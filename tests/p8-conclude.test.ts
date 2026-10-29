@@ -1,7 +1,7 @@
 import { Effect, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import {
-  P8_MIGRATIONS,
+  P23_MIGRATIONS,
   runMigrations,
 } from "../adapters/persistence-sqlite/src/index.js";
 import {
@@ -75,7 +75,7 @@ const mission: VerificationMission = {
 };
 
 const seed = Effect.gen(function* () {
-  yield* runMigrations(P8_MIGRATIONS);
+  yield* runMigrations(P23_MIGRATIONS);
   yield* p7SeedProject;
   const receipt = yield* p7SeedWork(WORK_1, ASSIGN_CMD);
   expect(receipt.resolution._tag).toBe("Committed");
@@ -94,6 +94,7 @@ const seedVerification = (verificationId: VerificationId) =>
           workId: WORK_1,
           targetWorkRevision: parse(WorkRevision)(0),
           missionSnapshot: mission,
+          verificationExecutionIds: [EXE_1],
         }),
         p7Project,
         p7RootWorkspace,
@@ -186,6 +187,9 @@ const recordPayload = (
     evidenceId,
     criterionId,
     kind: "ToolObservation",
+    toolInvocationId: "tin_00000000-0000-7000-8000-000000000001" as never,
+    observationRef: "observation:test",
+    callRef: "call:test",
     recordedAt: "t",
   },
 });
@@ -281,6 +285,11 @@ describe("p8-conclude", () => {
         expect(rows[0]?.criterionId).toBe("c1");
         expect(rows[0]?.kind).toBe("ToolObservation");
         expect(rows[0]?.recordedByExecutionId).toBe(EXE_1);
+        expect(rows[0]?.toolInvocationId).toBe(
+          "tin_00000000-0000-7000-8000-000000000001",
+        );
+        expect(rows[0]?.observationRef).toBe("observation:test");
+        expect(rows[0]?.callRef).toBe("call:test");
 
         // Idempotent replay: same content (recordedAt differs) → no-op.
         const replay: RecordOutcome = yield* tx.transact(
@@ -291,6 +300,10 @@ describe("p8-conclude", () => {
                 evidenceId: EV(1),
                 criterionId: "c1",
                 kind: "ToolObservation",
+                toolInvocationId:
+                  "tin_00000000-0000-7000-8000-000000000001" as never,
+                observationRef: "observation:test",
+                callRef: "call:test",
                 recordedAt: "t2",
               },
             }),
@@ -347,7 +360,12 @@ describe("p8-conclude", () => {
         // conclude VER(2) by repository before keeping VER(1) Open.
         yield* seedVerification(VER(2));
         const concluded = yield* tx.transact(
-          verifications.concludeIfOpen(VER(2), "Pass", undefined),
+          verifications.concludeIfOpen(
+            VER(2),
+            "Pass",
+            "summary:test",
+            undefined,
+          ),
         );
         expect(Option.isSome(concluded)).toBe(true);
         yield* seedVerification(VER(1));
@@ -380,7 +398,34 @@ describe("p8-conclude", () => {
     );
   });
 
-  it('ConcludeVerification Pass: criteria complete + evidence-bound → Concluded, VerificationConcluded fields (conclusionReason ""), channel1Release, no wake on Pass', async () => {
+  it("RecordVerificationEvidence rejects a ToolObservation without Runtime-bound source identity", async () => {
+    await runP7(
+      Effect.gen(function* () {
+        yield* seed;
+        yield* seedVerification(VER(1));
+        const tx = yield* TransactionPort;
+        const handlers = yield* makeHandlers;
+        const outcome: RecordOutcome = yield* tx.transact(
+          handlers.record.execute(
+            recordEnvelope(CMD("0123456789cf"), {
+              verificationId: VER(1),
+              evidence: {
+                evidenceId: EV(1),
+                criterionId: "c1",
+                kind: "ToolObservation",
+                recordedAt: "t",
+              },
+            }),
+            verifierContext,
+          ),
+        );
+        expectRejected(outcome, "AuthorityDenied");
+      }),
+      makeP7App(),
+    );
+  });
+
+  it("ConcludeVerification Pass: criteria complete + evidence-bound → Concluded, VerificationConcluded fields (conclusionReason null), channel1Release, no wake on Pass", async () => {
     await runP7(
       Effect.gen(function* () {
         yield* seed;
@@ -408,7 +453,14 @@ describe("p8-conclude", () => {
             verificationId: VER(1),
             state: "Concluded",
             verdict: "Pass",
-            conclusionReason: undefined,
+            summaryRef: "summary:1",
+            missionSnapshot: mission,
+            criteriaResults: [
+              criterionResult("c1", "Pass", [EV(1)]),
+              criterionResult("c2", "Pass", [EV(2)]),
+            ],
+            snapshotStatus: "Available",
+            conclusionReason: null,
             wakeSignals: [],
             channel1Release: { workId: WORK_1, targetWorkRevision: 0 },
           });
@@ -416,7 +468,7 @@ describe("p8-conclude", () => {
           // biome-ignore lint/style/noNonNullAssertion: guarded by the preceding assertion
           const event = outcome.value.events[0]!;
           expect(event.eventType).toBe("VerificationConcluded");
-          expect(event.eventVersion).toBe(1);
+          expect(event.eventVersion).toBe(2);
           expect(event.aggregateRef).toBe(VER(1));
           expect(event.projectId).toBe(p7Project);
           expect(event.causedByCommandId).toBe(CMD("0123456789d1"));
@@ -425,12 +477,66 @@ describe("p8-conclude", () => {
             workId: WORK_1,
             targetWorkRevision: 0,
             verdict: "Pass",
-            conclusionReason: "",
+            conclusionReason: null,
             evidenceRefs: [EV(1), EV(2)],
+            summaryRef: "summary:1",
+            missionSnapshot: mission,
+            criteriaResults: [
+              criterionResult("c1", "Pass", [EV(1)]),
+              criterionResult("c2", "Pass", [EV(2)]),
+            ],
+            snapshotStatus: "Available",
           });
         }
         const stored = yield* storedVerification(VER(1));
         expect(stored?.state).toEqual({ status: "Concluded", verdict: "Pass" });
+        expect(stored?.summaryRef).toBe("summary:1");
+      }),
+      makeP7App(),
+    );
+  });
+
+  it("rejects duplicate or non-canonical criterion evidence ordering before conclusion", async () => {
+    await runP7(
+      Effect.gen(function* () {
+        yield* seed;
+        yield* seedVerification(VER(1));
+        yield* seedEvidence(VER(1), EV(1), "c1");
+        yield* seedEvidence(VER(1), EV(2), "c1");
+        yield* seedEvidence(VER(1), EV(3), "c2");
+        const tx = yield* TransactionPort;
+        const handlers = yield* makeHandlers;
+
+        const unsorted: ConcludeOutcome = yield* tx.transact(
+          handlers.conclude.execute(
+            concludeEnvelope(
+              CMD("0123456789d2"),
+              concludePayload(VER(1), "Pass", [
+                criterionResult("c1", "Pass", [EV(2), EV(1)]),
+                criterionResult("c2", "Pass", [EV(3)]),
+              ]),
+            ),
+            verifierContext,
+          ),
+        );
+        expectRejected(unsorted, "InvalidVerificationMission");
+
+        const duplicate: ConcludeOutcome = yield* tx.transact(
+          handlers.conclude.execute(
+            concludeEnvelope(
+              CMD("0123456789d3"),
+              concludePayload(VER(1), "Pass", [
+                criterionResult("c1", "Pass", [EV(1), EV(1)]),
+                criterionResult("c2", "Pass", [EV(3)]),
+              ]),
+            ),
+            verifierContext,
+          ),
+        );
+        expectRejected(duplicate, "InvalidVerificationMission");
+        expect((yield* storedVerification(VER(1)))?.state).toEqual({
+          status: "Open",
+        });
       }),
       makeP7App(),
     );
@@ -659,6 +765,10 @@ describe("p8-conclude", () => {
             verdict: "Unknown",
             conclusionReason: "Orphaned",
             evidenceRefs: [],
+            summaryRef: "summary:1",
+            missionSnapshot: mission,
+            criteriaResults: [],
+            snapshotStatus: "NotApplicableOrphaned",
           });
         }
         const stored = yield* storedVerification(VER(1));
@@ -803,7 +913,7 @@ describe("p8-conclude", () => {
     };
 
     expect(handler.commandType).toBe("ConcludeVerification");
-    expect(handler.schemaVersion).toBe("1");
+    expect(handler.schemaVersion).toBe("2");
     expect(handler.authority.tag).toBe("VerifierExecutionAuthority");
     expect(handler.stopAdmission).toEqual({ _tag: "NormalExecutionMutation" });
 

@@ -20,13 +20,40 @@ export const P14_MIGRATION_BASELINE = 14;
 /** Provider Runtime Correctness Phase 1 migration baseline. */
 export const P16_MIGRATION_BASELINE = 16;
 
+/** DID v1.21 ALS-I1 AgentLoopStep migration baseline. */
+export const P18_MIGRATION_BASELINE = 18;
+
+/** DID v1.22 SCRC typed Session Timeline migration baseline. */
+export const P19_MIGRATION_BASELINE = 19;
+export const P20_MIGRATION_BASELINE = 20;
+export const P21_MIGRATION_BASELINE = 21;
+export const P22_MIGRATION_BASELINE = 22;
+export const P23_MIGRATION_BASELINE = 23;
+export const P24_MIGRATION_BASELINE = 24;
+export const P25_MIGRATION_BASELINE = 25;
+export const P26_MIGRATION_BASELINE = 26;
+export const P27_MIGRATION_BASELINE = 27;
+export const P28_MIGRATION_BASELINE = 28;
+export const P29_MIGRATION_BASELINE = 29;
+export const P34_MIGRATION_BASELINE = 34;
+/** Historical schema baseline retained for pre-P36 upgrade fixtures. */
+export const P35_MIGRATION_BASELINE = 35;
+/** Historical production schema baseline retained for compatibility. */
+export const P36_MIGRATION_BASELINE = 36;
+/** @deprecated historical name; current readiness uses the adapter registry. */
+export const P32_MIGRATION_BASELINE = P36_MIGRATION_BASELINE;
+/** @deprecated historical name; current readiness uses the adapter registry. */
+export const P31_MIGRATION_BASELINE = P36_MIGRATION_BASELINE;
+/** @deprecated historical name; current readiness uses the adapter registry. */
+export const P30_MIGRATION_BASELINE = P36_MIGRATION_BASELINE;
+
 /** @deprecated Legacy alias kept for compiled references; the baseline is P16. */
 export const P15_MIGRATION_BASELINE = P16_MIGRATION_BASELINE;
 
 export interface ReadinessState {
   /** Canonical DB connection is open (reopen / integrity_check path available). */
   readonly dbOpen: boolean;
-  /** `PRAGMA user_version` equals {@link P12_MIGRATION_BASELINE}. */
+  /** `PRAGMA user_version` equals the composition's current migration baseline. */
   readonly migrationBaseline: boolean;
   /** The T1 startup recovery pass (SD §10.6; P9 `03` §2) has completed. */
   readonly t1RecoveryComplete: boolean;

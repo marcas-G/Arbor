@@ -25,6 +25,7 @@ import {
   WorkspaceRepositoryLive,
   WorkWaitStoreLive,
 } from "../../adapters/persistence-sqlite/src/index.js";
+import { makeDeliverMessageHandler } from "../../packages/application/src/commands/deliver-message.js";
 import { makeRecordDecisionHandler } from "../../packages/application/src/commands/record-decision.js";
 import { makeSendMessageHandler } from "../../packages/application/src/commands/send-message.js";
 import { makeSteerWorkHandler } from "../../packages/application/src/commands/steer-work.js";
@@ -34,6 +35,7 @@ import {
   CommandGatewayLive,
   type CommandHandler,
   type CreateProjectPayload,
+  type FenceStopCheck,
   FenceStopCheckInertLive,
   makeP1CommandHandlers,
   semanticRequestFingerprint,
@@ -48,7 +50,6 @@ import {
   Principal,
   ProjectId,
   parse,
-  ResourceBoundaryRevision,
   ResponsibilityRevision,
   Revision,
   responsibilityBound,
@@ -61,7 +62,7 @@ import {
 } from "../../packages/execution-runtime/src/index.js";
 import {
   type AcceptanceRepository,
-  type DeliverableRepository,
+  DeliverableRepository,
   type DependencyRepository,
   type EvidenceRepository,
   ExecutionRepository,
@@ -77,7 +78,9 @@ import {
   WorkspaceRepository,
   WorkWaitStore,
 } from "../../packages/ports/src/index.js";
+import { NoHoldWorkReadmissionGateStoreService } from "../../packages/testkit/src/index.js";
 import { ReconciliationSourceLive } from "../../packages/tool-runtime/src/index.js";
+import { ensureLegacyProjectResourceSourceFixture } from "./legacy-project-resource-source.js";
 
 export const p7TestActor = parse(Actor)("user:gov");
 export const p7TestPrincipal = parse(Principal)("user:gov");
@@ -102,6 +105,7 @@ export const makeP7CommandHandlers = (dependencies: {
   readonly messages: typeof MessageStore.Service;
   readonly workspaces: typeof WorkspaceRepository.Service;
   readonly works: typeof WorkRepository.Service;
+  readonly deliverables: typeof DeliverableRepository.Service;
 }): ReadonlyArray<CommandHandler<unknown, unknown>> => [
   makeRecordDecisionHandler({
     proposals: dependencies.proposals,
@@ -109,6 +113,13 @@ export const makeP7CommandHandlers = (dependencies: {
     originatingWorkspaceOf: (record) => record.parentWorkspaceId,
   }) as unknown as CommandHandler<unknown, unknown>,
   makeSendMessageHandler({
+    workspaces: dependencies.workspaces,
+    messages: dependencies.messages,
+    inbox: dependencies.inbox,
+  }) as unknown as CommandHandler<unknown, unknown>,
+  makeDeliverMessageHandler({
+    deliverables: dependencies.deliverables,
+    works: dependencies.works,
     workspaces: dependencies.workspaces,
     messages: dependencies.messages,
     inbox: dependencies.inbox,
@@ -131,6 +142,7 @@ const P7CommandHandlerRegistryLive: Layer.Layer<
   | FormationProposalStore
   | InboxProjectionStore
   | MessageStore
+  | DeliverableRepository
 > = Layer.effect(
   CommandHandlerRegistry,
   Effect.gen(function* () {
@@ -143,6 +155,7 @@ const P7CommandHandlerRegistryLive: Layer.Layer<
     const proposals = yield* FormationProposalStore;
     const inbox = yield* InboxProjectionStore;
     const messages = yield* MessageStore;
+    const deliverables = yield* DeliverableRepository;
     const handlers: ReadonlyArray<CommandHandler<unknown, unknown>> = [
       ...makeP1CommandHandlers({ projects, workspaces, sessions, works }),
       ...makeP2CommandHandlers({
@@ -150,6 +163,7 @@ const P7CommandHandlerRegistryLive: Layer.Layer<
         workspaces,
         sessions,
         executions,
+        readmissionGate: NoHoldWorkReadmissionGateStoreService,
         workWaits,
       }),
       ...makeP7CommandHandlers({
@@ -158,6 +172,7 @@ const P7CommandHandlerRegistryLive: Layer.Layer<
         messages,
         workspaces,
         works,
+        deliverables,
       }),
     ];
     return CommandHandlerRegistry.of({
@@ -176,6 +191,7 @@ const P7CommandHandlerRegistryLive: Layer.Layer<
  * (scheduler timers) so test bodies can seed directly. */
 export const makeP7App = (
   filename = ":memory:",
+  fenceStopCheck: Layer.Layer<FenceStopCheck> = FenceStopCheckInertLive,
 ): Layer.Layer<
   | CommandGateway
   | SqlClient
@@ -245,7 +261,7 @@ export const makeP7App = (
         Layer.provide(TransactionPortLive, infra),
       ),
     ),
-    FenceStopCheckInertLive,
+    fenceStopCheck,
   );
   return Layer.mergeAll(
     gatewayDeps,
@@ -282,6 +298,7 @@ export const runP7 = <A, R>(
   );
 
 export const p7SeedProject = Effect.gen(function* () {
+  yield* ensureLegacyProjectResourceSourceFixture();
   const gateway = yield* CommandGateway;
   const payload: CreateProjectPayload = {
     name: "p6",
@@ -306,11 +323,7 @@ export const p7SeedProject = Effect.gen(function* () {
         interfaces: [],
       },
       responsibilityRevision: parse(ResponsibilityRevision)(0),
-      resourceBoundary: {
-        basisResponsibilityRevision: parse(ResponsibilityRevision)(0),
-        addresses: [],
-      },
-      resourceBoundaryRevision: parse(ResourceBoundaryRevision)(0),
+      resourceSelection: { _tag: "ConversationOnly" },
       agentBinding: responsibilityBound(p7RootWorkspace),
       workspacePolicy: makeWorkspacePolicy(),
       workspacePolicyRevision: parse(Revision)(0),
@@ -325,7 +338,7 @@ export const p7SeedProject = Effect.gen(function* () {
       commandType: "CreateProject",
       projectId: p7Project,
       actor: p7TestActor,
-      schemaVersion: "1",
+      schemaVersion: "2",
       payload,
     }),
     projectId: p7Project,
@@ -360,6 +373,7 @@ export { runRecovery };
 export const p7SeedWork = (
   workId: import("../../packages/domain/dist/index.js").WorkId,
   commandId: import("../../packages/domain/dist/index.js").CommandId,
+  verificationMission?: import("../../packages/domain/dist/index.js").VerificationMission,
 ) =>
   Effect.gen(function* () {
     const gateway = yield* CommandGateway;
@@ -374,7 +388,11 @@ export const p7SeedWork = (
       why: "seed",
       constraints: [],
       completionExpectation: "green",
-      verificationMission: { goal: "g", criteria: [], riskRequirements: [] },
+      verificationMission: verificationMission ?? {
+        goal: "g",
+        criteria: [],
+        riskRequirements: [],
+      },
       provenance: { predecessorWorkId: null, reason: "seed" },
       revision: parse(WorkRevision)(0),
     };

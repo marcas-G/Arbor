@@ -165,6 +165,22 @@ const productionTrees: ReadonlyArray<string> = [
 ];
 
 describe("p9-architecture", () => {
+  it("ProviderTurn persistence is split by durable responsibility behind one public store", () => {
+    const modules = [
+      "adapters/persistence-sqlite/src/provider-turn-store-shared.ts",
+      "adapters/persistence-sqlite/src/provider-turn-intent-store.ts",
+      "adapters/persistence-sqlite/src/provider-attempt-store.ts",
+      "adapters/persistence-sqlite/src/provider-turn-settlement-store.ts",
+      "adapters/persistence-sqlite/src/provider-turn-project-store.ts",
+    ];
+    for (const module of modules) {
+      expect(existsSync(join(repoRoot, module)), module).toBe(true);
+    }
+    const root = sourceOf("adapters/persistence-sqlite/src/provider-turns.ts");
+    expect(root).not.toContain("SELECT ");
+    expect(root.split(/\r?\n/u).length).toBeLessThan(100);
+  });
+
   it("P9 production modules exist at their frozen locations and export their contract faces", () => {
     for (const relativePath of P9_RUNTIME_MODULES) {
       const absolute = join(repoRoot, relativePath);

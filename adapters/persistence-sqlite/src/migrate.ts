@@ -7,13 +7,72 @@ export interface MigrationFile {
   readonly id: number;
   readonly name: string;
   readonly sql: string;
+  readonly foreignKeysOff?: boolean;
+  readonly requiresUserVersion?: number;
+  readonly offlineOnly?: boolean;
+  /** Same-transaction data initialization for migrations whose canonical
+   * facts require a deterministic runtime digest. */
+  readonly onApply?: (
+    sql: unknown,
+    context?: MigrationApplyContext,
+  ) => Effect.Effect<void, SqlError>;
 }
 
-export const splitStatements = (sql: string): ReadonlyArray<string> =>
-  sql
-    .split(";")
-    .map((statement) => statement.trim())
-    .filter((statement) => statement.length > 0);
+export interface MigrationApplyContext {
+  readonly capturedAt?: string;
+}
+
+export const splitStatements = (sql: string): ReadonlyArray<string> => {
+  const statements: string[] = [];
+  let current = "";
+  let quote: "'" | '"' | "`" | "[" | null = null;
+  for (let index = 0; index < sql.length; index += 1) {
+    const character = sql[index];
+    if (character === undefined) continue;
+    if (quote !== null) {
+      current += character;
+      const closing = quote === "[" ? "]" : quote;
+      if (character === closing) {
+        if (sql[index + 1] === closing && quote !== "[") {
+          current += sql[index + 1];
+          index += 1;
+        } else {
+          quote = null;
+        }
+      }
+      continue;
+    }
+    if (character === "'" || character === '"' || character === "`") {
+      quote = character;
+      current += character;
+      continue;
+    }
+    if (character === "[") {
+      quote = "[";
+      current += character;
+      continue;
+    }
+    if (character !== ";") {
+      current += character;
+      continue;
+    }
+    const trimmed = current.trim();
+    const isTrigger = /^CREATE\s+TRIGGER\b/i.test(trimmed);
+    if (isTrigger && !/\bEND$/i.test(trimmed)) {
+      current += character;
+      continue;
+    }
+    if (trimmed.length > 0) {
+      statements.push(trimmed);
+    }
+    current = "";
+  }
+  const trailing = current.trim();
+  if (trailing.length > 0) {
+    statements.push(trailing);
+  }
+  return statements;
+};
 
 /**
  * Forward-only migration runner keyed on `PRAGMA user_version`.
@@ -25,13 +84,46 @@ export const splitStatements = (sql: string): ReadonlyArray<string> =>
  */
 export const runMigrations = (
   migrations: ReadonlyArray<MigrationFile>,
+  options: {
+    readonly allowOfflineOnly?: boolean;
+    readonly migrationContext?: MigrationApplyContext;
+  } = {},
 ): Effect.Effect<number, SqlError | SqliteAdapterError, SqlClient> =>
   Effect.gen(function* () {
+    // Migration 0039 is only executable through the trusted P39 maintenance
+    // coordinator. The generic runner must refuse it before it reads the
+    // database version or executes any part of a caller-supplied chain.
+    if (migrations.some(({ id }) => id === 39)) {
+      return yield* Effect.fail(
+        sqliteAdapterError(
+          "migration 39 requires the trusted P39 maintenance coordinator",
+        ),
+      );
+    }
     const sql = yield* SqlClient;
     const versionRows = yield* sql.unsafe<{ user_version: number }>(
       "PRAGMA user_version",
     );
     const current = Number(versionRows[0]?.user_version ?? 0);
+    if (
+      options.allowOfflineOnly !== true &&
+      current > 0 &&
+      migrations.some(
+        (migration) => migration.offlineOnly === true && migration.id > current,
+      )
+    ) {
+      const offlineStep = migrations.find(
+        (migration) => migration.offlineOnly === true,
+      )?.id;
+      return yield* Effect.fail(
+        sqliteAdapterError(
+          "database user_version " +
+            String(current) +
+            " requires an offline upgrade before migration " +
+            String(offlineStep ?? "unknown"),
+        ),
+      );
+    }
     const latest = migrations.reduce(
       (max, migration) => Math.max(max, migration.id),
       0,
@@ -47,14 +139,50 @@ export const runMigrations = (
       .filter((migration) => migration.id > current)
       .sort((a, b) => a.id - b.id);
     for (const migration of pending) {
-      yield* sql.withTransaction(
-        Effect.gen(function* () {
-          for (const statement of splitStatements(migration.sql)) {
-            yield* sql.unsafe(statement);
-          }
-          yield* sql.unsafe(`PRAGMA user_version = ${migration.id}`);
-        }),
+      const requiredVersion = migration.requiresUserVersion ?? migration.id - 1;
+      const actualRows = yield* sql.unsafe<{ user_version: number }>(
+        "PRAGMA user_version",
       );
+      const actual = Number(actualRows[0]?.user_version ?? 0);
+      if (actual !== requiredVersion) {
+        return yield* Effect.fail(
+          sqliteAdapterError(
+            `migration ${migration.id} requires database user_version ${requiredVersion}, found ${actual}`,
+          ),
+        );
+      }
+      const apply = Effect.gen(function* () {
+        for (const statement of splitStatements(migration.sql)) {
+          yield* sql.unsafe(statement);
+        }
+        if (migration.onApply !== undefined) {
+          yield* migration.onApply(sql, options.migrationContext);
+        }
+        yield* sql.unsafe(`PRAGMA user_version = ${migration.id}`);
+      });
+      if (migration.foreignKeysOff === true) {
+        yield* sql.unsafe("PRAGMA foreign_keys = OFF");
+        yield* sql.unsafe("PRAGMA legacy_alter_table = ON");
+        yield* sql.withTransaction(apply).pipe(
+          Effect.ensuring(
+            Effect.gen(function* () {
+              yield* sql.unsafe("PRAGMA legacy_alter_table = OFF");
+              yield* sql.unsafe("PRAGMA foreign_keys = ON");
+            }).pipe(Effect.orDie),
+          ),
+        );
+        const violations = yield* sql.unsafe("PRAGMA foreign_key_check");
+        if (violations.length > 0) {
+          return yield* Effect.fail(
+            sqliteAdapterError(
+              `migration ${migration.id} produced foreign-key violations`,
+              violations,
+            ),
+          );
+        }
+      } else {
+        yield* sql.withTransaction(apply);
+      }
     }
     return pending.length;
   });

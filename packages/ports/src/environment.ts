@@ -1,20 +1,27 @@
 import type {
+  Actor,
   CanonicalResourceRegion,
+  CommandId,
   ProjectId,
   ResourceAddress,
+  ResourceBoundaryRevision,
+  WorkspaceId,
 } from "@arbor/domain";
 import { Context, type Effect, type Option } from "effect";
 import type {
+  DomainEventJournalError,
   EnvironmentError,
   EnvironmentRevisionStoreError,
   ResourceOwnershipRepositoryError,
   ResourceResolutionStale,
+  WorkspaceRepositoryError,
 } from "./errors.js";
 import type { ResourceOwnershipClaimRecord } from "./repositories.js";
 import type {
   TransactionOperationalFailure,
   TransactionScope,
 } from "./session.js";
+import type { WorkspaceResourceActivationStoreError } from "./workspace-resource-activation.js";
 
 /**
  * P11 `01` §3 store mapping: the stored string IS the counter. The typed
@@ -88,6 +95,88 @@ export interface OwnershipWriteServiceService {
     | ResourceResolutionStale
     | TransactionOperationalFailure
     | EnvironmentRevisionStoreError
+  >;
+  readonly activatePendingWorkspaceResource: (
+    projectId: ProjectId,
+    workspaceId: WorkspaceId,
+    resourceBoundaryRevision: ResourceBoundaryRevision,
+    addresses: ReadonlyArray<ResourceAddress>,
+  ) => Effect.Effect<
+    { readonly _tag: "Activated" } | { readonly _tag: "AlreadyActive" },
+    | EnvironmentError
+    | ResourceOwnershipRepositoryError
+    | ResourceResolutionStale
+    | TransactionOperationalFailure
+    | EnvironmentRevisionStoreError
+    | WorkspaceResourceActivationStoreError
+    | WorkspaceRepositoryError
+    | DomainEventJournalError
+  >;
+  /** S3 activation consumes the exact durable Parent-approved delegation
+   * identity. Canonical resolution happens before BEGIN IMMEDIATE; all
+   * revision checks, claims, intent settlement, and event append are atomic. */
+  readonly activateDelegatedOwnership: (input: {
+    readonly projectId: ProjectId;
+    readonly childWorkspaceId: WorkspaceId;
+    readonly childResourceBoundaryRevision: ResourceBoundaryRevision;
+    readonly delegationSourceId: string;
+  }) => Effect.Effect<
+    | {
+        readonly _tag: "Activated";
+        readonly parentClaim: ResourceOwnershipClaimRecord;
+        readonly childClaim: ResourceOwnershipClaimRecord;
+      }
+    | {
+        readonly _tag: "AlreadyActive";
+        readonly parentClaim: ResourceOwnershipClaimRecord;
+        readonly childClaim: ResourceOwnershipClaimRecord;
+      },
+    | EnvironmentError
+    | ResourceOwnershipRepositoryError
+    | ResourceResolutionStale
+    | TransactionOperationalFailure
+    | EnvironmentRevisionStoreError
+    | WorkspaceResourceActivationStoreError
+    | WorkspaceRepositoryError
+    | DomainEventJournalError
+  >;
+  /** Reclaim the exact delegated Child claim. `retireChild` folds the
+   * Workspace lifecycle CAS into the same ownership/event transaction. The
+   * caller must supply its checked, exact quiescence preconditions. */
+  readonly reclaimDelegatedOwnership: (input: {
+    readonly projectId: ProjectId;
+    readonly childWorkspaceId: WorkspaceId;
+    readonly delegationSourceId: string;
+    readonly expectedParentWorkspaceRevision: number;
+    readonly expectedChildWorkspaceRevision: number;
+    readonly expectedParentBoundaryRevision: ResourceBoundaryRevision;
+    readonly expectedChildBoundaryRevision: ResourceBoundaryRevision;
+    readonly expectedParentClaimRevision: number;
+    readonly expectedChildClaimRevision: number;
+    readonly actor: Actor;
+    readonly causedByCommandId: CommandId;
+    readonly retireChild: boolean;
+    readonly quiescence: {
+      readonly noUnresolvedEffects: boolean;
+      readonly noActiveExecution: boolean;
+      readonly noOpenWork: boolean;
+      readonly noActiveChildren: boolean;
+      readonly noUnresolvedIncomingDependencies: boolean;
+    };
+  }) => Effect.Effect<
+    {
+      readonly _tag: "Reclaimed" | "AlreadyReclaimed";
+      readonly parentClaim: ResourceOwnershipClaimRecord;
+      readonly childClaim: ResourceOwnershipClaimRecord;
+      readonly childRetired: boolean;
+    },
+    | EnvironmentError
+    | ResourceOwnershipRepositoryError
+    | ResourceResolutionStale
+    | TransactionOperationalFailure
+    | EnvironmentRevisionStoreError
+    | WorkspaceRepositoryError
+    | DomainEventJournalError
   >;
 }
 

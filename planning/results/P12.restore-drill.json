@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-09-29T09:33:15.747Z",
+  "timestamp": "2026-09-30T04:58:00.887Z",
   "backupRef": "backup://backup.db",
-  "restoredDbHash": "sha256:77226a91dc4834502e7d65dde42a24bb8e76b94d704ae5416676a746b8a590b7",
+  "restoredDbHash": "sha256:fc30c1931e23ee2f92c0a0c87807fe242aa18d50d13c4fc04d6160b581e3c821",
   "migrationUserVersion": 13,
   "measuredRpo": "PT0S",
   "measuredRto": "PT0S"

@@ -41,6 +41,7 @@ const PROJECT = "prj_018f2b3c-4d5e-7abc-8def-0123456789d1";
 const WS = "ws_018f2b3c-4d5e-7abc-8def-0123456789d1";
 const SES = "ses_018f2b3c-4d5e-7abc-8def-0123456789d1";
 const EXE = "exe_018f2b3c-4d5e-7abc-8def-0123456789d1";
+const WORK = "wrk_018f2b3c-4d5e-7abc-8def-0123456789d1";
 const WORKER = "wrk_restore_drill";
 const INCARNATION = "wic_018f2b3c-4d5e-7abc-8def-0123456789d1";
 
@@ -79,8 +80,12 @@ const seedProgram = Effect.gen(function* () {
         [WS, PROJECT, SES],
       );
       yield* sql.unsafe(
-        "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, focus_kind, focus_work_id, parent_execution_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?,'workspace',?,'coordination',NULL,NULL,NULL,?,'t',NULL,NULL,NULL,NULL)",
-        [EXE, PROJECT, WS, SES],
+        "INSERT INTO works (work_id, project_id, workspace_id, objective, why, constraints, completion_expectation, verification_mission, provenance, lifecycle, revision, created_at, updated_at) VALUES (?,?,?,'restore drill','durability','[]','lease restored','{}','{}','Open',0,'t','t')",
+        [WORK, PROJECT, WS],
+      );
+      yield* sql.unsafe(
+        "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, focus_kind, focus_work_id, parent_execution_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?,'workspace',?,'work',?,NULL,NULL,?,'t',NULL,NULL,NULL,NULL)",
+        [EXE, PROJECT, WS, WORK, SES],
       );
       yield* sql.unsafe(
         "INSERT INTO execution_leases (execution_id, worker_id, worker_incarnation_id, generation, expires_at, updated_at) VALUES (?,?,?,0,'2999-01-01T00:00:00Z','t')",
@@ -105,7 +110,9 @@ const readLeases = Effect.gen(function* () {
   );
 });
 
-export const runRestoreDrill = async (): Promise<RestoreDrillArtifact> => {
+export const runRestoreDrill = async (
+  options: { readonly artifactOutputPath?: string } = {},
+): Promise<RestoreDrillArtifact> => {
   const workDir = mkdtempSync(join(tmpdir(), "arbor-restore-drill-"));
   const canonicalDb = join(workDir, "canonical.db");
   const backupDb = join(workDir, "backup.db");
@@ -186,12 +193,9 @@ export const runRestoreDrill = async (): Promise<RestoreDrillArtifact> => {
       measuredRpo: toIsoDuration(measuredRpoMs),
       measuredRto: toIsoDuration(measuredRtoMs),
     };
-    const outPath = join(
-      repoRoot,
-      "planning",
-      "results",
-      "P12.restore-drill.json",
-    );
+    const outPath =
+      options.artifactOutputPath ??
+      join(repoRoot, "planning", "results", "P12.restore-drill.json");
     mkdirSync(dirname(outPath), { recursive: true });
     writeFileSync(outPath, `${JSON.stringify(artifact, null, 2)}\n`);
     return artifact;

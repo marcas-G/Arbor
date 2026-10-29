@@ -53,6 +53,24 @@ const installAttention = (
   return urls;
 };
 
+const installAttentionSequence = (outcomes: ReadonlyArray<MockOutcome>) => {
+  const urls: string[] = [];
+  let index = 0;
+  const fetchMock = vi.fn(async (input: unknown): Promise<Response> => {
+    const url = String(input);
+    urls.push(url);
+    const outcome = outcomes[Math.min(index, outcomes.length - 1)];
+    index += 1;
+    if (outcome === undefined) throw new Error("attention fixture is empty");
+    return new Response(
+      "problem" in outcome ? problemBody(outcome.problem) : okBody(outcome.dto),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return { fetchMock, urls };
+};
+
 const sessionValue: SessionContextValue = {
   token: "tok",
   actor: "user:test",
@@ -74,13 +92,14 @@ const renderAttention = () => {
       queries: { retry: false, staleTime: Number.POSITIVE_INFINITY },
     },
   });
-  return render(
+  const rendered = render(
     <QueryClientProvider client={client}>
       <SessionContext.Provider value={sessionValue}>
         <AttentionPage route={route} />
       </SessionContext.Provider>
     </QueryClientProvider>,
   );
+  return { client, ...rendered };
 };
 
 beforeEach(() => {
@@ -96,6 +115,92 @@ afterEach(() => {
 });
 
 describe("W-06 关注事项页（只读）", () => {
+  it("renders sandbox Attention sources as read-only safe rows", async () => {
+    const urls = installAttention({
+      dto: {
+        rows: [
+          {
+            source: "SandboxProviderUnavailable",
+            severity: "ActionRequired",
+            targetWorkspaceId: "ws_1",
+            dedupKey: "att_provider",
+            summaryRef:
+              "Required sandbox capabilities are unavailable; execution did not start.",
+            occurredAt: "2026-10-19T10:00:00.000Z",
+          },
+          {
+            source: "SandboxRecoveryBindingFailure",
+            severity: "ActionRequired",
+            targetWorkspaceId: "ws_2",
+            dedupKey: "a".repeat(64),
+            summaryRef:
+              "Sandbox recovery binding evidence is missing or invalid; execution is paused.",
+            occurredAt: "2026-10-19T10:00:01.000Z",
+          },
+        ],
+      },
+    });
+    renderAttention();
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          "Sandbox recovery binding evidence is missing or invalid; execution is paused.",
+        ),
+      ).toBeTruthy(),
+    );
+    expect(
+      screen.getAllByText(
+        "Required sandbox capabilities are unavailable; execution did not start.",
+      ),
+    ).toHaveLength(3);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /Sandbox recovery binding evidence is missing or invalid/,
+      }),
+    );
+    const inspection = screen.getByRole("complementary", {
+      name: "关注事项检查面板",
+    });
+    expect(within(inspection).getByText("a".repeat(64))).toBeTruthy();
+    expect(
+      within(inspection).queryByRole("button", { name: /repair|rebind/i }),
+    ).toBeNull();
+    expect(urls.every((url) => url.startsWith("/views/"))).toBe(true);
+  });
+
+  it("renders terminal Provider failure code and exact Work revision without a retry action", async () => {
+    installAttention({
+      dto: {
+        rows: [
+          {
+            source: "TerminalProviderFailure",
+            severity: "ActionRequired",
+            targetWorkspaceId: "ws_1",
+            dedupKey: `terminal-provider-failure:wrk_1:2:${"a".repeat(64)}`,
+            summaryRef:
+              "The model provider rejected this Work execution. Review the provider configuration or request compatibility, then explicitly steer the Work to retry.",
+            occurredAt: "2026-10-25T00:00:01.000Z",
+            terminalProviderFailure: {
+              kind: "TerminalProviderFailure",
+              workId: "wrk_1",
+              workRevision: 2,
+              occurredAt: "2026-10-25T00:00:01.000Z",
+              failureCode: "RequestRejected",
+            },
+          },
+        ],
+      },
+    });
+    renderAttention();
+    await waitFor(() =>
+      expect(screen.getByText("RequestRejected")).toBeTruthy(),
+    );
+    expect(screen.getByText("2")).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: /重新验证|Retry Verification/iu }),
+    ).toBeNull();
+  });
+
   it("severity 分组顺序：ActionRequired 组在前；组头 danger/attention Badge + 计数", async () => {
     installAttention();
     renderAttention();
@@ -160,12 +265,113 @@ describe("W-06 关注事项页（只读）", () => {
     expect(window.location.pathname).toBe("/p/prj_1/workspace/ws_1");
   });
 
+  it("VerifierOrphan 检查展示精确 Work/Verification/revision 绑定但不暴露未经解析的重试动作", async () => {
+    const urls = installAttention();
+    renderAttention();
+    await waitFor(() =>
+      expect(screen.getByText("verifier-orphan#4")).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /verifier-orphan#4/ }));
+    const inspection = screen.getByRole("complementary", {
+      name: "关注事项检查面板",
+    });
+    expect(within(inspection).getByText("wrk_4")).toBeTruthy();
+    expect(within(inspection).getByText("ver_4")).toBeTruthy();
+    expect(within(inspection).getByText("Target Work revision")).toBeTruthy();
+    expect(within(inspection).getByText("7")).toBeTruthy();
+    expect(
+      within(inspection).queryByRole("button", { name: /RetryVerification/ }),
+    ).toBeNull();
+    expect(urls.every((url) => url.startsWith("/views/"))).toBe(true);
+  });
+
+  it("只有服务端对当前 principal 精确解析通过后才显示 RetryVerification 表单", async () => {
+    const rows = attentionPageTypical.rows.map((row) =>
+      row.source === "VerifierOrphan"
+        ? { ...row, availableActions: ["RetryVerification"] as const }
+        : row,
+    );
+    installAttention({ dto: { rows } });
+    renderAttention();
+    await waitFor(() =>
+      expect(screen.getByText("verifier-orphan#4")).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /verifier-orphan#4/ }));
+    expect(screen.getByRole("form", { name: "重新启动验证" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "提交重试" })).toBeTruthy();
+  });
+
   it("空态 Empty 无关注事项；全部 fetch 均为 /views/（无任何 command）", async () => {
     const urls = installAttention({ dto: attentionPageEmpty });
     renderAttention();
     await waitFor(() => expect(screen.getByText("无关注事项")).toBeTruthy());
     expect(urls.every((url) => url.startsWith("/views/"))).toBe(true);
     expect(urls.every((url) => url.startsWith("/views/attention"))).toBe(true);
+  });
+
+  it("activation Attention clears the Pending notice when a later read has no pending source", async () => {
+    const pendingActivation = {
+      source: "WorkspaceResourceActivationPending" as const,
+      severity: "ActionRequired" as const,
+      targetWorkspaceId: "ws_1" as never,
+      dedupKey: "resource-activation:prj_1:ws_1:0",
+      summaryRef: "resource-activation-pending",
+      occurredAt: "2026-10-12T00:00:00.000Z",
+    };
+    const { fetchMock } = installAttentionSequence([
+      { dto: { rows: [pendingActivation] } },
+      { dto: attentionPageEmpty },
+    ]);
+    const { client } = renderAttention();
+    const pendingNotice =
+      "项目已创建，但资源尚未激活，文件操作暂不可用。该创建命令已经提交，请勿重复创建；此状态会随资源激活更新。";
+    await waitFor(() => expect(screen.getByText(pendingNotice)).toBeTruthy());
+
+    await client.invalidateQueries({ queryKey: ["view", "attention"] });
+
+    await waitFor(() => expect(screen.queryByText(pendingNotice)).toBeNull());
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("an Attention read error shows Unknown and never claims resource activation", async () => {
+    const pendingNotice =
+      "项目已创建，但资源尚未激活，文件操作暂不可用。该创建命令已经提交，请勿重复创建；此状态会随资源激活更新。";
+    const pendingActivation = {
+      source: "WorkspaceResourceActivationPending" as const,
+      severity: "ActionRequired" as const,
+      targetWorkspaceId: "ws_1" as never,
+      dedupKey: "resource-activation:prj_1:ws_1:0",
+      summaryRef: "resource-activation-pending",
+      occurredAt: "2026-10-12T00:00:00.000Z",
+    };
+    const { fetchMock } = installAttentionSequence([
+      { dto: { rows: [pendingActivation] } },
+      {
+        problem: {
+          code: "view/attention-unavailable",
+          category: "unavailable",
+          message: "attention view failed",
+          correlationId: null,
+          retryDisposition: "retryable",
+          safeDetails: {},
+        },
+      },
+    ]);
+    const { client } = renderAttention();
+    await waitFor(() => expect(screen.getByText(pendingNotice)).toBeTruthy());
+
+    await client.invalidateQueries({ queryKey: ["view", "attention"] });
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(
+          "无法确认此项目的资源激活状态。请勿重复创建；刷新关注事项后再确认。",
+        ),
+      ).toBeTruthy(),
+    );
+    expect(screen.queryByText(pendingNotice)).toBeNull();
+    expect(screen.queryByText(/资源已经激活/u)).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("行交互后仍全部 fetch 均为 /views/", async () => {

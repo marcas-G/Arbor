@@ -6,6 +6,6 @@ export interface Problem {
   readonly category: string;
   readonly message: string;
   readonly correlationId: string | null;
-  readonly retryDisposition: string;
+  readonly retryDisposition: "retryable" | "non-retryable";
   readonly safeDetails: Readonly<Record<string, unknown>>;
 }

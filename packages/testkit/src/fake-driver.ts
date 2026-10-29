@@ -1,6 +1,10 @@
 import type { ExecutionSettlement } from "@arbor/domain";
-import { ExecutionDriverPort } from "@arbor/ports";
-import { Effect, Layer } from "effect";
+import {
+  ControlApprovalStore,
+  ExecutableApprovalStore,
+  ExecutionDriverPort,
+} from "@arbor/ports";
+import { Effect, Layer, Option } from "effect";
 
 /** Deterministic driver double: returns a fixed settlement proposal. */
 export const FakeDriverLive = (
@@ -9,3 +13,15 @@ export const FakeDriverLive = (
   Layer.succeed(ExecutionDriverPort, {
     drive: () => Effect.succeed(settlement),
   });
+
+/** Pre-P38 fixtures have no approval ledger rows. P2 runner fixtures install
+ * this explicit no-pending port instead of relying on a missing service. */
+export const NoPendingExecutableApprovalStoreLive: Layer.Layer<ExecutableApprovalStore> =
+  Layer.succeed(ExecutableApprovalStore, {
+    findPendingForExecution: () => Effect.succeed(Option.none()),
+  } as never);
+
+export const NoPendingControlApprovalStoreLive: Layer.Layer<ControlApprovalStore> =
+  Layer.succeed(ControlApprovalStore, {
+    findPendingForExecution: () => Effect.succeed(Option.none()),
+  } as never);

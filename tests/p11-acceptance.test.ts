@@ -22,9 +22,11 @@ import {
   IdGeneratorLive,
   layer,
   P16_MIGRATIONS,
+  ProjectRepositoryLive,
   ProviderTurnStoreLive,
   RecordEnvironmentChangeLive,
   ResourceOwnershipRepositoryLive,
+  RuntimeClockLive,
   runMigrations,
   SessionRepositoryLive,
   TransactionPortLive,
@@ -43,7 +45,7 @@ import {
 } from "../adapters/sandbox-worktree/src/index.js";
 import {
   type AgentActionHandler,
-  AgentDriverLive,
+  AgentLoopDriverLive,
   checkFreshness,
   makeControlToolRegistry,
 } from "../packages/agent-runtime/src/index.js";
@@ -128,6 +130,7 @@ import {
 } from "../packages/ports/src/index.js";
 import { ProviderRuntimeLive } from "../packages/provider-runtime/src/index.js";
 import { FixedSecretStoreLive } from "../packages/testkit/src/index.js";
+import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-project-resource-source.js";
 
 // P11-012 acceptance: one story per closure invariant CI-1..CI-5 (P11 `00`
 // §Five closure invariants) + the end-to-end environment story + the
@@ -167,6 +170,7 @@ const seedProjectRows = (sql: SqlClient) =>
         "INSERT INTO projects (project_id, name, root_workspace_id, project_policy, project_policy_revision, default_configuration, environment_ref, lifecycle, revision, created_at, updated_at) VALUES (?,'p',?,'{}',0,'{}','local','Open',0,'t','t')",
         [PROJECT, WS],
       );
+      yield* ensureLegacyProjectResourceSourceFixture();
       yield* sql.unsafe(
         "INSERT INTO workspaces (workspace_id, project_id, parent_workspace_id, name, responsibility_definition, responsibility_revision, resource_boundary, resource_boundary_revision, agent_binding, primary_session_id, workspace_policy, workspace_policy_revision, revision, lifecycle, created_at, updated_at) VALUES (?,?,NULL,'root','{}',1,'{}',1,'{}',?,'{}',0,0,'Active','t','t')",
         [WS, PROJECT, "ses_acc"],
@@ -250,7 +254,12 @@ const driftAppLayer = (
   reprobe?: Layer.Layer<EnvironmentReProbePort>,
 ): Layer.Layer<DriftAppEnv> => {
   const base = layer({ filename: ":memory:" });
-  const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
+  const infra = Layer.mergeAll(
+    base,
+    ClockLive,
+    RuntimeClockLive,
+    IdGeneratorLive,
+  );
   const tx = Layer.provide(TransactionPortLive, base);
   const journal = Layer.provide(DomainEventJournalLive, infra);
   const waits = Layer.provide(WorkWaitStoreLive, infra);
@@ -336,7 +345,21 @@ const concludedVerification = (
     },
     targetEnvironmentRevision,
   });
-  const result = concludeVerification(started, verdict);
+  const result = concludeVerification(
+    started,
+    verdict,
+    "summary:test",
+    undefined,
+    [
+      {
+        criterionId: "c1",
+        requirement: "must hold",
+        required: true,
+        verdict,
+        evidenceRefs: [],
+      },
+    ],
+  );
   if (!result.ok) {
     throw new Error(`concludeVerification failed: ${result.error._tag}`);
   }
@@ -368,7 +391,11 @@ const cbExecutionOf = (index: 0 | 1): Execution => ({
   binding: {
     _tag: "WorkspaceExecution",
     workspaceId: cbWorkspaceIds[index],
-    focus: { _tag: "Coordination" },
+    episode: {
+      _tag: "InboxEpisode",
+      entryKey: `acceptance-control-basis-${index}`,
+      inputKind: "TestInput",
+    },
   },
   sessionId: cbSessionIds[index],
   admittedAt: "t",
@@ -378,7 +405,11 @@ const cbExecutionOf = (index: 0 | 1): Execution => ({
 
 const cbStateOf = (index: 0 | 1): AgentExecutionState => ({
   executionId: cbExecutionIds[index],
-  focus: { _tag: "Coordination" },
+  episode: {
+    _tag: "InboxEpisode",
+    entryKey: `acceptance-control-basis-${index}`,
+    inputKind: "TestInput",
+  },
   wakeReason: { _tag: "WorkSelected" },
   currentMode: "execute",
   activeSkillRefs: [],
@@ -414,7 +445,7 @@ const cbSendMessageTurn = (body: string) => [
   {
     _tag: "ToolCallProposed" as const,
     callRef: "c1",
-    toolName: "arbor_send_message",
+    toolName: "send_message",
     argumentsJson: JSON.stringify({
       kind: "Query",
       body,
@@ -454,9 +485,7 @@ const cbRecordingModelContext = (recorded: Array<ControlBasis>) =>
               budget: { maxOutputTokens: input.maxOutputTokens },
               cacheHints: [],
             },
-            toolRoutes: [
-              { name: "arbor_send_message", route: "Control" as const },
-            ],
+            toolRoutes: [{ name: "send_message", route: "Control" as const }],
             manifest: {
               providerTurnId: input.providerTurnId,
               executionId: input.executionId,
@@ -466,10 +495,8 @@ const cbRecordingModelContext = (recorded: Array<ControlBasis>) =>
               instructionFragments: [],
               contextRefs: [],
               skillRefs: [],
-              toolRefs: ["Control:arbor_send_message@1"],
-              toolRoutes: [
-                { name: "arbor_send_message", route: "Control" as const },
-              ],
+              toolRefs: ["Control:send_message@1"],
+              toolRoutes: [{ name: "send_message", route: "Control" as const }],
               outputContractRef: "tool-invocation-v1",
               budgetDecision: { maxOutputTokens: input.maxOutputTokens },
               compiledRequestHash: "hash-p11-acceptance",
@@ -483,7 +510,12 @@ const cbRecordingModelContext = (recorded: Array<ControlBasis>) =>
 const cbMakeApp = () => {
   const recorded: Array<ControlBasis> = [];
   const base = layer({ filename: ":memory:" });
-  const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
+  const infra = Layer.mergeAll(
+    base,
+    ClockLive,
+    RuntimeClockLive,
+    IdGeneratorLive,
+  );
   const provider = FakeProviderLive({
     turns: [cbSendMessageTurn("first"), cbSendMessageTurn("second")],
   });
@@ -501,13 +533,16 @@ const cbMakeApp = () => {
   const advancement = Layer.provide(EnvironmentRevisionAdvancementLive, infra);
   const tx = Layer.provide(TransactionPortLive, infra);
   const driver = Layer.provide(
-    AgentDriverLive([], { controlRegistry: cbControlRegistry }),
+    AgentLoopDriverLive({ controlRegistry: cbControlRegistry }),
     Layer.mergeAll(
+      infra,
       cbRecordingModelContext(recorded),
       providerRuntime,
       cbCapability,
       Layer.provide(SessionRepositoryLive, infra),
       Layer.provide(HumanMessageStoreLive, infra),
+      Layer.provide(ProjectRepositoryLive, infra),
+      Layer.provide(WorkspaceRepositoryLive, infra),
       Layer.provide(WorkRepositoryLive, infra),
       tx,
       revisions,
@@ -553,6 +588,7 @@ const cbSeed = Effect.gen(function* () {
           "t",
         ],
       );
+      yield* ensureLegacyProjectResourceSourceFixture();
       for (const [index, workspaceId] of cbWorkspaceIds.entries()) {
         yield* sql.unsafe(
           "INSERT INTO workspaces (workspace_id, project_id, parent_workspace_id, name, responsibility_definition, responsibility_revision, resource_boundary, resource_boundary_revision, agent_binding, primary_session_id, current_work_id, workspace_policy, workspace_policy_revision, revision, lifecycle, created_at, updated_at) VALUES (?,?,NULL,?,?,?,?,?,?,?,NULL,?,?,?,?,?,?)",
@@ -1003,7 +1039,11 @@ describe("p11-acceptance (P11 00 CI-1..CI-5 + end-to-end story)", () => {
 
   it("CI-2 real ControlBasis — driver has no hardcoded env revision (grep) and an anchor move trips DecisionStale (p11-controlbasis pattern)", async () => {
     const source = readFileSync(
-      join(import.meta.dirname, "..", "packages/agent-runtime/src/driver.ts"),
+      join(
+        import.meta.dirname,
+        "..",
+        "packages/agent-runtime/src/agent-loop-driver.ts",
+      ),
       "utf8",
     );
     expect(source.includes('"env"')).toBe(false);

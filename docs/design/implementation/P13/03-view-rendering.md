@@ -1,7 +1,19 @@
 # P13 — 03 View Rendering & Problem Presentation
 
-**Owns:** 9 个 frozen view DTO 的呈现契约、fixture/render coverage、Problem 呈现
+**Owns:** 10 个 frozen view DTO 的呈现契约、fixture/render coverage、Problem 呈现
 **Does not own:** view 语义/形状（P10 `05` / api-contracts，frozen）
+
+**FT-DG-02 additive rendering amendment (2026-10-08):** render the
+P10-owned `work-detail` DTO; this does not reopen P13 or alter command,
+transport, or canonical lifecycle semantics.
+
+**RAI-DG-02 additive rendering amendment (2026-10-25):** render the P10-owned
+`TerminalProviderFailure` and `TerminalProviderFailureIntegrity` source/code,
+fixed summary, occurredAt, target and exact Work revision without client-side
+inference. The only recovery affordance is the existing Steer form pre-bound
+to server-supplied `workId + revision`; no Retry button, timer, automatic
+submission, Provider-config mutation or client authority is added. Unknown
+future codes retain the ordinary unknown-enum presentation rule.
 
 ## 1. 通用规则
 
@@ -14,13 +26,14 @@
    零值或 false。
 4. 时间戳（ISO string）本地化呈现 + 原始值可查（title/展开）。
 
-## 2. 九视图呈现契约
+## 2. 十视图呈现契约
 
 | ViewId | 主呈现 | 关键组件语义 |
 |---|---|---|
 | `responsibility-tree` | 缩进树（root 顶部；depth 参数控件）；节点卡 = name + `WorkspaceStatusLabel` 徽章 + `subtreeAttention`（attention/actionRequired 计数，>0 高亮）+ `currentWork.objective` 摘要 + `usageSummary`（tokens/cost；cost=`Unknown` 原样呈现 "unknown"，≠0） | 节点点击 → `workspace-detail` 下钻（本文件 §4 导航） |
-| `attention` | 按 severity 分组列表（ActionRequired 在前）；行 = source 徽章 + summaryRef + occurredAt + target 链接 | 行点击 → 目标 workspace 下钻；`AttentionSeverity`/`AttentionSource` 未知值原样（I5） |
+| `attention` | 按 severity 分组列表（ActionRequired 在前）；行 = source 徽章 + summaryRef + occurredAt + target 链接；terminal Provider 行显示闭集 failure/integrity code 与 exact Work revision | 行点击 → 目标 workspace 下钻；`AttentionSeverity`/`AttentionSource` 未知值原样（I5）；terminal Provider 只链接既有 Steer，无盲重试 |
 | `workspace-detail` | 单 workspace 全景：responsibility 摘要、boundary、currentWork、pendingWorks 列表、executionSummary、dependencies 表（state 徽章 + satisfiedBy 链接）、inboxUnconsumed 计数列表、verification（criteriaResults 表：required 标记 + verdict 徽章 + evidenceRefs；acceptance 块）、auditTimeline（sequence + eventType + at，mono） | 各 ID 链接跳转对应下钻；`pendingWorks` 行**不是**选择控件（`02` §4）；activeExecution 卡带"停止该执行"紧急控件（`02` §2 StopExecution，显式确认） |
+| `work-detail` | 精确 `{projectId, workspaceId, workId}` 的只读 Work 页面：objective/why/completionExpectation、revision、canonical lifecycle；有精确绑定时呈现 Acceptance 与 PASS Verification 摘要；有当前 Blocked WorkEpisode 时显示 safe denial facts；有 RAI-DG-02 源时显示闭集 Provider/integrity code、occurredAt 与 exact revision | `Open + acceptedResult` 呈现“已验收、待完成”；`Completed` 呈现“已完成”；`Cancelled` 呈现已取消；Blocked/terminal-Provider explanation 仅来自精确 canonical proof；证据明细仍由 Verification view 提供；不从 Workspace/Session 推断生命周期 |
 | `current-work` | 单卡：objective + status + activeExecution（executionId + admittedAt）；`null` → 空态"无当前工作" | 空态不得提供"去选择"动作（`02` §4） |
 | `verification` | criteriaResults 全表 + evidenceRefs + acceptance 状态块 | verdict 徽章三态 + 未知值原样 |
 | `dependency-view` | 依赖行表：consumer → binding → state → satisfiedBy；project 范围与 workspace 范围两个查询形态（DTO req 二选一） | state 徽章；行内无任何变更动作（变更走 `02` 矩阵，v1 无 dependency 类 Human-actionable） |
@@ -49,11 +62,16 @@
 顶栏：brand + project 切换（projectId 输入/记忆）+ token 状态
 主导航：Tree · Attention · Usage
 下钻：tree/detail/attention → workspace-detail；detail 内 ID 链接
-      → verification / transcript / dependency-view / inbox-view
+      → work-detail / verification / transcript / dependency-view / inbox-view
 命令区：detail/attention 上下文中的 governance 动作
       （RecordDecision / SteerWork / AcceptWorkOutcome / StopExecution /
-       Grant|RevokePermission；`02` §2）
+       Grant|RevokePermission / RetryVerification；`02` §2）
 ```
+
+Blocked Work Detail itself does not provide an Agent retry or projection-clear
+button. Recovery guidance points to the existing human/Parent `SteerWork`
+boundary or later WorkEpisode; `resolve_work_blocker` is a WorkEpisode-only
+control and requires exact later successful-action evidence.
 
 路由为纯 UI 状态（URL path/query），不属于任何 server 语义。
 
@@ -82,5 +100,132 @@
 
 ## 7. Verification
 
-`06` EC-3（9×3 fixtures render coverage）、EC-4（六 category Problem
+`06` EC-3（10×3 fixtures render coverage）、EC-4（六 category Problem
 render tests + TerminalRejected 内联态）。
+
+## Accepted Native OS Sandbox rendering
+
+Render P10's optional `WorkspaceDetail.executionSummary.sandboxPolicy`
+fields as the exact current variant/profile, provider where applicable,
+network mode where applicable, policy revision, expiry and
+Committed/Unavailable/NeedsDecision state. Render the
+`SandboxProviderUnavailable` Attention row with its fixed safe summary and
+Execution Workspace target. Do not display host paths, provider diagnostics,
+network destinations, environment values or operator-config secrets. Render
+`FullAccess` as an explicit high-risk choice requiring separate confirmation;
+never infer or select it from provider failure. Render the existing
+`sandbox/provider-unavailable` 503 Problem as the standard unavailable state
+and keep the Work visibly blocked; no browser retry may bypass the human
+command route.
+
+## Accepted V21 derived RecoveryBinding Attention rendering
+
+Render the P10 `SandboxRecoveryBindingFailure` ActionRequired row on its exact
+Execution Workspace with the fixed safe summary “Sandbox recovery binding
+evidence is missing or invalid; execution is paused.” Use the supplied
+immutable `occurredAt` (sourced from `tool_invocations.intent_at`) and stable
+`attentionFactId`; repeated query results render identically. Never expose
+RecoveryBinding hash/bytes, arguments, resolved regions, host paths or parser
+diagnostics. The row is not dismissible and has no repair/rebind control. A
+corruption Problem from malformed binding-hash format or invalid intent time
+uses the existing corruption rendering; the UI must not fabricate a row or
+
+
+## V21 policy status and large-summary rendering
+
+Render NeedsDecision as a required-human-policy state distinct from provider
+Unavailable and success; show safe preconditions and refetch through existing
+Workspace Detail when CAS rejection says inputs changed. Never auto-select a
+profile/provider/network policy or reuse stale refs. FullAccess is explicitly
+labelled TrustedLocal/Unconfined, high risk, requires affirmative separate
+confirmation and is never fallback after OS provider failure. Do not describe
+it as OS-isolated or T3 Supported.
+
+Render durable SandboxPolicySummaryTooLarge as the existing HTTP 200
+TerminalRejected CommandReceiptView inline hint with no raw fields, no Problem/
+409 and no truncation. User reduces policy inputs and submits a fresh
+CommandId. Provider unavailable renders fixed safe Attention/503 state, keeps
+Work visibly blocked and has no auto-retry/spawn; wait for existing WebSocket
+invalidation or explicit manual refetch. Policy-required interruption displays
+NeedsDecision without provider-unavailable label or 503. RecoveryBinding
+failure Attention has fixed safe summary and immutable intent_at, with no
+repair/rebind UI.
+
+## Accepted Sandbox Policy Candidate Read Model V5 rendering
+
+When Workspace Detail supplies `sandboxPolicyCandidateRead`, render its
+current safe choices instead of treating the omitted singular
+`sandboxPolicyPreconditions` as unavailable. The common preconditions are
+read-only CAS context; they do not select a profile or provider by themselves.
+Render each OsEnforced option from its exact providerId/version,
+profile, and networkMode; render TrustedLocal as explicit
+FullAccess/Unconfined and high risk, with the existing separate affirmative
+confirmation. Never present TrustedLocal as an OS-isolated choice or fallback.
+
+The human supplies the existing V21 P1 fields after selection: copy the exact
+common preconditions and only the selected candidate's
+`sandboxHandleBindingDigest` to P1's existing
+`expectedSandboxHandleBindingDigest`. Add the OsEnforced registry pair only
+for that variant and submit the existing NetworkPolicyV1 matching the selected
+networkMode.
+Do not submit `candidateId`, candidate reason/list, evidence refs, or any
+provider diagnostics; candidate IDs are UI identity only. There is no
+automatic choice or submit. On `StaleSandboxPolicyInputs`, wait for existing
+invalidation or an explicit refetch, replace the stale candidate list, and
+require a new deliberate human choice even if the refreshed option has the
+same `candidateId`. Discard the whole stale read; never implicitly reuse or
+resubmit it. After any V2 bundle child changes,
+including registry-only changes while a TrustedLocal decision is committed,
+show NeedsDecision and require explicit reapproval without implying an
+OS-provider dependency for TrustedLocal.
+
+## Accepted Option A exact provider selection (2026-10-20)
+
+Under `ACCEPT_P10_P1_OS_PROVIDER_TUPLE_SELECTION_OPTION_A`, fixed proposal
+SHA-256
+`02D2687AA87D6E2B08D06090F293961CCBCFDFF884B6348872D42AFAA59B3013`,
+P13 renders the safe `capabilityRevision` alongside providerId/providerVersion
+for each OsEnforced V2 candidate so distinct supported capability tuples are
+deliberate, distinguishable human choices. On submission, P13 copies the
+selected candidate's exact `providerId`, `providerVersion`,
+`capabilityRevision`, profile, matching NetworkPolicy mode, existing registry
+pair, common CAS fields and selected handle digest into the P1 OsEnforced
+request. It never submits `candidateId`, currentHost, evidence refs or
+qualification details. There is no auto-selection, nearest-version choice,
+fallback or local authority; stale/refetch behavior is unchanged.
+
+## Accepted pre-intent CandidateRead bootstrap (2026-10-21)
+
+When the exact active Execution has a Pending P3 Executable Action and its
+existing P4 Executable approval is Pending/unconsumed after the nonterminal
+`ApprovalRequired` pause, P13 renders the same `sandboxPolicyCandidateRead`
+variants and common preconditions from Workspace Detail. No ActionId,
+ApprovalId, P3 input hash, P4 invocation/binding or source digest is rendered.
+The human deliberately submits the existing DecideSandboxPolicy fields first;
+P13 does not create or resolve the approval and adds no command or route. The
+human then resolves the exact existing Executable approval through the
+existing Inbox command. The first P4 invocation intent/approval consumption
+continues to use the existing atomic claim transaction.
+
+P1 safe stale fields `ActionRevision` and `ExecutableApprovalRevision` use
+the existing generic stale/refetch summary. P13 refetches only through its
+existing invalidation/explicit-refetch behavior, requires a deliberate human
+choice, and never auto-submits the old payload. The approval expiry detail and
+revision numbers are not displayed. No provider diagnostic, host path, target
+ref, source digest or secret is added to the view.
+
+## Accepted F18 Verification criterion projection (DID v1.58)
+
+For each Verification view, P13 renders the canonical snapshot status without
+inference. `Pending` and `UnavailableLegacy` show the frozen mission criteria
+with `Unknown`; `Available` shows the exact stored criterion verdicts in
+mission order; `NotApplicableOrphaned` shows the exact empty list. The
+Available projection must be complete, ordered and criterion-identical to the
+mission. Corrupt or mismatched Available state is a typed projection failure,
+never an Unknown fallback. Stored results must be non-null and include exactly
+one result per mission criterion, in order, with matching criterion ID,
+requirement and required flag. Duplicate, malformed or evidence-mismatched
+results are typed failures. Evidence IDs remain on the existing evidence
+surface; the read model does not synthesize them. Workspace-detail Open
+Verification remains Pending/Unknown. The rendered criterion verdict grants
+no authority and does not change Acceptance.

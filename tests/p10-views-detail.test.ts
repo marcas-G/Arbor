@@ -1,18 +1,26 @@
-import { Effect, Option } from "effect";
+import { Effect, Exit, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import type {
   CurrentWorkRes,
   DependencyRes,
   VerificationRes,
+  WorkDetailReq,
+  WorkDetailRes,
   WorkspaceDetailRes,
 } from "../packages/api-contracts/src/index.js";
-import { parse, WorkId, WorkRevision } from "../packages/domain/dist/index.js";
+import {
+  parse,
+  type Verification,
+  WorkId,
+  WorkRevision,
+} from "../packages/domain/dist/index.js";
 import {
   AUDIT_TIMELINE_EVENT_TYPES,
   deriveAuditTimeline,
   deriveCurrentWork,
   deriveDependencyRows,
   deriveVerificationView,
+  deriveWorkDetail,
   deriveWorkspaceDetail,
   makeProjectionQueryService,
 } from "../packages/projection-runtime/src/index.js";
@@ -45,6 +53,7 @@ const W_ROOT = parse(WorkId)("wrk_00000000-0000-7000-8000-0000000000d1");
 const W_PEND = parse(WorkId)("wrk_00000000-0000-7000-8000-0000000000d2");
 const W_DONE = parse(WorkId)("wrk_00000000-0000-7000-8000-0000000000d3");
 const W_CHILD = parse(WorkId)("wrk_00000000-0000-7000-8000-0000000000d4");
+const W_CANCEL = parse(WorkId)("wrk_00000000-0000-7000-8000-0000000000d5");
 const EXE_ROOT = "exe_00000000-0000-7000-8000-0000000000d1";
 
 const seedDetail = seedCanonical(
@@ -279,6 +288,282 @@ const seedDetail = seedCanonical(
 );
 
 describe("P10-006 Workspace Detail (01 §1 ①–⑥; SD §12.4)", () => {
+  it("projects a bounded terminal provider integrity result in Work Detail", async () => {
+    await runP10(
+      Effect.gen(function* () {
+        yield* migrate;
+        yield* seedDetail;
+        const deps = yield* makeP10Deps();
+        const detail = yield* deriveWorkDetail(
+          { projectId: p10Project, workspaceId: p10Root, workId: W_ROOT },
+          {
+            ...deps.workDetail,
+            findTerminalProviderFailure: () =>
+              Effect.succeed(
+                Option.some({
+                  kind: "TerminalProviderFailureIntegrity" as const,
+                  workId: W_ROOT,
+                  workRevision: 7,
+                  occurredAt: "2026-10-26T02:03:04.000Z",
+                  failureCode: "SourceManifestMismatch",
+                } as never),
+              ),
+          },
+        );
+
+        expect(detail.terminalProviderFailure).toEqual({
+          kind: "TerminalProviderFailureIntegrity",
+          workId: W_ROOT,
+          workRevision: 7,
+          occurredAt: "2026-10-26T02:03:04.000Z",
+          failureCode: "SourceManifestMismatch",
+        });
+      }),
+      makeP10App(),
+    );
+  });
+
+  it("keeps terminal provider presentation tied to the current Open Work revision", async () => {
+    await runP10(
+      Effect.gen(function* () {
+        yield* migrate;
+        yield* seedDetail;
+        yield* insertWorkRow(
+          {
+            workId: W_CANCEL,
+            workspaceId: p10Root,
+            objective: "cancelled work",
+            lifecycle: "Cancelled",
+          },
+          p10Project,
+        );
+        yield* insertVerificationRow({
+          verificationId: "ver_terminal_completed",
+          workId: W_DONE,
+          targetWorkRevision: 0,
+          ownerWorkspaceId: p10Root,
+          executionIds: [],
+          state: "Concluded",
+          verdict: "Pass",
+        });
+        yield* insertAcceptanceRow({
+          acceptanceId: "acc_00000000-0000-7000-8000-0000000000f1",
+          workId: W_DONE,
+          targetWorkRevision: 0,
+          verificationId: "ver_terminal_completed",
+          actor: "user:gov",
+          acceptedAt: "2026-10-26T00:00:00.000Z",
+        });
+        const deps = yield* makeP10Deps();
+        const openWork = yield* deps.workDetail.findWork(W_ROOT);
+        expect(Option.isSome(openWork)).toBe(true);
+        if (Option.isNone(openWork)) return;
+
+        const queriedRevisions: Array<number> = [];
+        const steered = yield* deriveWorkDetail(
+          { projectId: p10Project, workspaceId: p10Root, workId: W_ROOT },
+          {
+            ...deps.workDetail,
+            findWork: () =>
+              Effect.succeed(
+                Option.some({ ...openWork.value, revision: 8 as never }),
+              ),
+            findTerminalProviderFailure: (input) => {
+              queriedRevisions.push(input.workRevision);
+              return Effect.succeed(Option.none());
+            },
+          },
+        );
+        expect(queriedRevisions).toEqual([8]);
+        expect(steered.terminalProviderFailure).toBeUndefined();
+
+        for (const workId of [W_DONE, W_CANCEL]) {
+          const work = yield* deps.workDetail.findWork(workId);
+          expect(Option.isSome(work)).toBe(true);
+          if (Option.isNone(work)) continue;
+          const detail = yield* deriveWorkDetail(
+            {
+              projectId: p10Project,
+              workspaceId: p10Root,
+              workId,
+            },
+            {
+              ...deps.workDetail,
+              findTerminalProviderFailure: () => {
+                throw new Error(
+                  "terminal read must be skipped after settlement",
+                );
+              },
+            },
+          );
+          expect(detail.terminalProviderFailure).toBeUndefined();
+        }
+      }),
+      makeP10App(),
+    );
+  });
+
+  it("projects a candidate choice instead of the singular preconditions union", async () => {
+    await runP10(
+      Effect.gen(function* () {
+        yield* migrate;
+        yield* seedDetail;
+        const deps = yield* makeP10Deps();
+        const sandboxPolicyCandidateRead = {
+          reason: "InitialDecision" as const,
+          commonPreconditions: {
+            expectedEpisodeRevision: 2,
+            latestCommittedPolicyRevision: 0,
+            episodeBinding: {
+              _tag: "WorkEpisode" as const,
+              workId: W_ROOT,
+              targetWorkRevision: 7 as never,
+            },
+            workspaceRevision: 4,
+            resourceBoundaryRevision: 2,
+            authorityBundleRevision: 3,
+            authorityBundleDigest: "b".repeat(64) as never,
+            operatorConfigRevision: 2,
+            operatorConfigDigest: "c".repeat(64) as never,
+          },
+          candidates: [
+            {
+              kind: "TrustedLocalUnconfinedV1" as const,
+              candidateId:
+                "spc2_5ed13734a81314c653c0487eea6a454283c800b71f9c0a2bed72f4a6d49cc98d",
+              sandboxHandleBindingDigest: "a".repeat(64) as never,
+            },
+          ],
+        };
+        const detail = yield* deriveWorkspaceDetail(p10Root, {
+          ...deps.workspaceDetail,
+          sandboxPolicyForExecution: () =>
+            Effect.succeed({ sandboxPolicyCandidateRead }),
+        });
+        expect(detail.sandboxPolicyCandidateRead).toEqual(
+          sandboxPolicyCandidateRead,
+        );
+        expect(detail.sandboxPolicyPreconditions).toBeUndefined();
+      }),
+      makeP10App(),
+    );
+  });
+
+  it("rejects a response that contains both candidate and singular preconditions", async () => {
+    const exit = await runP10(
+      Effect.gen(function* () {
+        yield* migrate;
+        yield* seedDetail;
+        const deps = yield* makeP10Deps();
+        return yield* Effect.exit(
+          deriveWorkspaceDetail(p10Root, {
+            ...deps.workspaceDetail,
+            sandboxPolicyForExecution: () =>
+              Effect.succeed({
+                sandboxPolicyPreconditions: {
+                  kind: "TrustedLocalUnconfinedV1" as const,
+                  expectedEpisodeRevision: 2,
+                  latestCommittedPolicyRevision: 0,
+                  episodeBinding: {
+                    _tag: "WorkEpisode" as const,
+                    workId: W_ROOT,
+                    targetWorkRevision: 7 as never,
+                  },
+                  workspaceRevision: 4,
+                  resourceBoundaryRevision: 2,
+                  sandboxHandleBindingDigest: "a".repeat(64) as never,
+                  authorityBundleRevision: 3,
+                  authorityBundleDigest: "b".repeat(64) as never,
+                  operatorConfigRevision: 2,
+                  operatorConfigDigest: "c".repeat(64) as never,
+                },
+                sandboxPolicyCandidateRead: {
+                  reason: "InitialDecision" as const,
+                  commonPreconditions: {
+                    expectedEpisodeRevision: 2,
+                    latestCommittedPolicyRevision: 0,
+                    episodeBinding: {
+                      _tag: "WorkEpisode" as const,
+                      workId: W_ROOT,
+                      targetWorkRevision: 7 as never,
+                    },
+                    workspaceRevision: 4,
+                    resourceBoundaryRevision: 2,
+                    authorityBundleRevision: 3,
+                    authorityBundleDigest: "b".repeat(64) as never,
+                    operatorConfigRevision: 2,
+                    operatorConfigDigest: "c".repeat(64) as never,
+                  },
+                  candidates: [
+                    {
+                      kind: "TrustedLocalUnconfinedV1" as const,
+                      candidateId:
+                        "spc2_5ed13734a81314c653c0487eea6a454283c800b71f9c0a2bed72f4a6d49cc98d",
+                      sandboxHandleBindingDigest: "a".repeat(64) as never,
+                    },
+                  ],
+                },
+              } as never),
+          }),
+        );
+      }),
+      makeP10App(),
+    );
+    expect(Exit.isFailure(exit)).toBe(true);
+  });
+
+  it("projects the exact current sandbox policy onto the active Execution summary", async () => {
+    await runP10(
+      Effect.gen(function* () {
+        yield* migrate;
+        yield* seedDetail;
+        const deps = yield* makeP10Deps();
+        const sandboxPolicy = {
+          kind: "OsEnforced" as const,
+          policyRevision: 3,
+          profile: "WorkspaceWrite" as const,
+          providerId: "bwrap",
+          providerVersion: "0.8.0",
+          networkMode: "Restricted" as const,
+          status: "Unavailable" as const,
+          expiresAt: "2026-10-19T12:00:00.000Z",
+        };
+        const sandboxPolicyPreconditions = {
+          kind: "OsEnforced" as const,
+          expectedEpisodeRevision: 2,
+          latestCommittedPolicyRevision: 3,
+          episodeBinding: {
+            _tag: "WorkEpisode" as const,
+            workId: W_ROOT,
+            targetWorkRevision: 7 as never,
+          },
+          workspaceRevision: 4,
+          resourceBoundaryRevision: 2,
+          sandboxHandleBindingDigest: "a".repeat(64),
+          authorityBundleRevision: 3,
+          authorityBundleDigest: "b".repeat(64),
+          operatorConfigRevision: 2,
+          operatorConfigDigest: "c".repeat(64),
+          providerRegistryRevision: 5,
+          providerRegistryDigest: "d".repeat(64),
+        };
+        const detail = yield* deriveWorkspaceDetail(p10Root, {
+          ...deps.workspaceDetail,
+          sandboxPolicyForExecution: () =>
+            Effect.succeed({ sandboxPolicy, sandboxPolicyPreconditions }),
+        });
+        expect(detail.executionSummary?.sandboxPolicy).toEqual(sandboxPolicy);
+        expect(detail.currentWork?.activeExecution?.sandboxPolicy).toEqual(
+          sandboxPolicy,
+        );
+        expect(detail.sandboxPolicyPreconditions).toEqual(
+          sandboxPolicyPreconditions,
+        );
+      }),
+      makeP10App(),
+    );
+  });
+
   it("derives every frozen core section from canonical tables + journal, zero mutation", async () => {
     await runP10(
       Effect.gen(function* () {
@@ -403,6 +688,7 @@ describe("P10-006 Workspace Detail (01 §1 ①–⑥; SD §12.4)", () => {
     expect([...AUDIT_TIMELINE_EVENT_TYPES]).toEqual([
       "HumanInterventionApplied",
       "WorkSteered",
+      "WorkAmended",
       "DecisionRecorded",
     ]);
     const reversed = [4, 2].map(
@@ -520,8 +806,8 @@ describe("P10-006 Verification view (01 §1 ⑤)", () => {
             Effect.succeed(Option.some(mismatchedAcceptance)),
         });
 
-        expect(verification.verificationId).toBe("ver_d1");
-        expect(verification.targetWorkRevision).toBe(7);
+        expect(verification.verificationId).toBeUndefined();
+        expect(verification.targetWorkRevision).toBeUndefined();
         expect(verification.acceptance).toBeUndefined();
         expect(detail.verification?.verificationId).toBe("ver_d1");
         expect(detail.verification?.targetWorkRevision).toBe(7);
@@ -578,6 +864,192 @@ describe("P10-006 Verification view (01 §1 ⑤)", () => {
       }),
       makeP10App(),
     );
+  });
+
+  it("renders an Available snapshot's exact ordered criterion verdicts", async () => {
+    await runP10(
+      Effect.gen(function* () {
+        yield* migrate;
+        yield* seedDetail;
+        const deps = yield* makeP10Deps();
+        const evidenceA = "evd_00000000-0000-7000-8000-0000000000d2";
+        const evidenceB = "evd_00000000-0000-7000-8000-0000000000d3";
+        const requiredCriterion = {
+          criterionId: "c-required",
+          requirement: "tests pass",
+          required: true,
+        };
+        const optionalCriterion = {
+          criterionId: "c-optional",
+          requirement: "style clean",
+          required: false,
+        };
+        const mission = [requiredCriterion, optionalCriterion];
+        yield* seedCanonical(
+          Effect.gen(function* () {
+            yield* insertVerificationRow({
+              verificationId: "ver_available",
+              workId: W_PEND,
+              targetWorkRevision: 1,
+              ownerWorkspaceId: p10Root,
+              executionIds: [],
+              criteria: mission,
+              state: "Concluded",
+              verdict: "Pass",
+              snapshotStatus: "Available",
+              criteriaResults: [
+                {
+                  ...requiredCriterion,
+                  verdict: "Pass",
+                  evidenceRefs: [evidenceA],
+                },
+                {
+                  ...optionalCriterion,
+                  verdict: "Fail",
+                  evidenceRefs: [evidenceB],
+                },
+              ],
+            });
+            yield* insertEvidenceRow({
+              evidenceId: evidenceA,
+              verificationId: "ver_available",
+              criterionId: "c-required",
+              kind: "Observation",
+              recordedByExecutionId: EXE_ROOT,
+              recordedAt: "t1",
+            });
+            yield* insertEvidenceRow({
+              evidenceId: evidenceB,
+              verificationId: "ver_available",
+              criterionId: "c-optional",
+              kind: "Observation",
+              recordedByExecutionId: EXE_ROOT,
+              recordedAt: "t2",
+            });
+          }),
+        );
+
+        const view = yield* deriveVerificationView(
+          W_PEND,
+          deps.verificationView,
+        );
+        expect(view.verificationId).toBe("ver_available");
+        expect(view.verdict).toBe("Pass");
+        expect(view.criteriaResults).toEqual([
+          {
+            criterionId: "c-required",
+            requirement: "tests pass",
+            required: true,
+            verdict: "Pass",
+          },
+          {
+            criterionId: "c-optional",
+            requirement: "style clean",
+            required: false,
+            verdict: "Fail",
+          },
+        ]);
+        expect(view.evidenceRefs).toEqual([evidenceA, evidenceB]);
+      }),
+      makeP10App(),
+    );
+  });
+
+  it("renders NotApplicableOrphaned as an exact empty criterion list", async () => {
+    await runP10(
+      Effect.gen(function* () {
+        yield* migrate;
+        yield* seedDetail;
+        const deps = yield* makeP10Deps();
+        yield* seedCanonical(
+          insertVerificationRow({
+            verificationId: "ver_orphaned",
+            workId: W_PEND,
+            targetWorkRevision: 1,
+            ownerWorkspaceId: p10Root,
+            executionIds: [],
+            criteria: [
+              {
+                criterionId: "c-orphan",
+                requirement: "owner review",
+                required: true,
+              },
+            ],
+            state: "Concluded",
+            verdict: "Unknown",
+            conclusionReason: "Orphaned",
+            snapshotStatus: "NotApplicableOrphaned",
+            criteriaResults: [],
+          }),
+        );
+        const view = yield* deriveVerificationView(
+          W_PEND,
+          deps.verificationView,
+        );
+        expect(view.verdict).toBe("Unknown");
+        expect(view.criteriaResults).toEqual([]);
+        expect(view.evidenceRefs).toEqual([]);
+      }),
+      makeP10App(),
+    );
+  });
+
+  it("fails with typed ProjectionIntegrityFailure for corrupt Available evidence ownership", async () => {
+    await expect(
+      runP10(
+        Effect.gen(function* () {
+          yield* migrate;
+          yield* seedDetail;
+          const deps = yield* makeP10Deps();
+          const evidenceId = "evd_00000000-0000-7000-8000-0000000000d4";
+          const criterion = {
+            criterionId: "c1",
+            requirement: "tests pass",
+            required: true,
+          };
+          const mission = [criterion];
+          yield* seedCanonical(
+            Effect.gen(function* () {
+              yield* insertVerificationRow({
+                verificationId: "ver_corrupt_available",
+                workId: W_PEND,
+                targetWorkRevision: 1,
+                ownerWorkspaceId: p10Root,
+                executionIds: [],
+                criteria: mission,
+                state: "Concluded",
+                verdict: "Pass",
+                snapshotStatus: "Available",
+                criteriaResults: [
+                  {
+                    ...criterion,
+                    verdict: "Pass",
+                    evidenceRefs: [evidenceId],
+                  },
+                ],
+              });
+              yield* insertEvidenceRow({
+                evidenceId,
+                verificationId: "ver_corrupt_available",
+                criterionId: "some-other-criterion",
+                kind: "Observation",
+                recordedByExecutionId: EXE_ROOT,
+                recordedAt: "t1",
+              });
+            }),
+          );
+          return yield* deriveVerificationView(W_PEND, deps.verificationView);
+        }),
+        makeP10App(),
+      ),
+    ).rejects.toMatchObject({
+      _tag: "ProjectionIntegrityFailure",
+      code: "projection/unavailable",
+      safeDetails: {
+        view: "verification",
+        reasonCode: "AvailableCriterionSnapshotInvalid",
+      },
+    });
   });
 });
 
@@ -639,6 +1111,7 @@ describe("P10-006 ProjectionQueryPort bindings (05 §1: envelope + typed errors)
           tree: deps.tree,
           attention: deps.attention,
           workspaceDetail: deps.workspaceDetail,
+          workDetail: deps.workDetail,
           currentWork: deps.currentWork,
           verification: deps.verificationView,
           dependency: deps.dependencyView,
@@ -673,6 +1146,245 @@ describe("P10-006 ProjectionQueryPort bindings (05 §1: envelope + typed errors)
         );
         expect(missing._tag).toBe("ProjectionUnavailable");
         expect(missing.code).toBe("projection/unavailable");
+      }),
+      makeP10App(),
+    );
+  });
+
+  it("work-detail is exact, read-only and binds Completed to the same revision's accepted PASS", async () => {
+    await runP10(
+      Effect.gen(function* () {
+        yield* migrate;
+        yield* seedDetail;
+        yield* insertWorkRow(
+          {
+            workId: W_CANCEL,
+            workspaceId: p10Root,
+            objective: "cancelled history",
+            lifecycle: "Cancelled",
+          },
+          p10Project,
+        );
+        const deps = yield* makeP10Deps();
+        const service = makeProjectionQueryService({
+          journalLastSequence: deps.journalLastSequence,
+          projectIdOfWorkspace: deps.projectIdOfWorkspace,
+          tree: deps.tree,
+          attention: deps.attention,
+          workspaceDetail: deps.workspaceDetail,
+          workDetail: deps.workDetail,
+          currentWork: deps.currentWork,
+          verification: deps.verificationView,
+          dependency: deps.dependencyView,
+          transcript: deps.transcript,
+          usage: deps.usage,
+          inboxView: deps.inboxView,
+          effectiveFacts: deps.effectiveFacts,
+          inboxReconcile: deps.inboxReconcile,
+        });
+        const missingCompletionBinding = yield* Effect.flip(
+          service.query("work-detail", {
+            projectId: p10Project,
+            workspaceId: p10Root,
+            workId: W_DONE,
+          }),
+        );
+        expect(missingCompletionBinding).toMatchObject({
+          _tag: "ProjectionIntegrityFailure",
+          code: "projection/unavailable",
+          retryDisposition: "non-retryable",
+          safeDetails: {
+            sourceTag: "ProjectionIntegrityFailure",
+            view: "work-detail",
+          },
+        });
+        yield* insertVerificationRow({
+          verificationId: "ver_d2",
+          workId: W_DONE,
+          targetWorkRevision: 0,
+          ownerWorkspaceId: p10Root,
+          executionIds: [],
+          state: "Concluded",
+          verdict: "Pass",
+        });
+        yield* insertAcceptanceRow({
+          acceptanceId: "acc_00000000-0000-7000-8000-0000000000d2",
+          workId: W_DONE,
+          targetWorkRevision: 0,
+          verificationId: "ver_d2",
+          actor: "user:gov",
+          acceptedAt: "t5",
+        });
+        yield* insertVerificationRow({
+          verificationId: "ver_d3",
+          workId: W_PEND,
+          targetWorkRevision: 0,
+          ownerWorkspaceId: p10Root,
+          executionIds: [],
+          state: "Concluded",
+          verdict: "Pass",
+        });
+        yield* insertAcceptanceRow({
+          acceptanceId: "acc_00000000-0000-7000-8000-0000000000d3",
+          workId: W_PEND,
+          targetWorkRevision: 0,
+          verificationId: "ver_d3",
+          actor: "user:gov",
+          acceptedAt: "t6",
+        });
+        yield* insertVerificationRow({
+          verificationId: "ver_d4",
+          workId: W_CANCEL,
+          targetWorkRevision: 0,
+          ownerWorkspaceId: p10Root,
+          executionIds: [],
+          state: "Concluded",
+          verdict: "Pass",
+        });
+        yield* insertAcceptanceRow({
+          acceptanceId: "acc_00000000-0000-7000-8000-0000000000d4",
+          workId: W_CANCEL,
+          targetWorkRevision: 0,
+          verificationId: "ver_d4",
+          actor: "user:gov",
+          acceptedAt: "t7",
+        });
+        const detail = yield* service.query("work-detail", {
+          projectId: p10Project,
+          workspaceId: p10Root,
+          workId: W_DONE,
+        });
+        expect(detail.value).toMatchObject({
+          workId: W_DONE,
+          lifecycle: "Completed",
+          revision: 0,
+          acceptedResult: {
+            verificationId: "ver_d2",
+            targetWorkRevision: 0,
+            verdict: "Pass",
+          },
+        });
+        const validAcceptance = {
+          acceptanceId: "acc_00000000-0000-7000-8000-0000000000d2" as never,
+          workId: W_DONE,
+          targetWorkRevision: 0 as never,
+          verificationId: "ver_d2" as never,
+          actor: "user:gov" as never,
+          acceptedAt: "t5",
+        };
+        const validVerification = {
+          verificationId: "ver_d2" as never,
+          workId: W_DONE,
+          targetWorkRevision: 0 as never,
+          state: { status: "Concluded", verdict: "Pass" },
+        } as unknown as Verification;
+        const badBindings = [
+          {
+            acceptance: { ...validAcceptance, workId: W_PEND },
+            verification: validVerification,
+          },
+          {
+            acceptance: { ...validAcceptance, targetWorkRevision: 1 as never },
+            verification: validVerification,
+          },
+          {
+            acceptance: {
+              ...validAcceptance,
+              verificationId: "ver_other" as never,
+            },
+            verification: validVerification,
+          },
+          {
+            acceptance: validAcceptance,
+            verification: {
+              ...validVerification,
+              state: { status: "Concluded", verdict: "Fail" },
+            },
+          },
+        ];
+        for (const binding of badBindings) {
+          const failure = yield* Effect.flip(
+            deriveWorkDetail(
+              {
+                projectId: p10Project,
+                workspaceId: p10Root,
+                workId: W_DONE,
+              },
+              {
+                ...deps.workDetail,
+                findAcceptanceByWorkRevision: () =>
+                  Effect.succeed(Option.some(binding.acceptance as never)),
+                findVerification: () =>
+                  Effect.succeed(Option.some(binding.verification as never)),
+              },
+            ),
+          );
+          expect(failure._tag).toBe("ProjectionIntegrityFailure");
+        }
+
+        const foreign = yield* Effect.flip(
+          service.query("work-detail", {
+            projectId: p10Project,
+            workspaceId: p10Child,
+            workId: W_DONE,
+          }),
+        );
+        expect(foreign).toMatchObject({
+          _tag: "ProjectionNotFound",
+          code: "projection/work-not-found",
+          category: "not-found",
+          safeDetails: {},
+        });
+
+        const missing = yield* Effect.flip(
+          service.query("work-detail", {
+            projectId: p10Project,
+            workspaceId: p10Root,
+            workId: "wrk_00000000-0000-7000-8000-0000000000ff" as never,
+          }),
+        );
+        expect(missing).toEqual(foreign);
+
+        const acceptedOpen = yield* service.query<WorkDetailReq, WorkDetailRes>(
+          "work-detail",
+          {
+            projectId: p10Project,
+            workspaceId: p10Root,
+            workId: W_PEND,
+          },
+        );
+        expect(acceptedOpen.value.lifecycle).toBe("Open");
+        expect(acceptedOpen.value.acceptedResult).toMatchObject({
+          verificationId: "ver_d3",
+          targetWorkRevision: 0,
+          verdict: "Pass",
+        });
+        const acceptedVerification = yield* deriveVerificationView(
+          W_PEND,
+          deps.verificationView,
+        );
+        expect(acceptedVerification).toMatchObject({
+          verificationId: "ver_d3",
+          targetWorkRevision: 0,
+          verdict: "Pass",
+          acceptance: {
+            acceptanceId: "acc_00000000-0000-7000-8000-0000000000d3",
+          },
+        });
+        const cancelled = yield* service.query<WorkDetailReq, WorkDetailRes>(
+          "work-detail",
+          {
+            projectId: p10Project,
+            workspaceId: p10Root,
+            workId: W_CANCEL,
+          },
+        );
+        expect(cancelled.value.lifecycle).toBe("Cancelled");
+        expect(cancelled.value.acceptedResult).toMatchObject({
+          verificationId: "ver_d4",
+          targetWorkRevision: 0,
+          verdict: "Pass",
+        });
       }),
       makeP10App(),
     );

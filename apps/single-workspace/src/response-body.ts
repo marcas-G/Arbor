@@ -27,7 +27,12 @@ export const makeResponseBodyOf =
         .unsafe<ModelOutputRow>(
           `SELECT se.payload_json AS payload_json, se.entry_kind AS entry_kind
              FROM human_messages hm
-             JOIN executions e ON e.execution_id = hm.claimed_by_execution_id
+             JOIN conversation_response_jobs job ON job.message_id = hm.message_id
+             JOIN executions e ON e.execution_id = COALESCE(
+               job.active_execution_id,
+               job.response_execution_id,
+               hm.claimed_by_execution_id
+             )
              JOIN session_entries se ON se.session_id = e.session_id
             WHERE hm.message_id = ?
               AND se.entry_kind = 'ModelOutput'

@@ -1,0 +1,24 @@
+{
+  "name": "@arbor/sandbox-windows",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src/native"
+  ],
+  "dependencies": {
+    "@arbor/domain": "workspace:*",
+    "@arbor/ports": "workspace:*"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "build:native-host": "node ./scripts/build-native-host.mjs"
+  }
+}

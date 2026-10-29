@@ -7,27 +7,56 @@ import {
 } from "@arbor/application";
 import type {
   CommandSubmissionContext,
+  InboxEntry,
   Principal,
   WakeReason,
   WorkspaceId,
 } from "@arbor/domain";
-import { CommandId, ExecutionId, parse } from "@arbor/domain";
+import { CommandId, DecisionId, ExecutionId, parse } from "@arbor/domain";
+import type { LeaseFencingRejected } from "@arbor/ports";
 import {
   Clock,
+  DecisionRequestStore,
   ExecutionScheduler,
   IdGenerator,
+  InboxProjectionStore,
   TransactionPort,
+  WorkRepository,
   WorkspaceRepository,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import type { AdmitExecutionPayload } from "./commands/admit-execution.js";
-import { runExecution } from "./execution-runtime.js";
+import {
+  type ExecutionLeaseQualificationProbe,
+  type ExecutionSettlementQualificationProbe,
+  runExecution,
+} from "./execution-runtime.js";
 
 const systemContext = (principal: Principal): CommandSubmissionContext => ({
   _tag: "System",
   principal,
   causationRef: "execution-scheduler",
 });
+
+/** The existing InboxEpisode boundary admits only canonical important-input
+ * kinds. WorkBlocked is a typed Parent input, not an Agent Session message. */
+export const selectWorkspaceInboxEpisode = (
+  entries: ReadonlyArray<InboxEntry>,
+): InboxEntry | undefined =>
+  entries.find(
+    (entry) =>
+      entry.kind === "Message" ||
+      entry.kind === "SpecialistSettled" ||
+      entry.kind === "WorkBlocked",
+  );
+
+/** A worker that lost its lease must stop this wake without failing the daemon. */
+export const containLeaseFencingRejected = <A, E, R>(
+  effect: Effect.Effect<A, LeaseFencingRejected | E, R>,
+): Effect.Effect<A | undefined, E, R> =>
+  effect.pipe(
+    Effect.catchTag("LeaseFencingRejected", () => Effect.succeed(undefined)),
+  );
 
 /**
  * P2 production wake consumer. The scheduler remains the only decision
@@ -42,6 +71,8 @@ export const consumeWorkspaceWake = (
   workspaceId: WorkspaceId,
   wakeReason: WakeReason,
   principal: Principal,
+  qualificationProbe?: ExecutionSettlementQualificationProbe,
+  leaseQualificationProbe?: ExecutionLeaseQualificationProbe,
 ) =>
   Effect.gen(function* () {
     const scheduler = yield* ExecutionScheduler;
@@ -50,11 +81,14 @@ export const consumeWorkspaceWake = (
     const tx = yield* TransactionPort;
     const clock = yield* Clock;
     const ids = yield* IdGenerator;
+    const works = yield* WorkRepository;
+    const decisions = yield* DecisionRequestStore;
+    const inbox = yield* InboxProjectionStore;
 
     while (true) {
       const decision = yield* scheduler.reevaluate(workspaceId, wakeReason);
 
-      if (decision._tag === "Noop" || decision._tag === "Idle") {
+      if (decision._tag === "Noop") {
         return;
       }
 
@@ -114,15 +148,77 @@ export const consumeWorkspaceWake = (
       }
       const current = workspace.value;
       const now = yield* clock.now();
+      const inboxEntry =
+        decision._tag === "Idle"
+          ? selectWorkspaceInboxEpisode(
+              yield* tx.transact(inbox.listUnconsumed(workspaceId)),
+            )
+          : undefined;
+      if (decision._tag === "Idle" && inboxEntry === undefined) {
+        return;
+      }
+      const decisionRequest =
+        decision._tag === "RequestWorkSelection"
+          ? {
+              decisionId: parse(DecisionId)(
+                `dec_${newUuid7(
+                  "work-selection-decision",
+                  `${workspaceId}:${String(current.revision)}:${decision.candidateWorkIds.join(",")}`,
+                )}`,
+              ),
+              workspaceId,
+              candidateWorkIds: decision.candidateWorkIds,
+              workspaceRevision: Number(current.revision),
+              state: { _tag: "Pending" as const },
+              revision: 0,
+              createdAt: now,
+              updatedAt: now,
+            }
+          : undefined;
+      if (decisionRequest !== undefined) {
+        yield* tx.transact(decisions.upsertPending(decisionRequest));
+      }
       const executionSeed = yield* ids.generate<string>("ExecutionId");
       const executionId = parse(ExecutionId)(
         `exe_${newUuid7("execution-scheduler-execution", executionSeed)}`,
       );
+      const workEpisode =
+        decision._tag === "AdmitWork"
+          ? yield* tx.transact(works.findById(decision.workId))
+          : Option.none();
+      if (decision._tag === "AdmitWork" && Option.isNone(workEpisode)) {
+        return;
+      }
       const payload: AdmitExecutionPayload = {
         _tag: "WorkspaceMain",
         executionId,
         workspaceId,
-        focus: decision.focus,
+        ...(decision._tag === "AdmitWork"
+          ? {
+              episode: {
+                _tag: "WorkEpisode" as const,
+                workId: decision.workId,
+                targetWorkRevision: Option.getOrThrow(workEpisode).revision,
+              },
+            }
+          : decisionRequest !== undefined
+            ? {
+                episode: {
+                  _tag: "DecisionEpisode" as const,
+                  decisionId: decisionRequest.decisionId,
+                  decisionKind: "SelectCurrentWork" as const,
+                  requestRevision: decisionRequest.revision,
+                },
+              }
+            : inboxEntry !== undefined
+              ? {
+                  episode: {
+                    _tag: "InboxEpisode" as const,
+                    entryKey: inboxEntry.entryKey,
+                    inputKind: inboxEntry.kind,
+                  },
+                }
+              : {}),
       };
       const commandSeed = yield* ids.generate<string>("CommandId");
       const commandId = parse(CommandId)(
@@ -161,7 +257,16 @@ export const consumeWorkspaceWake = (
         return;
       }
 
-      yield* runExecution(executionId, wakeReason, principal);
+      yield* containLeaseFencingRejected(
+        runExecution(
+          executionId,
+          wakeReason,
+          principal,
+          undefined,
+          qualificationProbe,
+          leaseQualificationProbe,
+        ),
+      );
       return;
     }
   });

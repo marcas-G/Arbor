@@ -111,18 +111,15 @@ export const withFreshnessEnvelope = <T>(
  * catch-up read → re-read → serve, else refuse with the typed staleness
  * marker). No implicit RYW anywhere: without a barrier the caller gets
  * whatever the snapshot currently reflects — writes are never awaited. */
-export const enforceFreshnessBarrier = <T>(input: {
+export const enforceFreshnessBarrier = <T, E = ProjectionReadError>(input: {
   readonly barrier: FreshnessRequirement | undefined;
   readonly lastSequence: number;
-  readonly readSnapshot: () => Effect.Effect<
-    QueryResult<T>,
-    ProjectionReadError
-  >;
+  readonly readSnapshot: () => Effect.Effect<QueryResult<T>, E>;
   readonly catchUp: (
     fromSequence: number,
     toSequence: number,
-  ) => Effect.Effect<number, ProjectionReadError>;
-}): Effect.Effect<QueryResult<T>, ProjectionReadError | ProjectionStale> =>
+  ) => Effect.Effect<number, E>;
+}): Effect.Effect<QueryResult<T>, E | ProjectionStale> =>
   Effect.gen(function* () {
     const first = yield* input.readSnapshot();
     const decision = resolveBarrier(

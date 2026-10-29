@@ -10,6 +10,7 @@ import {
   LeaseServiceLive,
   layer,
   P12_MIGRATIONS,
+  P36_MIGRATIONS,
   ProjectRepositoryLive,
   ProviderTurnStoreLive,
   runMigrations,
@@ -66,7 +67,10 @@ import {
   WorkWaitStore,
 } from "../packages/ports/src/index.js";
 import { ReconciliationSourceLive } from "../packages/tool-runtime/src/index.js";
+import { yieldedSettlement } from "./support/execution-episode-fixtures.js";
+import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-project-resource-source.js";
 import { labeled } from "./support/p9-harness-api.js";
+import { makeP41OptionalTestServices } from "./support/p41-optional-test-services.js";
 
 /**
  * P9-006 — worker crash (W1–W5) + old-worker resurrection (R1–R6) injection
@@ -142,11 +146,13 @@ const P9CommandHandlerRegistryLive: Layer.Layer<
 const makeApp = () => {
   const base = layer({ filename: ":memory:" });
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
+  const journal = Layer.provide(DomainEventJournalLive, infra);
   const execRepo = Layer.provide(ExecutionRepositoryLive, infra);
   const stores = Layer.mergeAll(
     Layer.provide(TransactionPortLive, infra),
     Layer.provide(CommandStoreLive, infra),
-    Layer.provide(DomainEventJournalLive, infra),
+    journal,
+    makeP41OptionalTestServices(Layer.merge(infra, journal)),
     Layer.provide(ProjectRepositoryLive, infra),
     Layer.provide(WorkspaceRepositoryLive, infra),
     Layer.provide(SessionRepositoryLive, infra),
@@ -193,6 +199,7 @@ const seed = Effect.gen(function* () {
           "t",
         ],
       );
+      yield* ensureLegacyProjectResourceSourceFixture();
       yield* sql.unsafe(
         "INSERT INTO sessions (session_id, binding_kind, workspace_id, execution_id, context_epoch, created_at) VALUES (?, 'ExecutionScoped', NULL, ?, 0, 't')",
         [sessionId, executionId],
@@ -415,23 +422,39 @@ const openProviderTurn = (turnId: ProviderTurnId) =>
     );
   });
 
-const recordToolIntent = (invocationId: ToolInvocationId) =>
+const toolExecutionFence = (workerId: string, generation: LeaseGeneration) => ({
+  executionId,
+  workerId,
+  workerIncarnationId: "inc-a",
+  fencingGeneration: generation,
+});
+
+const recordToolIntent = (
+  invocationId: ToolInvocationId,
+  fence: ReturnType<typeof toolExecutionFence>,
+) =>
   Effect.gen(function* () {
     const tx = yield* TransactionPort;
     const tools = yield* ToolInvocationStore;
+    const clock = yield* Clock;
+    const now = yield* clock.now();
     yield* tx.transact(
-      tools.recordIntent({
-        invocationId,
-        executionId,
-        workspaceId,
-        toolName: "shell",
-        toolVersion: "1",
-        sideEffectSemantics: "NonIdempotent",
-        argumentsJson: "{}",
-        resolvedRegions: [],
-        approvalId: null,
-        intentAt: "t",
-      }),
+      tools.recordIntent(
+        {
+          invocationId,
+          executionId,
+          workspaceId,
+          toolName: "shell",
+          toolVersion: "1",
+          sideEffectSemantics: "NonIdempotent",
+          argumentsJson: "{}",
+          resolvedRegions: [],
+          approvalId: null,
+          intentAt: now,
+        },
+        fence,
+        now,
+      ),
     );
   });
 
@@ -471,8 +494,7 @@ const withLeaseFence = <A, E, R>(
   });
 
 const completed: SettleExecutionPayload["settlement"] = {
-  _tag: "Completed",
-  result: { _tag: "CoordinationCompleted" },
+  ...yieldedSettlement,
 };
 
 /** Worker lifecycle mirroring `runExecution`'s durable sequence with a
@@ -494,7 +516,10 @@ const workerRun = (
     const lease = yield* acquireLease(workerId);
     yield* kill("W2");
     yield* openProviderTurn(turnId);
-    yield* recordToolIntent(invocationId);
+    yield* recordToolIntent(
+      invocationId,
+      toolExecutionFence(workerId, lease.generation),
+    );
     yield* kill("W3");
     yield* kill("W5");
     const settlement = completed;
@@ -514,7 +539,10 @@ const run = <A>(program: Effect.Effect<A, any, any>): Promise<A> =>
   );
 
 const boot = Effect.gen(function* () {
+  // Preserve the historical P12 fixture start, then upgrade before the
+  // current P4 ToolInvocation store reads/writes its P36 admission state.
   yield* runMigrations(P12_MIGRATIONS);
+  yield* runMigrations(P36_MIGRATIONS);
   yield* seed;
 });
 
@@ -758,11 +786,25 @@ describe("p9-worker-crash (W1–W5, 02 §1)", () => {
         const exec = yield* executionState;
         const tx = yield* TransactionPort;
         const repo = yield* ExecutionRepository;
+        const sql = yield* SqlClient;
         const now = yield* clockNow;
         yield* tx.transact(repo.requestStop(executionId, now));
         const recovery = yield* runRecovery(principal);
         const execAfter = yield* executionState;
-        const escalations = yield* eventsOf("ReconciliationEscalated");
+        const escalationRows = yield* sql.unsafe<{
+          readonly aggregate_ref: string;
+          readonly payload_json: string;
+        }>(
+          "SELECT aggregate_ref, payload_json FROM domain_events WHERE event_type = 'ReconciliationEscalated'",
+        );
+        const escalations = escalationRows.map((row) => ({
+          aggregateRef: row.aggregate_ref,
+          payload: JSON.parse(row.payload_json) as {
+            readonly executionId: string;
+            readonly invocationRefsFingerprint: string;
+            readonly refs: ReadonlyArray<string>;
+          },
+        }));
         return { exit, exec, recovery, execAfter, escalations };
       }),
     );
@@ -775,7 +817,16 @@ describe("p9-worker-crash (W1–W5, 02 §1)", () => {
     expect(r.recovery.escalated).toEqual([executionId]);
     expect(r.execAfter?.settled_at).toBeNull();
     expect(r.execAfter?.settlement_kind).not.toBe("Interrupted");
-    expect(r.escalations).toBeGreaterThanOrEqual(1);
+    expect(r.escalations).toEqual([
+      {
+        aggregateRef: executionId,
+        payload: {
+          executionId,
+          invocationRefsFingerprint: String(toolInvocationId(1)),
+          refs: [String(toolInvocationId(1))],
+        },
+      },
+    ]);
   });
 });
 
@@ -886,7 +937,10 @@ describe("p9-resurrection (R1–R6, 02 §2)", () => {
       Effect.gen(function* () {
         yield* boot;
         const first = yield* acquireLease("worker:a");
-        yield* recordToolIntent(invocationId);
+        yield* recordToolIntent(
+          invocationId,
+          toolExecutionFence("worker:a", first.generation),
+        );
         yield* expireInPlace("worker:a", first.generation);
         const next = yield* acquireLease("worker:b");
         const tx = yield* TransactionPort;
@@ -895,7 +949,14 @@ describe("p9-resurrection (R1–R6, 02 §2)", () => {
           .transact(
             withLeaseFence(
               first.generation,
-              tools.settle(invocationId, { _tag: "Success" }, null, "t"),
+              tools.settle(
+                invocationId,
+                { _tag: "Success" },
+                null,
+                "t",
+                toolExecutionFence("worker:a", first.generation),
+                "t",
+              ),
             ),
           )
           .pipe(Effect.flip);
@@ -991,7 +1052,10 @@ describe("p9-resurrection (R1–R6, 02 §2)", () => {
                 entryKind: "Observation",
                 payload: { late: true },
               });
-              yield* recordToolIntent(invocationId);
+              yield* recordToolIntent(
+                invocationId,
+                toolExecutionFence("worker:b", generations.current),
+              );
               yield* Effect.die(new Error("harness-kill:R6-pre-commit"));
             }),
           ),

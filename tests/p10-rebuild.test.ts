@@ -4,18 +4,23 @@ import { describe, expect, it } from "vitest";
 import {
   AcceptanceRepositoryLive,
   ClockLive,
+  CommandStoreLive,
   ConsumerDeadLetterStoreLive,
   ConsumerOffsetStoreLive,
+  DeliverableRepositoryLive,
   DependencyRepositoryLive,
   DomainEventJournalLive,
   EvidenceRepositoryLive,
   ExecutionRepositoryLive,
+  FormationFulfillmentStoreLive,
+  FormationProposalStoreLive,
   IdGeneratorLive,
   InboxProjectionStoreLive,
   layer,
   MessageStoreLive,
   P8_MIGRATIONS,
   ProjectionStoreLive,
+  ProjectRepositoryLive,
   rebuildProjection,
   runConsumerBatch,
   runMigrations,
@@ -56,6 +61,7 @@ import {
   retainAttentionRows,
   retainTranscriptWindow,
 } from "../packages/projection-runtime/src/index.js";
+import { NoHoldWorkReadmissionGateStoreLive } from "../packages/testkit/src/index.js";
 
 import type { P10FixtureDeps } from "./support/p10-fixture.js";
 import {
@@ -94,8 +100,13 @@ const makeRebuildApp = () => {
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
   const stores = Layer.mergeAll(
     Layer.provide(TransactionPortLive, infra),
+    Layer.provide(ProjectRepositoryLive, infra),
     Layer.provide(WorkspaceRepositoryLive, infra),
     Layer.provide(WorkRepositoryLive, infra),
+    Layer.provide(DeliverableRepositoryLive, infra),
+    Layer.provide(FormationProposalStoreLive, infra),
+    Layer.provide(FormationFulfillmentStoreLive, infra),
+    Layer.provide(CommandStoreLive, infra),
     Layer.provide(ExecutionRepositoryLive, infra),
     Layer.provide(WorkWaitStoreLive, infra),
     Layer.provide(DependencyRepositoryLive, infra),
@@ -108,6 +119,7 @@ const makeRebuildApp = () => {
     Layer.provide(ConsumerOffsetStoreLive, infra),
     Layer.provide(ConsumerDeadLetterStoreLive, infra),
     Layer.provide(ProjectionStoreLive, infra),
+    NoHoldWorkReadmissionGateStoreLive,
   );
   return Layer.mergeAll(
     infra,

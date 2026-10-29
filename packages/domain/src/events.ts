@@ -8,8 +8,17 @@ export const ProjectPolicyChanged = Schema.TaggedStruct(
   "ProjectPolicyChanged",
   {},
 );
+export const ProjectRenamed = Schema.TaggedStruct("ProjectRenamed", {});
 export const ProjectClosed = Schema.TaggedStruct("ProjectClosed", {});
 export const WorkspaceCreated = Schema.TaggedStruct("WorkspaceCreated", {});
+export const WorkspaceResourceActivationChanged = Schema.TaggedStruct(
+  "WorkspaceResourceActivationChanged",
+  {
+    workspaceId: Schema.String,
+    resourceBoundaryRevision: Schema.Number,
+    status: Schema.Literals(["Pending", "Active"]),
+  },
+);
 export const ResponsibilityChanged = Schema.TaggedStruct(
   "ResponsibilityChanged",
   {},
@@ -46,6 +55,30 @@ export const WorkSteered = Schema.TaggedStruct("WorkSteered", {
   toRevision: Schema.Number,
   severity: Schema.String,
 });
+export const WorkAmended = Schema.TaggedStruct("WorkAmended", {
+  workId: Schema.String,
+  fromRevision: Schema.Number,
+  toRevision: Schema.Number,
+  severity: Schema.String,
+});
+
+export const WorkBlockerResolved = Schema.TaggedStruct("WorkBlockerResolved", {
+  blockerId: Schema.String,
+  workId: Schema.String,
+  workRevision: Schema.Number,
+  resolvedAt: Schema.String,
+});
+
+export const WorkBlockerSuperseded = Schema.TaggedStruct(
+  "WorkBlockerSuperseded",
+  {
+    blockerId: Schema.String,
+    workId: Schema.String,
+    previousWorkRevision: Schema.Number,
+    currentWorkRevision: Schema.Number,
+    supersededAt: Schema.String,
+  },
+);
 export const DependencyDeclared = Schema.TaggedStruct("DependencyDeclared", {
   dependencyId: Schema.String,
   consumerWorkId: Schema.String,
@@ -95,6 +128,101 @@ export const ReconciliationEscalated = Schema.TaggedStruct(
     refs: Schema.Array(Schema.Unknown),
   },
 );
+export const AssignWorkTargetBindingEscalated = Schema.TaggedStruct(
+  "AssignWorkTargetBindingEscalated",
+  {
+    attentionFactId: Schema.String,
+    executionId: Schema.String,
+    targetWorkspaceId: Schema.String,
+    logicalActionId: Schema.String,
+    committedCommandId: Schema.String,
+    failureCode: Schema.String,
+  },
+);
+export const DeliverReplayEscalated = Schema.Struct({
+  attentionFactId: Schema.String,
+  executionId: Schema.String,
+  targetWorkspaceId: Schema.String,
+  logicalActionId: Schema.String,
+  messageId: Schema.String,
+  failureCode: Schema.Literals([
+    "LegacyMessageMissingEvent",
+    "LegacyEventMissingMessage",
+    "LegacyMessageBindingMismatch",
+    "LegacyInboxConflict",
+    "PriorReceiptDecodeMismatch",
+    "PriorReceiptResultMismatch",
+    "RejectedReceiptEffectConflict",
+    "PriorReceiptEffectConflict",
+  ]),
+});
+export const ToolObservationReplayEvidenceEscalated = Schema.TaggedStruct(
+  "ToolObservationReplayEvidenceEscalated",
+  {
+    attentionFactId: Schema.String,
+    executionId: Schema.String,
+    targetWorkspaceId: Schema.String,
+    logicalActionId: Schema.String,
+    providerTurnId: Schema.String,
+    callRef: Schema.String,
+    invocationId: Schema.String,
+    failureCode: Schema.String,
+  },
+);
+export const SubmittedDecisionBindingEscalated = Schema.TaggedStruct(
+  "SubmittedDecisionBindingEscalated",
+  {
+    attentionFactId: Schema.String,
+    executionId: Schema.String,
+    workspaceId: Schema.String,
+    logicalStepNo: Schema.Number,
+    repairAttempt: Schema.Number,
+    providerTurnId: Schema.String,
+    logicalActionId: Schema.String,
+    failureCode: Schema.Literals([
+      "DecisionRequestWorkspaceMismatch",
+      "StepManifestMismatch",
+      "SettledExecutionWithPendingDecisionAction",
+    ]),
+  },
+);
+export const SandboxProviderUnavailable = Schema.TaggedStruct(
+  "SandboxProviderUnavailable",
+  {
+    attentionFactId: Schema.String,
+    executionId: Schema.String,
+    workspaceId: Schema.String,
+    policyRevision: Schema.Number,
+  },
+);
+export const LegacyAdoptionEvidenceEscalated = Schema.Struct({
+  factId: Schema.String,
+  attentionFactId: Schema.String,
+  projectId: Schema.String,
+  executionId: Schema.String,
+  targetWorkspaceId: Schema.String,
+  providerTurnId: Schema.String,
+  logicalStepNo: Schema.Number,
+  repairAttempt: Schema.Number,
+  failureCode: Schema.Literals(["LegacyActionDispositionUnproven"]),
+  evidenceSha256: Schema.String,
+  firstDetectedAt: Schema.String,
+});
+export const LegacyAdoptionEvidenceResolved = Schema.Struct({
+  factId: Schema.String,
+  attentionFactId: Schema.String,
+  projectId: Schema.String,
+  executionId: Schema.String,
+  targetWorkspaceId: Schema.String,
+  providerTurnId: Schema.String,
+  originalEvidenceSha256: Schema.String,
+  resolutionEvidenceSha256: Schema.String,
+  resolutionCode: Schema.Literals([
+    "DispositionProvenNotAdmitted",
+    "DispositionProvenSettled",
+  ]),
+  resolvedAt: Schema.String,
+});
 export const DeadlockAttentionRequested = Schema.TaggedStruct(
   "DeadlockAttentionRequested",
   {
@@ -119,6 +247,34 @@ export const VerificationConcluded = Schema.TaggedStruct(
     verdict: Schema.String,
     conclusionReason: Schema.String,
     evidenceRefs: Schema.Array(Schema.String),
+    summaryRef: Schema.String,
+    missionSnapshot: Schema.optional(
+      Schema.Struct({
+        goal: Schema.String,
+        criteria: Schema.Array(
+          Schema.Struct({
+            criterionId: Schema.String,
+            requirement: Schema.String,
+            required: Schema.Boolean,
+          }),
+        ),
+        riskRequirements: Schema.Array(Schema.String),
+      }),
+    ),
+    criteriaResults: Schema.optional(
+      Schema.Array(
+        Schema.Struct({
+          criterionId: Schema.String,
+          requirement: Schema.String,
+          required: Schema.Boolean,
+          verdict: Schema.Literals(["Pass", "Fail", "Unknown"]),
+          evidenceRefs: Schema.Array(Schema.String),
+        }),
+      ),
+    ),
+    snapshotStatus: Schema.optional(
+      Schema.Literals(["Available", "NotApplicableOrphaned"]),
+    ),
   },
 );
 export const WorkOutcomeAccepted = Schema.TaggedStruct("WorkOutcomeAccepted", {
@@ -141,6 +297,28 @@ export const ExecutionSettled = Schema.TaggedStruct("ExecutionSettled", {
   claimRef: Schema.String,
 });
 export const PermissionChanged = Schema.TaggedStruct("PermissionChanged", {});
+export const SandboxPolicyGrantIssued = Schema.TaggedStruct(
+  "SandboxPolicyGrantIssued",
+  {
+    permissionGrantId: Schema.String,
+    grantPermissionCommandId: Schema.String,
+    executionId: Schema.String,
+    operatorConfigRevision: Schema.Number,
+    operatorConfigDigest: Schema.String,
+  },
+);
+export const SandboxPolicyDecisionRecorded = Schema.TaggedStruct(
+  "SandboxPolicyDecisionRecorded",
+  {
+    workspaceId: Schema.String,
+    executionId: Schema.String,
+    episodeBinding: Schema.Unknown,
+    policyRevision: Schema.Number,
+    permissionGrantId: Schema.String,
+    operatorConfigRevision: Schema.Number,
+    operatorConfigDigest: Schema.String,
+  },
+);
 export const DecisionRecorded = Schema.TaggedStruct("DecisionRecorded", {});
 export const WorktreeCreated = Schema.TaggedStruct("WorktreeCreated", {
   worktreeId: Schema.String,
@@ -177,6 +355,20 @@ export const HumanMessageSubmitted = Schema.TaggedStruct(
     bodyRef: Schema.String,
   },
 );
+export const ConversationResponseResumed = Schema.TaggedStruct(
+  "ConversationResponseResumed",
+  {
+    messageId: Schema.String,
+    revision: Schema.Number,
+  },
+);
+export const ConversationResponseCancelled = Schema.TaggedStruct(
+  "ConversationResponseCancelled",
+  {
+    messageId: Schema.String,
+    revision: Schema.Number,
+  },
+);
 export const HumanInterventionApplied = Schema.TaggedStruct(
   "HumanInterventionApplied",
   {
@@ -187,12 +379,56 @@ export const HumanInterventionApplied = Schema.TaggedStruct(
     kind: Schema.String,
   },
 );
+export const ControlApprovalResolved = Schema.TaggedStruct(
+  "ControlApprovalResolved",
+  {
+    approvalId: Schema.String,
+    executionId: Schema.String,
+    decision: Schema.Literals(["Approve", "Reject"]),
+    revision: Schema.Number,
+  },
+);
+export const ExecutableApprovalRequested = Schema.TaggedStruct(
+  "ExecutableApprovalRequested",
+  {
+    approvalId: Schema.String,
+    routeKind: Schema.Literals(["Executable"]),
+    executionId: Schema.String,
+    workspaceId: Schema.String,
+    logicalActionId: Schema.String,
+    toolInvocationId: Schema.String,
+    revision: Schema.Number,
+    expiresAt: Schema.String,
+    actionDigest: Schema.String,
+  },
+);
+export const ExecutableApprovalResolved = Schema.TaggedStruct(
+  "ExecutableApprovalResolved",
+  {
+    approvalId: Schema.String,
+    routeKind: Schema.Literals(["Executable"]),
+    executionId: Schema.String,
+    workspaceId: Schema.String,
+    logicalActionId: Schema.String,
+    toolInvocationId: Schema.String,
+    revision: Schema.Number,
+    resolution: Schema.Literals([
+      "Approved",
+      "Rejected",
+      "Expired",
+      "Cancelled",
+    ]),
+    reasonCode: Schema.optional(Schema.String),
+  },
+);
 
 export const DomainEventPayload = Schema.Union([
   ProjectCreated,
   ProjectPolicyChanged,
+  ProjectRenamed,
   ProjectClosed,
   WorkspaceCreated,
+  WorkspaceResourceActivationChanged,
   ResponsibilityChanged,
   ResourceBoundaryChanged,
   ResourceOwnershipChanged,
@@ -206,11 +442,21 @@ export const DomainEventPayload = Schema.Union([
   WorkCompleted,
   WorkCancelled,
   WorkSteered,
+  WorkAmended,
+  WorkBlockerResolved,
+  WorkBlockerSuperseded,
   DependencyDeclared,
   DependencySatisfied,
   DependencyContractRevised,
   DeadlockAttentionRequested,
   ReconciliationEscalated,
+  AssignWorkTargetBindingEscalated,
+  DeliverReplayEscalated,
+  ToolObservationReplayEvidenceEscalated,
+  SubmittedDecisionBindingEscalated,
+  SandboxProviderUnavailable,
+  LegacyAdoptionEvidenceEscalated,
+  LegacyAdoptionEvidenceResolved,
   DependencyWithdrawn,
   DependencyMarkedUnfulfillable,
   DeliverableProduced,
@@ -222,12 +468,19 @@ export const DomainEventPayload = Schema.Union([
   ExecutionStopRequested,
   ExecutionSettled,
   PermissionChanged,
+  SandboxPolicyGrantIssued,
+  SandboxPolicyDecisionRecorded,
   DecisionRecorded,
   EnvironmentChanged,
   WorktreeCreated,
   WorktreeRetired,
   HumanInterventionApplied,
   HumanMessageSubmitted,
+  ConversationResponseResumed,
+  ConversationResponseCancelled,
+  ControlApprovalResolved,
+  ExecutableApprovalRequested,
+  ExecutableApprovalResolved,
 ]);
 
 export type DomainEventPayload = Schema.Schema.Type<typeof DomainEventPayload>;
@@ -235,8 +488,10 @@ export type DomainEventPayload = Schema.Schema.Type<typeof DomainEventPayload>;
 export const EVENT_CATALOG = {
   ProjectCreated,
   ProjectPolicyChanged,
+  ProjectRenamed,
   ProjectClosed,
   WorkspaceCreated,
+  WorkspaceResourceActivationChanged,
   ResponsibilityChanged,
   ResourceBoundaryChanged,
   ResourceOwnershipChanged,
@@ -250,6 +505,9 @@ export const EVENT_CATALOG = {
   WorkCompleted,
   WorkCancelled,
   WorkSteered,
+  WorkAmended,
+  WorkBlockerResolved,
+  WorkBlockerSuperseded,
   DependencyDeclared,
   DependencySatisfied,
   DependencyContractRevised,
@@ -257,6 +515,13 @@ export const EVENT_CATALOG = {
   DependencyMarkedUnfulfillable,
   DeadlockAttentionRequested,
   ReconciliationEscalated,
+  AssignWorkTargetBindingEscalated,
+  DeliverReplayEscalated,
+  ToolObservationReplayEvidenceEscalated,
+  SubmittedDecisionBindingEscalated,
+  SandboxProviderUnavailable,
+  LegacyAdoptionEvidenceEscalated,
+  LegacyAdoptionEvidenceResolved,
   DeliverableProduced,
   MessageSent,
   VerificationStarted,
@@ -266,12 +531,19 @@ export const EVENT_CATALOG = {
   ExecutionStopRequested,
   ExecutionSettled,
   PermissionChanged,
+  SandboxPolicyGrantIssued,
+  SandboxPolicyDecisionRecorded,
   DecisionRecorded,
   EnvironmentChanged,
   WorktreeCreated,
   WorktreeRetired,
   HumanInterventionApplied,
   HumanMessageSubmitted,
+  ConversationResponseResumed,
+  ConversationResponseCancelled,
+  ControlApprovalResolved,
+  ExecutableApprovalRequested,
+  ExecutableApprovalResolved,
 } as const;
 
 export type EventTypeName = keyof typeof EVENT_CATALOG;

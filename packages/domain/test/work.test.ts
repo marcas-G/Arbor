@@ -3,11 +3,13 @@ import type { Work, WorkLifecycle } from "../src/index.js";
 import * as domain from "../src/index.js";
 import {
   Actor,
+  amendWorkContract,
   assignWork,
   cancelWork,
   completeWork,
   concludeVerification,
   createAcceptance,
+  directionGuideWork,
   isWorkCurrent,
   isWorkOpen,
   isWorkTerminal,
@@ -100,6 +102,76 @@ describe("work aggregate", () => {
     }
   });
 
+  it("DirectionGuidance advances one revision without changing any contract field", () => {
+    const original = assign(7);
+    const guided = directionGuideWork(original, { authorized: true });
+    expect(guided.ok).toBe(true);
+    if (!guided.ok) throw new Error("expected DirectionGuidance");
+    expect(guided.value).toEqual({ ...original, revision: 8 });
+  });
+
+  it("ContractAmendment replaces the complete Work contract in one new revision", () => {
+    const original = assign(4);
+    const replacement = {
+      objective: "ship the revised kernel",
+      why: "the approved delivery target changed",
+      constraints: ["keep the public API stable", "preserve audit history"],
+      completionExpectation: "new output is independently verified",
+      verificationMission: {
+        goal: "verify the revised output",
+        criteria: [
+          {
+            criterionId: "new-output",
+            requirement: "the output matches the replacement contract",
+            required: true,
+          },
+        ],
+        riskRequirements: ["retain the prior revision for audit"],
+      },
+    };
+    const amended = amendWorkContract(original, {
+      authorized: true,
+      contract: replacement,
+    });
+    expect(amended.ok).toBe(true);
+    if (!amended.ok) throw new Error("expected ContractAmendment");
+    expect(amended.value).toEqual({
+      ...original,
+      ...replacement,
+      revision: 5,
+    });
+    expect(original).toEqual(assign(4));
+  });
+
+  it("rejects unauthorized or terminal ContractAmendment without a new revision", () => {
+    const original = assign(3);
+    const contract = {
+      objective: "replacement",
+      why: "human-authorized goal change",
+      constraints: ["complete snapshot"],
+      completionExpectation: "new acceptance condition",
+      verificationMission: mission,
+    };
+    const denied = amendWorkContract(original, {
+      authorized: false,
+      contract,
+    });
+    expect(denied.ok).toBe(false);
+    if (!denied.ok) expect(denied.error._tag).toBe("AuthorityDenied");
+
+    const cancelled = cancelWork(original, { authorized: true });
+    if (!cancelled.ok) throw new Error("expected cancellation");
+    const terminal = amendWorkContract(cancelled.value, {
+      authorized: true,
+      contract,
+    });
+    expect(terminal.ok).toBe(false);
+    if (!terminal.ok) {
+      expect(terminal.error._tag).toBe("TerminalLifecycleMutation");
+    }
+    expect(original.revision).toBe(3);
+  });
+
   it("completes only with current-revision PASS verification and acceptance", () => {
     const work = assign(3);
     const started = startVerification({
@@ -108,7 +180,13 @@ describe("work aggregate", () => {
       targetWorkRevision: parse(WorkRevision)(3),
       missionSnapshot: mission,
     });
-    const concluded = concludeVerification(started, "Pass");
+    const concluded = concludeVerification(
+      started,
+      "Pass",
+      "summary:test",
+      undefined,
+      [],
+    );
     if (!concluded.ok) {
       throw new Error("expected conclude");
     }
@@ -153,7 +231,13 @@ describe("work aggregate", () => {
       targetWorkRevision: parse(WorkRevision)(1),
       missionSnapshot: mission,
     });
-    const concluded = concludeVerification(started, "Fail");
+    const concluded = concludeVerification(
+      started,
+      "Fail",
+      "summary:test",
+      undefined,
+      [],
+    );
     if (!concluded.ok) {
       throw new Error("expected conclude");
     }

@@ -26,8 +26,73 @@
 
 .arbor-session-login {
   width: 100%;
-  max-width: 480px;
-  margin: var(--arbor-space-6) auto 0;
+  max-width: 440px;
+}
+
+.arbor-bootstrap {
+  display: grid;
+  width: min(100%, 66rem);
+  min-height: calc(100vh - 10rem);
+  grid-template-columns: minmax(0, 1.15fr) minmax(22rem, 0.85fr);
+  align-items: center;
+  gap: var(--arbor-space-6);
+  margin: 0 auto;
+}
+
+.arbor-bootstrap-intro {
+  display: flex;
+  max-width: 38rem;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--arbor-space-3);
+}
+
+.arbor-bootstrap-intro h1 {
+  margin: 0;
+  color: var(--arbor-ink);
+  font-size: var(--arbor-text-display);
+  line-height: 1.22;
+  letter-spacing: -0.03em;
+}
+
+.arbor-bootstrap-intro > p:last-child {
+  max-width: 32rem;
+  margin: 0;
+  color: var(--arbor-ink-soft);
+  line-height: 1.7;
+}
+
+.arbor-bootstrap-mark {
+  display: grid;
+  width: 56px;
+  height: 56px;
+  place-items: center;
+  border-radius: var(--arbor-radius-large);
+  background: var(--arbor-leaf-pale);
+  color: var(--arbor-leaf);
+}
+
+.arbor-bootstrap-eyebrow {
+  margin: 0;
+  color: var(--arbor-leaf);
+  font-size: var(--arbor-text-caption);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+@media (max-width: 56rem) {
+  .arbor-bootstrap {
+    grid-template-columns: minmax(0, 1fr);
+    align-content: center;
+  }
+
+  .arbor-bootstrap-intro {
+    display: none;
+  }
+
+  .arbor-session-login {
+    margin: 0 auto;
+  }
 }
 
 .arbor-command-panel-actions {

@@ -1,6 +1,6 @@
 # P6 — 02 Communication Protocol
 
-**Authority:** DID v1.9 §4.2, §1.8(Message), §2 表(Inbox), §5.4, §12.10 表, §8.4A; SD v1.3 §7.1–§7.5, §13.5, 不变量 20/21/31/36; P3 `03` §3. Resolved D2.
+**Authority:** DID v1.9 §4.2, §1.8(Message), §2 表(Inbox), §5.4, §12.10 表, §8.4A, v1.39 EA-DG-01, v1.47 P8 UnboundLegacy route amendment, and v1.52 P6 offline operator rebuild / v1 route-command qualification; SD v1.14 §7.1–§7.5, §13.5, 不变量 20/21/31/36; P3 `03` §3. Resolved D2.
 **Status:** FROZEN (manual governance adoption).
 
 ## 1. P6 的 Message 语义子集（D2 冻结闭合）
@@ -50,6 +50,12 @@ DID §4.2 Coordination 组命令、§12.10 表行：`SendMessage → MessageSent
 }
 ```
 
+FT-DG-03: the registered semantic validator uses this exact closed payload
+and the owning `OutboundMessage` contract (including nested message kinds,
+recipient, correlation, and ID schemas). `SendMessage` remains
+Agent-originated and externally denied; codec registration adds no UI or
+human-chat route (DID §4.1B; P13 `02`).
+
 ### Preconditions / rejections
 
 | Condition | Rejection |
@@ -90,6 +96,107 @@ Promotion 不调用模型（Receive != Promote != Consume）。**P7 之前的 pr
 ### Consumption（cognitive，Agent 侧）
 
 Context Builder 只选择与 Current Work、Interrupt 或高价值事项相关的未消费输入（SD §7.4：Inbox != Next Context）；消费标记是 Session 认知事件，不是 canonical mutation。
+
+### Executable approval queue entries (EA-DG-01)
+
+An Executable human approval is a route-specific Governance Inbox entry, not a
+Message and not a `RequestGovernance` model action. Its exact key is
+`eap:<approvalId>:<revision>`; `cap:<approvalId>:<revision>` remains the
+Control/CAPA route. P4/Application admission upserts the entry by this key in
+the same transaction as the proven Executable Pending ActionApproval. Replaying
+the same logical action reads the existing row and does not add a second
+entry or refresh the approval TTL.
+
+Executable approval entries are human-only: they are excluded from promotion
+into Agent Session and do not become model instructions. Approve/Reject,
+automatic Expire, or Stop Cancel consumes only the exact displayed Inbox key
+in the same transaction as its ActionApproval state change and durable
+resolution fact. Consumer redelivery is idempotent and cannot resurrect a
+consumed entry. The resolved fact is the durable P2 wake source for the same
+Execution; Inbox admission/consumption never creates a new Execution or
+ProviderTurn.
+
+### P8 UnboundLegacy RetryVerification Governance Inbox entry (DID v1.47)
+
+The ordered P8 origin migration admits one human-only, queryable Governance
+Inbox item when a recognized historical successful RetryVerification receipt
+cannot be bound by exact retained event and successor evidence. It is visible
+only through a currently authorized P8 human governance route, never through
+an Agent/Session consumer. The P6 entry reuses `kind=Governance`; there is no
+new Inbox kind. Its stable `entryKey` is
+`retry-verification-unbound:<commandId>`, with typed payload subtype
+`RetryVerificationUnboundLegacy`. The payload is derived from the immutable
+P1 disposition and contains only CommandId, ProjectId, source WorkId and
+VerificationId, fixed `UnboundLegacy` / `OriginEvidenceIncomplete`, and the
+entry's created/updated timestamps and revision. It never exposes receipt
+JSON, summary content, raw event JSON, fingerprint, path or host detail.
+The P1 disposition stores the minimum source identities needed for rebuild and
+is independent of Command receipt decoding and Domain Event retention.
+
+The current recipient is derived on every admission, query and rebuild from
+that disposition plus current canonical Work/Workspace governance facts, then
+checked against current P8 human authorization. Root Work follows its current
+Root-local human governance route; child Work follows its current exact direct
+Parent Workspace human route. The Inbox row grants no authority. The item is
+human-only and queryable under that current route; reading does not consume or
+clear it, promote it into Session, create a Message/approval/Agent instruction,
+command, wake or ProviderTurn. It is not a P10 Attention source.
+
+No v1 P1 command changes the canonical Work owner or Workspace Parent.
+Therefore the command-level owner/Parent route-move and its command/process
+crash qualification are N/A for v1 only. This does not make the route helper or
+its contract N/A. If a future separately governed command changes the
+recipient, it must move the same stable key to the newly authorized route in
+the same P1 transaction as the canonical change. The old route loses
+visibility and the new route receives the entry at that commit; no asynchronous
+reconciliation window/fact is allowed. If that future command cannot move the
+Inbox row atomically, it follows the existing P1 Gateway as
+`TerminalRejected(AuthorityDenied)` (or the narrowest existing typed
+rejection): the normal receipt and attempt are committed, while no canonical
+Work/Workspace/owner, Event, Inbox or disposition mutation occurs. The same
+CommandId/tuple replays that terminal receipt; a different CommandId
+independently rejects. This is not a pre-Gateway error. Reconciliation of an
+identical route is a no-op; a changed source/disposition identity for the same
+key is typed integrity corruption. An UnboundLegacy command replay remains a
+generic current Resolver denial.
+
+### Operator rebuild (DID v1.52)
+
+The P6 UnboundLegacy projection is rebuilt by the operator-only offline
+`p6:inbox-rebuild` command, not by P10 Attention, daemon startup, an Agent or a
+Web/API request. It requires the daemon stopped, current schema 48, and the
+existing P39 `MaintenanceExclusive` permit. The P39 blocker-report SQLite
+`--p39-sidecar` and protected JSONL operation `--manifest` are distinct. The
+operator continuation uses the same P39 primary SqlClient connection and one
+`TransactionPort` transaction to invoke
+`rebuildUnboundLegacyInboxProjections`; it may only insert a missing stable-key
+Governance row or move that same row to the canonical current route. Canonical
+dispositions and Work/Verification/Project/Workspace rows are read-only. A
+pre-permit P39 sidecar/writer-lock infrastructure initialization is permitted,
+but lock refusal leaves the primary, P6 rows and JSONL operation manifest
+unchanged. See the accepted landing record for the audit/crash/restart contract.
+
+The matching immutable `retry_verification_legacy_dispositions` row and
+Governance Inbox admission are paired atomically by the ordered P8 migration.
+P1 `04` records this as migration `0045` (`requiresUserVersion: 44`), already
+present in the current schema-48 history and applied only through the offline
+schema-upgrade path. The accepted v1.52 operator rebuild adds no migration or
+high-water change. The P1 transaction boundary and row-transition semantics
+remain fixed below.
+
+### Typed WorkBlocked Parent input (accepted WorkEpisode amendment)
+
+For a child WorkEpisode that commits `Completed(Blocked)`, the deterministic
+P6 consumer admits one typed `InboxEntry.kind=WorkBlocked` to the direct
+Parent Workspace. Entry identity uses the source Execution as `entryKey`; the
+sender/recipient Workspaces, Work, blocker IDs, source Execution and bounded
+request refs are resolved from canonical state, never authored as a
+`SendMessage` or model/human identity. Admission, Inbox sequence advance and
+consumer offset commit atomically; replay of the same settlement is an
+upsert no-op. Failed admission remains retryable and is not treated as
+delivered. A blocker resolution/supersession resolves matching unconsumed
+WorkBlocked inputs idempotently. Root Work has no Parent Inbox entry. Parent
+handling follows the existing exact InboxEpisode boundary.
 
 ### Wake
 

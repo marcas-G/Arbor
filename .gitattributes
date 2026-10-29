@@ -1,0 +1,2 @@
+adapters/sandbox-windows/src/native/*.cs text eol=lf
+adapters/sandbox-windows/test/native/*.cs text eol=lf

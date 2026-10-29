@@ -1,7 +1,34 @@
 # P9 — 00 Contract Index
 
-**Authority:** DID v1.11 §11 P9, v1.9 G5, v1.7 G1/G3/G5; SD v1.3 §6.5/§7.3/§10/§14 (No.15/16/34/35/36/37/39/46/47/48/53/54/60); S4, S3 步骤 10; P1 `06`, P2 `03`/`06`, P3 `06`, P4 `01`/`02`/`06`, P5 `04`/`05`, P8 `00`/`02`/`03`; `planning/results/P8.result.md`; GQ1–GQ5 裁决（2026-09-21，本轮会话）.
-**Status:** FROZEN (first draft for contract review).
+**RAI-DG-01 amendment (DID v1.37 §8.18A.1):** P9 `07` owns the closed
+Deliver replay, direct-child AssignWork binding, and ReconciliationEscalated
+source identities/code unions used by the exact Work-revision gate. Facts and
+events remain immutable and atomic; ephemeral RecoveryBlocked outcomes are
+not promoted into sources.
+
+**Accepted ProviderTurnId V2 codec amendment (DID v1.58):** P9 `07` recovery
+and legacy adoption use P3's strict closed codec. Existing UUIDv7 and
+deterministic V2 identities are matched byte-for-byte across Turn, Manifest,
+Step, Session source refs, Action and P20 links. Unknown formats fail closed;
+P9 writes no replacement identity and changes no settlement semantics.
+
+**Authority:** DID v1.20（含原 DID v1.11 P9 closure 与 AHT-1…AHT-8）；SD v1.3 §6.5/§7.3/§10/§14；P1 `06`/`07`, P2 `03`/`06`, P3 `06`/`08`, P4 `01`/`02`/`03`/`06`, P5 `04`/`05`, P8 `00`/`02`/`03`；GQ1–GQ5 与 2026-09-30 AgentLoopStep 治理裁决。
+**Status:** FROZEN — P9 formally closed; accepted AH7-DG-03 owner amendment
+(2026-10-10). Post-landing consistency review pending.
+
+## Accepted owner amendment — AH7-DG-03 (2026-10-10)
+
+Decision: `ACCEPT_TOOL_APPROVAL_SETTLEMENT_ATOMICITY`. Accepted proposal SHA-256:
+`E818CC208F6A3B233FEF213E54E02AA30A1E96D6147313870C75FDE38DC94CBE`;
+source and delegated decision record are
+`planning/proposals/AH7-approval-settlement-fixed-decision-draft.md` and
+`planning/results/AH7-DG-03-governance-acceptance-and-landing.review.md`.
+
+P9 `02` and `07` add AH7-DG-03 crash/restart qualification for atomic
+intent+approval claim, P4 no-effect Denied/Interrupted records, effect
+admission, lease fencing and Stop/quiescence. They inherit P4/P2/P3 semantics;
+this addition does not change P9's guarantee classes, fault-injection method,
+or recovery ownership.
 
 ## Governance decisions recorded (GQ1–GQ5; no DID catalog changes)
 
@@ -10,7 +37,7 @@
 | GQ1 | X1–X11 = **superseded / non-normative archival**; P9 never cites them — `02` §0 |
 | GQ2 | **P9 owns generic recovery/rebuild semantics; P10 owns concrete business projections / at-scale rebuild** — `02` §10, `05` §3 |
 | GQ3 | Recovery triggers = **startup full pass + periodic/event-triggered sweeps + targeted pre-dispatch fence check**; pre-dispatch never runs the nine steps — `01` §3, `03` §2 |
-| GQ4 | **No new provider failure tag**; connect-phase failure → `ProviderUnavailable`, post-stream → `StreamInterrupted`; **P9 owns unsettled-ProviderTurn crash recovery** (same ProviderTurn, new ProviderAttempt, turnNo unchanged) — `02` §6, `04` §2 |
+| GQ4 | **No new provider failure tag**; connect-phase failure → `ProviderUnavailable`, post-stream → `StreamInterrupted`; **P9 owns unsettled-ProviderTurn crash recovery**. DID v1.20 refines it: complete success evidence converges locally; only absence of such evidence permits same ProviderTurn/new ProviderAttempt, turnNo unchanged — `02` §6, `04` §2, `07` |
 | GQ5 | **No fault-injecting SQLite adapter**; real process/daemon/worker crash injection; power-loss/WAL semantics proven via SQLite durability contract + DurabilityEnvelope + reopen/integrity evidence; **crash-injected vs durability-asserted guarantees explicitly distinguished** — `02` §0/§12, `05` §4 |
 | — | ReconciliationSourceStub replacement is **P9 phase-scoped closure**, not a Design Gap — `01` §1 |
 
@@ -24,13 +51,15 @@
 | `04-provider-tool-hardening.md` | Provider disconnect mapping + unsettled-turn recovery (GQ4), tool four-tier assertions, dispatch-failure semantics |
 | `05-consumer-rebuild-hardening.md` | Consumer offset wiring + crash matrix, generic rebuild (GQ2 P9 face), P10 boundary |
 | `06-acceptance.md` | Stories A–G and mechanical assertion list |
+| `07-agent-loop-step-recovery.md` | DID v1.20 Provider success local convergence、AgentLoopStep recovery matrix、legacy adoption、AH1–AH14 |
 
 ## Scope (DID §11 P9, nine faces)
 
 ```text
 worker crash / daemon crash / provider disconnect / tool outcome unknown /
 lease expiration / old worker resurrection / dispatch failure /
-consumer crash / projection rebuild (generic face, GQ2)
+consumer crash / projection rebuild (generic face, GQ2) /
+settled Provider result handoff / AgentLoopStep crash windows / legacy adoption
 ```
 
 P9 is hardening over existing semantics: P2 owns the mechanism, P1 owns the
@@ -41,7 +70,10 @@ systematizes, closes the two visibility gaps, and injects.
 
 - Concrete business-projection rebuild at scale (P10, GQ2).
 - Attention presentation (P10); recovery daemon/composition surface (P12).
-- Environment/git (P11); new failure taxonomies; settle-rule changes; X1–X11.
+- Environment/git (P11); new failure taxonomies; X1–X11. The original
+  “no settle-rule changes” boundary remains except for the explicitly governed
+  DID v1.20 AgentLoopStep successor in `07`; DID v1.21 ALS-I1 now authorizes
+  its implementation.
 
 ## Implementation baseline highlights (from scope extraction)
 
@@ -70,3 +102,37 @@ Review round 1 (independent): 6 Blocking (1 HIGH / 1 MED-HIGH / 2 MED / 2 LOW) �
 FROZEN — P9 phase-scoped contracts; review Blocking = 0 (P9 FORMALLY CLOSED).
 freezes; then planning/phases/P9.md, then implementation authorization.
 ```
+
+The v1.20 `07` successor is FROZEN as design and implementation is AUTHORIZED
+by DID v1.21 ALS-I1; it does not reopen the historical P9 completion record.
+
+The DID v1.22 SCRC successor adds recovery contracts for Inbox promotion,
+callRef-paired ToolResult, checkpoint/epoch atomicity, bounded overflow recovery
+and native-binding fallback in `04`/`07`. It is design-frozen but implementation
+is not authorized and does not reopen historical P9 completion.
+
+## Accepted Native OS Sandbox recovery owner amendment
+
+P9 `07` owns rehydration of the exact P1 `SandboxPolicyDecision` and its
+provider binding on restart, plus the durable pre-spawn
+`SandboxProviderUnavailable` fact/event that P10 projects. Recovery never
+reconstructs a decision from current config, Worktree or model text. The
+accepted sandbox fact does not reopen P9/AH completion or authorize runtime
+implementation.
+
+## Accepted V5 fact-storage/rebuild amendment
+
+P9 `07` owns the immutable fact relation, bounded opaque reason decoder,
+canonical identity, lease-fenced fact→P10 queue→wake-event transaction,
+exact retry/conflict semantics, and `listSandboxProviderUnavailableFacts`
+snapshot. Event is only wake/audit; P9 fact is source of truth and is
+independent of `domain_events` retention. No runtime implementation is
+authorized by this storage design.
+
+## Accepted Native OS Sandbox RecoveryBinding Attention amendment (V21)
+
+P9 `07` classifies invalid/missing existing RecoveryBindingV1 evidence
+read-only from P4 invocation/binding rows as internal RecoveryBlocked. It
+does not persist a replay fact/event/marker or call P4/Provider/lease/effect;
+P10 derives the non-persisted `SandboxRecoveryBindingFailure` Attention.
+Actual `SandboxProviderUnavailableFactV1` persistence remains unchanged.

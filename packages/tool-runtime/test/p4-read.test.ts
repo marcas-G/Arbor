@@ -1,6 +1,6 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { ToolExecutionContext, ToolIntent } from "@arbor/ports";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
@@ -12,19 +12,33 @@ writeFileSync(join(root, "a.txt"), "hello world");
 const intent = (argumentsJson: string): ToolIntent => ({
   callRef: "c",
   toolName: "read",
-  toolVersion: "1",
+  toolVersion: "2",
   argumentsJson,
   invocationId: "tin_x" as never,
   approvalId: null,
 });
 const context = {} as ToolExecutionContext;
-const sandbox = { handleId: "s", rootPath: root, writableRegions: [] };
+const sandbox = {
+  handleId: "s",
+  rootPath: root,
+  mounts: [
+    {
+      ref: "workspace",
+      rootPath: root,
+      region: { resourceSpaceId: "filesystem", normalizedRegion: {} },
+      access: "ReadOnly" as const,
+    },
+  ],
+  writableRegions: [],
+};
 
 describe("P4 read tool", () => {
   it("reads a bounded slice within the sandbox", async () => {
     const result = await Effect.runPromise(
       readExecutor.execute({
-        intent: intent('{"path":{"path":"a.txt"},"limit":5}'),
+        intent: intent(
+          '{"target":{"mount":"workspace","path":"a.txt"},"limit":5}',
+        ),
         definition: {} as never,
         context,
         sandbox,
@@ -36,17 +50,62 @@ describe("P4 read tool", () => {
   });
 
   it("rejects a path escaping the sandbox root", async () => {
-    const exit = await Effect.runPromise(
-      Effect.exit(
-        readExecutor.execute({
-          intent: intent('{"path":{"path":"../../etc/passwd"}}'),
-          definition: {} as never,
-          context,
-          sandbox,
-          regions: [],
-        }),
-      ),
+    const result = await Effect.runPromise(
+      readExecutor.execute({
+        intent: intent(
+          '{"target":{"mount":"workspace","path":"../../etc/passwd"}}',
+        ),
+        definition: {} as never,
+        context,
+        sandbox,
+        regions: [],
+      }),
     );
-    expect(exit._tag).toBe("Failure");
+    expect(result.settlement._tag).toBe("ExpectedFailure");
+  });
+
+  it("rejects an adjacent directory that shares the root string prefix", async () => {
+    const sibling = `${root}-escape`;
+    mkdirSync(sibling, { recursive: true });
+    writeFileSync(join(sibling, "secret.txt"), "secret");
+    const result = await Effect.runPromise(
+      readExecutor.execute({
+        intent: intent(
+          JSON.stringify({
+            target: {
+              mount: "workspace",
+              path: `../${basename(sibling)}/secret.txt`,
+            },
+          }),
+        ),
+        definition: {} as never,
+        context,
+        sandbox,
+        regions: [],
+      }),
+    );
+    expect(result.settlement._tag).toBe("ExpectedFailure");
+  });
+
+  it("rejects a sandbox symlink or junction that resolves outside", async () => {
+    const outside = mkdtempSync(join(tmpdir(), "p4-read-outside-"));
+    writeFileSync(join(outside, "secret.txt"), "secret");
+    symlinkSync(
+      outside,
+      join(root, "outside-link"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    const result = await Effect.runPromise(
+      readExecutor.execute({
+        intent: intent(
+          '{"target":{"mount":"workspace","path":"outside-link/secret.txt"}}',
+        ),
+        definition: {} as never,
+        context,
+        sandbox,
+        regions: [],
+      }),
+    );
+    expect(result.settlement._tag).toBe("ExpectedFailure");
   });
 });

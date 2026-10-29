@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import {
   SANDBOX_ENV_ALLOWLIST as localAllowlist,
@@ -10,6 +11,7 @@ import {
   SANDBOX_ENV_ALLOWLIST as worktreeAllowlist,
   sandboxEnvironment as worktreeProjection,
 } from "../adapters/sandbox-worktree/src/index.js";
+import { makeProductionWindowsSandboxProcessPort } from "../apps/single-workspace/src/composition.js";
 import {
   assessStorage,
   ENVELOPE_DIMENSIONS,
@@ -158,7 +160,7 @@ describe("P12-013 §2 Information Trust Plane at the context boundary", () => {
         }
         const source = readFileSync(path, "utf8");
         if (fieldShape.every((token) => source.includes(token))) {
-          offenders.push(path.slice(repoRoot.length + 1));
+          offenders.push(path.slice(repoRoot.length + 1).replaceAll("\\", "/"));
         }
       }
     };
@@ -185,7 +187,7 @@ describe("P12-013 §2 Information Trust Plane at the context boundary", () => {
 // ---------------------------------------------------------------------------
 
 describe("P12-013 §3 sandbox trajectory + env allow-list", () => {
-  it("every sandbox adapter projects the shared env allow-list (no new isolation semantics)", () => {
+  it("keeps the exact accepted adapter set, shared env projection, and Windows fail-closed production status", async () => {
     expect(localAllowlist).toEqual(SANDBOX_ENV_ALLOWLIST);
     expect(worktreeAllowlist).toEqual(SANDBOX_ENV_ALLOWLIST);
     const sample: NodeJS.ProcessEnv = {
@@ -198,15 +200,50 @@ describe("P12-013 §3 sandbox trajectory + env allow-list", () => {
     const sandboxAdapters = readdirSync(join(repoRoot, "adapters"))
       .filter((entry) => entry.startsWith("sandbox-"))
       .sort();
-    expect(sandboxAdapters).toEqual(["sandbox-local", "sandbox-worktree"]);
+    expect(sandboxAdapters).toEqual([
+      "sandbox-local",
+      "sandbox-native-posix",
+      "sandbox-windows",
+      "sandbox-worktree",
+    ]);
 
-    for (const adapter of sandboxAdapters) {
+    for (const adapter of sandboxAdapters.filter(
+      (entry) => entry !== "sandbox-windows",
+    )) {
       const source = readRepoFile(`adapters/${adapter}/src/index.ts`);
       expect(source, adapter).toContain("SANDBOX_ENV_ALLOWLIST");
       expect(source, adapter).toContain("sandboxEnvironment");
       // The allow-list is inherited from @arbor/ports, never re-declared.
       expect(source, adapter).not.toContain('"HOME"');
     }
+
+    const windowsPackage = JSON.parse(
+      readRepoFile("adapters/sandbox-windows/package.json"),
+    ) as { readonly dependencies?: Readonly<Record<string, string>> };
+    expect(windowsPackage.dependencies).toEqual({
+      "@arbor/domain": "workspace:*",
+      "@arbor/ports": "workspace:*",
+    });
+    const windowsSource = readRepoFile("adapters/sandbox-windows/src/index.ts");
+    expect(windowsSource).toContain('status: "Experimental"');
+    expect(windowsSource).not.toContain('status: "Supported"');
+    expect(windowsSource).toContain('return "ProviderNotRegistered"');
+    expect(windowsSource).not.toMatch(/node:child_process|\bspawn\s*\(/u);
+
+    const productionCapabilities = await Effect.runPromise(
+      makeProductionWindowsSandboxProcessPort(undefined).capabilities(),
+    );
+    expect(productionCapabilities).toHaveLength(3);
+    expect(
+      productionCapabilities.every(
+        (capability) => capability.status === "Experimental",
+      ),
+    ).toBe(true);
+    expect(
+      productionCapabilities.some(
+        (capability) => capability.status === "Supported",
+      ),
+    ).toBe(false);
   });
 
   it("keeps a sentinel ambient secret unreachable: spawned env is a subset of the allow-list", () => {

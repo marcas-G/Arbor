@@ -38,6 +38,9 @@ secret-env  (env-var backed, default)   |   secret-file (restricted path)
 
 - Adapter selection is Composition-Root config; adapters live under `adapters/*`.
 - Provider/Tool Runtime resolve at the execution boundary; Agent never sees raw secret.
+- An inline single-secret adapter is bound to exactly one sentinel `SecretRef`.
+  Resolving any other ref returns `SecretNotFound`; it must never behave as a
+  wildcard credential source.
 - **Every sandbox adapter MUST project an env allow-list** so `secret-env` material cannot
   leak into the sandbox process environment (see `adapters/sandbox-local`'s existing
   allow-list); cross-referenced in `13` §3.
@@ -78,6 +81,7 @@ Violation = invariant breach (CI-2).
 
 ```text
 resolve(missing) → SecretNotFound (no silent fallback)
+inline resolve(non-sentinel) → SecretNotFound
 driver no longer hardcodes secretRef:"secret"
 
 sentinel no-leak test (E-20), end-to-end:

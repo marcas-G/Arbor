@@ -46,7 +46,7 @@ Vitest + RTL + user-event + jsdom
 | J1 | "现在整体怎么样？有什么要我处理？" | **概览 Overview**（落地页） | tree(浅) + attention + usage(project) + root workspace-detail |
 | J2 | "哪里卡住了/出事了？" | **关注事项 Attention**（独立页+全局嵌入，read-only） | attention |
 | J3 | "这个工作区在干嘛？进展如何？" | **Workspace**（master-detail） | workspace-detail / current-work / transcript / inbox-view |
-| J4 | "这件工作到什么阶段了？验收了吗？" | **Work Detail** | workspace-detail(currentWork/pendingWorks) + verification(workId) |
+| J4 | "这件工作到什么阶段了？验收了吗？" | **Work Detail** | ~~workspace-detail(currentWork/pendingWorks) + verification(workId)~~ → P10 `work-detail`（FT-DG-02 accepted landing；旧来源约束 superseded） |
 | J5 | "轮到我决策/干预了" | **待处理 Governance Queue** + 上下文命令 | inbox-view（各工作区聚合）+ 表单 |
 | J6 | "花了多少？" | **Usage** | usage(groupBy) |
 
@@ -158,7 +158,7 @@ URL: `/p/:projectId/workspace/:workspaceId/work/:workId`。从 Workspace 概要/
 - 生命周期头部：objective、status、activeExecution。
 - **验证与验收区**：verification(workId) 全量（criteriaResults/verdict 徽章/evidenceRefs/acceptance 块）。
 - **治理动作**：`AcceptWorkOutcome`（当验证通过且待验收时主呈现；acp_ 预分配）、`SteerWork`（带 exact workId/revision 预填）。
-- 数据组合：父 workspace-detail 的 work 引用 + verification 视图；不发明 work 级新视图。
+- 数据组合（旧约束，已由 FT-DG-02 accepted landing superseded）：~~父 workspace-detail 的 work 引用 + verification 视图；不发明 work 级新视图。~~ WorkPage 使用 P10 `work-detail` 视图；Verification view 继续提供证据明细。
 
 ### 2.6 Attention（关注事项）——read-only
 

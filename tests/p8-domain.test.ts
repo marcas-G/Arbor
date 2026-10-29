@@ -100,9 +100,21 @@ describe("P8-001 Orphaned conclusion (G5)", () => {
       targetWorkRevision: 0 as never,
       missionSnapshot: mission([criterion("c1")]),
     });
-    const bad = concludeVerification(open, "Pass", "Orphaned");
+    const bad = concludeVerification(
+      open,
+      "Pass",
+      "summary:test",
+      "Orphaned",
+      [],
+    );
     expect(bad.ok).toBe(false);
-    const good = concludeVerification(open, "Unknown", "Orphaned");
+    const good = concludeVerification(
+      open,
+      "Unknown",
+      "summary:test",
+      "Orphaned",
+      [],
+    );
     expect(good.ok).toBe(true);
     if (good.ok) {
       expect(
@@ -148,7 +160,11 @@ describe("P8-001 rejection enums + event payloads", () => {
       [
         "_tag",
         "conclusionReason",
+        "criteriaResults",
         "evidenceRefs",
+        "missionSnapshot",
+        "snapshotStatus",
+        "summaryRef",
         "targetWorkRevision",
         "verificationId",
         "verdict",

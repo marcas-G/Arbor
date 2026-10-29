@@ -2,8 +2,10 @@ import type {
   PermissionGrant,
   PermissionGrantId,
   ProjectId,
+  SandboxPolicyGrantIssuerProvenanceV1,
 } from "@arbor/domain";
-import { Context, type Effect } from "effect";
+import { Context, type Effect, type Option } from "effect";
+import type { RepositoryFailure } from "./errors.js";
 import type { TransactionScope } from "./session.js";
 
 /**
@@ -23,10 +25,7 @@ export type PermissionGrantRepositoryError =
       readonly _tag: "PermissionGrantNotFound";
       readonly permissionGrantId: PermissionGrantId;
     }
-  | {
-      readonly _tag: "PermissionGrantRepositoryFailure";
-      readonly cause: unknown;
-    };
+  | RepositoryFailure<"PermissionGrantRepository">;
 
 export interface PermissionGrantRepositoryService {
   /** Active grants only (`state = 'Active'`); a Revoked grant is never loaded. */
@@ -37,6 +36,29 @@ export interface PermissionGrantRepositoryService {
     PermissionGrantRepositoryError,
     TransactionScope
   >;
+  /** Exact lookup used by the AssignWork command transaction to revalidate
+   * the same trusted Grant basis returned by the ControlAction authorizer. */
+  readonly findById: (
+    permissionGrantId: PermissionGrantId,
+  ) => Effect.Effect<
+    Option.Option<PermissionGrant>,
+    PermissionGrantRepositoryError,
+    TransactionScope
+  >;
+  /** Exact immutable sandbox-only CAPA provenance lookup. Resolver composition
+   * reads it; the pure resolver never performs repository I/O. */
+  readonly findSandboxPolicyGrantIssuerProvenanceByGrantId: (
+    permissionGrantId: PermissionGrantId,
+  ) => Effect.Effect<
+    Option.Option<SandboxPolicyGrantIssuerProvenanceV1>,
+    PermissionGrantRepositoryError,
+    TransactionScope
+  >;
+  /** Write-once provenance. Callable only by the exact authenticated
+   * GrantPermission command handler inside CommandGateway's transaction. */
+  readonly insertSandboxPolicyGrantIssuerProvenance: (
+    provenance: SandboxPolicyGrantIssuerProvenanceV1,
+  ) => Effect.Effect<void, PermissionGrantRepositoryError, TransactionScope>;
   readonly put: (
     grant: PermissionGrant,
     projectId: ProjectId,

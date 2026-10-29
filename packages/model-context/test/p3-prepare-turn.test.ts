@@ -19,8 +19,10 @@ import {
   contextFragment,
   hashInstructionContent,
   type InstructionFragment,
+  latestSessionInputIndex,
   ModelContext,
   ModelContextLive,
+  projectCompressibleHistory,
   WORK_EXECUTION_PROGRAM,
 } from "../src/index.js";
 
@@ -123,6 +125,15 @@ const input = (overrides: Record<string, unknown> = {}) => ({
   },
   maxOutputTokens: 128,
   bodySkillIds: [],
+  turnProfile: {
+    purpose: "WorkspaceWork" as const,
+    profileVersion: "turn-profile-v1" as const,
+    outputContractRef: "tool-invocation-v1",
+    executableTools: [],
+    controlTools: [],
+    contextPolicyRef: "workspace-work-context-v1",
+    fingerprint: "tpf_test",
+  },
   ...overrides,
 });
 
@@ -183,5 +194,228 @@ describe("P3 prepareTurn", () => {
     );
     expect(exit._tag).toBe("Failure");
     void Option;
+  });
+
+  it("counts provider messages in the context window", async () => {
+    const exit = await Effect.runPromise(
+      Effect.exit(
+        Effect.provide(
+          Effect.gen(function* () {
+            const modelContext = yield* ModelContext;
+            return yield* modelContext.prepareTurn(
+              input({
+                messages: [{ role: "tool", text: "x".repeat(4000) }],
+              }) as never,
+            );
+          }),
+          app,
+        ) as Effect.Effect<unknown, unknown, never>,
+      ),
+    );
+    expect(exit._tag).toBe("Failure");
+  });
+
+  it("routes a compressible input item through context planning exactly once", async () => {
+    const item = {
+      _tag: "Message" as const,
+      role: "user" as const,
+      text: "history ".repeat(500),
+    };
+    const projectedHistory = projectCompressibleHistory({
+      inputItems: [item],
+      sourceRefs: ["session:InboxEntry:old"],
+      compressibleIndexes: [0],
+    });
+    const result = (await prepare(
+      input({
+        inputItems: [item],
+        ...projectedHistory,
+      }),
+    )) as { _tag: string; reason?: string };
+
+    expect(result).toEqual({
+      _tag: "NeedsCompaction",
+      reason: "BudgetPressure",
+    });
+    expect(projectedHistory.contextFragments).toMatchObject([
+      {
+        ref: "history:session:InboxEntry:old",
+        layer: "C3",
+        retention: "Compressible",
+        provenance: {
+          provenanceKind: "AuthenticatedHuman",
+          instructionCapability: "DataOnly",
+        },
+      },
+    ]);
+  });
+
+  it("keeps a post-checkpoint tail over 64 rows for explicit budget compaction", async () => {
+    const inputItems = [
+      {
+        _tag: "CompactionCheckpoint" as const,
+        implementation: "Summary" as const,
+        summaryText: "continuation checkpoint",
+        fromEpoch: parse(ContextEpochNumber)(0),
+        toEpoch: parse(ContextEpochNumber)(1),
+        retainedFrontierRef: "frontier:test:epoch-0",
+      },
+      ...Array.from({ length: 71 }, (_, index) => ({
+        _tag: "Message" as const,
+        role: "user" as const,
+        text: `post-checkpoint item ${index} ${"durable detail ".repeat(20)}`,
+      })),
+    ];
+    const projectedHistory = projectCompressibleHistory({
+      inputItems,
+      sourceRefs: inputItems.map((_, index) => `session:typed:${index}`),
+      compressibleIndexes: Array.from({ length: 71 }, (_, index) => index + 1),
+    });
+
+    expect(projectedHistory.compressibleInputItemIndexes).toEqual(
+      Array.from({ length: 71 }, (_, index) => index + 1),
+    );
+    const result = (await prepare(
+      input({
+        inputItems,
+        ...projectedHistory,
+      }),
+    )) as { _tag: string; reason?: string };
+
+    expect(result).toEqual({
+      _tag: "NeedsCompaction",
+      reason: "BudgetPressure",
+    });
+  });
+
+  it("charges fitting history to either fixed input or its fragment, not both", async () => {
+    const item = {
+      _tag: "Message" as const,
+      role: "user" as const,
+      text: "history ".repeat(260),
+    };
+    const projectedHistory = projectCompressibleHistory({
+      inputItems: [item],
+      sourceRefs: ["session:InboxEntry:older"],
+      compressibleIndexes: [0],
+    });
+    const result = (await prepare(
+      input({
+        inputItems: [item],
+        ...projectedHistory,
+      }),
+    )) as { _tag: string };
+
+    expect(result._tag).toBe("Ready");
+  });
+
+  it("keeps observation evidence data-only in C4 history fragments", () => {
+    const projected = projectCompressibleHistory({
+      inputItems: [
+        {
+          _tag: "ToolResult",
+          callRef: "call-1",
+          toolName: "read",
+          status: "Succeeded",
+          outputText: "observed value",
+          observationRef: "obs-1",
+          artifactRefs: [],
+          truncated: false,
+        },
+      ],
+      sourceRefs: ["session:ToolResult:obs-1"],
+      compressibleIndexes: [0],
+    });
+
+    expect(projected.contextFragments).toMatchObject([
+      {
+        ref: "history:session:ToolResult:obs-1",
+        layer: "C4",
+        retention: "Compressible",
+        provenance: {
+          provenanceKind: "ToolObservation",
+          instructionCapability: "DataOnly",
+          epistemicStatus: "Unverified",
+        },
+      },
+    ]);
+  });
+
+  it("retains the latest attachment as current Session input", () => {
+    expect(
+      latestSessionInputIndex([
+        { _tag: "Message", role: "user", text: "older input" },
+        {
+          _tag: "AttachmentRef",
+          ref: "attachment:current",
+          mediaType: "text/plain",
+          trust: "DataOnly",
+        },
+      ]),
+    ).toBe(1);
+  });
+
+  it("keeps current input in the fixed budget when older history is compressible", async () => {
+    const current = {
+      _tag: "Message" as const,
+      role: "user" as const,
+      text: "current",
+    };
+    const history = {
+      _tag: "Message" as const,
+      role: "user" as const,
+      text: "history ".repeat(500),
+    };
+    const estimatedTokens = 4 + Math.ceil(JSON.stringify(history).length / 4);
+    const result = (await prepare(
+      input({
+        inputItems: [history, current],
+        compressibleInputItemIndexes: [0],
+        contextFragments: [
+          contextFragment({
+            ref: "conversation-history:older-turns",
+            layer: "C3",
+            retention: "Compressible",
+            cacheClass: "TurnDynamic",
+            tokens: estimatedTokens,
+            provenance: {
+              provenanceKind: "AuthenticatedHuman",
+              instructionCapability: "DataOnly",
+              epistemicStatus: "Established",
+            },
+          }),
+        ],
+      }),
+    )) as { _tag: string; reason?: string };
+
+    expect(result).toEqual({
+      _tag: "NeedsCompaction",
+      reason: "BudgetPressure",
+    });
+  });
+
+  it("keeps Conversation history fixed until its cross-response checkpoint owner is governed", async () => {
+    const exit = await Effect.runPromise(
+      Effect.exit(
+        Effect.provide(
+          Effect.gen(function* () {
+            const modelContext = yield* ModelContext;
+            return yield* modelContext.prepareTurn(
+              input({
+                conversationMessages: [
+                  { role: "user", text: "older conversation ".repeat(500) },
+                  { role: "assistant", text: "prior response" },
+                  { role: "user", text: "current input" },
+                ],
+                contextFragments: [],
+              }) as never,
+            );
+          }),
+          app,
+        ) as Effect.Effect<unknown, unknown, never>,
+      ),
+    );
+
+    expect(exit._tag).toBe("Failure");
   });
 });

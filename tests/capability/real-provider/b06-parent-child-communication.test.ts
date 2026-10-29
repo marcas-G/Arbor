@@ -11,6 +11,7 @@ import { runAndCapture } from "../support/capture.js";
 import {
   makePublicProject,
   newCapabilityId,
+  publicProjectPayload,
   withPublicConversationApp,
 } from "../support/public-chat.js";
 import { driveWorkExecution, submitWork } from "../support/work-execution.js";
@@ -40,9 +41,9 @@ describe("B06 L3 — parent/child communication through the adopted route", () =
           mkdirSync(directory, { recursive: true });
           temporaryDirectories.push(directory);
           const objective =
-            "你的第一个动作必须是调用 arbor_send_message，参数 JSON：" +
+            "你的第一个动作必须是调用 send_message，参数 JSON：" +
             `{"kind": "Report", "body": "${marker} 阶段性汇报完成"}。` +
-            "禁止调用 list、read、shell、patch。第二个动作调用 arbor_wait（reason done，waitSpec Any + Manual）。";
+            "禁止调用 list、read、shell、patch。第二个动作调用 wait（reason done，waitSpec Any + Manual）。";
           let settlement: unknown;
           let messages: ReadonlyArray<messageRow> = [];
           let parentInbox: ReadonlyArray<inboxRow> = [];
@@ -69,7 +70,7 @@ describe("B06 L3 — parent/child communication through the adopted route", () =
                 projectId: project.projectId,
                 actor: "user:capability-test",
                 issuedAt: new Date().toISOString(),
-                payload: project,
+                payload: publicProjectPayload(project),
               });
               if (
                 created.status !== 200 ||
@@ -105,10 +106,7 @@ describe("B06 L3 — parent/child communication through the adopted route", () =
                   responsibilityRevision: 0,
                   resourceBoundary: {
                     basisResponsibilityRevision: 0,
-                    addresses: [
-                      { _tag: "FileTree", path: process.cwd() },
-                      { _tag: "GitWorktree", path: process.cwd() },
-                    ],
+                    addresses: [],
                   },
                   resourceBoundaryRevision: 0,
                   agentBinding: {

@@ -1,17 +1,23 @@
+import { createHash } from "node:crypto";
 import {
   Actor,
   CommandId,
-  type CommandReceipt,
   type CommandSubmissionContext,
   type DomainError,
   type DomainResult,
   ExecutionId,
+  encodeEffectivePolicySummaryV1,
+  encodeSandboxPolicyDecisionCommittedInternalV1,
   err,
   LeaseGeneration,
+  MessageId,
   ok,
+  PermissionGrantId,
   Principal,
   ProjectId,
   parse,
+  VerificationId,
+  WorkspaceId,
 } from "@arbor/domain";
 import {
   Clock,
@@ -23,6 +29,10 @@ import {
   IdGenerator,
   type IdGeneratorService,
   type PendingDomainEvent,
+  ProjectRepository,
+  type ProjectRepositoryService,
+  type ResourceOwnershipRepositoryService,
+  type StoredCommandResolution,
   TransactionPort,
   TransactionScope,
 } from "@arbor/ports";
@@ -37,7 +47,10 @@ import {
   FenceStopCheck,
   FenceStopCheckInertLive,
   type FenceStopOutcome,
+  FINGERPRINT_ALGORITHM_VERSION,
   type GatewayEnvelope,
+  makeUpdateResourceBoundaryHandler,
+  projectAdmissionOf,
   semanticRequestFingerprint,
   type VerifiedCommandAuthority,
 } from "../src/index.js";
@@ -49,6 +62,20 @@ const otherCommandId = parse(CommandId)(
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789ab");
 const actor = parse(Actor)("user:test");
 const principal = parse(Principal)("user:test");
+const createProjectResult = {
+  projectId,
+  rootWorkspaceId: "ws_018f2b3c-4d5e-7abc-8def-0123456789ac",
+  primarySessionId: "ses_018f2b3c-4d5e-7abc-8def-0123456789ad",
+};
+const submitHumanMessageResult = {
+  messageId: "msg_018f2b3c-4d5e-7abc-8def-0123456789ae",
+  state: "Pending",
+};
+const submitHumanMessagePayload = {
+  messageId: "msg_018f2b3c-4d5e-7abc-8def-0123456789ae",
+  targetWorkspaceId: "ws_018f2b3c-4d5e-7abc-8def-0123456789ac",
+  bodyRef: "body-ref",
+};
 const externalContext: CommandSubmissionContext = {
   _tag: "External",
   principal,
@@ -60,8 +87,11 @@ const executionContext: CommandSubmissionContext = {
   fencingGeneration: parse(LeaseGeneration)(1),
 };
 
-const envelope = (payload: unknown): GatewayEnvelope<unknown> => ({
-  commandType: "TestCommand",
+const envelope = (
+  payload: unknown,
+  commandType = "CreateProject",
+): GatewayEnvelope<unknown> => ({
+  commandType,
   commandId,
   projectId,
   actor,
@@ -69,12 +99,15 @@ const envelope = (payload: unknown): GatewayEnvelope<unknown> => ({
   payload,
 });
 
-const fpFor = (payload: unknown) =>
+const schemaVersionFor = (commandType: string): string =>
+  commandType === "CreateProject" ? "2" : "1";
+
+const fpFor = (payload: unknown, commandType = "CreateProject") =>
   semanticRequestFingerprint({
-    commandType: "TestCommand",
+    commandType,
     projectId,
     actor,
-    schemaVersion: "1",
+    schemaVersion: schemaVersionFor(commandType),
     payload,
   });
 
@@ -86,22 +119,45 @@ type CreateProjectAuthority = Extract<
 const authorityFor = (
   payload: unknown,
   overrides: Partial<CreateProjectAuthority> = {},
-): VerifiedCommandAuthority => ({
-  _tag: "CreateProjectAuthority",
-  principal,
-  commandId,
-  semanticRequestFingerprint: fpFor(payload),
-  projectId,
-  ...overrides,
-});
+  commandType = "CreateProject",
+): VerifiedCommandAuthority => {
+  const semanticRequestFingerprint = fpFor(payload, commandType);
+  if (commandType === "SubmitHumanMessage") {
+    const record = payload as Record<string, unknown>;
+    return {
+      _tag: "SubmitHumanMessageAuthority",
+      principal,
+      commandId,
+      semanticRequestFingerprint,
+      projectId,
+      targetWorkspaceId:
+        typeof record.targetWorkspaceId === "string"
+          ? parse(WorkspaceId)(record.targetWorkspaceId)
+          : parse(WorkspaceId)("ws_018f2b3c-4d5e-7abc-8def-0123456789ac"),
+      messageId:
+        typeof record.messageId === "string"
+          ? record.messageId
+          : parse(MessageId)("msg_018f2b3c-4d5e-7abc-8def-0123456789ae"),
+    };
+  }
+  return {
+    _tag: "CreateProjectAuthority",
+    principal,
+    commandId,
+    semanticRequestFingerprint,
+    projectId,
+    ...overrides,
+  };
+};
 
 interface FakeState {
-  readonly rows: Map<string, CommandReceipt<unknown, unknown>>;
+  readonly rows: Map<string, StoredCommandResolution>;
   readonly attempts: Array<{
     readonly commandId: string;
     readonly outcome: string;
   }>;
   readonly appended: PendingDomainEvent[];
+  readonly order: string[];
 }
 
 const TransactionPortLive: Layer.Layer<TransactionPort> = Layer.succeed(
@@ -116,19 +172,20 @@ const buildApp = (
   handlers: ReadonlyArray<CommandHandler<unknown, unknown>>,
   fence: Layer.Layer<FenceStopCheck> = FenceStopCheckInertLive,
   transaction: Layer.Layer<TransactionPort> = TransactionPortLive,
+  projectLifecycle: "Open" | "Closed" = "Open",
 ): { readonly app: Layer.Layer<CommandGateway>; readonly state: FakeState } => {
   const state: FakeState = {
     rows: new Map(),
     attempts: [],
     appended: [],
+    order: [],
   };
   const store: CommandStoreService = {
     findResolution: (id) =>
-      Effect.sync(() =>
-        state.rows.has(id)
-          ? Option.some(state.rows.get(id) as CommandReceipt<unknown, unknown>)
-          : Option.none(),
-      ),
+      Effect.sync(() => {
+        const stored = state.rows.get(id);
+        return stored === undefined ? Option.none() : Option.some(stored);
+      }),
     insertCommitted: (
       id,
       project,
@@ -138,13 +195,16 @@ const buildApp = (
       resultJson,
     ) =>
       Effect.sync(() => {
+        state.order.push("receipt");
         state.rows.set(id, {
           commandId: id,
           projectId: project,
           semanticRequestFingerprint: fingerprint,
           schemaVersion,
           fingerprintAlgorithmVersion: algorithmVersion,
-          resolution: { _tag: "Committed", result: JSON.parse(resultJson) },
+          resolution: "Committed",
+          resultJson,
+          terminalErrorJson: null,
           createdAt: "t",
           settledAt: "t",
         });
@@ -164,10 +224,9 @@ const buildApp = (
           semanticRequestFingerprint: fingerprint,
           schemaVersion,
           fingerprintAlgorithmVersion: algorithmVersion,
-          resolution: {
-            _tag: "TerminalRejected",
-            error: JSON.parse(terminalJson),
-          },
+          resolution: "TerminalRejected",
+          resultJson: null,
+          terminalErrorJson: terminalJson,
           createdAt: "t",
           settledAt: "t",
         });
@@ -187,9 +246,14 @@ const buildApp = (
   const journal: DomainEventJournalService = {
     append: (drafts) =>
       Effect.sync(() => {
+        state.order.push("event");
         state.appended.push(...drafts);
       }),
+    appendReturningIds: () => Effect.succeed([]),
     readAfter: () => Effect.succeed([]),
+    readAfterRaw: () => Effect.succeed([]),
+    decodeRaw: () =>
+      Effect.succeed({ _tag: "Poison", reason: "MalformedEnvelope" }),
     lastSequence: () => Effect.succeed(0),
   };
   let clockTick = 0;
@@ -206,6 +270,10 @@ const buildApp = (
     Layer.succeed(DomainEventJournal, journal),
     Layer.succeed(Clock, clock),
     Layer.succeed(IdGenerator, ids),
+    Layer.succeed(ProjectRepository, {
+      findById: () =>
+        Effect.succeed(Option.some({ lifecycle: projectLifecycle } as never)),
+    } as unknown as ProjectRepositoryService),
     CommandHandlerRegistryLive(handlers),
     fence,
   );
@@ -218,24 +286,39 @@ const buildApp = (
 
 const handler = (
   behaviour: (payload: unknown) => DomainResult<{
-    result: { readonly ok: boolean };
+    result: unknown;
     events: ReadonlyArray<PendingDomainEvent>;
   }>,
   onExecute?: () => void,
-  authority: CommandAuthorityRule<unknown> = {
-    tag: "CreateProjectAuthority",
+  authority?: CommandAuthorityRule<unknown>,
+  commandType = "CreateProject",
+): CommandHandler<unknown, unknown> => ({
+  commandType,
+  schemaVersion: schemaVersionFor(commandType),
+  authority: authority ?? {
+    tag:
+      commandType === "SubmitHumanMessage"
+        ? "SubmitHumanMessageAuthority"
+        : "CreateProjectAuthority",
     targetMatches: () => true,
   },
-): CommandHandler<unknown, { readonly ok: boolean }> => ({
-  commandType: "TestCommand",
-  schemaVersion: "1",
-  authority,
   stopAdmission: { _tag: "Unclassified" },
   execute: (env) =>
     Effect.sync(() => {
       onExecute?.();
       return behaviour(env.payload);
-    }),
+    }).pipe(
+      Effect.map((outcome) => {
+        if (!outcome.ok) return outcome;
+        if (commandType === "CreateProject") {
+          return ok({ ...outcome.value, result: createProjectResult });
+        }
+        if (commandType === "SubmitHumanMessage") {
+          return ok({ ...outcome.value, result: submitHumanMessageResult });
+        }
+        return outcome;
+      }),
+    ),
 });
 
 const fenceLive = (outcome: FenceStopOutcome): Layer.Layer<FenceStopCheck> =>
@@ -273,7 +356,358 @@ describe("semantic request fingerprint", () => {
   });
 });
 
+describe("typed internal command input validation", () => {
+  it.each<CommandSubmissionContext>([
+    { _tag: "System", principal, causationRef: "test" },
+    executionContext,
+    { _tag: "RecoveryController", principal, causationRef: "test" },
+  ])(
+    "rejects malformed internal payloads before Gateway effects (%s)",
+    async (context) => {
+      let transactionCalls = 0;
+      let fenceCalls = 0;
+      let handlerCalls = 0;
+      const transaction = Layer.succeed(TransactionPort, {
+        transact: (body) =>
+          Effect.suspend(() => {
+            transactionCalls++;
+            return Effect.provideService(body, TransactionScope, {
+              session: { id: "tx" },
+            });
+          }),
+      });
+      const app = buildApp(
+        [
+          handler(
+            () => ok({ result: { ok: true }, events: [] }),
+            () => handlerCalls++,
+            undefined,
+            "SubmitHumanMessage",
+          ),
+        ],
+        Layer.succeed(FenceStopCheck, {
+          check: () =>
+            Effect.sync(() => {
+              fenceCalls++;
+              return "Pass";
+            }),
+        }),
+        transaction,
+      );
+      const malformed = {
+        messageId: undefined,
+        targetWorkspaceId: "ws_018f1f62-7b3c-7abc-8def-0123456789ab",
+        bodyRef: "body-ref",
+      };
+
+      const result = await run(
+        Effect.match(
+          Effect.gen(function* () {
+            const gateway = yield* CommandGateway;
+            return yield* gateway.execute(
+              envelope(malformed, "SubmitHumanMessage"),
+              context,
+              authorityFor(malformed, {}, "SubmitHumanMessage"),
+            );
+          }),
+          {
+            onFailure: (error) => ({ _tag: "Left" as const, error }),
+            onSuccess: (value) => ({ _tag: "Right" as const, value }),
+          },
+        ),
+        app.app,
+      );
+
+      expect(result._tag).toBe("Left");
+      if (result._tag === "Left") {
+        expect(result.error).toMatchObject({
+          _tag: "InternalCommandContractDefect",
+          commandType: "SubmitHumanMessage",
+          issues: [{ path: ["messageId"], rule: "type" }],
+        });
+      }
+      expect(transactionCalls).toBe(0);
+      expect(fenceCalls).toBe(0);
+      expect(handlerCalls).toBe(0);
+      expect(app.state.rows.size).toBe(0);
+      expect(app.state.attempts).toEqual([]);
+      expect(app.state.appended).toEqual([]);
+    },
+  );
+
+  it("continues a valid typed internal payload through the Gateway", async () => {
+    let handlerCalls = 0;
+    const payload = {
+      messageId: "msg_018f1f62-7b3c-7abc-8def-0123456789ab",
+      targetWorkspaceId: "ws_018f1f62-7b3c-7abc-8def-0123456789ab",
+      bodyRef: "body-ref",
+    };
+    const app = buildApp([
+      handler(
+        () => ok({ result: { ok: true }, events: [] }),
+        () => handlerCalls++,
+        undefined,
+        "SubmitHumanMessage",
+      ),
+    ]);
+
+    const result = await run(
+      Effect.gen(function* () {
+        const gateway = yield* CommandGateway;
+        return yield* gateway.execute(
+          envelope(payload, "SubmitHumanMessage"),
+          { _tag: "System", principal, causationRef: "test" },
+          authorityFor(payload, {}, "SubmitHumanMessage"),
+        );
+      }),
+      app.app,
+    );
+
+    expect(result.resolution._tag).toBe("Committed");
+    expect(handlerCalls).toBe(1);
+  });
+});
+
 describe("command gateway", () => {
+  it("prepares only after an advisory miss and replays without recapturing inputs", async () => {
+    let prepareCalls = 0;
+    let executeCalls = 0;
+    const episodeBinding = {
+      _tag: "InboxEpisode" as const,
+      entryKey: "inbox:one",
+      inputKind: "HumanMessage",
+    };
+    const summary = {
+      version: 1 as const,
+      kind: "TrustedLocalUnconfinedV1" as const,
+      projectId,
+      workspaceId: "ws_018f2b3c-4d5e-7abc-8def-0123456789ac" as never,
+      executionId: executionContext.executionId,
+      episodeBinding,
+      workspaceRevision: 1,
+      resourceBoundaryRevision: 1,
+      resourceBoundaryDigest: "a".repeat(64),
+      sandboxEnvironmentBasisDigest: "b".repeat(64),
+      policyRevision: 1,
+      expiresAt: "2026-10-20T00:00:00.000Z",
+      trustedRuntimeIdentity: "TrustedLocal" as const,
+      trustedRuntimeVersion: "builtin-v1" as const,
+      profile: "FullAccess" as const,
+      networkBoundary: "Unconfined" as const,
+      sandboxHandleBindingDigest: "c".repeat(64),
+      mounts: [
+        {
+          mountId: "workspace",
+          targetRef: {
+            version: 1 as const,
+            kind: "RegionDigest" as const,
+            resourceSpace: "filesystem" as const,
+            regionIdentityDigest: "9".repeat(64),
+          },
+          targetIdentityDigest: "d".repeat(64),
+          access: "ReadOnly" as const,
+        },
+      ],
+      environmentAllowlist: ["PATH"],
+      limits: {
+        wallTimeMs: 1000,
+        stdoutBytes: 1000,
+        stderrBytes: 1000,
+        processCount: 1,
+        memoryBytes: 1024,
+        cpuTimeMs: 1000,
+      },
+      auditRefs: ["audit:one"],
+      authorityBundleRevision: 1,
+      authorityBundleDigest: "e".repeat(64),
+      operatorConfigRevision: 1,
+      operatorConfigDigest: "f".repeat(64),
+    };
+    const policyDigest = createHash("sha256")
+      .update(encodeEffectivePolicySummaryV1(summary))
+      .digest("hex");
+    const decisionResult = {
+      version: 1 as const,
+      commandId,
+      projectId,
+      workspaceId: summary.workspaceId,
+      executionId: executionContext.executionId,
+      episodeBinding,
+      policyRevision: 1,
+      policyDigest,
+      effectivePolicySnapshot: summary,
+    };
+    // Constructing canonical bytes here also asserts the test fixture follows
+    // the same closed internal DTO used by receipt replay.
+    encodeSandboxPolicyDecisionCommittedInternalV1(decisionResult);
+    const baseHandler = handler(
+      () => ok({ result: decisionResult, events: [] }),
+      () => {
+        executeCalls += 1;
+      },
+      undefined,
+      "DecideSandboxPolicy",
+    );
+    const policyHandler: CommandHandler<unknown, unknown> = {
+      ...baseHandler,
+      schemaVersion: "1",
+      prepare: () =>
+        Effect.sync(() => {
+          prepareCalls += 1;
+          return { prepared: true };
+        }),
+    };
+    const { app, state } = buildApp([policyHandler]);
+    const payload = { identity: "same" };
+    const command = envelope(payload, "DecideSandboxPolicy");
+    const authority: VerifiedCommandAuthority = {
+      _tag: "CreateProjectAuthority",
+      principal,
+      commandId,
+      projectId,
+      semanticRequestFingerprint: fpFor(payload, "DecideSandboxPolicy"),
+    };
+    const receipts = await run(
+      Effect.gen(function* () {
+        const gateway = yield* CommandGateway;
+        const first = yield* gateway.execute(
+          command,
+          externalContext,
+          authority,
+        );
+        const replay = yield* gateway.execute(
+          command,
+          externalContext,
+          authority,
+        );
+        return { first, replay };
+      }),
+      app,
+    );
+    expect(receipts.first.resolution._tag).toBe("Committed");
+    expect(receipts.replay.resolution).toEqual(receipts.first.resolution);
+    expect(prepareCalls).toBe(1);
+    expect(executeCalls).toBe(1);
+    expect(state.rows.get(commandId)?.resolution).toBe("Committed");
+  });
+
+  it("rechecks the receipt after transient preparation failure without inserting a command", async () => {
+    const baseHandler = handler(
+      () => ok({ result: { committed: true }, events: [] }),
+      undefined,
+      undefined,
+      "DecideSandboxPolicy",
+    );
+    const policyHandler: CommandHandler<unknown, unknown> = {
+      ...baseHandler,
+      schemaVersion: "1",
+      prepare: () =>
+        Effect.fail({
+          _tag: "TransactionOperationalFailure",
+          cause: "fixture preparation unavailable",
+        }),
+    };
+    const { app, state } = buildApp([policyHandler]);
+    const payload = { identity: "unprepared" };
+    const result = await run(
+      Effect.gen(function* () {
+        const gateway = yield* CommandGateway;
+        return yield* Effect.match(
+          gateway.execute(
+            envelope(payload, "DecideSandboxPolicy"),
+            externalContext,
+            {
+              _tag: "CreateProjectAuthority",
+              principal,
+              commandId,
+              projectId,
+              semanticRequestFingerprint: fpFor(payload, "DecideSandboxPolicy"),
+            },
+          ),
+          {
+            onFailure: (error) => ({ _tag: "Failure" as const, error }),
+            onSuccess: (receipt) => ({ _tag: "Receipt" as const, receipt }),
+          },
+        );
+      }),
+      app,
+    );
+    expect(result._tag).toBe("Failure");
+    expect(state.rows.has(commandId)).toBe(false);
+    expect(state.appended).toHaveLength(0);
+  });
+
+  it("inserts the GrantPermission receipt before its events in the same transaction", async () => {
+    const permissionGrantId = parse(PermissionGrantId)(
+      "pgr_018f2b3c-4d5e-7abc-8def-0123456789ab",
+    );
+    const payload = { permissionGrantId };
+    const events: PendingDomainEvent[] = [
+      {
+        projectId,
+        eventType: "PermissionChanged",
+        eventVersion: 1,
+        occurredAt: "t",
+        aggregateRef: permissionGrantId,
+        actor,
+        payload: {},
+      },
+      {
+        projectId,
+        eventType: "SandboxPolicyGrantIssued",
+        eventVersion: 1,
+        occurredAt: "t",
+        aggregateRef: permissionGrantId,
+        actor,
+        payload: {
+          permissionGrantId,
+          grantPermissionCommandId: commandId,
+          executionId: executionContext.executionId,
+          operatorConfigRevision: 1,
+          operatorConfigDigest: "a".repeat(64),
+        },
+      },
+    ];
+    const { app, state } = buildApp([
+      handler(
+        () => ok({ result: { permissionGrantId }, events }),
+        undefined,
+        {
+          tag: "GrantPermissionAuthority",
+          targetMatches: (authority, commandPayload) =>
+            authority._tag === "GrantPermissionAuthority" &&
+            authority.permissionGrantId ===
+              (commandPayload as typeof payload).permissionGrantId,
+        },
+        "GrantPermission",
+      ),
+    ]);
+    const receipt = await run(
+      Effect.gen(function* () {
+        const gateway = yield* CommandGateway;
+        return yield* gateway.execute(
+          envelope(payload, "GrantPermission"),
+          externalContext,
+          {
+            _tag: "GrantPermissionAuthority",
+            principal,
+            commandId,
+            projectId,
+            semanticRequestFingerprint: fpFor(payload, "GrantPermission"),
+            permissionGrantId,
+          },
+        );
+      }),
+      app,
+    );
+    expect(receipt.resolution._tag).toBe("Committed");
+    expect(state.order).toEqual(["receipt", "event"]);
+    expect(state.appended.map(({ eventType }) => eventType)).toEqual([
+      "PermissionChanged",
+      "SandboxPolicyGrantIssued",
+    ]);
+  });
+
   it("commits, appends events, and records a resolving attempt", async () => {
     const events: PendingDomainEvent[] = [
       {
@@ -333,6 +767,82 @@ describe("command gateway", () => {
     expect(executions).toBe(1);
   });
 
+  it("decodes a prior ConcludeVerification v1 receipt and validates it before replay", async () => {
+    let executeCalls = 0;
+    let replayChecks = 0;
+    const payload = {
+      verificationId: parse(VerificationId)(
+        "ver_018f2b3c-4d5e-7abc-8def-0123456789ab",
+      ),
+      verdict: "Pass",
+      criteriaResults: [],
+      summaryRef: "blob:summary",
+    };
+    const oldFingerprint = semanticRequestFingerprint({
+      commandType: "ConcludeVerification",
+      projectId,
+      actor,
+      schemaVersion: "1",
+      payload,
+    });
+    const replayHandler: CommandHandler<unknown, unknown> = {
+      commandType: "ConcludeVerification",
+      schemaVersion: "2",
+      priorReceiptSchemaVersions: ["1"],
+      authority: {
+        tag: "VerifierExecutionAuthority",
+        targetMatches: () => true,
+      },
+      stopAdmission: { _tag: "Unclassified" },
+      validateReceiptReplay: () =>
+        Effect.sync(() => {
+          replayChecks += 1;
+        }),
+      execute: () => {
+        executeCalls += 1;
+        return Effect.die(new Error("stored receipt should avoid execution"));
+      },
+    };
+    const { app, state } = buildApp([replayHandler]);
+    state.rows.set(commandId, {
+      commandId,
+      projectId,
+      semanticRequestFingerprint: oldFingerprint,
+      schemaVersion: "1",
+      fingerprintAlgorithmVersion: FINGERPRINT_ALGORITHM_VERSION,
+      resolution: "Committed",
+      resultJson: JSON.stringify({
+        verificationId: payload.verificationId,
+        state: "Concluded",
+        verdict: "Pass",
+        summaryRef: payload.summaryRef,
+        wakeSignals: [],
+        channel1Release: {
+          workId: "wrk_018f2b3c-4d5e-7abc-8def-0123456789ab",
+          targetWorkRevision: 0,
+        },
+      }),
+      terminalErrorJson: null,
+      createdAt: "t",
+      settledAt: "t",
+    });
+    const receipt = await run(
+      Effect.gen(function* () {
+        const gateway = yield* CommandGateway;
+        return yield* gateway.execute(
+          envelope(payload, "ConcludeVerification"),
+          externalContext,
+          {} as never,
+        );
+      }),
+      app,
+    );
+    expect(receipt.schemaVersion).toBe("1");
+    expect(receipt.resolution._tag).toBe("Committed");
+    expect(replayChecks).toBe(1);
+    expect(executeCalls).toBe(0);
+  });
+
   it("rejects an idempotency conflict without overwriting the row", async () => {
     const { app, state } = buildApp([
       handler(() => ok({ result: { ok: true }, events: [] })),
@@ -355,7 +865,99 @@ describe("command gateway", () => {
     if (receipt.resolution._tag === "TerminalRejected") {
       expect(receipt.resolution.error._tag).toBe("IdempotencyConflict");
     }
-    expect(state.rows.get(commandId)?.resolution._tag).toBe("Committed");
+    expect(state.rows.get(commandId)?.resolution).toBe("Committed");
+  });
+
+  it("compares a stored tuple before interpreting its raw result JSON", async () => {
+    let executions = 0;
+    const { app, state } = buildApp([
+      handler(() => {
+        executions += 1;
+        return ok({ result: { ok: true }, events: [] });
+      }),
+    ]);
+    const sentinel = "RAW-RECEIPT-MUST-NOT-BE-INTERPRETED";
+    const stored = {
+      commandId,
+      projectId,
+      semanticRequestFingerprint: fpFor({ x: 1 }),
+      schemaVersion: "2",
+      fingerprintAlgorithmVersion: 1,
+      resolution: "Committed" as const,
+      resultJson: `{"sentinel":"${sentinel}`,
+      terminalErrorJson: null,
+      createdAt: "t0",
+      settledAt: "t1",
+    } satisfies StoredCommandResolution;
+    state.rows.set(commandId, stored);
+
+    const receipt = await run(
+      Effect.gen(function* () {
+        const gw = yield* CommandGateway;
+        return yield* gw.execute(
+          envelope({ x: 2 }),
+          externalContext,
+          authorityFor({ x: 2 }),
+        );
+      }),
+      app,
+    );
+
+    expect(receipt.resolution._tag).toBe("TerminalRejected");
+    if (receipt.resolution._tag === "TerminalRejected") {
+      expect(receipt.resolution.error._tag).toBe("IdempotencyConflict");
+    }
+    expect(JSON.stringify(receipt)).not.toContain(sentinel);
+    expect(state.rows.get(commandId)).toEqual(stored);
+    expect(state.attempts).toEqual([]);
+    expect(state.appended).toEqual([]);
+    expect(executions).toBe(0);
+  });
+
+  it("fails an exact-tuple corrupt receipt closed without a new attempt or handler effect", async () => {
+    let executions = 0;
+    const payload = { x: 1 };
+    const { app, state } = buildApp([
+      handler(() => {
+        executions += 1;
+        return ok({ result: { ok: true }, events: [] });
+      }),
+    ]);
+    const stored = {
+      commandId,
+      projectId,
+      semanticRequestFingerprint: fpFor(payload),
+      schemaVersion: "2",
+      fingerprintAlgorithmVersion: 1,
+      resolution: "Committed" as const,
+      resultJson: JSON.stringify({ unexpected: "private-sentinel" }),
+      terminalErrorJson: null,
+      createdAt: "t0",
+      settledAt: "t1",
+    } satisfies StoredCommandResolution;
+    state.rows.set(commandId, stored);
+
+    const failure = await run(
+      Effect.gen(function* () {
+        const gateway = yield* CommandGateway;
+        return yield* gateway
+          .execute(envelope(payload), externalContext, authorityFor(payload))
+          .pipe(Effect.flip);
+      }),
+      app,
+    );
+
+    expect(failure).toMatchObject({
+      _tag: "PersistenceCorruption",
+      repository: "CommandStore",
+      operation: "decodeReceipt",
+      reason: "stored command receipt does not match its registered schema",
+    });
+    expect(JSON.stringify(failure)).not.toContain("private-sentinel");
+    expect(state.rows.get(commandId)).toEqual(stored);
+    expect(state.attempts).toEqual([]);
+    expect(state.appended).toEqual([]);
+    expect(executions).toBe(0);
   });
 
   it("persists a terminal rejection with no event", async () => {
@@ -386,15 +988,22 @@ describe("command gateway", () => {
   it("distinguishes FencingRejected from ExecutionStopping via the hook", async () => {
     for (const outcome of ["FencingRejected", "ExecutionStopping"] as const) {
       const { app, state } = buildApp(
-        [handler(() => ok({ result: { ok: true }, events: [] }))],
+        [
+          handler(
+            () => ok({ result: submitHumanMessageResult, events: [] }),
+            undefined,
+            undefined,
+            "SubmitHumanMessage",
+          ),
+        ],
         fenceLive(outcome),
       );
       const program = Effect.gen(function* () {
         const gw = yield* CommandGateway;
         return yield* gw.execute(
-          envelope({ x: 1 }),
+          envelope(submitHumanMessagePayload, "SubmitHumanMessage"),
           executionContext,
-          authorityFor({ x: 1 }),
+          authorityFor(submitHumanMessagePayload, {}, "SubmitHumanMessage"),
         );
       });
       const receipt = await run(program, app);
@@ -442,6 +1051,81 @@ describe("command gateway", () => {
       { commandId, outcome: "Retryable:TransactionOperationalFailure" },
     ]);
   });
+
+  it("preserves the original transaction failure when attempt tracing also fails", async () => {
+    const unavailable: Layer.Layer<TransactionPort> = Layer.succeed(
+      TransactionPort,
+      {
+        transact: () =>
+          Effect.fail({
+            _tag: "TransactionOperationalFailure",
+            cause: "database unavailable",
+          }),
+      },
+    );
+    const { app, state } = buildApp(
+      [handler(() => ok({ result: { ok: true }, events: [] }))],
+      FenceStopCheckInertLive,
+      unavailable,
+    );
+    const failure = await run(
+      Effect.gen(function* () {
+        const gateway = yield* CommandGateway;
+        return yield* gateway
+          .execute(envelope({ x: 1 }), externalContext, authorityFor({ x: 1 }))
+          .pipe(Effect.flip);
+      }),
+      app,
+    );
+
+    expect(failure).toEqual({
+      _tag: "TransactionOperationalFailure",
+      cause: "database unavailable",
+    });
+    expect(state.rows.size).toBe(0);
+    expect(state.attempts).toEqual([]);
+  });
+
+  it("propagates a normalized handler repository failure as a typed failure", async () => {
+    const repositoryFailure = {
+      _tag: "PersistenceUnavailable" as const,
+      repository: "DependencyRepository" as const,
+      operation: "test",
+      retryDisposition: "retryable" as const,
+      sourceTag: "InjectedFailure",
+      cause: "database unavailable",
+    };
+    const failingHandler: CommandHandler<unknown, unknown> = {
+      commandType: "CreateProject",
+      schemaVersion: "2",
+      authority: {
+        tag: "CreateProjectAuthority",
+        targetMatches: () => true,
+      },
+      stopAdmission: { _tag: "Unclassified" },
+      execute: () => Effect.fail(repositoryFailure),
+    };
+    const { app, state } = buildApp([failingHandler]);
+    const failure = await run(
+      Effect.gen(function* () {
+        const gateway = yield* CommandGateway;
+        return yield* gateway
+          .execute(envelope({ x: 1 }), externalContext, authorityFor({ x: 1 }))
+          .pipe(Effect.flip);
+      }),
+      app,
+    );
+
+    expect(failure).toEqual(repositoryFailure);
+    expect(state.rows.size).toBe(0);
+    expect(state.attempts).toEqual([
+      {
+        commandId,
+        outcome:
+          "Retryable:PersistenceUnavailable:DependencyRepository:InjectedFailure",
+      },
+    ]);
+  });
 });
 
 describe("command authority (P1-DG-11)", () => {
@@ -470,7 +1154,7 @@ describe("command authority (P1-DG-11)", () => {
     const receipt = await run(program, app);
     expect(receipt.resolution._tag).toBe("Committed");
     expect(executions).toBe(1);
-    expect(state.rows.get(commandId)?.resolution._tag).toBe("Committed");
+    expect(state.rows.get(commandId)?.resolution).toBe("Committed");
   });
 
   it("denies a wrong principal, commandId, fingerprint, or kind", async () => {
@@ -594,5 +1278,172 @@ describe("command authority (P1-DG-11)", () => {
     expect(first.resolution._tag).toBe("Committed");
     expect(replay.resolution._tag).toBe("Committed");
     expect(executions).toBe(1);
+  });
+
+  it("rejects an OpenRequired command before its handler on a Closed project", async () => {
+    let executed = false;
+    const { app } = buildApp(
+      [
+        handler(
+          () => ok({ result: submitHumanMessageResult, events: [] }),
+          () => {
+            executed = true;
+          },
+          undefined,
+          "SubmitHumanMessage",
+        ),
+      ],
+      FenceStopCheckInertLive,
+      TransactionPortLive,
+      "Closed",
+    );
+    const receipt = await run(
+      Effect.gen(function* () {
+        const gateway = yield* CommandGateway;
+        return yield* gateway.execute(
+          envelope(submitHumanMessagePayload, "SubmitHumanMessage"),
+          externalContext,
+          authorityFor(submitHumanMessagePayload, {}, "SubmitHumanMessage"),
+        );
+      }),
+      app,
+    );
+    expect(receipt.resolution._tag).toBe("TerminalRejected");
+    if (receipt.resolution._tag === "TerminalRejected") {
+      expect(receipt.resolution.error._tag).toBe("TerminalLifecycleMutation");
+    }
+    expect(executed).toBe(false);
+  });
+
+  it("defaults new commands to OpenRequired and explicitly allows convergence controls", () => {
+    expect(projectAdmissionOf("FutureCommand")).toBe("OpenRequired");
+    expect(projectAdmissionOf("CreateProject")).toBe("Bootstrap");
+    expect(projectAdmissionOf("StopExecution")).toBe("ClosedAllowed");
+    expect(projectAdmissionOf("SettleExecution")).toBe("ClosedAllowed");
+    expect(projectAdmissionOf("RevokePermission")).toBe("ClosedAllowed");
+  });
+
+  it("commits boundary, exact claim release, events and receipt once, then replays same id", async () => {
+    const targetWorkspaceId = parse(WorkspaceId)(
+      "ws_018f2b3c-4d5e-7abc-8def-0123456789ab",
+    );
+    const payload = {
+      workspaceId: targetWorkspaceId,
+      expectedWorkspaceRevision: 1 as never,
+    };
+    const released: string[] = [];
+    const boundaryWrites: unknown[][] = [];
+    const claim = {
+      claimId: "claim-acceptance-only",
+      workspaceId: targetWorkspaceId,
+      region: {
+        resourceSpaceId: "local",
+        normalizedRegion: { kind: "FileTree", path: "C:/acceptance" },
+      },
+      sourceAddressSnapshot: { _tag: "FileTree", path: "C:/acceptance" },
+      resourceBoundaryRevision: 0,
+      resolvedAtEnvironmentRevision: "env1",
+      createdAt: "t0",
+      releasedAt: null,
+    };
+    const workspace = {
+      workspaceId: targetWorkspaceId,
+      projectId,
+      parentWorkspaceId: null,
+      name: "acceptance",
+      responsibilityDefinition: {
+        purpose: "acceptance",
+        ownedResponsibilities: [],
+        obligations: [],
+        includes: [],
+        excludes: [],
+        interfaces: [],
+      },
+      responsibilityRevision: 0,
+      resourceBoundary: {
+        basisResponsibilityRevision: 0,
+        addresses: [{ _tag: "FileTree", path: "C:/acceptance" }],
+      },
+      resourceBoundaryRevision: 0,
+      agentBinding: {
+        _tag: "ResponsibilityBoundAgentBinding",
+        workspaceId: targetWorkspaceId,
+      },
+      primarySessionId: "ses_018f2b3c-4d5e-7abc-8def-0123456789ab",
+      currentWorkId: null,
+      workspacePolicy: {},
+      workspacePolicyRevision: 0,
+      revision: 1,
+      lifecycle: "Active",
+    };
+    const workspaces = {
+      findById: () => Effect.succeed(Option.some(workspace as never)),
+      updateResourceBoundaryIfRevision: (...args: unknown[]) =>
+        Effect.sync(() => boundaryWrites.push(args)),
+    } as never;
+    const ownership: Pick<
+      ResourceOwnershipRepositoryService,
+      "listActiveByWorkspace" | "releaseClaim"
+    > = {
+      listActiveByWorkspace: (id) =>
+        Effect.succeed(id === targetWorkspaceId ? [claim as never] : []),
+      releaseClaim: (id) => Effect.sync(() => released.push(id)),
+    };
+    const updateHandler = makeUpdateResourceBoundaryHandler({
+      workspaces,
+      ownership,
+    }) as unknown as CommandHandler<unknown, unknown>;
+    const { app, state } = buildApp([updateHandler]);
+    const fingerprint = fpFor(payload, "UpdateResourceBoundary");
+    const authority = {
+      _tag: "UpdateResourceBoundaryAuthority" as const,
+      principal,
+      commandId,
+      semanticRequestFingerprint: fingerprint,
+      projectId,
+      targetWorkspaceId,
+    } satisfies VerifiedCommandAuthority;
+    const localContext: CommandSubmissionContext = {
+      _tag: "System",
+      principal,
+      causationRef: "trusted-local-resource-boundary-admin",
+    };
+    const command = envelope(payload, "UpdateResourceBoundary");
+    const receipts = await run(
+      Effect.gen(function* () {
+        const gw = yield* CommandGateway;
+        const denied = yield* gw.execute(
+          { ...command, commandId: otherCommandId },
+          localContext,
+          {
+            ...authority,
+            commandId: otherCommandId,
+            targetWorkspaceId:
+              "ws_018f2b3c-4d5e-7abc-8def-0123456789ac" as never,
+          },
+        );
+        const first = yield* gw.execute(command, localContext, authority);
+        const replay = yield* gw.execute(command, localContext, authority);
+        return { denied, first, replay };
+      }),
+      app,
+    );
+
+    expect(receipts.denied.resolution._tag).toBe("TerminalRejected");
+    if (receipts.denied.resolution._tag === "TerminalRejected") {
+      expect(receipts.denied.resolution.error._tag).toBe("AuthorityDenied");
+    }
+    expect(receipts.first.resolution._tag).toBe("Committed");
+    expect(receipts.replay.resolution._tag).toBe("Committed");
+    expect(released).toEqual(["claim-acceptance-only"]);
+    expect(boundaryWrites).toHaveLength(1);
+    expect(state.appended.map((event) => event.eventType)).toEqual([
+      "ResourceBoundaryChanged",
+      "ResourceOwnershipChanged",
+    ]);
+    expect(state.rows.get(commandId)?.resolution).toBe("Committed");
+    expect(
+      state.attempts.filter((attempt) => attempt.outcome === "Committed"),
+    ).toHaveLength(1);
   });
 });

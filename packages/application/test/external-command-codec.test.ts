@@ -1,0 +1,612 @@
+import { describe, expect, it } from "vitest";
+import {
+  CommandInputContractRegistry,
+  decodeCommandPayload,
+  decodeCommandPayloadForSchemaVersion,
+  decodeExternalCommand,
+} from "../src/external-command-codec.js";
+
+const UUID_V7 = "018f1f62-7b3c-7abc-8def-0123456789ab";
+
+describe("external wire-v1 command payload codec", () => {
+  it("rejects a malformed MessageId with a stable field path", () => {
+    const result = decodeCommandPayload("SubmitHumanMessage", {
+      messageId: "msg_not-a-uuid-v7",
+      targetWorkspaceId: `ws_${UUID_V7}`,
+      bodyRef: "body-ref",
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      issues: [{ path: ["messageId"], rule: "format" }],
+    });
+  });
+
+  it.each(["target", "expiresAt"] as const)(
+    "rejects a null GrantPermission %s with a stable field path",
+    (field) => {
+      const payload: Record<string, unknown> = {
+        permissionGrantId: `pgr_${UUID_V7}`,
+        issuer: "user:alice",
+        subject: { _tag: "WorkspaceAgent", workspaceId: `ws_${UUID_V7}` },
+        capability: "fs:write",
+        target: `ws_${UUID_V7}`,
+        expiresAt: "2026-10-12T08:30:00.000Z",
+      };
+      payload[field] = null;
+
+      expect(decodeCommandPayload("GrantPermission", payload)).toEqual({
+        ok: false,
+        issues: [{ path: [field], rule: "type" }],
+      });
+    },
+  );
+
+  it("accepts a WorkspaceAgent GrantPermission with an exact target and expiry", () => {
+    const result = decodeCommandPayload("GrantPermission", {
+      permissionGrantId: `pgr_${UUID_V7}`,
+      issuer: "user:alice",
+      subject: { _tag: "WorkspaceAgent", workspaceId: `ws_${UUID_V7}` },
+      capability: "fs:write",
+      target: `ws_${UUID_V7}`,
+      expiresAt: "2099-10-12T08:30:00.000Z",
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value).toMatchObject({
+      subject: { _tag: "WorkspaceAgent", workspaceId: `ws_${UUID_V7}` },
+      capability: "fs:write",
+      target: `ws_${UUID_V7}`,
+      expiresAt: "2099-10-12T08:30:00.000Z",
+    });
+  });
+
+  it("rejects empty GrantPermission target and expiry strings", () => {
+    expect(
+      decodeCommandPayload("GrantPermission", {
+        permissionGrantId: `pgr_${UUID_V7}`,
+        issuer: "user:alice",
+        subject: { _tag: "WorkspaceAgent", workspaceId: `ws_${UUID_V7}` },
+        capability: "fs:write",
+        target: "",
+        expiresAt: "",
+      }),
+    ).toEqual({
+      ok: false,
+      issues: [
+        { path: ["expiresAt"], rule: "format" },
+        { path: ["target"], rule: "format" },
+      ],
+    });
+  });
+
+  it.each([
+    ["whitespace target", { target: "   " }, "target"],
+    ["whitespace expiry", { expiresAt: "   " }, "expiresAt"],
+    ["invalid expiry", { expiresAt: "tomorrow" }, "expiresAt"],
+    [
+      "calendar-invalid expiry",
+      { expiresAt: "2026-02-30T00:00:00Z" },
+      "expiresAt",
+    ],
+    ["timezone-free expiry", { expiresAt: "2099-10-12T08:30:00" }, "expiresAt"],
+  ] as const)(
+    "rejects a GrantPermission with %s as an InvalidCommandPayload field issue",
+    (_name, patch, field) => {
+      const result = decodeCommandPayload("GrantPermission", {
+        permissionGrantId: `pgr_${UUID_V7}`,
+        issuer: "user:alice",
+        subject: { _tag: "WorkspaceAgent", workspaceId: `ws_${UUID_V7}` },
+        capability: "fs:write",
+        target: `ws_${UUID_V7}`,
+        expiresAt: "2099-10-12T08:30:00.000Z",
+        ...patch,
+      });
+
+      expect(result).toEqual({
+        ok: false,
+        issues: [{ path: [field], rule: "format" }],
+      });
+    },
+  );
+
+  it("rejects an AcceptanceId with the wrong frozen prefix", () => {
+    const result = decodeCommandPayload("AcceptWorkOutcome", {
+      acceptanceId: `acp_${UUID_V7}`,
+      workId: `wrk_${UUID_V7}`,
+      targetWorkRevision: 1,
+      verificationId: `ver_${UUID_V7}`,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      issues: [{ path: ["acceptanceId"], rule: "format" }],
+    });
+  });
+
+  it("rejects unknown keys without reflecting their name or value", () => {
+    const privateKey = "sentinel-secret-field-name";
+    const privateValue = "sentinel-secret-field-value";
+    const result = decodeCommandPayload("SubmitHumanMessage", {
+      messageId: `msg_${UUID_V7}`,
+      targetWorkspaceId: `ws_${UUID_V7}`,
+      bodyRef: "body-ref",
+      [privateKey]: privateValue,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      issues: [{ path: ["<unknown-field>"], rule: "unknown-field" }],
+    });
+    expect(JSON.stringify(result)).not.toContain(privateKey);
+    expect(JSON.stringify(result)).not.toContain(privateValue);
+  });
+
+  it("rejects unknown keys inside a nested message object", () => {
+    const result = decodeCommandPayload("SendMessage", {
+      messageId: `msg_${UUID_V7}`,
+      senderWorkspaceId: `ws_${UUID_V7}`,
+      message: {
+        kind: "Query",
+        recipientWorkspaceId: `ws_${UUID_V7}`,
+        bodyRef: "query-ref",
+        urgency: "Normal",
+        extra: "must stay private",
+      },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      issues: [{ path: ["message", "<unknown-field>"], rule: "unknown-field" }],
+    });
+    expect(JSON.stringify(result)).not.toContain("must stay private");
+  });
+
+  it("rejects an invalid ID in a tagged array member with a closed nested path", () => {
+    const result = decodeCommandPayload("ProduceDeliverable", {
+      deliverableId: `del_${UUID_V7}`,
+      sourceWorkId: `wrk_${UUID_V7}`,
+      observedSourceWorkRevision: 2,
+      kind: "report",
+      artifacts: [{ role: "source", artifactId: `wrk_${UUID_V7}` }],
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      issues: [{ path: ["artifacts", 0, "artifactId"], rule: "format" }],
+    });
+  });
+
+  it("validates the outer envelope before returning a typed command envelope", () => {
+    const result = decodeExternalCommand({
+      commandType: "SubmitHumanMessage",
+      commandId: `cmd_${UUID_V7}`,
+      projectId: `prj_${UUID_V7}`,
+      actor: "user:alice",
+      issuedAt: "2026-10-10T00:00:00.000Z",
+      payload: {
+        messageId: `msg_${UUID_V7}`,
+        targetWorkspaceId: `ws_${UUID_V7}`,
+        bodyRef: "body-ref",
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.commandType).toBe("SubmitHumanMessage");
+    expect(result.value.payload).toMatchObject({ messageId: `msg_${UUID_V7}` });
+  });
+
+  it("accepts only the closed human-selected sandbox policy variants", () => {
+    const payload = {
+      projectId: `prj_${UUID_V7}`,
+      workspaceId: `ws_${UUID_V7}`,
+      executionId: `exe_${UUID_V7}`,
+      episodeBinding: {
+        _tag: "InboxEpisode",
+        entryKey: "inbox:one",
+        inputKind: "HumanMessage",
+      },
+      expectedEpisodeRevision: 2,
+      expectedPolicyRevision: 0,
+      expectedWorkspaceRevision: 3,
+      expectedResourceBoundaryRevision: 1,
+      expectedSandboxHandleBindingDigest: "a".repeat(64),
+      expectedAuthorityBundleRevision: 4,
+      expectedAuthorityBundleDigest: "b".repeat(64),
+      expectedOperatorConfigRevision: 4,
+      expectedOperatorConfigDigest: "c".repeat(64),
+      expectedProviderRegistryRevision: 3,
+      expectedProviderRegistryDigest: "d".repeat(64),
+      profile: "ReadOnly",
+      providerId: "bwrap",
+      providerVersion: "1.2.0",
+      capabilityRevision: 7,
+      networkPolicy: {
+        kind: "OsEnforced",
+        policy: { version: 1, mode: "Disabled", destinations: [] },
+      },
+      decisionExpiresAt: "2099-10-12T08:30:00.000Z",
+    };
+    const envelope = {
+      commandType: "DecideSandboxPolicy",
+      commandId: `cmd_${UUID_V7}`,
+      projectId: `prj_${UUID_V7}`,
+      actor: "user:alice",
+      issuedAt: "2026-10-10T00:00:00.000Z",
+      payload,
+    };
+    expect(decodeExternalCommand(envelope).ok).toBe(true);
+    const legacyPayload: Record<string, unknown> = { ...payload };
+    delete legacyPayload.providerVersion;
+    delete legacyPayload.capabilityRevision;
+    expect(
+      decodeExternalCommand({ ...envelope, payload: legacyPayload }).ok,
+    ).toBe(true);
+    expect(
+      decodeExternalCommand({
+        ...envelope,
+        payload: { ...payload, capabilityRevision: 0 },
+      }).ok,
+    ).toBe(false);
+    expect(
+      decodeExternalCommand({
+        ...envelope,
+        payload: { ...payload, capabilityRevision: 1.5 },
+      }).ok,
+    ).toBe(false);
+    const partialSelector: Record<string, unknown> = { ...payload };
+    delete partialSelector.providerVersion;
+    expect(
+      decodeExternalCommand({ ...envelope, payload: partialSelector }).ok,
+    ).toBe(false);
+    expect(
+      decodeExternalCommand({
+        ...envelope,
+        payload: { ...payload, profile: "FullAccess" },
+      }),
+    ).toEqual({
+      ok: false,
+      issues: [{ path: ["payload"], rule: "format" }],
+    });
+    expect(
+      decodeExternalCommand({
+        ...envelope,
+        payload: { ...payload, extra: "operator-ref" },
+      }).ok,
+    ).toBe(false);
+
+    const trustedPayload: Record<string, unknown> = {
+      ...legacyPayload,
+      profile: "FullAccess",
+      providerId: "TrustedLocal",
+      networkPolicy: { kind: "TrustedLocalUnconfinedV1", version: 1 },
+    };
+    delete trustedPayload.expectedProviderRegistryRevision;
+    delete trustedPayload.expectedProviderRegistryDigest;
+    expect(
+      decodeExternalCommand({ ...envelope, payload: trustedPayload }).ok,
+    ).toBe(true);
+    expect(
+      decodeExternalCommand({
+        ...envelope,
+        payload: { ...trustedPayload, capabilityRevision: 7 },
+      }).ok,
+    ).toBe(false);
+  });
+
+  it("decodes the authenticated-human RetryVerification command and rejects authority/BlobRef fields", () => {
+    const payload = {
+      workId: `wrk_${UUID_V7}`,
+      verificationId: `ver_${UUID_V7}`,
+      expectedWorkRevision: 1,
+      summaryContent: "The bound verifier settled without concluding.",
+      successorVerificationId: `ver_${UUID_V7.replace(/.$/, "c")}`,
+      verifierExecutionId: `exe_${UUID_V7.replace(/.$/, "d")}`,
+    };
+    expect(decodeCommandPayload("RetryVerification" as never, payload).ok).toBe(
+      true,
+    );
+    expect(
+      CommandInputContractRegistry.lookup("RetryVerification" as never),
+    ).toMatchObject({
+      commandType: "RetryVerification",
+      externalOriginAllowed: true,
+    });
+    expect(
+      decodeExternalCommand({
+        commandType: "RetryVerification",
+        commandId: `cmd_${UUID_V7}`,
+        projectId: `prj_${UUID_V7}`,
+        actor: "user:local",
+        issuedAt: "2026-10-12T00:00:00.000Z",
+        payload,
+      }).ok,
+    ).toBe(true);
+    expect(
+      decodeCommandPayload("RetryVerification" as never, {
+        ...payload,
+        authority: { _tag: "OrphanConclusionAuthority" },
+        summaryRef: "client-authored-ref",
+      }),
+    ).toMatchObject({
+      ok: false,
+      issues: [{ path: ["<unknown-field>"], rule: "unknown-field" }],
+    });
+  });
+
+  it("registers the strict human RetryVerification payload without authority or BlobRef", () => {
+    const payload = {
+      workId: `wrk_${UUID_V7}`,
+      verificationId: `ver_${UUID_V7}`,
+      expectedWorkRevision: 1,
+      summaryContent: "The prior verifier settled before conclusion.",
+      successorVerificationId: `ver_${UUID_V7.replace(/.$/, "c")}`,
+      verifierExecutionId: `exe_${UUID_V7.replace(/.$/, "d")}`,
+    };
+    const decoded = decodeCommandPayload("RetryVerification" as never, payload);
+    expect(decoded.ok).toBe(true);
+    expect(
+      CommandInputContractRegistry.lookup("RetryVerification" as never),
+    ).toMatchObject({
+      commandType: "RetryVerification",
+      externalOriginAllowed: true,
+    });
+    expect(
+      decodeExternalCommand({
+        commandType: "RetryVerification",
+        commandId: `cmd_${UUID_V7}`,
+        projectId: `prj_${UUID_V7}`,
+        actor: "user:local",
+        issuedAt: "2026-10-12T00:00:00.000Z",
+        payload,
+      }).ok,
+    ).toBe(true);
+    expect(
+      decodeCommandPayload("RetryVerification" as never, {
+        ...payload,
+        authority: { _tag: "OrphanConclusionAuthority" },
+        summaryRef: "blob:caller-controlled",
+      }),
+    ).toMatchObject({
+      ok: false,
+      issues: [{ path: ["<unknown-field>"], rule: "unknown-field" }],
+    });
+  });
+
+  it("keeps the frozen shell envelope closed", () => {
+    const result = decodeExternalCommand({
+      commandType: "SubmitHumanMessage",
+      commandId: `cmd_${UUID_V7}`,
+      projectId: `prj_${UUID_V7}`,
+      actor: "user:alice",
+      issuedAt: "2026-10-10T00:00:00.000Z",
+      causationRef: "not part of ExternalCommandEnvelope v1",
+      payload: {
+        messageId: `msg_${UUID_V7}`,
+        targetWorkspaceId: `ws_${UUID_V7}`,
+        bodyRef: "body-ref",
+      },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      issues: [{ path: ["<unknown-field>"], rule: "unknown-field" }],
+    });
+  });
+
+  it("rejects unsupported command types without reflecting caller text", () => {
+    const result = decodeExternalCommand({
+      commandType: "private-command-name",
+      payload: { secret: "private-value" },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      issues: [{ path: ["commandType"], rule: "unsupported-command" }],
+    });
+    expect(JSON.stringify(result)).not.toContain("private-command-name");
+    expect(JSON.stringify(result)).not.toContain("private-value");
+  });
+
+  it("does not treat inherited object keys as enum or discriminator cases", () => {
+    const result = decodeCommandPayload("SteerWork", {
+      workId: `wrk_${UUID_V7}`,
+      workspaceId: `ws_${UUID_V7}`,
+      steer: { severity: "toString", guidance: "hold", scope: "Direction" },
+      expectedWorkRevision: 1,
+      provenance: { source: "HumanInput" },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      issues: [{ path: ["steer", "severity"], rule: "enum" }],
+    });
+  });
+
+  it("keeps legacy SteerWork schema-v1 as direction guidance and accepts an explicit complete amendment", () => {
+    const common = {
+      workId: `wrk_${UUID_V7}`,
+      workspaceId: `ws_${UUID_V7}`,
+      expectedWorkRevision: 3,
+      provenance: { source: "HumanInput" },
+    };
+    expect(
+      decodeCommandPayload("SteerWork", {
+        ...common,
+        steer: {
+          severity: "Normal",
+          guidance: "try the alternative method",
+          scope: "Constraint",
+        },
+      }).ok,
+    ).toBe(true);
+
+    expect(
+      decodeCommandPayload("SteerWork", {
+        ...common,
+        steer: {
+          severity: "Critical",
+          operation: {
+            kind: "ContractAmendment",
+            amendment: {
+              objective: "deliver the corrected output",
+              why: "the human changed the accepted outcome",
+              constraints: ["keep the audit trail"],
+              completionExpectation: "the corrected output is verified",
+              verificationMission: {
+                goal: "verify the corrected output",
+                criteria: [
+                  {
+                    criterionId: "corrected-output",
+                    requirement: "output matches the new exact result",
+                    required: true,
+                  },
+                ],
+                riskRequirements: [],
+              },
+            },
+          },
+        },
+      }).ok,
+    ).toBe(true);
+  });
+
+  it("keeps the v1 decoder DirectionGuidance-only while the v2 decoder accepts typed operations", () => {
+    const common = {
+      workId: `wrk_${UUID_V7}`,
+      workspaceId: `ws_${UUID_V7}`,
+      expectedWorkRevision: 3,
+      provenance: { source: "HumanInput" },
+    };
+    const directionGuidance = {
+      ...common,
+      steer: { severity: "Normal", guidance: "use a smaller batch" },
+    };
+    const amendment = {
+      ...common,
+      steer: {
+        severity: "Normal",
+        operation: {
+          kind: "ContractAmendment",
+          amendment: {
+            objective: "new objective",
+            why: "human changed the intended result",
+            constraints: [],
+            completionExpectation: "new result is verified",
+            verificationMission: {
+              goal: "verify the new result",
+              criteria: [
+                {
+                  criterionId: "result",
+                  requirement: "result matches",
+                  required: true,
+                },
+              ],
+              riskRequirements: [],
+            },
+          },
+        },
+      },
+    };
+
+    expect(
+      decodeCommandPayloadForSchemaVersion("SteerWork", "1", directionGuidance)
+        .ok,
+    ).toBe(true);
+    expect(
+      decodeCommandPayloadForSchemaVersion("SteerWork", "1", amendment).ok,
+    ).toBe(false);
+    expect(
+      decodeCommandPayloadForSchemaVersion("SteerWork", "2", amendment).ok,
+    ).toBe(true);
+  });
+
+  it.each([
+    ["partial contract", { objective: "new", why: "why" }],
+    [
+      "legacy guidance mixed with amendment",
+      {
+        guidance: "not an amendment",
+        operation: {
+          kind: "ContractAmendment",
+          amendment: {
+            objective: "new",
+            why: "why",
+            constraints: [],
+            completionExpectation: "done",
+            verificationMission: {
+              goal: "verify",
+              criteria: [],
+              riskRequirements: [],
+            },
+          },
+        },
+      },
+    ],
+  ])("rejects malformed SteerWork operation: %s", (_name, steer) => {
+    const result = decodeCommandPayload("SteerWork", {
+      workId: `wrk_${UUID_V7}`,
+      workspaceId: `ws_${UUID_V7}`,
+      expectedWorkRevision: 3,
+      provenance: { source: "HumanInput" },
+      steer: { severity: "Normal", ...steer },
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it.each([
+    ["legacy Coordination focus only", { _tag: "Coordination" }],
+    ["missing episode", undefined],
+    ["legacy focus alongside exact episode", { _tag: "Coordination" }],
+  ])("rejects WorkspaceMain payload shape: %s", (_caseName, focus) => {
+    const payload: Record<string, unknown> = {
+      _tag: "WorkspaceMain",
+      executionId: `exe_${UUID_V7}`,
+      workspaceId: `ws_${UUID_V7}`,
+    };
+    if (focus !== undefined) payload.focus = focus;
+    if (_caseName === "legacy focus alongside exact episode") {
+      payload.episode = {
+        _tag: "WorkEpisode",
+        workId: `wrk_${UUID_V7}`,
+        targetWorkRevision: 1,
+      };
+    }
+
+    expect(decodeCommandPayload("AdmitExecution", payload).ok).toBe(false);
+  });
+
+  it.each(["CoordinationCompleted", "QueryCompleted"])(
+    "rejects historical %s as a new Completed settlement result",
+    (resultTag) => {
+      const result = decodeCommandPayload("SettleExecution", {
+        executionId: `exe_${UUID_V7}`,
+        settlement: {
+          _tag: "Completed",
+          result: { _tag: resultTag },
+        },
+      });
+
+      expect(result.ok).toBe(false);
+    },
+  );
+
+  it("applies the typed descriptor codec even when its external origin is denied", () => {
+    const descriptor = CommandInputContractRegistry.lookup("AdmitExecution");
+    expect(descriptor?.externalOriginAllowed).toBe(false);
+    expect(
+      descriptor?.decodePayload({
+        _tag: "WorkspaceMain",
+        executionId: `exe_${UUID_V7}`,
+        workspaceId: `ws_${UUID_V7}`,
+        episode: {
+          _tag: "WorkEpisode",
+          workId: `wrk_${UUID_V7}`,
+          targetWorkRevision: 1,
+        },
+      }).ok,
+    ).toBe(true);
+  });
+});

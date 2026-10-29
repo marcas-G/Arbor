@@ -1,8 +1,18 @@
 # P1 — 02 Port Contracts
 
-**Authority:** DID v1.6 §7.1–§7.4, §7.7, §9.5, §9.7, §10.4.1, §12.6, §12.10
+**Authority:** DID v1.6 §7.1–§7.4, §7.7, §9.5, §9.7, §10.4.1, §12.6, §12.10; DID v1.38 §4.1C FT-DG-01 ProjectResourceProfilePort and Project source
 **Status:** P1 phase-scoped closure (revised after 4-way review)
 **Implements:** P1 port contracts; P1-DG-08 persistence access; P1-DG-10 port ownership.
+
+**Accepted FT-DG-01 OPEN-1/OPEN-2 owner amendment (DID v1.38):** The existing
+`ProjectRepository.create(project)` and `findById(projectId)` carry the
+Project's `resourceSource: ProjectResourceSource` field. This does not add a
+Profile catalog lookup or change `ProjectResourceProfilePort` timing, effects,
+or filesystem boundary. The persisted source is decoded as the exact closed
+P1 ADT; malformed JSON, unknown tags, missing/extra fields, or wrong field
+types fail the Project read as persistence corruption and are never converted
+to `LegacyUnknown`. `ProjectDirectory`'s non-path read projection is owned by
+P15 `02-directory-read.md`.
 
 Ports are Effect services (DID §7.1/§7.7); adapters are Layers. All P1
 repositories **require `TransactionScope`** and never open their own
@@ -104,15 +114,117 @@ P1 `ResourceOwnershipClaim` record (matches the DDL columns;
   resolvedAtEnvironmentRevision, createdAt, releasedAt: string | null }
 ```
 
+### WorkspaceResourceActivationStore (FT-DG-01 OPEN-3)
+
+This P1-owned operational store records only a root Workspace's committed
+boundary-activation obligation. It is not a Profile source/audit record and
+stores no canonical path, Profile ref/version, raw failure, or model/user
+text.
+
+```ts
+interface WorkspaceResourceActivationIntent {
+  readonly projectId: ProjectId;
+  readonly workspaceId: WorkspaceId;
+  readonly resourceBoundaryRevision: ResourceBoundaryRevision;
+  readonly status: "Pending" | "Active";
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly activatedAt: string | null;
+}
+
+type NewWorkspaceResourceActivationIntent = Omit<
+  WorkspaceResourceActivationIntent,
+  "status" | "activatedAt"
+> & { readonly status: "Pending"; readonly activatedAt: null };
+
+type WorkspaceResourceActivationStoreError = RepositoryFailure<
+  "WorkspaceResourceActivationStore"
+>;
+
+interface WorkspaceResourceActivationStoreService {
+  readonly insertPending: (
+    intent: NewWorkspaceResourceActivationIntent,
+  ) => Effect.Effect<void, WorkspaceResourceActivationStoreError, TransactionScope>;
+  readonly find: (
+    projectId: ProjectId,
+    workspaceId: WorkspaceId,
+    resourceBoundaryRevision: ResourceBoundaryRevision,
+  ) => Effect.Effect<Option.Option<WorkspaceResourceActivationIntent>, WorkspaceResourceActivationStoreError, TransactionScope>;
+  readonly compareAndSetActive: (
+    projectId: ProjectId,
+    workspaceId: WorkspaceId,
+    resourceBoundaryRevision: ResourceBoundaryRevision,
+    activatedAt: string,
+    updatedAt: string,
+  ) => Effect.Effect<boolean, WorkspaceResourceActivationStoreError, TransactionScope>;
+  readonly listPending: (
+    projectId?: ProjectId,
+  ) => Effect.Effect<ReadonlyArray<WorkspaceResourceActivationIntent>, WorkspaceResourceActivationStoreError, TransactionScope>;
+  readonly listAll: () => Effect.Effect<
+    ReadonlyArray<WorkspaceResourceActivationIntent>,
+    WorkspaceResourceActivationStoreError,
+    TransactionScope
+  >;
+}
+```
+
+The unique identity is `(projectId, workspaceId, resourceBoundaryRevision)`;
+`insertPending` participates in the CreateProject Gateway transaction.
+`listPending` is deterministic (createdAt then identity) and is the P12
+activation worklist. `listAll` is deterministic and lets P12/P10 reconcile
+stale Active projection rows after a crash. Active intents remain durable so
+replay/rebuild can prove the exact transition; no intent is hard-deleted by
+P12 or P10. The additive migration never infers/backfills rows from a
+non-empty Workspace boundary or a missing claim.
+
 ### CommandStore
 
 | Method | Semantics |
 |---|---|
-| `findResolution(commandId): Effect<Option<CommandReceipt<unknown, unknown>>, CommandStoreError>` | opaque stored resolution; Application decodes to `CommandRejection` |
+| `findResolution(commandId): Effect<Option<StoredCommandResolution>, CommandStoreError>` | returns tuple metadata and the stored result/error JSON as raw text; does not decode the receipt |
 | `insertCommitted(commandId, projectId, fingerprint, schemaVersion, fingerprintAlgorithmVersion, resultJson)` | authoritative |
 | `insertTerminalRejected(commandId, projectId, fingerprint, schemaVersion, fingerprintAlgorithmVersion, terminalErrorJson)` | authoritative, no event |
 | `recordResolvingAttempt(commandId, outcome, startedAt, settledAt)` | resolving attempt (Committed / TerminalRejected); written in the **command transaction** (03 §3.1/§3.2) |
 | `recordRetryableAttempt(commandId, failureKind, startedAt, settledAt)` | non-authoritative trace; written in a **separate** short transaction after rollback (03 §3.3) |
+
+`StoredCommandResolution` is the ports-owned pre-decode representation of an
+existing `commands` row:
+
+```ts
+interface StoredCommandResolution {
+  readonly commandId: CommandId;
+  readonly projectId: ProjectId;
+  readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+  readonly schemaVersion: string;
+  readonly fingerprintAlgorithmVersion: number;
+  readonly resolution: "Committed" | "TerminalRejected";
+  readonly resultJson: string | null;
+  readonly terminalErrorJson: string | null;
+  readonly createdAt: string;
+  readonly settledAt: string;
+}
+```
+
+`resultJson` and `terminalErrorJson` are the stored column text, not parsed
+JSON values; `findResolution` MUST NOT parse, validate, or otherwise interpret
+either field. Within the existing command transaction, the Application
+compares `(semanticRequestFingerprint, schemaVersion,
+fingerprintAlgorithmVersion)` from this representation with the current
+request first. A mismatch follows P1 `01`'s existing `IdempotencyConflict`
+branch without decoding or disclosing either raw field. Only an exact tuple
+match may proceed to the existing Application receipt decoding and produce a
+typed P1 `CommandReceipt`. This port contract does not define exact-tuple
+result/error shape rules or decoding failures; it adds no corruption error
+type, failure mapping, or receipt repair behavior.
+
+The exact-tuple Application decoder and its `PersistenceCorruption<"CommandStore">`
+classification are defined in `01-command-contracts.md` §3A. The Port remains
+raw and version-neutral: it does not select a command result schema, convert
+`result_json` / `terminal_error_json` to a typed value, or make a corruption
+disposition. Gateway/Recovery call sites own the trusted command type and
+schema selection after the appropriate identity/tuple checks; adapter JSON
+parsing before those boundaries is forbidden. This clarification changes no
+`StoredCommandResolution` field, SQL, DDL, migration, or transaction owner.
 
 `CommandStore` allocates the next free `attempt_no` for a `command_id`
 (serialized by `BEGIN IMMEDIATE`); callers do not supply it.
@@ -143,9 +255,14 @@ P1 `ResourceOwnershipClaim` record (matches the DDL columns;
 | Method | Semantics |
 |---|---|
 | `resolveAndWrite(projectId, addresses, claims)` | implements the 04 §3.3 ownership write sequence; returns `{ regions, claims }` |
+| `activatePendingWorkspaceResource(projectId, workspaceId, resourceBoundaryRevision, addresses)` | P11 CreateProject recovery path; resolves addresses outside the write transaction, then in one `BEGIN IMMEDIATE` scope checks the exact Pending intent and environment revision, loads overlaps, inserts the complete claim set, CASes Pending→Active, appends `WorkspaceResourceActivationChanged(Active)`, and commits; returns `Activated` or idempotent `AlreadyActive`; missing/mismatched intent fails closed |
 
-`ProjectionStore` requires `TransactionScope`; `OwnershipWriteService` opens
-its own transaction (it resolves outside, then transacts).
+`ProjectionStore` requires `TransactionScope`; ordinary `resolveAndWrite`
+opens its own transaction (it resolves outside, then transacts). The activation
+operation also resolves outside, but its claim insert, intent CAS, and P1
+DomainEventJournal append share exactly one transaction; it MUST NOT call
+`resolveAndWrite` as a nested/separate commit and MUST NOT expose a state where
+claims are committed while the intent remains Pending or vice versa.
 
 ### ConsumerOffsetStore
 
@@ -177,6 +294,47 @@ failure (re-resolve + re-evaluate), never an authoritative rejection.
 | `IdGenerator` | `generate<T>(kind): Effect<T, never>` | used by **callers** and the journal (EventId), not command handlers |
 | `ProjectEnvironmentPort` | `resolve(projectId, addresses): Effect<{ regions: ReadonlyArray<CanonicalResourceRegion>; observedEnvironmentRevision: string }, EnvironmentError>` | resolve **outside** write tx (DID §1.5); returns regions + revision together |
 
+### ProjectResourceProfilePort (FT-DG-01 CreateProject v2)
+
+The P12 host composition loads and validates the local host Profile registry at
+startup, then supplies this immutable, read-only snapshot to Application. The
+Port itself performs no filesystem I/O; its Profile lookup is deterministic
+memory access so CreateProject may call it only after the Gateway has checked
+for an existing receipt, without holding the transaction across a slow host
+probe.
+
+```ts
+interface ProjectResourceProfileSummary {
+  readonly resourceProfileRef: string;
+  readonly version: string;
+  readonly displayName: string;
+  readonly available: boolean;
+}
+
+interface TrustedProjectResourceProfile extends ProjectResourceProfileSummary {
+  readonly available: true;
+  readonly canonicalAddress: Extract<ResourceAddress, { readonly _tag: "FileTree" }>;
+}
+
+interface ProjectResourceProfilePortService {
+  readonly list: () => Effect.Effect<ReadonlyArray<ProjectResourceProfileSummary>, never>;
+  readonly resolve: (
+    resourceProfileRef: string,
+    version: string,
+  ) => Effect.Effect<Option.Option<TrustedProjectResourceProfile>, never>;
+}
+```
+
+`canonicalAddress` is an Application/handler trusted value and must never be
+returned by the public profile-list transport. The list exposes only opaque
+ref, version, friendly display name and availability. The host configuration
+owns stable ref/version values across process restart; changing canonical path
+or scope requires a new version. Profile lookup does not decide authority,
+create a GitWorktree, or mutate ownership claims. The existing
+ProjectEnvironmentPort / OwnershipWriteService remains the filesystem
+resolution and ownership-activation path after the canonical Workspace
+boundary has committed.
+
 ## 4A. Application boundary input: `VerifiedCommandAuthority`
 
 `VerifiedCommandAuthority` (`01-command-contracts.md` §2A, P1-DG-11) is **not**
@@ -194,7 +352,9 @@ ResourceOwnershipRepository / CommandStore / DomainEventJournal
 ConsumerOffsetStore / EnvironmentRevisionStore / ConsumerDeadLetterStore
 ProjectionStore                                    -> require TransactionScope
 OwnershipWriteService                               -> opens its own transaction
+WorkspaceResourceActivationStore                   -> require TransactionScope
 ProjectEnvironmentPort                             -> NO TransactionScope (slow I/O)
+ProjectResourceProfilePort                         -> NO TransactionScope (immutable in-memory snapshot)
 Clock / IdGenerator                                -> NO TransactionScope
 CommandStore.recordResolvingAttempt                -> command transaction
 CommandStore.recordRetryableAttempt                -> separate scope (after rollback)
@@ -219,3 +379,15 @@ CommandStore.recordRetryableAttempt                -> separate scope (after roll
 
 - Execution/lease ports (P2), including `SessionRepository.appendEntry`.
 - Provider/Tool/Blob/Projection ports (P3+).
+
+## Native OS Sandbox accepted ports
+
+Extend the existing `PermissionGrantRepository` only for this exact contract:
+`findById(permissionGrantId)` returns the complete CAPA v2 projection and
+`findSandboxPolicyGrantIssuerProvenanceByGrantId(permissionGrantId)` returns
+the immutable issuer provenance in a TransactionScope. A provenance insert
+operation is callable only from the authenticated `GrantPermission` handler
+inside CommandGateway. Resolver composition may read the exact Grant and
+provenance facts; the pure P12 Resolver itself remains `R = never`. P1 also
+owns transactional `SandboxPolicyDecisionStore` exact-key read/write. No
+generic authorization port is added.

@@ -4,19 +4,22 @@ import { join } from "node:path";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
+import { BlobStorePortLive } from "../adapters/blob-local/src/index.js";
 import {
   ArtifactMetadataRepositoryLive,
   ClockLive,
   layer,
-  P4_MIGRATIONS,
+  P36_MIGRATIONS,
   runMigrations,
   ToolInvocationStoreLive,
   TransactionPortLive,
+  WorkspaceRepositoryLive,
 } from "../adapters/persistence-sqlite/src/index.js";
 import { SandboxPortLive } from "../adapters/sandbox-local/src/index.js";
 import {
   Actor,
   ExecutionId,
+  LeaseGeneration,
   Principal,
   ProjectId,
   parse,
@@ -26,6 +29,7 @@ import {
 } from "../packages/domain/dist/index.js";
 import {
   Clock,
+  invocationAuthoritySourceRevisionOf,
   ProjectEnvironmentPort,
   ResourceAdmission,
   SandboxPort,
@@ -36,6 +40,7 @@ import {
   TransactionScope,
 } from "../packages/ports/src/index.js";
 import {
+  ArtifactServiceLive,
   BUILTIN_EXECUTORS,
   ToolDefinitionStoreLive,
   ToolRuntimeLive,
@@ -63,7 +68,12 @@ const authority = {
   workspaceId,
   executionId,
   toolName: "read",
-  toolVersion: "1",
+  toolVersion: "2",
+  sourceRevision: invocationAuthoritySourceRevisionOf({
+    workspacePolicyRevision: 0,
+    activeGrants: [],
+    verifierId: null,
+  }),
   resourceSpaceIds: ["filesystem"],
   allowedCapabilities: ["fs:read"],
   controlBasisDigest: "d",
@@ -79,12 +89,18 @@ const context = {
   authenticatedPrincipal: principal,
   authority,
   controlBasisDigest: "d",
+  executionFence: {
+    executionId,
+    workerId: String(principal),
+    workerIncarnationId: "incarnation:p4-integration",
+    fencingGeneration: parse(LeaseGeneration)(0),
+  },
   requestedAt: "t",
 } as import("../packages/ports/src/index.js").ToolExecutionContext;
 const intent = (toolName: string, argumentsJson: string) => ({
   callRef: "c",
   toolName,
-  toolVersion: "1",
+  toolVersion: "2",
   argumentsJson,
   invocationId,
   approvalId: null,
@@ -122,7 +138,10 @@ const seed = Effect.gen(function* () {
           "w",
           "{}",
           0,
-          "{}",
+          JSON.stringify({
+            basisResponsibilityRevision: 0,
+            addresses: [{ _tag: "GitWorktree", path: root }],
+          }),
           0,
           "{}",
           sessionId,
@@ -135,14 +154,17 @@ const seed = Effect.gen(function* () {
         ],
       );
       yield* sql.unsafe(
-        "INSERT OR IGNORE INTO executions (execution_id, project_id, binding_kind, workspace_id, focus_kind, focus_work_id, parent_execution_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?,?,?,?,NULL,NULL,NULL,?,?,NULL,NULL,NULL,NULL)",
+        "INSERT OR IGNORE INTO executions (execution_id, project_id, binding_kind, workspace_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?, 'execution_bound', ?, 'm', ?, 't', NULL, NULL, NULL, NULL)",
+        [executionId, projectId, workspaceId, sessionId],
+      );
+      yield* sql.unsafe(
+        "INSERT OR IGNORE INTO execution_leases (execution_id, worker_id, worker_incarnation_id, generation, expires_at, updated_at) VALUES (?,?,?,?,?,?)",
         [
           executionId,
-          projectId,
-          "workspace",
-          workspaceId,
-          "coordination",
-          sessionId,
+          String(principal),
+          "incarnation:p4-integration",
+          0,
+          "2999-01-01T00:00:00.000Z",
           "t",
         ],
       );
@@ -162,7 +184,9 @@ const makeApp = () => {
     Layer.provide(TransactionPortLive, infra),
     Layer.provide(ToolInvocationStoreLive, infra),
     Layer.provide(ArtifactMetadataRepositoryLive, infra),
+    Layer.provide(WorkspaceRepositoryLive, infra),
     ToolDefinitionStoreLive,
+    BlobStorePortLive,
     sandbox,
     Layer.succeed(ResourceAdmission, {
       admit: () => Effect.succeed({ _tag: "Admitted" as const }),
@@ -179,10 +203,13 @@ const makeApp = () => {
     }),
   );
   const all = Layer.mergeAll(deps, infra);
+  const artifacts = Layer.provide(ArtifactServiceLive, all);
+  const runtimeDeps = Layer.mergeAll(all, artifacts);
   return Layer.mergeAll(
     infra,
     deps,
-    Layer.provide(ToolRuntimeLive(BUILTIN_EXECUTORS), all),
+    artifacts,
+    Layer.provide(ToolRuntimeLive(BUILTIN_EXECUTORS), runtimeDeps),
   );
 };
 
@@ -195,7 +222,7 @@ const run = (
   Effect.runPromise(
     Effect.provide(
       Effect.gen(function* () {
-        yield* runMigrations(P4_MIGRATIONS);
+        yield* runMigrations(P36_MIGRATIONS);
         yield* seed;
         const runtime = yield* ToolRuntimePort;
         return yield* runtime.invoke(
@@ -205,7 +232,7 @@ const run = (
       }),
       app,
     ) as Effect.Effect<
-      { _tag: string; observation?: { text: string } },
+      { _tag: string; observation?: { text: string }; resultRef?: string },
       unknown,
       never
     >,
@@ -215,7 +242,7 @@ describe("P4 integration — tool runtime end to end", () => {
   // biome-ignore lint/suspicious/noExplicitAny: test helper erases framework types
   const migrate = (app: Layer.Layer<any, any, any>) =>
     Effect.runPromise(
-      Effect.provide(runMigrations(P4_MIGRATIONS), app) as Effect.Effect<
+      Effect.provide(runMigrations(P36_MIGRATIONS), app) as Effect.Effect<
         number,
         unknown,
         never
@@ -228,12 +255,15 @@ describe("P4 integration — tool runtime end to end", () => {
     const result = await run(
       app,
       "read",
-      JSON.stringify({ path: { path: "a.txt" } }),
+      JSON.stringify({
+        target: { mount: "workspace", path: "a.txt" },
+      }),
     );
     expect(result._tag).toBe("Success");
     expect(JSON.parse(result.observation?.text ?? "{}").text).toBe(
       "integration read",
     );
+    expect(result.resultRef).toMatch(/^art_/u);
   });
 
   it("denies an unknown tool and reports invalid input", async () => {
@@ -252,4 +282,5 @@ describe("P4 integration — tool runtime end to end", () => {
   void Clock;
   void SandboxPortLive;
   void Option;
+  void BlobStorePortLive;
 });

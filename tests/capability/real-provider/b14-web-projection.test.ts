@@ -10,6 +10,7 @@ import {
   makePublicProject,
   newCapabilityId,
   type PublicTranscriptPage,
+  publicProjectPayload,
   withPublicConversationApp,
 } from "../support/public-chat.js";
 import { makeHttpProviderClient } from "./http-sdk-client.js";
@@ -64,7 +65,7 @@ describe("B14 L3 — web/product projection with real generated replies", () => 
                 projectId: project.projectId,
                 actor: "user:capability-test",
                 issuedAt: new Date().toISOString(),
-                payload: project,
+                payload: publicProjectPayload(project),
               });
               if (
                 created.status !== 200 ||

@@ -1,6 +1,3 @@
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import {
   CommandGateway,
   semanticRequestFingerprint,
@@ -26,12 +23,13 @@ import {
 import { SessionRepository, TransactionPort } from "@arbor/ports";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
 import {
-  buildSliceLayer,
-  P12_MIGRATIONS,
-  runMigrations,
-} from "../src/index.js";
+  createCurrentSchemaTestDatabaseFactory,
+  type Schema44TestDatabaseFactory,
+} from "../../../tests/support/schema44-database.js";
+import { buildSingleWorkspaceLayer } from "../src/index.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const workspaceId = parse(WorkspaceId)(
@@ -50,6 +48,27 @@ const exe3 = parse(ExecutionId)(
 const workId = parse(WorkId)("wrk_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const principal = parse(Principal)("worker:a");
 const actor = parse(Actor)("user:test");
+let schema44Factory: Schema44TestDatabaseFactory | undefined;
+const schema44Cleanups: Array<() => void> = [];
+
+beforeAll(async () => {
+  schema44Factory = await createCurrentSchemaTestDatabaseFactory({
+    prefix: ".p5-restart-continuity-template-",
+  });
+}, 120_000);
+
+afterAll(() => schema44Factory?.cleanup());
+
+const createSchema44Case = () => {
+  if (schema44Factory === undefined) {
+    throw new Error("Schema-42 test database factory was not prepared.");
+  }
+  return schema44Factory.create();
+};
+
+afterEach(() => {
+  for (const cleanup of schema44Cleanups.splice(0)) cleanup();
+});
 const context: CommandSubmissionContext = {
   _tag: "System",
   principal,
@@ -60,7 +79,7 @@ const yieldTurn = [
   {
     _tag: "ToolCallProposed" as const,
     callRef: "c1",
-    toolName: "arbor_wait",
+    toolName: "wait",
     argumentsJson: JSON.stringify({
       reason: "waiting",
       waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
@@ -143,7 +162,11 @@ const admit = (executionId: ExecutionId, commandId: CommandId) =>
       _tag: "WorkspaceMain",
       executionId,
       workspaceId,
-      focus: { _tag: "Work", workId },
+      episode: {
+        _tag: "WorkEpisode",
+        workId,
+        targetWorkRevision: 0 as never,
+      },
     };
     const authority: VerifiedRuntimeCommandAuthority = {
       _tag: "AdmitExecutionAuthority",
@@ -200,99 +223,106 @@ const readState = Effect.gen(function* () {
 
 describe("P5 restart continuity", () => {
   it("a fresh layer on the same database recovers and continues the session", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "p5-restart-"));
-    const databaseFile = join(dir, "slice.db");
-    const turns = [yieldTurn];
+    const fixture = createSchema44Case();
+    const databaseFile = fixture.databaseFilename;
+    try {
+      const turns = [yieldTurn];
 
-    const before = await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          yield* runMigrations(P12_MIGRATIONS);
-          yield* seed;
-          yield* admit(
-            exe1,
-            parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789a1"),
-          );
-          yield* runExecution(exe1, { _tag: "WorkSelected" }, principal);
-          yield* admit(
-            exe2,
-            parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789a2"),
-          );
-          const sql = yield* SqlClient;
-          yield* sql.unsafe(
-            "UPDATE executions SET stop_requested_at = 't' WHERE execution_id = ?",
-            [exe2],
-          );
-          const tx = yield* TransactionPort;
-          const sessions = yield* SessionRepository;
-          yield* tx.transact(
-            sessions.appendEntry(sessionId, {
-              entryKind: "Input",
-              payload: { x: 1 },
-            }),
-          );
-          return yield* readState;
-        }),
-        buildSliceLayer({ databaseFile, providerTurns: turns }),
-      ) as unknown as Effect.Effect<
-        {
-          executions: ReadonlyArray<{
-            execution_id: string;
-            settlement_kind: string | null;
-          }>;
-          waits: number;
-          entries: number;
-        },
-        unknown,
-        never
-      >,
-    );
-
-    const after = await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          const recovery = yield* runRecovery(principal);
-          yield* admit(
-            exe3,
-            parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789a3"),
-          );
-          const state = yield* readState;
-          return { recovery, state };
-        }),
-        buildSliceLayer({ databaseFile }),
-      ) as unknown as Effect.Effect<
-        {
-          recovery: { invalidated: number; settled: ReadonlyArray<string> };
-          state: {
+      const before = await Effect.runPromise(
+        Effect.provide(
+          Effect.gen(function* () {
+            yield* seed;
+            yield* ensureLegacyProjectResourceSourceFixture();
+            yield* admit(
+              exe1,
+              parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+            );
+            yield* runExecution(exe1, { _tag: "WorkSelected" }, principal);
+            yield* admit(
+              exe2,
+              parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789a2"),
+            );
+            const sql = yield* SqlClient;
+            yield* sql.unsafe(
+              "UPDATE executions SET stop_requested_at = 't' WHERE execution_id = ?",
+              [exe2],
+            );
+            const tx = yield* TransactionPort;
+            const sessions = yield* SessionRepository;
+            yield* tx.transact(
+              sessions.appendEntry(sessionId, {
+                entryKind: "Input",
+                payload: { x: 1 },
+              }),
+            );
+            return yield* readState;
+          }),
+          buildSingleWorkspaceLayer({ databaseFile, providerTurns: turns }),
+        ) as unknown as Effect.Effect<
+          {
             executions: ReadonlyArray<{
               execution_id: string;
               settlement_kind: string | null;
-              session_id: string;
             }>;
             waits: number;
             entries: number;
-          };
-        },
-        unknown,
-        never
-      >,
-    );
+          },
+          unknown,
+          never
+        >,
+      );
 
-    const kind = (id: string) =>
-      after.state.executions.find((e) => e.execution_id === id)
-        ?.settlement_kind;
-    expect(
-      before.executions.find((e) => e.execution_id === exe1)?.settlement_kind,
-    ).toBe("Completed");
-    expect(before.waits).toBe(1);
-    expect(before.entries).toBe(2);
-    expect(after.recovery.settled).toContain(exe2);
-    expect(kind(exe2)).toBe("Interrupted");
-    expect(kind(exe3)).toBeNull();
-    expect(after.state.waits).toBe(1);
-    expect(after.state.entries).toBe(2);
-    expect(new Set(after.state.executions.map((e) => e.session_id))).toEqual(
-      new Set([sessionId]),
-    );
-  });
+      const after = await Effect.runPromise(
+        Effect.provide(
+          Effect.gen(function* () {
+            const recovery = yield* runRecovery(principal);
+            yield* admit(
+              exe3,
+              parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789a3"),
+            );
+            const state = yield* readState;
+            return { recovery, state };
+          }),
+          buildSingleWorkspaceLayer({ databaseFile }),
+        ) as unknown as Effect.Effect<
+          {
+            recovery: { invalidated: number; settled: ReadonlyArray<string> };
+            state: {
+              executions: ReadonlyArray<{
+                execution_id: string;
+                settlement_kind: string | null;
+                session_id: string;
+              }>;
+              waits: number;
+              entries: number;
+            };
+          },
+          unknown,
+          never
+        >,
+      );
+
+      const kind = (id: string) =>
+        after.state.executions.find((e) => e.execution_id === id)
+          ?.settlement_kind;
+      expect(
+        before.executions.find((e) => e.execution_id === exe1)?.settlement_kind,
+      ).toBe("Completed");
+      expect(before.waits).toBe(1);
+      // SCRC: the settling wait call is paired with a sourced
+      // ControlResult, so the durable timeline now contains one additional
+      // entry beyond the pre-SCRC legacy count.
+      expect(before.entries).toBe(4);
+      expect(after.recovery.settled).toContain(exe2);
+      expect(kind(exe2)).toBe("Interrupted");
+      expect(kind(exe3)).toBeNull();
+      expect(after.state.waits).toBe(1);
+      expect(after.state.entries).toBe(4);
+      expect(new Set(after.state.executions.map((e) => e.session_id))).toEqual(
+        new Set([sessionId]),
+      );
+    } finally {
+      fixture.cleanup();
+    }
+  }, 120_000);
 });

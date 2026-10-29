@@ -1,15 +1,13 @@
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  CURRENT_SCHEMA_VERSION,
   P7_MIGRATIONS,
   runMigrations,
   WorkWaitStoreLive,
 } from "../adapters/persistence-sqlite/src/index.js";
-import { buildSliceLayer } from "../apps/single-workspace/src/index.js";
+import { buildSingleWorkspaceLayer } from "../apps/single-workspace/src/index.js";
 import {
   consumeWakeSignals,
   deliverWakeSignal,
@@ -37,6 +35,7 @@ import {
   p7SeedWork,
   runP7,
 } from "./support/p7-app.js";
+import { createCurrentSchemaTestDatabaseFactory } from "./support/schema44-database.js";
 
 const WORK_CONSUMER = parse(WorkId)("wrk_018f2b3c-4d5e-7abc-8def-0123456789b1");
 const CMD_CONSUMER = parse(CommandId)(
@@ -124,8 +123,18 @@ const seedWakeFixture = Effect.gen(function* () {
 const waitOf = (deps: WakeSinkDependencies, workId: WorkId) =>
   deps.tx.transact(deps.waits.findByWork(workId));
 
+let schema44Factory: Awaited<
+  ReturnType<typeof createCurrentSchemaTestDatabaseFactory>
+>;
+
 describe("p7-wake-pipeline (P7-011, 06 §2/§3)", () => {
-  it("DependencySatisfied clears only the advanced DependencyChanged wait and reevaluates the target workspace", async () => {
+  beforeAll(async () => {
+    schema44Factory = await createCurrentSchemaTestDatabaseFactory();
+  }, 120_000);
+
+  afterAll(() => schema44Factory?.cleanup(), 120_000);
+
+  it("DependencySatisfied clears the exact wait without requiring revision advance and reevaluates", async () => {
     const { calls, app } = makeWakeApp();
     await runP7(
       Effect.gen(function* () {
@@ -149,7 +158,7 @@ describe("p7-wake-pipeline (P7-011, 06 §2/§3)", () => {
           {
             workspaceId: p7RootWorkspace,
             reason: "DependencySatisfied",
-            detail: { dependencyId: DEP, fromRevision: 0, toRevision: 1 },
+            detail: { dependencyId: DEP, fromRevision: 0, toRevision: 0 },
           },
           deps,
         );
@@ -168,7 +177,7 @@ describe("p7-wake-pipeline (P7-011, 06 §2/§3)", () => {
     );
   });
 
-  it("observedRevision already at/after toRevision clears nothing (already seen); reevaluate still fires at-least-once", async () => {
+  it("DependencySatisfied clears a matching wait even when observedRevision equals or exceeds the stable revision", async () => {
     const { calls, app } = makeWakeApp();
     await runP7(
       Effect.gen(function* () {
@@ -189,8 +198,8 @@ describe("p7-wake-pipeline (P7-011, 06 §2/§3)", () => {
           },
           deps,
         );
-        expect(outcome).toEqual({ woke: false, clearedWaits: 0 });
-        expect(Option.isSome(yield* waitOf(deps, WORK_CONSUMER))).toBe(true);
+        expect(outcome).toEqual({ woke: true, clearedWaits: 1 });
+        expect(yield* waitOf(deps, WORK_CONSUMER)).toEqual(Option.none());
         expect(calls.length).toBe(1);
       }),
       app,
@@ -300,23 +309,41 @@ describe("p7-wake-pipeline (P7-011, 06 §2/§3)", () => {
     );
   });
 
-  it("composition smoke: buildSliceLayer builds and migrates a durable DB to v7 (P7_MIGRATIONS)", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "p7-wake-"));
-    const app = buildSliceLayer({ databaseFile: join(dir, "slice.db") });
-    const version = await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          yield* runMigrations(P7_MIGRATIONS);
-          yield* ExecutionScheduler;
-          const sql = yield* SqlClient;
-          const rows = yield* sql.unsafe<{ user_version: number }>(
-            "PRAGMA user_version",
-          );
-          return Number(rows[0]?.user_version);
-        }),
-        app,
-      ) as Effect.Effect<number, unknown, never>,
-    );
-    expect(version).toBe(7);
-  });
+  it("composition smoke: builds against the real current schema", async () => {
+    const database = schema44Factory.create();
+    try {
+      const app = buildSingleWorkspaceLayer({
+        databaseFile: database.databaseFilename,
+      });
+      const result = await Effect.runPromise(
+        Effect.provide(
+          Effect.gen(function* () {
+            yield* ExecutionScheduler;
+            const sql = yield* SqlClient;
+            const version = yield* sql.unsafe<{ user_version: number }>(
+              "PRAGMA user_version",
+            );
+            const waits = yield* sql.unsafe<{ name: string }>(
+              "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'work_waits'",
+            );
+            return {
+              version: Number(version[0]?.user_version),
+              hasWorkWaits: waits.length === 1,
+            };
+          }),
+          app,
+        ) as Effect.Effect<
+          { readonly version: number; readonly hasWorkWaits: boolean },
+          unknown,
+          never
+        >,
+      );
+      expect(result).toEqual({
+        version: CURRENT_SCHEMA_VERSION,
+        hasWorkWaits: true,
+      });
+    } finally {
+      database.cleanup();
+    }
+  }, 120_000);
 });

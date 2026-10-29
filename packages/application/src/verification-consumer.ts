@@ -15,13 +15,25 @@ import {
   parse,
   VerificationId,
   WorkRevision,
+  workEpisode,
 } from "@arbor/domain";
+import type {
+  ExecutionRepositoryError,
+  TransactionOperationalFailure,
+  VerificationRepositoryError,
+  WorkRepositoryError,
+  WorkspaceRepositoryError,
+} from "@arbor/ports";
 import { Effect, Option } from "effect";
 import type { CommandAuthorityFact } from "./authority.js";
 import type { StartVerificationPayload } from "./commands/start-verification.js";
 import { semanticRequestFingerprint } from "./fingerprint.js";
 import { newUuid7 } from "./formation-plan.js";
-import type { CommandGatewayService, GatewayEnvelope } from "./gateway.js";
+import type {
+  CommandGatewayError,
+  CommandGatewayService,
+  GatewayEnvelope,
+} from "./gateway.js";
 
 /** P8 `03` §1 (DID v1.11 §5.4): Consumer A — the deterministic consumer from
  * `ExecutionSettled(CompletionClaimed)` to `StartVerification` via the
@@ -43,22 +55,62 @@ export interface VerificationConsumerDependencies<R> {
     readonly findOpenByWorkRevision: (
       workId: WorkId,
       targetWorkRevision: number,
-    ) => Effect.Effect<Option.Option<Verification>, unknown, R>;
+    ) => Effect.Effect<
+      Option.Option<Verification>,
+      VerificationRepositoryError | TransactionOperationalFailure,
+      R
+    >;
     readonly findById: (
       verificationId: VerificationId,
-    ) => Effect.Effect<Option.Option<Verification>, unknown, R>;
+    ) => Effect.Effect<
+      Option.Option<Verification>,
+      VerificationRepositoryError | TransactionOperationalFailure,
+      R
+    >;
+    readonly listByWork: (
+      workId: WorkId,
+    ) => Effect.Effect<
+      ReadonlyArray<Verification>,
+      VerificationRepositoryError | TransactionOperationalFailure,
+      R
+    >;
   };
   readonly works: {
     readonly findById: (
       workId: WorkId,
-    ) => Effect.Effect<Option.Option<Work>, unknown, R>;
+    ) => Effect.Effect<
+      Option.Option<Work>,
+      WorkRepositoryError | TransactionOperationalFailure,
+      R
+    >;
   };
   readonly workspaces: {
     readonly findById: (
       workspaceId: WorkspaceId,
-    ) => Effect.Effect<Option.Option<Workspace>, unknown, R>;
+    ) => Effect.Effect<
+      Option.Option<Workspace>,
+      WorkspaceRepositoryError | TransactionOperationalFailure,
+      R
+    >;
+  };
+  readonly executions?: {
+    readonly findById: (
+      executionId: ExecutionId,
+    ) => Effect.Effect<
+      Option.Option<import("@arbor/domain").Execution>,
+      ExecutionRepositoryError | TransactionOperationalFailure,
+      R
+    >;
   };
 }
+
+export type VerificationConsumerError =
+  | CommandGatewayError
+  | ExecutionRepositoryError
+  | TransactionOperationalFailure
+  | VerificationRepositoryError
+  | WorkRepositoryError
+  | WorkspaceRepositoryError;
 
 /** Caller-preallocated identity set (P8 `02` §1, v1.7 G5): deterministic
  * f(workId, workRevision, claimRef) — at-least-once redelivery is absorbed
@@ -120,6 +172,50 @@ const asCompletionClaimed = (
   };
 };
 
+const asNestedCompletionClaimed = (
+  payload: unknown,
+): {
+  readonly executionId: ExecutionId;
+  readonly workRevision: number;
+  readonly claimRef: string;
+} | null => {
+  if (typeof payload !== "object" || payload === null) return null;
+  const candidate = payload as Record<string, unknown>;
+  const settlement = candidate.settlement;
+  if (typeof candidate.executionId !== "string") return null;
+  if (typeof settlement !== "object" || settlement === null) return null;
+  const result = (settlement as Record<string, unknown>).result;
+  if (
+    (settlement as Record<string, unknown>)._tag !== "Completed" ||
+    typeof result !== "object" ||
+    result === null ||
+    (result as Record<string, unknown>)._tag !== "CompletionClaimed" ||
+    typeof (result as Record<string, unknown>).workRevision !== "number" ||
+    typeof (result as Record<string, unknown>).claimRef !== "string"
+  ) {
+    return null;
+  }
+  return {
+    executionId: candidate.executionId as ExecutionId,
+    workRevision: (result as Record<string, unknown>).workRevision as number,
+    claimRef: (result as Record<string, unknown>).claimRef as string,
+  };
+};
+
+const isExplicitNonClaimSettlement = (payload: unknown): boolean => {
+  if (typeof payload !== "object" || payload === null) return false;
+  const settlement = (payload as Record<string, unknown>).settlement;
+  if (typeof settlement !== "object" || settlement === null) return false;
+  const result = (settlement as Record<string, unknown>).result;
+  return (
+    (settlement as Record<string, unknown>)._tag === "Completed" &&
+    typeof result === "object" &&
+    result !== null &&
+    typeof (result as Record<string, unknown>)._tag === "string" &&
+    (result as Record<string, unknown>)._tag !== "CompletionClaimed"
+  );
+};
+
 /** One record per event decision: "StartVerification" for a committed
  * submission, "skipped:<reason>:<ref>" for pre-check misses and typed
  * gateway rejections, "needSpawn:<verificationId>:<verifierExecutionId>"
@@ -129,7 +225,7 @@ export const runVerificationConsumer = <R>(
   dependencies: VerificationConsumerDependencies<R>,
   projectId: ProjectId,
   principal: Principal,
-): Effect.Effect<ReadonlyArray<string>, unknown, R> =>
+): Effect.Effect<ReadonlyArray<string>, VerificationConsumerError, R> =>
   Effect.gen(function* () {
     const records: string[] = [];
     const actor = parse(Actor)(principal);
@@ -159,7 +255,33 @@ export const runVerificationConsumer = <R>(
       if (event.eventType !== "ExecutionSettled") {
         continue;
       }
-      const trigger = asCompletionClaimed(event.payload);
+      if (isExplicitNonClaimSettlement(event.payload)) {
+        records.push(`skipped:NotCompletionClaimed:${event.eventId}`);
+        continue;
+      }
+      let trigger = asCompletionClaimed(event.payload);
+      if (
+        trigger !== null &&
+        "legacy" in trigger &&
+        dependencies.executions !== undefined
+      ) {
+        const nested = asNestedCompletionClaimed(event.payload);
+        if (nested !== null) {
+          const execution = yield* dependencies.executions.findById(
+            nested.executionId,
+          );
+          const boundWork = Option.isSome(execution)
+            ? workEpisode(execution.value)
+            : null;
+          if (boundWork !== null) {
+            trigger = {
+              workId: boundWork.workId,
+              workRevision: nested.workRevision,
+              claimRef: nested.claimRef,
+            };
+          }
+        }
+      }
       if (trigger === null) {
         records.push(`skipped:NotCompletionClaimed:${event.eventId}`);
         continue;
@@ -173,9 +295,7 @@ export const runVerificationConsumer = <R>(
       // Store facts, not payload claims (P7 coordinator convention): the
       // Work snapshot decides; a moved revision or terminal Work is a
       // recorded skip, never a submission burned into the journal.
-      const stored = yield* dependencies.works
-        .findById(workId)
-        .pipe(Effect.orDie);
+      const stored = yield* dependencies.works.findById(workId);
       if (Option.isNone(stored) || stored.value.projectId !== projectId) {
         records.push(`skipped:WorkNotFound:${workId}`);
         continue;
@@ -189,9 +309,7 @@ export const runVerificationConsumer = <R>(
         records.push(`skipped:RevisionConflict:${workId}`);
         continue;
       }
-      const owner = yield* dependencies.workspaces
-        .findById(work.workspaceId)
-        .pipe(Effect.orDie);
+      const owner = yield* dependencies.workspaces.findById(work.workspaceId);
       if (Option.isNone(owner)) {
         records.push(`skipped:WorkspaceNotFound:${workId}`);
         continue;
@@ -204,16 +322,30 @@ export const runVerificationConsumer = <R>(
       // or another starter holds the one-Open slot for this revision
       // (findOpenByWorkRevision). Either way the re-spawn hint still
       // fires for an un-backfilled Open row.
-      const mine = yield* dependencies.verifications
-        .findById(ids.verificationId)
-        .pipe(Effect.orDie);
+      const mine = yield* dependencies.verifications.findById(
+        ids.verificationId,
+      );
       if (Option.isSome(mine)) {
         records.push(replayRecord(mine.value, ids, workId));
         continue;
       }
-      const open = yield* dependencies.verifications
-        .findOpenByWorkRevision(workId, workRevision)
-        .pipe(Effect.orDie);
+      const history = yield* dependencies.verifications.listByWork(workId);
+      const sameRevision = history.find(
+        (verification) =>
+          Number(verification.targetWorkRevision) === workRevision,
+      );
+      if (sameRevision !== undefined) {
+        records.push(
+          sameRevision.state.status === "Open"
+            ? replayRecord(sameRevision, ids, workId)
+            : `skipped:VerificationAlreadyConcluded:${workId}:${workRevision}`,
+        );
+        continue;
+      }
+      const open = yield* dependencies.verifications.findOpenByWorkRevision(
+        workId,
+        workRevision,
+      );
       if (Option.isSome(open)) {
         records.push(replayRecord(open.value, ids, workId));
         continue;
@@ -259,9 +391,11 @@ export const runVerificationConsumer = <R>(
       // Operational failures are defects at this boundary (P7 coordinator
       // convention): the settlement transaction already committed; recovery
       // is catch-up replay, absorbed by the deterministic CommandId.
-      const receipt = yield* dependencies.gateway
-        .execute(envelope, context, authority)
-        .pipe(Effect.orDie);
+      const receipt = yield* dependencies.gateway.execute(
+        envelope,
+        context,
+        authority,
+      );
       if (receipt.resolution._tag === "Committed") {
         records.push("StartVerification");
         continue;

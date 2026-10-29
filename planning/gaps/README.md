@@ -35,6 +35,31 @@ CLOSED   — disposed by a later phase / governance ruling (see file)
 | DG-06 | Architecture test placement conflict | DID §10.1 vs `AGENTS.md` rule 5 | P0-001, P0-017 | RESOLVED |
 | P5-DG-01 | Acceptance story cannot reach `Admit Work(current)` | P5 `05` §1, P5 `02` §2; DID §8.18A; P2 `05` §4 | P5-009, P5-011 | RESOLVED |
 | P7-GAP-01 | Vacant-workspace silent wait | P7 / P10 | P10-004, P10-013 | CLOSED (P10 WaitingOnVacantProducer view) |
+| DOGFOOD-DG-01 | Settled ProviderTurn with active Execution after fenced session write | DID v1.20 AHT-1…AHT-8; P3 `08`; P9 `07` | Quant-research dogfood recovery (implementation separately gated) | RESOLVED |
+| DOGFOOD-DG-03 | Executable filesystem tool target cannot be mapped into the sandbox | DID v1.25 EWB-1…10; P4 `04`/`08`; P11 `12` | Filesystem tools / release-validation Work | RESOLVED |
+| DPM-DG-01 | Project directory, rename and close/archive product surface | DID §3.1/§4.2/§5/§12.10–§12.11; P15 project-management contracts | Project management surface | RESOLVED |
+| G-V2-1 | AssignWork provenance source | DID v1.26 VDC-5 | Agent AssignWork | RESOLVED |
+| G-V2-2 | ToolObservation exact evidence identity | DID v1.26 VDC-2 | B10 Verification | RESOLVED |
+| G-V2-3 | Verification conclusion summaryRef | DID v1.26 VDC-3 | B10 Verification | RESOLVED |
+| G-V2-4 | initialWork VerificationMission lifecycle | DID v1.26 VDC-4 | Formation / B10 | RESOLVED |
+| TOOL-AUTH-DG-01 | Execution tool capability source | DID §8 / P4 invocation authority | Executable Tool Calling | RESOLVED |
+| SCRC-DG-01 | Session / Context Runtime convergence | System Design v1.4; DID v1.22; landing `75589c5` | Session timeline, inbox promotion, typed tool items, compaction | RESOLVED |
+| SCRC-DG-02 | Context overflow successor ProviderTurn identity | DID v1.23 OVS-1…OVS-7; migration 0020 | SCRC-007/008 | RESOLVED |
+| P12-DG-01 | D4 durable-progress definition differs between P12 §5 and §7 | P12 `08` §5/§7; DID v1.20; P3 driver observation | P12 RuntimeSafety observation semantics / P3 signal production | CLOSED — accepted convergence landed and implementation review Blocking=0 |
+| S4-CONTEXT-DG-01 | WorkspaceWork AssistantMessage is persisted but omitted from next Provider context; text-only Stop may continue on unchanged input | DID §9.8 / v1.50 AH19; P3 `02` / `03` / `08`; P2 Session timeline | S4-B response-loop qualification; P3 Model Context / Agent Loop | CLOSED — Option A landed and implementation review Blocking=0; real S4-B remains release validation |
+| WSC-DG-01 | DependencySatisfied revision-stable transition cannot clear strict revision wait | DID WSC-1; P7 `06`/`07` | WorkflowSignalConsumer DependencySatisfied route | RESOLVED |
+| EEB-DG-01 | `Coordination` catch-all mixes unrelated Execution Episodes | System Design v1.6 EGP-1…10; DID v1.28 | Execution Domain, Scheduler, Agent Runtime, Model Context, SQLite, Conversation | RESOLVED |
+| CRAC-DG-01 | Root Conversation zero-tool profile blocks governed Arbor actions | System Design v1.7 / DID v1.29 / P17 TurnProfile | Root conversation, child Workspace proposal | RESOLVED |
+| RGI-DG-01 | Root goal lacks automatic placement and work-initiation closure | System Design v1.9 / DID v1.31 / MAC-P1/P2 | Root conversation, placement context, AssignWork, Formation, Scheduler | RESOLVED (implementation phase-gated) |
+| CAPA-DG-01 | Control Actions lack subject-bound permission and durable approval interruption | System Design v1.8 / DID v1.30 / P12 / P17 / AgentLoopStep | All model-facing Control Actions | RESOLVED |
+| SDO-DG-01 | ExecutionBound Specialist lacks usable subagent orchestration | System Design v1.9 / DID v1.31 / MAC-P4 | Runtime subagent context, tools, collaboration, result delivery, limits | CLOSED (optional capability disabled; legacy replay-only) |
+| MAC-DG-01 | System complexity exceeds the closed user-value path | Problem v1.3 / Scenarios v1.3 / System Design v1.9 / DID v1.31 / MAC | Vocabulary, golden path, cognition, actions, fulfillment, legacy isolation | RESOLVED |
+| RAI-DG-02 | Terminal Provider failure can readmit the same Open Work revision indefinitely | System Design v1.23 / DID v1.61 / P2/P3/P6/P7/P9/P10/P12/P13 | Exact Work-revision Provider-failure hold | RESOLVED at design layer; implementation separately gated |
+| FT-DG-01 | UI-created Project has no trusted resource admission | System Design / DID / P12 / P13 | F21 | OPEN |
+| FT-DG-02 | Completed Work cannot be inspected by its original link | System Design / DID / P10 / P13 | F05 terminal oracle / F22 | CLOSED — accepted contract implemented and F22 qualified; see `planning/results/FT-DG-02-work-detail-implementation.result.md` |
+| FT-DG-03 | External Command payloads can persist malformed typed identities | System Design / DID / P12 transport / Application | F23 and all public command shells | OPEN |
+| AH7-DG-01 | Settled ToolInvocation lacks replayable bounded Observation | System Design / DID / P3 / P4 / P9 | AH7 settlement→Observation crash seam | OPEN |
+| AH7-DG-02 | Reconcilable shell lacks an executable reality-proof contract | System Design / DID / P4 / P9 | AH7 effect→settlement crash seam | OPEN |
 
 All six gaps were resolved by the System Design v1.3 / DID v1.4 governance
 patch. Resolution authority is recorded in each gap file.

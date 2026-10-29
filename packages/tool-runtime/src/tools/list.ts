@@ -1,19 +1,14 @@
 import { readdirSync, statSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { join, relative } from "node:path";
 import { Effect } from "effect";
 import {
   bounded,
   type ToolExecutionResult,
   type ToolExecutor,
 } from "../runtime.js";
-
-const resolveWithin = (root: string, path: string): string => {
-  const target = resolve(join(root, path));
-  if (!target.startsWith(resolve(root))) {
-    throw new Error("path escapes sandbox root");
-  }
-  return target;
-};
+import { resolveExistingWithin } from "../safe-path.js";
+import { resolveSandboxTarget } from "../sandbox-target.js";
+import { executeFilesystemTool } from "./filesystem-result.js";
 
 const MAX_ENTRIES = 500;
 
@@ -32,10 +27,13 @@ const walk = (
       return;
     }
     const absolute = join(current, entry);
+    const safeAbsolute = resolveExistingWithin(root, relative(root, absolute));
     const rel = relative(root, absolute);
-    out.push(statSync(absolute).isDirectory() ? `${rel}/` : rel);
-    if (statSync(absolute).isDirectory()) {
-      walk(root, absolute, depth + 1, maxDepth, out);
+    const portableRel = rel.replaceAll("\\", "/");
+    const stat = statSync(safeAbsolute);
+    out.push(stat.isDirectory() ? `${portableRel}/` : portableRel);
+    if (stat.isDirectory()) {
+      walk(root, safeAbsolute, depth + 1, maxDepth, out);
     }
   }
 };
@@ -46,23 +44,31 @@ export const listExecutor: ToolExecutor = {
   write: false,
   requiresApproval: () => false,
   execute: ({ intent, sandbox }) =>
-    Effect.sync((): ToolExecutionResult => {
-      const args = JSON.parse(intent.argumentsJson) as {
-        path: { path: string };
-        depth?: number;
-      };
-      const start = resolveWithin(sandbox.rootPath, args.path.path);
-      const entries: Array<string> = [];
-      walk(sandbox.rootPath, start, 0, args.depth ?? 1, entries);
-      return {
-        settlement: { _tag: "Success" },
-        observation: bounded(
-          JSON.stringify({
-            entries,
-            truncated: entries.length >= MAX_ENTRIES,
-          }),
-        ),
-        resultRef: null,
-      };
-    }),
+    Effect.sync(
+      (): ToolExecutionResult =>
+        executeFilesystemTool(() => {
+          const args = JSON.parse(intent.argumentsJson) as {
+            target: { mount: string; path: string };
+            depth?: number;
+          };
+          const start = resolveSandboxTarget(sandbox, args.target, {
+            access: "ReadOnly",
+          });
+          const mountRoot =
+            sandbox.mounts?.find((entry) => entry.ref === args.target.mount)
+              ?.rootPath ?? sandbox.rootPath;
+          const entries: Array<string> = [];
+          walk(mountRoot, start, 0, args.depth ?? 1, entries);
+          return {
+            settlement: { _tag: "Success" },
+            observation: bounded(
+              JSON.stringify({
+                entries,
+                truncated: entries.length >= MAX_ENTRIES,
+              }),
+            ),
+            resultRef: null,
+          };
+        }),
+    ),
 };

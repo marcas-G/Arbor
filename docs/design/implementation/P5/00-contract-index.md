@@ -63,3 +63,38 @@ continuation, Tool effects and restarts, and emits a `CompletionClaim`.
 FROZEN (contracts) — independent review round 1 complete, **Blocking = 0**.
 No P5 planning is generated until the phase plan + tasks are derived from these
 contracts.
+
+## Accepted full-chain Native Sandbox authority/configuration owner
+
+P5 `01` loads and validates the current SandboxAuthorityBundleV2 from the
+protected deployment source and exposes one immutable snapshot to P1/P4. It
+owns exact issuer/operator/registry codecs, OS-protected source identity and
+independent monotone V2 high-water, versioned safe error/audit ADTs and
+fail-closed unavailable behavior. V1 source/high-water/audit bytes remain
+immutable forensic history only; they do not authorize new policy decisions
+after V2 activation. No daemon auto-initialization/reset, default issuer, hot
+reload or allow-all mode exists. V21 derived RecoveryBinding Attention uses
+existing P4/P9 data and does not alter this source contract.
+
+## Accepted Native Sandbox producer mapping closure (V3)
+
+P5/01 closes operator policy configuration inside the versioned bundle,
+including fixed `trustedLocalRuntimeVersion=builtin-v1`, exact revision/digest
+mapping, V1-to-V2 protected high-water preservation and immutable audit
+compatibility. See P5/01 and the V3 acceptance record/manifest.
+
+## Accepted Sandbox Policy Candidate Read Model V5
+
+P5/01 supplies one fully validated immutable SandboxAuthorityBundleV2
+snapshot and exact current-host Supported tuples only. It does not filter
+Workspace applicability, choose a policy, expose provider evidence refs, or
+gate dispatch. P10 owns the candidate read; P4 owns requirement proof and P1
+owns command CAS. See the V5 acceptance record.
+
+## Accepted Option A exact provider selector (2026-10-20)
+
+P5/01's existing V2 Supported tuple/evidence is the sole source for P1's
+exact providerVersion/capabilityRevision match. Current host remains trusted
+process-local input; registry codecs, uniqueness, high-water and migration
+contracts are unchanged. Accepted proposal SHA-256
+`02D2687AA87D6E2B08D06090F293961CCBCFDFF884B6348872D42AFAA59B3013`.

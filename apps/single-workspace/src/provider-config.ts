@@ -33,6 +33,12 @@ export interface ArborProviderSecretConfig {
 }
 
 export interface ArborProviderConfigFile {
+  readonly runtime?: {
+    readonly processExecutionMode?: {
+      readonly version: 1;
+      readonly processExecutionMode: ProcessExecutionMode;
+    };
+  };
   readonly provider: {
     readonly deploymentId: string;
     readonly modelRef: string;
@@ -43,6 +49,57 @@ export interface ArborProviderConfigFile {
     readonly extraHeaders?: ReadonlyArray<Record<string, string>>;
   };
 }
+
+export type ProcessExecutionMode = "Disabled" | "NativeOsSupportedOnly";
+
+/** Closed, fail-closed decoder for the optional P12 startup process mode. */
+export const processExecutionModeOfConfig = (
+  value: unknown,
+): ProcessExecutionMode => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return "Disabled";
+  }
+  const root = value as Record<string, unknown>;
+  if (!("runtime" in root)) return "Disabled";
+  const runtime = root.runtime;
+  if (
+    typeof runtime !== "object" ||
+    runtime === null ||
+    Array.isArray(runtime) ||
+    Object.keys(runtime).some((key) => key !== "processExecutionMode")
+  ) {
+    return "Disabled";
+  }
+  const setting = (runtime as Record<string, unknown>).processExecutionMode;
+  if (setting === undefined) return "Disabled";
+  if (
+    typeof setting !== "object" ||
+    setting === null ||
+    Array.isArray(setting)
+  ) {
+    return "Disabled";
+  }
+  const record = setting as Record<string, unknown>;
+  if (
+    Object.keys(record).length !== 2 ||
+    record.version !== 1 ||
+    (record.processExecutionMode !== "Disabled" &&
+      record.processExecutionMode !== "NativeOsSupportedOnly")
+  ) {
+    return "Disabled";
+  }
+  return record.processExecutionMode;
+};
+
+/** The config-file snapshot owns process mode; programmatic composition
+ * overrides cannot widen the production process surface. */
+export const bindProcessExecutionModeSnapshot = <A extends object>(
+  config: unknown,
+  overrides: A,
+): A & { readonly processExecutionMode: ProcessExecutionMode } => ({
+  ...overrides,
+  processExecutionMode: processExecutionModeOfConfig(config),
+});
 
 /** Sentinel SecretRef for inline credentials (value never enters the
  * deployment object — INV-P16-8 shape preserved). */
@@ -96,13 +153,13 @@ export const findArborConfigFile = (): ArborConfigFileResult | undefined => {
     let parsed: unknown;
     try {
       parsed = JSON.parse(readFileSync(path, "utf8"));
-    } catch (cause) {
+    } catch {
       return {
         ok: false,
         error: {
           _tag: "ProviderConfigInvalid",
           path,
-          reason: `JSON parse failed: ${String(cause)}`,
+          reason: "JSON parse failed",
         },
       };
     }

@@ -24,22 +24,23 @@ P2 adds port errors to `ports`:
 ```text
 ExecutionRepositoryError, WorkerDispatchError, ExecutionDriverError,
 ExecutionSchedulerError, WorkWaitStoreError, SchedulerTimerStoreError,
-RunnableWorkSourceError, LeaseFencingRejected
+RunnableWorkSourceError, LeaseFencingRejected, SessionSourceConflict,
+AgentLoopStepStoreError, AgentLoopStepInvariantConflict
 ```
 
 ## 2. ExecutionRepository
 
 ```ts
 interface ExecutionRepositoryService {
-  tryAdmitMainExecution(execution: Execution):
+  tryAdmitExecution(execution: Execution):
     Effect<Option<Execution>, ExecutionRepositoryError, TransactionScope>;
-    // None = another active main exists (partial unique) -> ActiveExecutionConflict
+    // None = active admission conflicts with the exact bound Execution policy
   admitExecution(execution: Execution):
     Effect<void, ExecutionRepositoryError, TransactionScope>;
-    // ExecutionBound; no one-active-main constraint
+    // persists one exact ExecutionEpisodeBinding
   findById(executionId):
     Effect<Option<Execution>, ExecutionRepositoryError, TransactionScope>;
-  findActiveMainByWorkspace(workspaceId):
+  findActiveByWorkspace(workspaceId):
     Effect<Option<Execution>, ExecutionRepositoryError, TransactionScope>;
   requestStop(executionId, stopRequestedAt):
     Effect<void, ExecutionRepositoryError, TransactionScope>;
@@ -94,6 +95,19 @@ interface SessionRepositoryService {
   ): Effect<{ readonly sequence: number },
              SessionRepositoryError | LeaseFencingRejected,
              TransactionScope>;
+  appendEntryIdempotent(
+    sessionId: SessionId,
+    source: { readonly kind: string; readonly ref: string },
+    entry: { readonly entryKind: SessionEntryKind; readonly payload: unknown },
+    contentHash: string,
+    fence: { readonly executionId: ExecutionId;
+             readonly workerId: WorkerId;
+             readonly workerIncarnationId: WorkerIncarnationId;
+             readonly fencingGeneration: LeaseGeneration },
+  ): Effect<{ readonly sequence: number; readonly inserted: boolean },
+             SessionRepositoryError | LeaseFencingRejected |
+               SessionSourceConflict,
+             TransactionScope>;
 }
 
 type SessionEntryKind =
@@ -112,6 +126,59 @@ type SessionEntryKind =
 > fencingGeneration)`, matching the authoritative fence predicate (`03` §3,
 > `04` §4). Incarnation-only matching is insufficient, so `workerId` is carried
 > as well. The same-transaction authoritative fence semantics are unchanged.
+
+> **DID v1.20 AHT-3.** `appendEntryIdempotent` uses the unique source key from
+> `04` §3.4. Same source + same `contentHash` returns the existing sequence;
+> same source + different hash returns typed `SessionSourceConflict` and never
+> overwrites. Agent Runtime calls this method and the AgentLoopStep transition in
+> one `TransactionPort.transact` body, so ModelOutput visibility and
+> `OutputAccepted` are atomic.
+
+## 3A. AgentLoopStepStore (DID v1.20 successor)
+
+```ts
+interface AgentLoopStepStoreService {
+  find(identity: AgentLoopStepIdentity):
+    Effect<Option<AgentLoopStepRecord>, AgentLoopStepStoreError, TransactionScope>;
+  findCurrent(executionId: ExecutionId):
+    Effect<Option<AgentLoopStepRecord>, AgentLoopStepStoreError, TransactionScope>;
+  createPrepared(record: AgentLoopStepRecord, fence: LeaseFence):
+    Effect<AgentLoopStepRecord, AgentLoopStepStoreError | LeaseFencingRejected,
+      TransactionScope>;
+  transition(input: {
+    readonly identity: AgentLoopStepIdentity;
+    readonly expectedRevision: number;
+    readonly expectedState: AgentLoopStepState;
+    readonly next: AgentLoopStepRecord;
+    readonly fence: LeaseFence;
+  }): Effect<AgentLoopStepRecord,
+    AgentLoopStepStoreError | LeaseFencingRejected | AgentLoopStepInvariantConflict,
+    TransactionScope>;
+  ensureSuccessor(predecessor, successor, fence):
+    Effect<AgentLoopStepRecord,
+      AgentLoopStepStoreError | LeaseFencingRejected | AgentLoopStepInvariantConflict,
+      TransactionScope>;
+  findWithoutTurn(executionId: ExecutionId):
+    Effect<boolean, AgentLoopStepStoreError, TransactionScope>;
+}
+
+interface LeaseFence {
+  readonly executionId: ExecutionId;
+  readonly workerId: WorkerId;
+  readonly workerIncarnationId: WorkerIncarnationId;
+  readonly fencingGeneration: LeaseGeneration;
+}
+```
+
+Every mutating method validates the complete lease-holder triple and
+`executions.settled_at IS NULL` in the same transaction. `transition` is a
+revision + expected-state CAS; zero rows is a typed conflict and is never
+silently retried as a different transition. `ensureSuccessor` follows P3 `08`
+§8 and returns an identical existing successor or raises an invariant conflict.
+
+Action-ledger methods follow the same pattern: find by ordered index or
+`LogicalActionId`, create exact records, and transition by expected revision +
+state under the same fence. The store never executes an action.
 
 ## 4. FenceStopCheck (P2 extension of the P1 hook)
 
@@ -177,6 +244,13 @@ interface ExecutionDriverPortService {
   `SettleExecution` (ExecutionOrigin, fenced). The driver never writes
   canonical state directly.
 
+**Single-flight driver use.** Dispatch is only a wake intent. The production
+P2 `runExecution` path invokes `ExecutionDriverPort.drive` only after its own
+successful `LeaseService.acquire` for that Execution. A live-lease acquisition
+rejection does not call the driver or reuse another run's `ExecutionOrigin`.
+The lease tuple is not an application-level token for starting a parallel
+driver.
+
 ### RuntimeSafetyGate (P2-owned, DID v1.7 G4)
 
 ```ts
@@ -189,7 +263,7 @@ type SafetyDecision = "Continue" | "Stop";
 
 type RuntimeSafetyObservation = {
   readonly retryCount?: number;                // D1: 0-based retry ordinal
-  readonly durableProgress?: boolean;          // D4: progress since previous turn boundary
+  readonly durableProgress?: boolean;          // P12-DG-01 shared D2/D4 progress since previous new ProviderTurn boundary
   readonly chainDepth?: number;                // D3: tool recursion / chaining depth
   readonly inFlight?: "begin" | "end";         // D5: lease-scoped in-flight gauge
   readonly leaseGeneration?: LeaseGeneration;  // D5: generation the gauge is scoped to
@@ -211,6 +285,15 @@ interface RuntimeSafetyGateService {
 > optional** and carries the D1/D3/D4/D5/D6 signals the frozen
 > `ExecutionActivity` does not. P2 gating ownership is unchanged (P3 reports;
 > P2 decides); numeric thresholds remain configuration.
+
+> **P12-DG-01 propagation (2026-10-24).** The existing optional
+> `durableProgress` observation is the shared D2/D4 reset signal: `true` clears
+> D2 fingerprint history and resets D4's consecutive no-progress counter at a
+> new ProviderTurn boundary; `false` or absence does neither. P2 retains the
+> existing per-dimension count/threshold algorithms and gate/port shape; the
+> D2 reset trigger is intentionally changed to this shared signal. P3 owns
+> producing the signal under the P12 `08` success/authoritative-commit
+> definition; D2/D4 ownership and detailed source semantics remain in P12 `08`.
 
 - P2 owns execution-wide enforcement (max transient retries, repeated action
   fingerprints, recursion depth, consecutive no-progress turns, concurrency
@@ -266,11 +349,18 @@ interface ExecutionSchedulerService {
 }
 
 type SchedulerDecision =
-  | { readonly _tag: "Noop"; readonly reason: "ActiveMainExecution" }
-  | { readonly _tag: "Admit"; readonly focus: ExecutionFocus }
-  | { readonly _tag: "SelectCurrentWork"; readonly workId: WorkId }
+  | { readonly _tag: "Noop"; readonly reason: "ActiveExecution" | "WorkReadmissionHeld" }
+  | { readonly _tag: "Admit"; readonly binding: ExecutionEpisodeBinding }
+  | { readonly _tag: "RequestWorkSelection" }
   | { readonly _tag: "Idle" };
 ```
+
+An ambiguous runnable-Work set produces `RequestWorkSelection`; its consumer
+persists the exact candidate set as a `WorkSelectionDecisionRequest` and
+admits a `DecisionEpisode`. It never admits a Coordination-focused Execution.
+Single runnable Work is admitted as its exact Work episode. Other eligible
+ConversationResponse and Inbox inputs use their exact bindings and owning
+admission paths.
 
 Runnability classification is **P7-owned**; P2 consumes it through:
 
@@ -287,6 +377,160 @@ P2 implements the DID §8.18A decision table over this port and ships a
 deterministic stub; P7 ships the real dependency-aware source. P2 does not add
 runnable semantics.
 
+RAI-DG-01 extends the classifier inputs with an exact Work-revision source
+gate; it does not change `classify(workspaceId)` or WorkWait/Dependency
+semantics.
+
+### 7.1 WorkReadmissionGateStore (RAI-DG-01)
+
+P2 owns the narrow durable-source query used by P7 and the authoritative
+Work-bound `AdmitExecution` transaction:
+
+```ts
+type ReadmissionSourceKind =
+  | "RuntimeSafetyStopSettlement"
+  | "OutcomeUnknownSettlement"
+  | "DeliverReplayFact"
+  | "AssignWorkBindingFact"
+  | "ReconciliationEscalationEvent"
+  | "TerminalProviderFailureSettlement";
+
+type TerminalProviderFailureSource = {
+  readonly sourceKind: "TerminalProviderFailureSettlement";
+  readonly executionId: ExecutionId;
+  readonly logicalStepNo: number;
+  readonly repairAttempt: number;
+  readonly providerTurnId: ProviderTurnId;
+  readonly attemptNo: number;
+  readonly failureKind:
+    | "AuthenticationFailed"
+    | "RequestRejected"
+    | "ProtocolViolation";
+  readonly failureFingerprint: Sha256;
+};
+
+type ReadmissionBlockingSource =
+  | { readonly sourceKind: Exclude<
+        ReadmissionSourceKind,
+        "TerminalProviderFailureSettlement"
+      >;
+      readonly executionId: ExecutionId }
+  | TerminalProviderFailureSource;
+
+interface WorkReadmissionGateStoreService {
+  readonly hasBlockingSource: (input: {
+    readonly projectId: ProjectId;
+    readonly workspaceId: WorkspaceId;
+    readonly workId: WorkId;
+    readonly workRevision: WorkRevision;
+  }) => Effect.Effect<
+    Option.Option<ReadmissionBlockingSource>,
+    ReadmissionTargetMismatch | ReadmissionGateIntegrityFailure,
+    TransactionScope
+  >;
+}
+```
+
+`None` means no exact-revision source; `Some` returns only bounded source
+identity. The SQLite query reads canonical Work, source Execution rows, P9
+fact/event witnesses and `agent_execution_state.episode_json` in one
+`TransactionScope`. It joins by `execution_id`, validates EGP binding and exact
+Project/owning Workspace/Work/revision, and never reads P10 projection tables.
+It adds no gate table or migration. Existing active-Execution admission and
+`BEGIN IMMEDIATE` discipline remain in force.
+
+The requested canonical Work must exist and match all four request fields;
+absence/scope/revision mismatch is `ReadmissionTargetMismatch`. For each
+candidate source in the requested Project and owning Workspace, require one
+Execution row and one episode-state row. Fact/event Project and Execution
+identities and any present target Workspace must match that Execution;
+`ReconciliationEscalated.aggregate_ref` and payload Execution IDs must both
+equal it. A valid non-Work Episode is outside this gate. A Work Episode must
+resolve to canonical Work in the same Project/owning Workspace and match the
+requested Work/revision exactly. A stale lower source revision is ignored; a
+source revision newer than canonical Work is integrity failure. Missing,
+duplicate, malformed, unsupported-version or conflicting evidence is never
+treated as `None` or attached to a guessed Work.
+
+```ts
+type ReadmissionGateIntegrityFailure = {
+  readonly _tag: "ReadmissionGateIntegrityFailure";
+  readonly projectId: ProjectId;
+  readonly workspaceId: WorkspaceId;
+  readonly workId: WorkId;
+  readonly requestedWorkRevision: WorkRevision;
+  readonly executionId?: ExecutionId;
+  readonly sourceKind?: ReadmissionSourceKind;
+  readonly reasonCode:
+    | "ReadmissionTargetMissing" | "ReadmissionTargetScopeMismatch"
+    | "ReadmissionTargetRevisionMismatch" | "SourceExecutionMissing"
+    | "SourceExecutionNonUnique" | "SourceEpisodeStateMissing"
+    | "SourceEpisodeStateNonUnique" | "EpisodeMalformed"
+    | "EpisodeVersionUnsupported" | "SourceFactEventMismatch"
+    | "SourceEventExecutionMismatch" | "SourceProjectMismatch"
+    | "SourceWorkspaceMismatch" | "WorkMissing" | "WorkScopeMismatch"
+    | "FutureWorkRevision" | "SettlementMalformed"
+    | "SourceSettlementStepMissing" | "SourceSettlementStepNonUnique"
+    | "SourceSettlementMismatch" | "SourceProviderTurnMissing"
+    | "SourceProviderTurnNonUnique" | "SourceProviderTurnMismatch"
+    | "SourceProviderAttemptMissing" | "SourceProviderAttemptNonUnique"
+    | "SourceProviderAttemptMismatch" | "SourceManifestMissing"
+    | "SourceManifestMismatch" | "FailureTaxonomyUnsupported"
+    | "FailureOccurrenceTimeInvalid";
+};
+
+type ReadmissionTargetMismatch = {
+  readonly _tag: "ReadmissionTargetMismatch";
+  readonly projectId: ProjectId;
+  readonly workspaceId: WorkspaceId;
+  readonly workId: WorkId;
+  readonly requestedWorkRevision: WorkRevision;
+  readonly reasonCode: "ReadmissionTargetMissing"
+    | "ReadmissionTargetScopeMismatch" | "ReadmissionTargetRevisionMismatch";
+};
+
+type WorkAdmissionBlock =
+  | { readonly _tag: "WorkReadmissionHeld";
+      readonly source: ReadmissionBlockingSource }
+  | ReadmissionTargetMismatch
+  | ReadmissionGateIntegrityFailure;
+```
+
+Errors expose no raw episode JSON, receipt/provider payload, invocation refs,
+SQLite or parser text. P7 propagates integrity errors through
+`RunnableWorkSourceError`; the authoritative Work-bound admission rechecks
+the query in its commit transaction and commits no Execution on a hold or
+integrity failure. Never infer Work identity from Session, `currentWorkId`,
+Message, Attention target, or Parent Workspace.
+
+**RAI-DG-02 accepted addendum.** For
+`TerminalProviderFailureSettlement`, enumerate all candidate WorkEpisode
+Executions bound to the requested tuple; do not require a single Execution for
+the Work revision. Each candidate must have one exact settlement-producing
+Step `(logicalStepNo, repairAttempt)`, failed ProviderTurn, final settled
+ProviderAttempt and Manifest. A valid candidate returns the bounded source
+identity including those Step fields, `providerTurnId`, `attemptNo`, the
+closed terminal kind and fingerprint. The closed source kinds are
+`AuthenticationFailed | RequestRejected | ProtocolViolation` with
+`TerminalFailure + Stop`. Retryable kinds never qualify, including exhausted
+or deadline outcomes.
+
+Extend `ReadmissionGateIntegrityFailure.reasonCode` for exact Step/Turn/
+Attempt/Manifest missing, non-unique and mismatch cases, unsupported taxonomy,
+and invalid occurrence time. Higher revision and malformed/ambiguous chains
+fail closed; lower revision, partial chain, cross-scope and non-Work Episode
+are not current sources. The same query is callable by P10 as a read-only proof
+source, but P10 results and ACK state are never read by this gate. Work-bound
+`AdmitExecution` rechecks the predicate inside its existing transaction, so
+settlement/admission/Steer races linearize by commit order.
+
+When multiple valid terminal candidates exist, choose the bounded witness by
+unsigned deterministic tuple
+`(execution.admittedAt, executionId, logicalStepNo, repairAttempt,
+providerTurnId, attemptNo)`. P10 uses this same order for drill-down witness
+selection. The predicate is true when any valid source exists; ordering never
+turns historical repetition into an integrity failure.
+
 ## 8. WorkWaitStore and SchedulerTimerStore
 
 ```ts
@@ -296,6 +540,30 @@ interface WorkWaitStoreService {
   clear(workId): Effect<void, WorkWaitStoreError, TransactionScope>;
   listActive(): Effect<ReadonlyArray<WorkWait>, WorkWaitStoreError, TransactionScope>;
 }
+
+interface WorkBlockerStoreService {
+  readonly findById: (blockerId: Sha256) =>
+    Effect<Option.Option<WorkBlocker>, WorkBlockerStoreError, TransactionScope>;
+  readonly listByWorkRevision: (workId: WorkId, revision: WorkRevision) =>
+    Effect<ReadonlyArray<WorkBlocker>, WorkBlockerStoreError, TransactionScope>;
+  readonly openOrUpdate: (blocker: WorkBlocker) =>
+    Effect<WorkBlocker, WorkBlockerStoreError, TransactionScope>;
+  readonly resolve: (resolution: {
+    readonly blockerId: Sha256;
+    readonly workId: WorkId;
+    readonly targetWorkRevision: WorkRevision;
+    readonly successfulActionRefs: NonEmptyArray<string>;
+  }) =>
+    Effect<void, WorkBlockerStoreError, TransactionScope>;
+  readonly supersede: (workId: WorkId, revision: WorkRevision) =>
+    Effect<void, WorkBlockerStoreError, TransactionScope>;
+}
+
+`WorkBlockerStore` is an Application-owned current-state ledger used by P2
+settlement and P6 Work revision/terminal commands. Every write above shares the
+owning canonical command's `TransactionScope`; P10 reads it only. The exact
+row identity, transitions, and event pairing are specified in the accepted
+Blocked WorkEpisode package and P2 `04`/`05`; it is not a P2 scheduler state.
 
 interface SchedulerTimerStoreService {
   schedule(timer: SchedulerTimer): Effect<void, SchedulerTimerStoreError, TransactionScope>;
@@ -321,7 +589,54 @@ ExecutionScheduler.reevaluate             -> opens its own short transaction per
 ProjectEnvironmentPort / Clock / IdGenerator -> NO TransactionScope (P1)
 ```
 
-## 10. Out of scope
+## 10. SCRC v1.22 Session Timeline evolution
+
+The following contracts supersede plain-text/every-turn context assembly but
+do not authorize their implementation:
+
+```ts
+interface SessionRepositoryService {
+  appendItemIdempotent(input, source, fence):
+    Effect<SessionSequence, SessionAppendError, TransactionScope>;
+  listActiveFrontier(sessionId, epoch):
+    Effect<ReadonlyArray<SessionItem>, SessionReadError, TransactionScope>;
+  commitCompaction(input: {
+    sessionId; expectedEpoch; checkpoint; nextEpoch;
+  }, fence):
+    Effect<CommittedCheckpoint, SessionCheckpointError, TransactionScope>;
+}
+```
+
+`InputPromotionService.promoteInbox` is an Application/Runtime service. In one
+`TransactionPort` scope it performs sourced Session Input append and Inbox
+`markConsumed`; exact retry returns the existing sequence and same-source/
+different-hash fails. `commitCompaction` uses epoch CAS plus the full active
+lease-holder triple. It commits checkpoint and epoch advance atomically.
+
+The transaction summary therefore evolves `SessionRepository.appendEntry` to
+typed/idempotent item append and adds Inbox promotion/checkpoint convergence;
+long-running projection/provider work remains outside the transaction.
+
+The SessionRepository checkpoint contract remains scoped to its exact Session,
+epoch and current lease fence. AH19 Conversation continuity has a distinct
+RootWorkspaceId owner and may not read, advance or satisfy the Workspace Work
+Session frontier. This design landing does not choose whether the Conversation
+owner is stored in a dedicated P14 record or a separately bound standard
+Session, and adds no P2 port method or transaction/schema shape. The physical
+owner-state choice and atomic write contract belong to a separately authorized
+implementation package.
+
+For a Work Session before its first typed `CompactionCheckpoint`,
+`listActiveFrontier(sessionId,epoch)` selects the latest 64 persisted
+`SessionItem` rows by Session-local sequence. It does not refill from older
+rows after P3 filters a selected row. After a typed checkpoint, it returns the
+exact checkpoint sequence and every unsummarized typed item after it, without
+the 64-row cap. The current pinned input and canonical Work/control facts are
+captured separately and consume no Session row slots. This selection contract
+does not say that every returned row becomes model context or checkpoint
+coverage; P3 owns projection and coverage evidence.
+
+## 11. Out of scope
 
 - Provider/Tool/Model Context ports (P3/P4).
 - Real dependency/runnable graph (P7).

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   SANDBOX_ENV_ALLOWLIST,
   sandboxEnvironment,
@@ -13,10 +13,8 @@ import { SecretEnvLive } from "../adapters/secret-env/dist/index.js";
 import { SecretFileLive } from "../adapters/secret-file/dist/index.js";
 import {
   admitExecution,
-  buildSliceLayer,
+  buildSingleWorkspaceLayer,
   evaluateAndSelect,
-  P12_MIGRATIONS,
-  runMigrations,
 } from "../apps/single-workspace/src/index.js";
 import {
   type AssignWorkPayload,
@@ -55,6 +53,17 @@ import {
   secretRef,
   TransactionPort,
 } from "../packages/ports/dist/index.js";
+import { createCurrentSchemaTestDatabaseFactory } from "./support/schema44-database.js";
+
+let schema44Factory: Awaited<
+  ReturnType<typeof createCurrentSchemaTestDatabaseFactory>
+>;
+beforeAll(async () => {
+  schema44Factory = await createCurrentSchemaTestDatabaseFactory({
+    prefix: "p12-secret-template-",
+  });
+}, 120_000);
+afterAll(() => schema44Factory.cleanup());
 
 const repoRoot = join(import.meta.dirname, "..");
 
@@ -164,7 +173,7 @@ describe("P12-003 secret-file adapter", () => {
 describe("P12-003 driver + sandbox mechanism", () => {
   it("driver no longer hardcodes a raw secretRef (P12 `03` §6 / B5)", () => {
     const source = readFileSync(
-      join(repoRoot, "packages/agent-runtime/src/driver.ts"),
+      join(repoRoot, "packages/agent-runtime/src/agent-loop-driver.ts"),
       "utf8",
     );
     expect(source).not.toMatch(/secretRef\s*:\s*"secret"/);
@@ -228,11 +237,7 @@ const projectPayload: CreateProjectPayload = {
     name: "root",
     responsibilityDefinition: definition,
     responsibilityRevision: parse(ResponsibilityRevision)(0),
-    resourceBoundary: {
-      basisResponsibilityRevision: parse(ResponsibilityRevision)(0),
-      addresses: [{ _tag: "FileTree", path: "." }],
-    },
-    resourceBoundaryRevision: parse(ResourceBoundaryRevision)(0),
+    resourceSelection: { _tag: "ConversationOnly" },
     agentBinding: responsibilityBound(workspaceId),
     workspacePolicy: makeWorkspacePolicy(),
     workspacePolicyRevision: parse(Revision)(0),
@@ -270,7 +275,7 @@ const p1Authority = (
         tag === "CreateProjectAuthority" ? "CreateProject" : "AssignWork",
       projectId,
       actor,
-      schemaVersion: "1",
+      schemaVersion: tag === "CreateProjectAuthority" ? "2" : "1",
       payload,
     }),
     projectId,
@@ -297,7 +302,7 @@ const turns = [
     {
       _tag: "ToolCallProposed" as const,
       callRef: "c1",
-      toolName: "arbor_wait",
+      toolName: "wait",
       argumentsJson: JSON.stringify({
         reason: "secret-store sentinel completion",
         waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
@@ -313,9 +318,9 @@ describe("P12-003 sentinel no-leak", () => {
     const sentinelValue = `sentinel-value-${randomUUID()}`;
     process.env[sentinelEnv] = sentinelValue;
 
-    const dir = mkdtempSync(join(tmpdir(), "p12-secret-"));
-    const app = buildSliceLayer({
-      databaseFile: join(dir, "slice.db"),
+    const database = schema44Factory.create();
+    const app = buildSingleWorkspaceLayer({
+      databaseFile: database.databaseFilename,
       providerTurns: turns,
       secretRef: secretRef(sentinelEnv),
     });
@@ -341,7 +346,6 @@ describe("P12-003 sentinel no-leak", () => {
       const result = await Effect.runPromise(
         Effect.provide(
           Effect.gen(function* () {
-            yield* runMigrations(P12_MIGRATIONS);
             const gateway = yield* CommandGateway;
             yield* gateway.execute(
               envelope("CreateProject", projectPayload, commandId("1")),
@@ -418,6 +422,7 @@ describe("P12-003 sentinel no-leak", () => {
       process.stdout.write = origOut as typeof process.stdout.write;
       process.stderr.write = origErr as typeof process.stderr.write;
       delete process.env[sentinelEnv];
+      database.cleanup();
     }
 
     // the turn completed: the sentinel SecretRef WAS resolved through the adapter.
@@ -426,5 +431,5 @@ describe("P12-003 sentinel no-leak", () => {
     expect(allRows).not.toContain(sentinelValue);
     expect(captured.join("")).not.toContain(sentinelValue);
     expect(captured.join("")).not.toContain(sentinelEnv);
-  });
+  }, 120_000);
 });

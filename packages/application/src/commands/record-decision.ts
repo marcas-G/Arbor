@@ -8,12 +8,16 @@ import {
   type WorkspaceId,
 } from "@arbor/domain";
 import type {
+  FormationFulfillmentStoreService,
   FormationProposalStoreService,
   InboxProjectionStoreService,
   PendingDomainEvent,
+  ResourceOwnershipRepositoryService,
+  WorkspaceRepositoryService,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { commandErr, commandOk } from "../command-result.js";
+import { deriveFormationIds } from "../formation-plan.js";
 import type { CommandHandler } from "../gateway.js";
 import {
   emitHumanIntervention,
@@ -40,7 +44,16 @@ export interface RecordDecisionResult {
 export interface RecordDecisionDependencies {
   readonly proposals: Pick<FormationProposalStoreService, "findById"> &
     Pick<FormationProposalStoreService, "decideIfPendingRevision">;
-  readonly inbox: Pick<InboxProjectionStoreService, "admitUpsert">;
+  readonly inbox: Pick<
+    InboxProjectionStoreService,
+    "admitUpsert" | "markConsumed"
+  >;
+  readonly fulfillments?: Pick<FormationFulfillmentStoreService, "put">;
+  readonly workspaces?: Pick<WorkspaceRepositoryService, "findById">;
+  readonly resourceOwnership?: Pick<
+    ResourceOwnershipRepositoryService,
+    "listActiveByWorkspace"
+  >;
   readonly originatingWorkspaceOf: (
     record: FormationProposalRecord,
   ) => WorkspaceId;
@@ -71,6 +84,64 @@ export const makeRecordDecisionHandler = (
         });
       }
       const record = existing.value;
+      let delegationApproval: Record<string, unknown> | undefined;
+      if (
+        payload.outcome._tag === "Approve" &&
+        record.proposal.resourceOwnershipDelegation !== undefined
+      ) {
+        if (
+          dependencies.workspaces === undefined ||
+          dependencies.resourceOwnership === undefined
+        ) {
+          return commandErr({
+            _tag: "AuthorityDenied",
+            reason:
+              "ownership delegation approval requires current Parent ownership evidence",
+          });
+        }
+        const parent = yield* dependencies.workspaces.findById(
+          record.parentWorkspaceId,
+        );
+        if (Option.isNone(parent) || parent.value.lifecycle !== "Active") {
+          return commandErr({
+            _tag: "AuthorityDenied",
+            reason: "ownership delegation requires an active Parent Workspace",
+          });
+        }
+        const claims =
+          yield* dependencies.resourceOwnership.listActiveByWorkspace(
+            record.parentWorkspaceId,
+          );
+        const parentClaim = claims[0];
+        const parentClaimRevision = parentClaim?.claimRevision;
+        if (
+          claims.length !== 1 ||
+          parentClaim === undefined ||
+          typeof parentClaimRevision !== "number" ||
+          !Number.isSafeInteger(parentClaimRevision) ||
+          parentClaimRevision < 0
+        ) {
+          return commandErr({
+            _tag: "AuthorityDenied",
+            reason:
+              "ownership delegation requires exactly one active Parent claim with a known revision",
+          });
+        }
+        delegationApproval = {
+          delegationSourceId: `formation:${record.proposalId}:${record.revision}`,
+          formationProposalId: record.proposalId,
+          formationProposalRevision: record.revision,
+          addresses: record.proposal.resourceOwnershipDelegation.addresses,
+          approvedBy: envelope.actor,
+          causedByCommandId: envelope.commandId,
+          parentWorkspaceId: record.parentWorkspaceId,
+          expectedParentWorkspaceRevision: parent.value.revision,
+          expectedChildWorkspaceRevision: 0,
+          expectedParentBoundaryRevision: parent.value.resourceBoundaryRevision,
+          expectedParentOwnershipRevision: parentClaimRevision,
+          expectedChildOwnershipRevision: 0,
+        };
+      }
       const decided = decideFormationProposal(record, {
         expectedProposalRevision: payload.expectedProposalRevision,
         outcome: payload.outcome,
@@ -92,6 +163,31 @@ export const makeRecordDecisionHandler = (
       }
 
       const fact = decided.value.fact;
+      if (dependencies.fulfillments !== undefined) {
+        const ids = deriveFormationIds(
+          decided.value.record.proposalId,
+          decided.value.record.revision,
+        );
+        const nextState =
+          fact.decision === "Approve"
+            ? ("PendingApplication" as const)
+            : fact.decision === "Reject"
+              ? ("Blocked" as const)
+              : ("AwaitingDecision" as const);
+        yield* dependencies.fulfillments.put({
+          proposalId: decided.value.record.proposalId,
+          proposalRevision: decided.value.record.revision,
+          expectedChildWorkspaceId: ids.workspaceId,
+          expectedInitialWorkId:
+            decided.value.record.proposal.initialWork === undefined
+              ? null
+              : ids.workId,
+          state: nextState,
+          typedBlock: fact.decision === "Reject" ? "FormationRejected" : null,
+          lastAttemptAt: null,
+          revision: 1,
+        });
+      }
       const events: PendingDomainEvent[] = [
         {
           projectId: envelope.projectId,
@@ -106,6 +202,7 @@ export const makeRecordDecisionHandler = (
             proposalRevision: fact.proposalRevision,
             decision: fact.decision,
             decidedBy: envelope.actor,
+            ...(delegationApproval === undefined ? {} : { delegationApproval }),
           },
         },
       ];
@@ -138,6 +235,10 @@ export const makeRecordDecisionHandler = (
       // The decision outcome returns to the originating Workspace Inbox as a
       // governance observation (P6 `01` §4.2) — Inbox admission only, never a
       // Session write.
+      yield* dependencies.inbox.markConsumed(
+        dependencies.originatingWorkspaceOf(record),
+        `gov:${payload.proposalId}:${payload.expectedProposalRevision}`,
+      );
       yield* dependencies.inbox.admitUpsert({
         recipientWorkspaceId: dependencies.originatingWorkspaceOf(record),
         entryKey: `dec:${payload.proposalId}:${fact.proposalRevision}:${fact.decision}`,
@@ -145,6 +246,15 @@ export const makeRecordDecisionHandler = (
         summary: `formation proposal ${fact.decision === "Modify" ? "modified" : fact.decision === "Approve" ? "approved" : "rejected"} at revision ${fact.proposalRevision}`,
         admittedAt: envelope.issuedAt,
       });
+      if (fact.decision === "Modify") {
+        yield* dependencies.inbox.admitUpsert({
+          recipientWorkspaceId: dependencies.originatingWorkspaceOf(record),
+          entryKey: `gov:${payload.proposalId}:${decided.value.record.revision}`,
+          kind: "Governance",
+          summary: `formation proposal "${decided.value.record.proposal.name}" revision ${decided.value.record.revision} awaiting human decision`,
+          admittedAt: envelope.issuedAt,
+        });
+      }
 
       return commandOk({
         result: {

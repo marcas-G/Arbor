@@ -5,7 +5,7 @@ import {
   P6_MIGRATIONS,
   runMigrations,
 } from "../adapters/persistence-sqlite/src/index.js";
-import { makeProposeChildWorkspaceHandler } from "../apps/single-workspace/src/directives.js";
+import { makeProposeChildWorkspaceHandler } from "../apps/single-workspace/src/legacy-directive-handlers.js";
 import {
   CommandGateway,
   formationPathOf,
@@ -136,6 +136,35 @@ describe("P6-005 formation path + payload shape (unit)", () => {
     expect(isChildWorkspaceProposal("nope")).toBe(false);
     expect(isChildWorkspaceProposal(null)).toBe(false);
     expect(isChildWorkspaceProposal(undefined)).toBe(false);
+  });
+
+  it("accepts a bounded unique structural ownership delegation payload", () => {
+    const address = { _tag: "FileTree" as const, path: "src/child" };
+    const proposal = {
+      ...minimalProposal(),
+      resourceBoundaryDraft: {
+        ...minimalProposal().resourceBoundaryDraft,
+        addresses: [address],
+      },
+      resourceOwnershipDelegation: { addresses: [address] },
+    };
+    expect(isChildWorkspaceProposal(proposal)).toBe(true);
+    expect(
+      isChildWorkspaceProposal({
+        ...proposal,
+        resourceOwnershipDelegation: {
+          addresses: [{ _tag: "FileTree", path: "src/other" }],
+        },
+      }),
+    ).toBe(true);
+    expect(
+      isChildWorkspaceProposal({
+        ...proposal,
+        resourceOwnershipDelegation: {
+          addresses: Array.from({ length: 17 }, () => address),
+        },
+      }),
+    ).toBe(false);
   });
 });
 

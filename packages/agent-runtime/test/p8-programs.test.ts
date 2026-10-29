@@ -267,13 +267,24 @@ describe("p8-programs", () => {
           why: "w",
           constraints: [],
           completionExpectation: "c",
+          verificationMission: {
+            goal: "verify o",
+            criteria: [
+              {
+                criterionId: "done",
+                requirement: "c",
+                required: true,
+              },
+            ],
+            riskRequirements: [],
+          },
         },
       },
       revision: 1,
       state: "Approved",
     });
 
-    const placeholderMission = (): VerificationMission => {
+    const formationMission = (): VerificationMission => {
       const plan = formationAssignPlan({
         snapshot: approvedSnapshot(),
         ids: deriveFormationIds(PROPOSAL, 1),
@@ -343,13 +354,13 @@ describe("p8-programs", () => {
       );
     };
 
-    it("formation emits the structured minimal placeholder mission", () => {
-      expect(placeholderMission()).toEqual({
-        goal: "formation-assigned work",
+    it("formation preserves the explicitly proposed verification mission", () => {
+      expect(formationMission()).toEqual({
+        goal: "verify o",
         criteria: [
           {
-            criterionId: "acceptance",
-            requirement: "parent acceptance",
+            criterionId: "done",
+            requirement: "c",
             required: true,
           },
         ],
@@ -357,9 +368,9 @@ describe("p8-programs", () => {
       });
     });
 
-    it("StartVerification accepts the formation placeholder mission", async () => {
+    it("StartVerification accepts the formation mission", async () => {
       const outcome: CommandResult<CommandOutcome<StartVerificationResult>> =
-        await Effect.runPromise(runStartVerification(placeholderMission()));
+        await Effect.runPromise(runStartVerification(formationMission()));
       expect(outcome.ok).toBe(true);
       if (outcome.ok) {
         expect(outcome.value.result.state).toBe("Open");

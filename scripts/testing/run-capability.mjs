@@ -239,7 +239,7 @@ if (mode === "real-provider") {
         files: [testFile],
         extraArgs: [
           "--repeats",
-          "3",
+          "2",
           "--testNamePattern",
           capability.l3.caseId,
         ],

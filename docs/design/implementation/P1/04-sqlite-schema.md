@@ -1,6 +1,6 @@
 # P1 — 04 SQLite Schema
 
-**Authority:** DID v1.6 §9.1–§9.9, §9.13, §12.11, §3.1–§3.3
+**Authority:** DID v1.59 §3.3/§9.3/§12.11; DID v1.6 §9.1–§9.9/§9.13/§3.1–§3.3; accepted P41/0041 storage, FT-DG-01 OPEN-1/OPEN-2 owner amendments, and DID v1.52 F23 P6 operator rebuild / v1 route-command qualification.
 **Status:** P1 phase-scoped closure (revised after 4-way review)
 **Closes:** P1-DG-07 (cyclic FKs, mapping, root uniqueness), P1-DG-08
 (`resource_ownership` lifecycle), P1-DG-09 (retention/delete + migration),
@@ -29,8 +29,12 @@ Only the Arbor Runtime writes this DB (DID §9.2).
 | `sessions` | `Session` |
 | `works` | `Work` |
 | `resource_ownership` | `ResourceOwnershipClaim` |
+| `workspace_resource_activation_intents` | `WorkspaceResourceActivationIntent` (P1 operational convergence fact; FT-DG-01 OPEN-3) |
 | `environment_revisions` | environment revision anchor |
 | `commands` | `CommandReceipt` (authoritative resolution) |
+| `retry_verification_origins` | immutable P8 originating-command/source/successor identity (non-receipt canonical fact) |
+| `retry_verification_legacy_dispositions` | immutable P8 `UnboundLegacy` replay disposition (non-receipt canonical fact) |
+| `inbox_entries` | P6 Inbox entry state, including the current recipient route for `UnboundLegacy` Governance entries |
 | `command_attempts` | `CommandAttempt` (non-authoritative trace) |
 | `domain_events` | `DomainEvent` (durable outbox) |
 | `project_event_sequences` | project-local sequence counter |
@@ -40,6 +44,16 @@ Only the Arbor Runtime writes this DB (DID §9.2).
 Later-phase tables (`work_waits` ↔ `Dependency`, `work_acceptances` ↔
 `Acceptance`, `executions`, `execution_leases`, `verifications`, …) are owned
 by their phases; their mapping is authoritative in the owning phase.
+
+**Accepted S2-RDG-01 logical storage constraint (DID v1.59):** every Work
+revision must have a durable, append-only complete Work contract snapshot
+addressable by exact `(WorkId, WorkRevision)`, with provenance/source-command,
+time and canonical digest sufficient for audit. AssignWork writes the initial
+snapshot and every semantic revision writer retains the matching snapshot.
+Legacy migration may mark only the exact current Work row as
+`LegacyCurrentSnapshot` / history unavailable; it must not infer prior
+revisions. This clause freezes the logical storage guarantee only; it does not
+name a physical table, columns, encoding, index, DDL, or migration number.
 
 ## 3. DDL
 
@@ -57,6 +71,9 @@ CREATE TABLE projects (
   project_policy_revision INTEGER NOT NULL,
   default_configuration   TEXT NOT NULL,              -- JSON
   environment_ref         TEXT NOT NULL,
+  resource_source_json    TEXT NOT NULL
+                            DEFAULT '{"_tag":"LegacyUnknown"}'
+                            CHECK (json_valid(resource_source_json)),
   lifecycle               TEXT NOT NULL CHECK (lifecycle IN ('Open','Closed')),
   revision                INTEGER NOT NULL,
   created_at              TEXT NOT NULL,
@@ -167,6 +184,40 @@ write records the observed revision. `EnvironmentRevisionStore.current`
 returns `None` when absent/NULL, and the stale check treats that as
 "not stale" (nothing observed yet).
 
+The FT-DG-01 OPEN-3 intent is additive and contains no resource address or
+Profile provenance. It is created only for a new Profile CreateProject after
+the handler has built the canonical Workspace boundary; ConversationOnly has
+no intent. There is no migration backfill from historical Workspace paths or
+missing ownership claims.
+
+```sql
+CREATE TABLE workspace_resource_activation_intents (
+  project_id                  TEXT NOT NULL,
+  workspace_id                TEXT NOT NULL,
+  resource_boundary_revision  INTEGER NOT NULL,
+  status                      TEXT NOT NULL CHECK (status IN ('Pending','Active')),
+  created_at                  TEXT NOT NULL,
+  updated_at                  TEXT NOT NULL,
+  activated_at                TEXT,
+  PRIMARY KEY (project_id, workspace_id, resource_boundary_revision),
+  FOREIGN KEY (workspace_id, project_id)
+    REFERENCES workspaces(workspace_id, project_id),
+  CHECK ((status = 'Active') = (activated_at IS NOT NULL))
+);
+
+CREATE INDEX idx_workspace_resource_activation_pending
+  ON workspace_resource_activation_intents(project_id, created_at, workspace_id,
+                                            resource_boundary_revision)
+  WHERE status = 'Pending';
+```
+
+The next forward-only additive migration after the current P10 Attention
+projection baseline (`user_version=34`) creates this table together with the
+P10-owned activation-attention projection table (`04`/`05`). Active intent
+rows are retained as the durable idempotency record for their exact boundary
+revision. The migration does not inspect/interpret old command result JSON or
+reconstruct v1/v2 intents from raw paths.
+
 Write transaction (DID §9.5): `ProjectEnvironmentPort.resolve` outside the tx
 returns `{ regions, observedEnvironmentRevision }`; then `BEGIN IMMEDIATE` →
 `EnvironmentRevisionStore.current(projectId)` compared to
@@ -243,6 +294,31 @@ Attempt recording:
 
 `result_json` / `terminal_error_json` are JSON keyed by the row's
 `schema_version`; `terminal_error_json` decodes to a `CommandRejection`.
+
+For FT-DG-03, `commands.schema_version` is the registered Handler's semantic
+Command/receipt schema version and result/error decoding key. It is not an
+external wire version. `fingerprint_algorithm_version` identifies the P1
+canonical serialization/hash algorithm; the current algorithm is 1
+(SHA-256). External codec version 1 is server-selected and is not stored.
+The existing tuple `(semantic_request_fingerprint, schema_version,
+fingerprint_algorithm_version)` remains the only replay comparison:
+
+| Stored row / current authenticated candidate | Receipt behavior | Persistence disposition |
+|---|---|---|
+| Current Handler schema and algorithm 1; exact current-valid semantic tuple; Resolver succeeds | Return the stored receipt without handler re-execution | No row change |
+| Current Handler schema and algorithm 1; changed valid semantic payload; Resolver succeeds | Return `IdempotencyConflict`; do not disclose the prior result | Row unchanged |
+| Historical Handler schema or algorithm (including P0 FNV if present); candidate passes current codec and Resolver | Existing exact tuple rule returns `IdempotencyConflict`; no historical comparator | Row unchanged; no guessing or upgrade |
+| Exact tuple row whose result/error JSON cannot be decoded | Non-disclosing receipt-integrity Problem/Attention | Row unchanged; no repair |
+| Stored receipt exists, but the current payload or CommandId fails the codec | Return `InvalidCommandPayload` before Resolver/Gateway; do not look up or disclose the receipt | Historical row preserved read-only; non-replayable |
+| No stored row and malformed CommandId or payload | Return `InvalidCommandPayload`; no Resolver/Gateway or durable write | No receipt, attempt, Event, or canonical mutation |
+
+No raw payload column, external wire-version column, compatibility table, or
+F23 migration is added. The required read-only historical receipt inventory
+before implementation authorization classifies rows by Handler schema,
+fingerprint algorithm, resolution/result/error decodability, and known
+deployment era/producer; it records counts and representative IDs/fields
+without sensitive payloads. Migration 0033 and its AH10 AssignWork binding
+contracts remain unchanged (DID §6A.16/§9.3/§9.9 and SD §4.11).
 
 ### 3.5 domain_events / sequence / offsets / dead letters (DID §5.2, §9.9)
 
@@ -337,10 +413,425 @@ inert and tested with a stub.
   require PRAGMA foreign_keys=OFF outside the transaction (documented exception).
 ```
 
+### EA-DG-01 migration contract — 0038
+
+The ordered accepted/planned suffix is `0036` AH7/P36,
+`0037` AH10 Deliver P9/P10, then `0038` Executable approval handoff.
+Migration 0037 is conditional on integrated 0036; 0038 is conditional on both
+0036 and 0037. Supported suffix paths are v35→36→37→38,
+v36→37→38, and v37→38. A v35 database must not skip either prerequisite.
+
+Migration `0038_executable_approval_handoff` is a forward-only rebuild of the
+0032 unified `action_approvals` table. It adds exact Executable Step/action/
+call/invocation identity fields and cancellation provenance, permits the
+shared MAC `Cancelled` terminal state with provenance checks, and replaces
+only 0032's route-blind digest uniqueness with separate Control and
+Executable-logical-action partial indexes. Existing 0032 rows retain route,
+`binding_proven`, source state, terminal Expired/Consumed disposition and
+consumer identity; no binding is inferred and no prior migration or 0037
+Deliver source row is rewritten. The rebuild also recreates the existing
+`action_approvals_id_project UNIQUE(approval_id, project_id)` key from 0033;
+`assign_work_target_bindings(action_approval_id, project_id)` depends on that
+exact composite parent key. This is preservation of the existing AssignWork
+foreign-key contract, not a new approval identity or Control behavior. The
+exact DDL delta and legacy constraints are owned by DID §9.3 and P4 `03`/`06`.
+
+The decision/Inbox/wake facts for request, Resolve, Expire and Stop remain in
+their owning P1/P4/P6/P2 transactions as specified in the EA-DG-01 owner
+contracts. This migration slot contract does not authorize executing the
+migration or changing the preserved dogfood database.
+
+### Accepted AH7-DG-02 P39 migration and operator-report contract (DID v1.40)
+
+Accepted logical proposal SHA-256:
+`D0A43BCDF3F95424BE7167B49D2170917B7605EE1E498A2601F2FFFB3DD6940B`;
+accepted P39 physical supplement SHA-256:
+`D2FF13087BB7A1BC5C9D422B4D5CEDE56689F83E765F96615FE13561CE5D446C`.
+P4 `06` owns the P39 tool-invocation DDL; this section owns the global
+`user_version`/startup boundary and the operator sidecar database contract.
+
+The accepted/planned suffix is `0036` P36 → `0037` P37 → `0038` P38 →
+`0039_ah7_reconciliation_attempts` P39. P39 depends on P36/P38 schema facts;
+the global version prefix also requires P37. P36–P38 owner contracts are
+integrated in this tree, but the real migration implementation/registration
+for those versions is not. P39 is conditional and cannot be implemented,
+installed or released alone. The actual P39 runner must gate before any
+pending 0037/0038/0039 DDL when the primary DB is at `user_version` 36–38.
+
+Before constructing either SQLite client, the P39-targeting maintenance entry
+requires `--migration-block-report-db <absolute-local-path>`. There is no
+default. The path must be local, non-temporary, distinct from the primary DB
+and all of its sidecars/configured storage, and pass filesystem identity,
+link/reparse/alias and supported-volume checks. Validate an existing sidecar
+read-only first; only the exact reserved application id, schema version,
+object set and schema digest are accepted. Never migrate/overwrite an unknown
+or unrelated file. A new or empty identity-zero database may be initialized
+exclusively with the accepted report table:
+
+```sql
+CREATE TABLE p39_migration_block_reports (
+  report_key        TEXT PRIMARY KEY CHECK
+                      (length(report_key) = 64 AND report_key NOT GLOB '*[^0-9a-f]*'),
+  content_hash      TEXT NOT NULL UNIQUE CHECK
+                      (length(content_hash) = 64 AND content_hash NOT GLOB '*[^0-9a-f]*'),
+  report_json       TEXT NOT NULL
+);
+CREATE TRIGGER p39_report_no_update BEFORE UPDATE ON p39_migration_block_reports
+BEGIN SELECT RAISE(ABORT, 'P39 audit report is immutable'); END;
+CREATE TRIGGER p39_report_no_delete BEFORE DELETE ON p39_migration_block_reports
+BEGIN SELECT RAISE(ABORT, 'P39 audit report is retained'); END;
+```
+
+Set and read back sidecar `application_id=0x41523739`, `user_version=1`,
+`journal_mode=WAL`, `synchronous=FULL`, foreign keys and bounded busy timeout.
+`report_key` is SHA-256 of canonical `{schema,targetUserVersion,
+databaseFingerprint}`; `content_hash` hashes exact canonical UTF-8 report JSON
+excluding that hash field. The immutable report contains stable schema/kind,
+observed/target version, blocker-state fingerprint and sorted invocation IDs;
+it contains no DB path, command/argument/resource path, principal or secret.
+Same key and same bytes is idempotent; same key with different bytes is typed
+`P39_REPORT_KEY_CONFLICT` and is never overwritten. On uncertain sidecar
+commit, reopen and query exact key/hash before any continuation; unresolved
+uncertainty fails closed.
+
+The closed maintenance error set is `P39_REPORT_DB_REQUIRED`,
+`P39_REPORT_DB_PATH_INVALID`, `P39_REPORT_DB_SCHEMA_UNSUPPORTED`,
+`P39_REPORT_DB_PRAGMA_MISMATCH`, `P39_REPORT_DB_IO_FAILURE`,
+`P39_REPORT_KEY_CONFLICT`, `P39_REPORT_COMMIT_UNRESOLVED`,
+`P39_PRIMARY_JOURNAL_MODE_UNSUPPORTED`, `P39_REPORT_DURABILITY_UNSUPPORTED`,
+and `P39_LEGACY_DB_ISOLATED`.
+Diagnostics contain stable typed codes only, never the path or row contents.
+
+Deployment maintenance mode stops every primary DB writer across preflight and
+the ordered migration chain. Validate the sidecar first and close its
+validation handle. For a v36–v38 primary, use the P1 adapter's preflight-only
+`disableWAL=true`, require existing `journal_mode=wal` by readback, then take a
+primary `BEGIN IMMEDIATE` consistent snapshot of `user_version` and active P36
+unsettled `NotAdmitted` invocation IDs/fingerprint. This snapshot is read-only
+at the committed application-state/schema/version level; transient SQLite
+WAL/SHM lock metadata may be managed. If blockers exist, while retaining the
+primary reservation acquire sidecar `BEGIN IMMEDIATE`, insert or verify the
+immutable report, read it back, then rollback/close primary and exit
+`P39_LEGACY_DB_ISOLATED` / 78 before pending P37/P38/P39 DDL or service start.
+The primary DB's committed rows, approvals, P3 state and `user_version` remain
+unchanged. That DB cohort stays isolated until future governance; do not
+fabricate binding, refund/transfer approval, delete rows, or retry invocations.
+If no blocker exists, rollback/close the snapshot and apply the ordered
+0037→0038→0039 transactions while maintenance mode continues to exclude other
+writers. The P39 rebuild/backfill/DDL/FK check and `user_version=39` update
+share one forward-only transaction; there is no down migration.
+
+The sidecar and primary use one lock order—primary then sidecar—and must be
+distinct file identities. Retain sidecar DB and SQLite `-wal`/`-shm` together;
+the named operator is responsible for backup and retention using SQLite's
+consistent backup mechanism. Windows deployment is blocked until the actual
+`@effect/sql-sqlite-node`/Node VFS, each supported local filesystem, and
+hardware pass process-kill, injected I/O failure, VM hard-power-off, reopen and
+integrity qualification. `FULL` durability is conditional on VFS/OS/device
+flush behavior. Network and unknown filesystems fail closed before primary DB
+open. No Windows deployment qualification is asserted here.
+
+### Accepted AH7-DG-01 / P39-P40 migration and startup boundary (DID v1.41)
+
+Accepted hashes: DG01 logical `19EFED54E037D3E2EC6F4D273D917F5249195650E5E41B3DCFF8DEB9784F29CD`;
+P40 physical `5B61E0FF922A10D225FD5DAEA00176BD16C5C0B39484D626B7FEF6340516373A`;
+compatibility addendum `8B8E5D3C5729CF5619605DA8D8DF34BA00E1F817E80A743555029F331690E830`;
+matrix `AD9AB72D0AA51AB84F4194EC2BF4BB90EC957BD062788C480BCBDD39B8E8DD35`.
+
+The ordered suffix is `0036` P36 → `0037` P37 → `0038` P38 → `0039` P39 →
+`0040_tool_observation_evidence` P40. P40 may enter only at
+`PRAGMA user_version=39`, cannot be registered in phase-local
+`P4_MIGRATIONS`, cannot ship as a standalone v35 upgrade, and may not skip a
+predecessor. These are owner contracts, not migration implementation.
+
+P39 can be landed/applied only inside the ordered cumulative maintenance chain;
+a P39-only database at `user_version=39` MUST NOT start Agent/P4 Runtime or be
+released. Service start is permitted only after P40 commits version 40 and the
+binary includes the accepted RNO branch in its closed v1 Observation decoder.
+P40 adds only P4 `06` observation columns/triggers, the P9 replay-evidence
+fact/event and P10 source-specific marker. It does not edit earlier migration
+bodies/checksums, backfill historical terminal rows, change P39 selected facts,
+or reuse/change the P39 sidecar/preflight.
+
+P39's preflight/report rules remain unchanged. Cross-process serialization of
+the cumulative startup migration runner is required before P40 can be
+registered/executed; it is not qualified here. P36–P40 prefix integration and
+P39 Windows/local-filesystem sidecar durability remain explicit gates. P40 is
+forward-only and commits its DDL plus `user_version=40` atomically.
+
+### Accepted P41 migration 0041 physical-storage gate
+
+The accepted P41 storage package adds migration descriptor
+`{ id: 41, name: "p41_submitted_decision_binding_attention" }`. The P9 fact key must be declared `TEXT NOT NULL PRIMARY KEY`; ordinary SQLite rowid tables permit NULL in non-INTEGER text primary-key columns unless explicitly `NOT NULL`. Its fact
+relation is owned by P9 `07`; its rebuildable Attention marker is owned by P10
+`02`/`04`. The exact DDL, composite keys, closed failure-code set and
+immutability constraints are specified in those owner contracts. Migration
+0041 is additive, creates both relations empty, and performs no historical
+backfill or canonical-row rewrite.
+
+Migration 0041 is conditional on the complete 0036→0037→0038→0039→0040 prefix
+being integrated and qualified. A migration-runner registration-presence
+check for IDs 37–40 is not qualification evidence. Until the prefix gate
+passes, 0041 must not enter a runnable/current migration list. The runner
+executes its DDL and `PRAGMA user_version = 41` in one transaction; failure
+preserves the previous schema and version. A schema at `user_version <= 40`
+does not support P41 storage and must not activate P41 recovery or Attention
+projection. No down migration or new qualification marker is defined. The
+existing refusal of a database whose `user_version` exceeds the latest known
+migration remains in force.
+
+#### Project resource source attribution (FT-DG-01 OPEN-1)
+
+`resource_source_json` stores the exact P1 `ProjectResourceSource` tagged
+union: `Profile` requires non-empty string `resourceProfileRef` and `version`;
+`ConversationOnly` and `LegacyUnknown` have no additional fields. The
+ProjectRepository decoder is strict over JSON syntax, tag, exact owned fields,
+and primitive values. Invalid stored values fail as persistence corruption;
+they are not repaired or coerced to `LegacyUnknown`. Application Project
+inserts always set the column explicitly. The SQL default is retained only as
+SQLite's additive-migration requirement, not as a new-command semantic
+fallback.
+
+The forward-only migration owner reserves ID 0042,
+`project_resource_source_attribution`, in the production sequence only after
+the integrated cumulative prefix includes P38/0038 and the already-owned
+migrations 0039, 0040, and 0041. Its exact DDL is:
+
+```sql
+ALTER TABLE projects ADD COLUMN resource_source_json TEXT NOT NULL
+  DEFAULT '{"_tag":"LegacyUnknown"}'
+  CHECK (json_valid(resource_source_json));
+UPDATE projects
+   SET resource_source_json = '{"_tag":"LegacyUnknown"}';
+```
+
+The uniform backfill assigns every pre-existing Project `LegacyUnknown`; it
+does not read Workspace ResourceBoundary/path, resource ownership, Events,
+Commands/receipts, the Profile catalog, or the host filesystem. Migration
+0042 must not be registered or executed ahead of 0039–0041, and must not be
+run against the preserved user database under this authorization. When the
+required prefix is integrated and qualified, 0042 is appended to
+`CURRENT_MIGRATIONS` and the high-water mark advances to 42.
+
+### P8 permanent RetryVerification origin and legacy disposition (DID v1.46)
+
+The v1.46 acceptance originally left the ordered forward-only migration ID/name
+TBD. Under separate implementation authorization
+`AUTHORIZE_F23_P8_PERMANENT_REPLAY_ORIGIN_IMPLEMENTATION`, it was implemented
+as migration `0045`, requiring schema 44, and is part of the current schema-48
+history. Its ordered offline application commits DDL, backfill, `UnboundLegacy`
+facts, and matching P6 Governance Inbox admissions atomically; it is not an
+ordinary online runtime migration. Reapplying a committed migration is a
+no-op; a failed or interrupted application leaves neither partial schema nor
+partial backfill. No downgrade or online/preserved-DB upgrade is authorized.
+The v1.52 operator-rebuild acceptance does not alter P45's DDL/backfill or add
+another migration.
+
+The permanent origin relation has exactly the following P8 facts and no
+payload/tuple material:
+
+```sql
+CREATE TABLE retry_verification_origins (
+  command_id                       TEXT PRIMARY KEY,
+  project_id                       TEXT NOT NULL REFERENCES projects(project_id),
+  actor                            TEXT NOT NULL,
+  source_verification_id           TEXT NOT NULL REFERENCES verifications(verification_id),
+  source_work_id                   TEXT NOT NULL REFERENCES works(work_id),
+  successor_verification_id        TEXT NOT NULL REFERENCES verifications(verification_id),
+  successor_verifier_execution_id  TEXT NOT NULL,
+  created_at                       TEXT NOT NULL,
+  UNIQUE (source_verification_id),
+  UNIQUE (successor_verification_id),
+  UNIQUE (successor_verifier_execution_id),
+  FOREIGN KEY (command_id) REFERENCES commands(command_id)
+    DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE TABLE retry_verification_legacy_dispositions (
+  command_id             TEXT PRIMARY KEY REFERENCES commands(command_id),
+  project_id             TEXT NOT NULL REFERENCES projects(project_id),
+  source_work_id         TEXT NOT NULL REFERENCES works(work_id),
+  source_verification_id TEXT NOT NULL REFERENCES verifications(verification_id),
+  disposition            TEXT NOT NULL CHECK (disposition = 'UnboundLegacy'),
+  reason_code            TEXT NOT NULL CHECK (reason_code = 'OriginEvidenceIncomplete'),
+  created_at             TEXT NOT NULL
+);
+
+CREATE TRIGGER retry_verification_origins_immutable_update
+BEFORE UPDATE ON retry_verification_origins
+BEGIN SELECT RAISE(ABORT, 'retry_verification_origin_immutable'); END;
+CREATE TRIGGER retry_verification_origins_immutable_delete
+BEFORE DELETE ON retry_verification_origins
+BEGIN SELECT RAISE(ABORT, 'retry_verification_origin_immutable'); END;
+CREATE TRIGGER retry_verification_legacy_dispositions_immutable_update
+BEFORE UPDATE ON retry_verification_legacy_dispositions
+BEGIN SELECT RAISE(ABORT, 'retry_verification_legacy_disposition_immutable'); END;
+CREATE TRIGGER retry_verification_legacy_dispositions_immutable_delete
+BEFORE DELETE ON retry_verification_legacy_dispositions
+BEGIN SELECT RAISE(ABORT, 'retry_verification_legacy_disposition_immutable'); END;
+```
+
+The Application verifies that source/successor rows and project/work
+relationships agree before insert. The successor verifier Execution ID has
+no FK because P8 `02` creates it later through post-commit `AdmitExecution`
+and binding backfill; that existing P8 intent boundary must remain intact.
+Update and delete are prohibited; the
+origin has the same effective lifetime as its never-hard-deleted Command
+receipt and is not subject to Domain Event retention. It stores no fingerprint,
+Handler schema version, fingerprint algorithm version, summary, expected
+revision, payload JSON, or result JSON. The deferred Command FK permits the
+origin to be inserted by the P8 handler inside the Gateway transaction before
+Gateway inserts the successful receipt; both are present at commit or neither
+is.
+
+The separate `retry_verification_legacy_dispositions` fact marks a recognized
+successful old P8 receipt for which origin cannot be proven. It stores only
+`command_id`, `project_id`, exact `source_work_id` and
+`source_verification_id`, fixed disposition `UnboundLegacy`, bounded reason
+code `OriginEvidenceIncomplete`, and immutable `created_at`; it never copies
+the receipt payload/result or recipient snapshot. The Work/Verification IDs
+are the minimum permanent route identity and allow Inbox reconstruction after
+Domain Event pruning or receipt corruption without decoding the receipt. The
+row is immutable and retained.
+
+The paired P6 Inbox item uses the existing `Governance` kind and stable
+`entry_key = 'retry-verification-unbound:' || command_id`. Its current
+`workspace_id` is the route recipient; the typed P6 payload is derived from
+the disposition and canonical Work/Workspace facts rather than receipt JSON.
+The existing `admitted_at` timestamp is the logical Inbox `created_at` and is
+preserved for the stable key. Schema 45 introduced the materialized `revision`
+and `updated_at` fields; current supported schema 48 carries them. A real
+recipient move updates `workspace_id`, increments the Inbox row `revision`,
+and sets `updated_at` in the same P1 `BEGIN IMMEDIATE` transaction as the
+canonical owner/Parent change. An identical route reconciliation is a no-op;
+mismatched disposition/source identity is integrity corruption, not overwrite.
+The route move changes no disposition or P8 origin row. The v1.52 acceptance
+does not reserve a new migration or change the schema-48 high-water mark.
+
+No v1 P1 command mutates canonical Work owner or Workspace Parent, so the
+command-level owner/Parent route-move and its command/process crash
+qualification are N/A for v1 only. The route-move invariant remains mandatory
+for any future separately governed route-mutating command: it may not create an
+asynchronous route window, and an unavailable same-transaction Inbox move uses
+the ordinary P1 Gateway `TerminalRejected(AuthorityDenied)` path in `03`,
+committing only its normal receipt/attempt and no canonical
+Work/Workspace/Event/Inbox/disposition mutation. If the current authorized
+human route cannot be established, maintenance/rebuild fails closed rather
+than routing to a broader principal. The route helper and current-route
+authorization are not N/A.
+
+### P6 operator UnboundLegacy projection rebuild (DID v1.52)
+
+The required production rebuild is a local operator-only offline operation on
+the exact current schema-48 database, with the daemon stopped. It reuses the
+existing `rebuildUnboundLegacyInboxProjections` repository helper and P39
+`MaintenanceExclusive` writer permit; it is not an Application Command and
+does not add a P10 Attention source. The CLI separates the P39 blocker-report
+SQLite `--p39-sidecar` from its hash-chained JSONL operation `--manifest`. The
+P39 report sidecar is exclusively created with `openSync(..., "wx", 0o600)` if
+absent, then initialized/validated by SQLite before the writer permit; that
+creation exclusion is not a persistent maintenance permit. A P39 lock refusal
+may leave P39 infrastructure files, but not a primary/P6 row or JSONL manifest
+mutation.
+
+Once `MaintenanceExclusive` is acquired, the operator validates the exact
+schema-48 prefix and manifest, then calls the existing helper in one
+`TransactionPort` transaction on the same primary SqlClient connection supplied
+by P39. Only exact stable-key Governance projection rows are inserted or moved;
+canonical Projects, Workspaces, Works, Verifications, Commands, Events, P8
+origins and dispositions are read-only. The operation is idempotent, route
+reconciliation uses current canonical facts, and P12 human authorization is
+rechecked at read time; the row grants no authority. Hash-chained preparation,
+commit, crash/restart recovery, and the P39 sidecar pre-lock boundary are owned
+by P6 `02` and its acceptance in `06`. No new schema migration or online,
+preserved-database, or deployment operation is authorized by this contract.
+
+Backfill an origin only if one strict Committed RetryVerification result and
+exactly one retained `VerificationConcluded(Unknown, Orphaned)` plus one
+`VerificationStarted` event prove the same CommandId, ProjectId, actor, source
+Work/Verification/revision and successor Verification; the successor
+Verification's persisted preallocated `verification_execution_ids` must bind
+the exact verifier Execution ID from the typed result; if a physical
+`verification_executions`/Execution binding has already been admitted, it
+must agree. Missing/pruned, duplicate, malformed, or conflicting evidence is
+never inferred from Session text or a partial row: preserve the receipt,
+insert `UnboundLegacy`, and admit the P6 entry in the same migration
+transaction. Current Command receipts and historical JSON are never rewritten
+or deleted.
+
+### Accepted VCS verification snapshot storage contract (DID v1.48)
+
+Accepted token `ACCEPT_VCS_STABLE_EVIDENCE_TIME_AND_CRITERIA_SNAPSHOT`,
+proposal raw SHA-256
+`B0C532FF66697CE1FB06B93CDE477B1A833FC310D360D48513E341D54F1FAD56`,
+accepted 2026-10-17. The `verifications` canonical row owns the complete
+immutable `mission_snapshot`, `criteria_results` JSON snapshot, snapshot
+status (`Pending`, `Available`, `NotApplicableOrphaned`, or
+`UnavailableLegacy`), and the conclusion reason needed to validate the exact
+status/verdict/result combination. Existing `summary_ref`, verdict and event
+identity remain canonical facts. `Pending` is Open with a proven mission and
+no criterion result; `Available` is a complete new ordinary conclusion;
+`NotApplicableOrphaned` is exactly `Unknown`/`Orphaned`/empty results; and
+`UnavailableLegacy` marks pre-migration concluded rows without inferred
+results. Status/JSON consistency is a required storage invariant.
+
+The migration must preflight every existing Open row using its existing
+`mission_snapshot` as the sole complete source: strict codec, Verification
+identity, exact Work/revision binding, and association with its
+`VerificationStarted` event must all prove before any DDL or data write. The
+event's `missionDigest` is weak consistency only and cannot reconstruct or
+normalize snapshot content. An unprovable Open row aborts before writes.
+Every pre-migration Concluded row becomes `UnavailableLegacy`; no canonical
+conclusion rewrite or criterion-result backfill is allowed.
+
+The migration identifier and ordering against the then-registered predecessor,
+exact DDL and initialization behavior are TBD for the separately authorized
+implementation package. This accepted contract does not reserve a migration
+number, register or execute DDL, or authorize implementation.
+
+### Accepted AH14 legacy adoption evidence storage contract (DID v1.49)
+
+Accepted token `ACCEPT_AH14_LEGACY_ADOPTION_EVIDENCE_ATTENTION_GOVERNANCE`,
+proposal raw SHA-256
+`71F81F8B61375B9828FAB208D517FBF2CE0092C0B71ECCD124353262E23FCFB1`,
+accepted 2026-10-17. P1 owns the shared persistence and transaction boundary;
+P9 owns the immutable source facts and P10 owns rebuildable markers.
+
+The accepted P9 source relations are `legacy_adoption_attention_facts` and
+`legacy_adoption_attention_resolution_facts`. The failure relation binds
+`attention_fact_id`, unique `event_id`, exact project/Execution/Workspace/
+ProviderTurn/Step/repair identities, closed `failure_code`, canonical
+`evidence_sha256`, and immutable `first_detected_at`; unique identity includes
+`(execution_id, evidence_sha256)`. The resolution relation binds one original
+failure fact and its evidence hash to a unique resolution event, exact
+project/Execution/Workspace/ProviderTurn identities, canonical resolution
+evidence hash, bounded canonical disposition summary plus its hash, derived
+closed resolution code and immutable resolution time. At most one resolution
+exists per failure. P10's `legacy_adoption_attention_rows` marker is keyed by
+`(project_id, attention_fact_id)`, stores the exact `workspace_id`, and has a
+composite reference on `(attention_fact_id, project_id, workspace_id)` to the
+corresponding P9 failure fact.
+
+The v1 identity/hash formulas, full evidence tuple fields, exact failure and
+resolution event payloads/envelopes, summary encoding and consistency checks
+are owned by P9 `07` and P10 `02`; this section adds no alternative encoding.
+P9 failure/resolution facts are permanent in v1 and independent of journal
+retention. P10 markers are rebuildable. Migration ID assignment, exact DDL,
+indexes/triggers and initialization are implementation-package details for
+separate authorization. No migration ID is assigned or reserved here; no DDL
+is registered or activated, and prior migrations are unchanged. A later
+implementation authorization must pin the then-current next migration ID,
+exact SQL hash, ordered offline-upgrade prefix, runtime schema target and
+disposable fixture baseline; it may not renumber or edit an earlier migration.
+
 ## 6. Retention / delete (P1-DG-09)
 
 ```text
 commands         NEVER hard-deleted (stable idempotency guarantee).
+retry_verification_origins
+                 NEVER hard-deleted; same lifetime as originating Command.
+retry_verification_legacy_dispositions
+                 retained as an immutable governance disposition.
 command_attempts non-authoritative trace; retention/archival allowed.
 domain_events    append-only; no hard DELETE before the retention horizon;
                  project_event_sequences persists the counter so pruning
@@ -357,3 +848,388 @@ Retention horizon is deployment configuration; the rules above are frozen.
 - executions / execution_leases / verifications / dependencies /
   deliverables / permissions / messages DDL (owning phases).
 - Query optimization / index tuning beyond the indexes above.
+
+## Native OS Sandbox accepted schema amendment
+
+The accepted schema-48 rebase contract is migration
+`0049_sandbox_policy_and_grant_provenance`; it follows the complete ordered
+001–0048 prefix and requires `user_version = 48` plus the
+0029 subject-bound `permission_grants` schema. Any prefix/schema mismatch,
+existing provenance object, or disallowed NULL revision aborts before writes.
+This contract does not register/run the migration or upgrade any database.
+
+`permission_grants.revision` already exists as nullable/nonnegative. Preserve
+revision 0 as valid. Only rows already `Revoked` and P29-unbound
+(`subject_kind`, `subject_ref` or `capability` NULL) may backfill NULL to 0;
+all other NULL rows fail closed. Keep the existing column/check; do not add a
+column or rebuild `permission_grants`. New grants begin at revision 0;
+Active→Revoked increments exactly once; Revoked is terminal.
+
+0049 creates the immutable issuer-provenance table and triggers:
+
+```sql
+CREATE TABLE sandbox_policy_grant_issuer_provenance (
+  permission_grant_id TEXT PRIMARY KEY NOT NULL
+    REFERENCES permission_grants(permission_grant_id) ON DELETE RESTRICT,
+  grant_permission_command_id TEXT NOT NULL UNIQUE
+    REFERENCES commands(command_id) ON DELETE RESTRICT
+    DEFERRABLE INITIALLY DEFERRED,
+  issuer_principal TEXT NOT NULL,
+  operator_config_revision INTEGER NOT NULL CHECK (operator_config_revision >= 1),
+  operator_config_digest TEXT NOT NULL
+    CHECK (length(operator_config_digest) = 64
+       AND operator_config_digest NOT GLOB '*[^0-9a-f]*')
+);
+CREATE TRIGGER sandbox_policy_grant_issuer_provenance_no_update
+BEFORE UPDATE ON sandbox_policy_grant_issuer_provenance
+BEGIN SELECT RAISE(ABORT, 'immutable sandbox policy grant provenance'); END;
+CREATE TRIGGER sandbox_policy_grant_issuer_provenance_no_delete
+BEFORE DELETE ON sandbox_policy_grant_issuer_provenance
+BEGIN SELECT RAISE(ABORT, 'immutable sandbox policy grant provenance'); END;
+```
+
+No historical Grant receives provenance by backfill. Only a Committed exact
+`GrantPermission` can create it, atomically with Grant, receipt and event in
+P1 `03` order. The same migration creates the immutable decision table below.
+Duplicate, missing, corrupt or mismatched bindings are unavailable/fail-closed.
+
+## V21 full-chain existing-result integrity (no schema change)
+
+The accepted policy decision row and the existing P1 command receipt/result
+remain the complete durable contract on the current schema-50 design. Do not
+add `effective_snapshot` columns, BlobStore retention, a command-envelope
+table, an Attention table for RecoveryBinding failures, or migration 0051.
+`decision_command_id` joins the immutable decision to the exact existing
+`commands` receipt whose closed `result_json` stores the bounded
+`SandboxPolicyDecisionCommittedInternalV1`. The decision row's
+`policy_digest` is SHA-256 of the exact canonical full effectivePolicySnapshot
+bytes in that result. Strict decode must verify result variant, command/decision
+identity, row digest, policy revision and canonical snapshot digest; absent,
+oversize or mismatched result is rejected/fails closed under the existing
+P1 corruption contract. The summary is capped at 65,536 UTF-8 bytes before
+commit, with no truncation. The P1 current schema and migration prefix remain
+unchanged: 0049 requires 48; 0050 requires 49; 0043/0044 and their exact
+prefix state remain present. V21 adds no SQL object, enum, event, column or
+migration.
+
+`SandboxPolicyDecision` is committed-only and keyed by exact
+Project/Workspace/Execution/Episode plus monotone policy revision. Its exact
+physical mapping is fixed by accepted schema-48 plan SHA
+`3EAD84A15267DD00AF754C2FC2B5DCE98FDBDBC7C5CB305A99055646571A8F62`:
+
+```sql
+CREATE TABLE sandbox_policy_decisions (
+  project_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  execution_id TEXT NOT NULL,
+  episode_binding_json TEXT NOT NULL CHECK (json_valid(episode_binding_json)),
+  policy_revision INTEGER NOT NULL CHECK (policy_revision >= 1),
+  expected_execution_revision INTEGER NOT NULL CHECK (expected_execution_revision >= 0),
+  expected_policy_revision INTEGER NOT NULL CHECK (expected_policy_revision >= 0),
+  profile_id TEXT NOT NULL CHECK (profile_id IN ('ReadOnly','WorkspaceWrite','FullAccess')),
+  provider_id TEXT NOT NULL CHECK (provider_id = trim(provider_id) AND length(provider_id) > 0),
+  network_policy_json TEXT NOT NULL CHECK (json_valid(network_policy_json)),
+  policy_digest TEXT NOT NULL CHECK (length(policy_digest) = 64 AND policy_digest NOT GLOB '*[^0-9a-f]*'),
+  permission_grant_id TEXT NOT NULL,
+  grant_permission_command_id TEXT NOT NULL,
+  grant_issuer_principal TEXT NOT NULL,
+  operator_config_revision INTEGER NOT NULL CHECK (operator_config_revision >= 1),
+  operator_config_digest TEXT NOT NULL CHECK (length(operator_config_digest) = 64 AND operator_config_digest NOT GLOB '*[^0-9a-f]*'),
+  actor_principal TEXT NOT NULL,
+  decision_command_id TEXT NOT NULL UNIQUE,
+  issued_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  PRIMARY KEY (project_id, workspace_id, execution_id, episode_binding_json, policy_revision),
+  UNIQUE (execution_id, policy_revision),
+  CHECK (policy_revision = expected_policy_revision + 1),
+  FOREIGN KEY (execution_id, project_id, workspace_id)
+    REFERENCES executions(execution_id, project_id, workspace_id) ON DELETE RESTRICT,
+  FOREIGN KEY (permission_grant_id, grant_permission_command_id, grant_issuer_principal,
+               operator_config_revision, operator_config_digest)
+    REFERENCES sandbox_policy_grant_issuer_provenance
+      (permission_grant_id, grant_permission_command_id, issuer_principal,
+       operator_config_revision, operator_config_digest) ON DELETE RESTRICT,
+  FOREIGN KEY (decision_command_id)
+    REFERENCES commands(command_id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
+);
+CREATE UNIQUE INDEX sandbox_policy_grant_provenance_exact_binding
+  ON sandbox_policy_grant_issuer_provenance
+    (permission_grant_id, grant_permission_command_id, issuer_principal,
+     operator_config_revision, operator_config_digest);
+CREATE TRIGGER sandbox_policy_decisions_no_update BEFORE UPDATE ON sandbox_policy_decisions
+BEGIN SELECT RAISE(ABORT, 'sandbox policy decisions are immutable'); END;
+CREATE TRIGGER sandbox_policy_decisions_no_delete BEFORE DELETE ON sandbox_policy_decisions
+BEGIN SELECT RAISE(ABORT, 'sandbox policy decisions are retained'); END;
+```
+
+`issued_at` is GatewayNow. Network policy uses canonical versioned JSON v1;
+`policy_digest` is the lowercase SHA-256 of the exact canonical full
+effectivePolicySnapshot bytes stored in the joined committed command result.
+Canonical
+PrincipalId codecs and exact Grant/provenance equality are enforced by P1;
+no SQL PrincipalId regex or root-Workspace-only condition is added. The
+deferred command FK permits the same-transaction committed decision/receipt/
+event order. No decision/provenance history is backfilled.
+
+## Accepted V5 provider-unavailable fact storage — migration 0050
+
+Add only the forward-only
+`0050_sandbox_provider_unavailable_fact` contract after the complete accepted
+001–0049 prefix. Preflight accepts only `PRAGMA user_version = 49`, the exact
+0049 objects/signature, the accepted `executions` composite key
+`(execution_id, project_id, workspace_id)`, and the exact inherited P43/P44
+schema from the complete registered 001–0048 prefix. In particular,
+`work_blockers` and `inbox_workspace_sequences` are expected from registered
+0043, and the P44 approval-rejected no-effect trigger state is expected from
+registered 0044. Verify these inherited objects against the exact prefix;
+their presence is not a reason to reject. Reject gaps, unknown later versions
+and any signature/schema mismatch before DDL. Apply the DDL, foreign-key checks and
+`PRAGMA user_version=50` atomically. No backfill, table rebuild, prior
+migration edit, registration, execution or database upgrade is part of this
+landing.
+
+Exact 0050 physical schema:
+
+```sql
+CREATE TABLE sandbox_provider_unavailable_facts (
+  attention_fact_id TEXT NOT NULL PRIMARY KEY,
+  event_id TEXT NOT NULL UNIQUE,
+  project_id TEXT NOT NULL,
+  execution_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  episode_binding_json TEXT NOT NULL CHECK (json_valid(episode_binding_json)),
+  policy_revision INTEGER NOT NULL CHECK (policy_revision >= 1),
+  policy_digest TEXT NOT NULL,
+  profile_id TEXT NOT NULL,
+  provider_id TEXT NOT NULL,
+  provider_version TEXT NOT NULL,
+  probe_evidence_ref TEXT,
+  failure_code TEXT NOT NULL CHECK (
+    failure_code = trim(failure_code)
+    AND length(trim(failure_code)) > 0
+    AND length(CAST(failure_code AS BLOB)) BETWEEN 1 AND 128
+  ),
+  first_detected_at TEXT NOT NULL,
+  UNIQUE (execution_id, policy_revision),
+  UNIQUE (attention_fact_id, project_id, workspace_id),
+  FOREIGN KEY (execution_id, project_id, workspace_id)
+    REFERENCES executions(execution_id, project_id, workspace_id),
+  FOREIGN KEY (project_id, workspace_id, execution_id,
+               episode_binding_json, policy_revision)
+    REFERENCES sandbox_policy_decisions
+      (project_id, workspace_id, execution_id, episode_binding_json,
+       policy_revision) ON DELETE RESTRICT
+);
+
+CREATE INDEX sandbox_provider_unavailable_fact_project_time
+  ON sandbox_provider_unavailable_facts
+    (project_id, first_detected_at, attention_fact_id);
+
+CREATE TRIGGER sandbox_provider_unavailable_fact_no_update
+BEFORE UPDATE ON sandbox_provider_unavailable_facts
+BEGIN
+  SELECT RAISE(ABORT, 'sandbox provider unavailable facts are immutable');
+END;
+
+CREATE TRIGGER sandbox_provider_unavailable_fact_no_delete
+BEFORE DELETE ON sandbox_provider_unavailable_facts
+BEGIN
+  SELECT RAISE(ABORT, 'sandbox provider unavailable facts are retained');
+END;
+
+CREATE TABLE sandbox_provider_unavailable_attention_rows (
+  project_id TEXT NOT NULL,
+  attention_fact_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  PRIMARY KEY (project_id, attention_fact_id),
+  FOREIGN KEY (attention_fact_id, project_id, workspace_id)
+    REFERENCES sandbox_provider_unavailable_facts
+      (attention_fact_id, project_id, workspace_id)
+);
+
+CREATE TABLE sandbox_provider_unavailable_attention_queue (
+  project_id TEXT NOT NULL,
+  attention_fact_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('Pending','Claimed','Consumed')),
+  claim_id TEXT UNIQUE,
+  claim_expires_at TEXT,
+  attempt_count INTEGER NOT NULL CHECK (attempt_count >= 0),
+  enqueued_at TEXT NOT NULL,
+  consumed_at TEXT,
+  PRIMARY KEY (project_id, attention_fact_id),
+  CHECK (
+    (state = 'Pending' AND claim_id IS NULL AND claim_expires_at IS NULL
+      AND consumed_at IS NULL)
+    OR
+    (state = 'Claimed' AND claim_id IS NOT NULL
+      AND claim_expires_at IS NOT NULL AND consumed_at IS NULL)
+    OR
+    (state = 'Consumed' AND claim_id IS NULL
+      AND claim_expires_at IS NULL AND consumed_at IS NOT NULL)
+  ),
+  FOREIGN KEY (attention_fact_id, project_id, workspace_id)
+    REFERENCES sandbox_provider_unavailable_facts
+      (attention_fact_id, project_id, workspace_id)
+);
+
+CREATE INDEX sandbox_provider_unavailable_queue_due
+  ON sandbox_provider_unavailable_attention_queue
+    (state, claim_expires_at, enqueued_at, project_id, attention_fact_id);
+
+CREATE TRIGGER sandbox_provider_unavailable_queue_no_identity_update
+BEFORE UPDATE OF project_id, attention_fact_id, workspace_id, enqueued_at
+ON sandbox_provider_unavailable_attention_queue
+BEGIN
+  SELECT RAISE(ABORT, 'sandbox provider unavailable queue identity is immutable');
+END;
+
+CREATE TRIGGER sandbox_provider_unavailable_queue_no_delete
+BEFORE DELETE ON sandbox_provider_unavailable_attention_queue
+BEGIN
+  SELECT RAISE(ABORT, 'sandbox provider unavailable queue markers are retained');
+END;
+```
+
+The event id on a source fact is not FK-bound to prunable `domain_events`.
+Composite Execution/fact FKs bind tenant and Workspace. No cascades, source
+fact backfill or promotion of a projection/queue row to canonical state is
+allowed. The queue survives `Consumed`; P10 may rebuild only its disposable
+Attention marker and re-arm the same queue identity.
+
+0050 requires the exact accepted 0049 schema and descriptor signature, which
+must be computed from the final combined 0049 DDL during implementation
+qualification; the obsolete side-branch 0043 signature is not authoritative
+for schema 48:
+
+| Signature | SHA-256 |
+|---|---|
+| 0049 normalized SQL body | computed from exact accepted schema-48 DDL before implementation |
+| Descriptor fingerprint | computed from 0049/requires48 and exact normalized SQL before implementation |
+
+Fingerprint input remains the exact LF UTF-8 lines containing predecessor
+version, migration name and lowercase SQL SHA-256, separated by one LF with no
+trailing LF. Any mismatch at `user_version=49` fails closed; no schema
+guessing/adoption is permitted.
+
+## Accepted S3 canonical ownership carve-outs (schema 52 → 53)
+
+Accepted under `ACCEPT_S3_CANONICAL_OWNERSHIP_CARVEOUTS_V1`, supplement
+SHA-256
+`CEC99E498129189BD166703154A1FFD1E6DDA1CE93BE3C88C8CA9B51C7380B3D`.
+The proposal's observed head is schema 52; after verifying the actual
+integrated `CURRENT_MIGRATIONS` head, migration 0053 is the next sequential
+additive migration (`requiresUserVersion=52`). If the head changed, reassign
+the next sequential number after inspection; do not modify or renumber an
+earlier migration.
+
+The migration adds durable canonical exclusions to `resource_ownership` and
+the exact delegated-claim provenance needed to bind delegator Workspace,
+formation/delegation identity, claim revision, source-address snapshot/ref,
+and resolved Environment revision. The activation intent retains exact
+Parent/Child identities and expected Workspace, boundary, and ownership
+revisions plus resolved delegation identity. Exact SQL member names and JSON
+codec version remain in the authorized phase contract. Existing rows receive
+only the semantically neutral empty-exclusions value; Root claims preserve
+their existing effective sets. The migration creates no ownership claims,
+Parent exclusions, or Child provenance by inference. Legacy Child ownership
+without exact durable delegation evidence remains absent/unusable. The
+migration is transactional and restart-safe and does not activate filesystem
+access or pending ownership intent.
+
+The canonical ownership mutation uses the durable Child delegation provenance
+to match exactly one Parent exclusion by canonical delegated region and
+delegation source/claim revision. Under `BEGIN IMMEDIATE`, it CAS-checks the
+Parent/Child Workspace, boundary, and ownership revisions; releases only the
+matching Child claim; removes only that exact Parent exclusion; preserves all
+unrelated exclusions and their normalized sorted/unique antichain; validates
+the full Parent/Child/other-owner effective-set post-image; and appends the
+version-capable ownership event atomically. Reclaim and Child retirement use
+this same path, with retirement lifecycle committed in that transaction.
+Missing, duplicate, stale, or mismatched evidence leaves the complete state
+and event set unchanged. Exact committed replay returns the same result and
+does not remove another exclusion or append another event.
+Conditional implementation authorization is provided under
+`AUTHORIZE_S3_CANONICAL_OWNERSHIP_CARVEOUTS_V1_IMPLEMENTATION` after
+independent post-landing review. Migration execution, existing-database
+mutation/upgrade, and release remain outside this scope.
+
+## Accepted Native process-mode durable no-effect Denied V2 (schema 53 → 54)
+
+Accepted under `ACCEPT_NATIVE_PROCESS_MODE_DURABLE_NO_EFFECT_V2`, supplement
+SHA-256
+`B9909E31C005FE3546EBA1EA72395BDE3231F68ECFD2ADA14045B0C50E018DEB`.
+The accepted P4/P40 contract adds only
+`ProcessExecutionDisabled` and `NativeOsTupleUnavailable` to the existing
+closed P40 Denied reason-code allowlists. Following S3 migration 0053, the
+proposed next sequential migration is 0054 (`requiresUserVersion=53`), subject
+to rechecking the integrated migration head and retaining strict sequential
+ordering.
+
+Migration 0054 transactionally replaces/rebuilds only the P40
+`tool_invocations` Denied insert/update guard definitions. It preserves every
+existing predicate and currently accepted reason code (including
+`ApprovalRejected`), then adds the two exact new codes to both allowlists.
+It changes no table, column, index, event, queue, marker, authority source or
+historical row; performs no DML, backfill, or settlement rewrite; and advances
+only `user_version` with those guard changes in the same transaction. Unknown
+reason codes remain rejected. Its restart behavior follows the existing
+serialized migration runner. This narrowly supersedes the base Native
+first-release package's no-migration statement only for these two codes.
+Conditional implementation authorization is provided under
+`AUTHORIZE_NATIVE_PROCESS_MODE_DURABLE_NO_EFFECT_V2_IMPLEMENTATION` after
+independent post-landing review. It does not authorize migration execution,
+existing-database upgrade, deployment, Native support claims, or release.
+
+The accepted P2 WorkBlocker owner/DDL is unchanged. In the current schema-48
+candidate, P43 and P44 are registered migrations in the ordered
+`CURRENT_MIGRATIONS` prefix (0043/requires42 and 0044/requires43). Their
+`work_blockers`/`inbox_workspace_sequences` tables and P44 trigger state
+are part of the exact 001–0048 baseline and remain unchanged through 0049 and
+0050. Neither migration is duplicated, moved, renumbered, or treated as a
+dormant draft. No separate non-current P43 draft is a preflight condition.
+
+## Accepted Option A decision-schema compatibility (2026-10-20)
+
+The accepted OsEnforced providerVersion/capabilityRevision selector is part
+of the existing `DecideSandboxPolicy` command payload and existing canonical
+`commands.result_json`; the committed internal result already contains both
+values. It advances the command handler receipt schema to 2 but changes no
+SQLite table, column, FK, trigger, migration descriptor, schema version, or
+historical row. Schema-1 receipts remain immutable and are only replayed by
+the exact prior-receipt compatibility path. Accepted proposal SHA-256
+`02D2687AA87D6E2B08D06090F293961CCBCFDFF884B6348872D42AFAA59B3013`.
+
+## Accepted pre-intent stale receipt compatibility (2026-10-21)
+
+The pre-intent Action/Executable-approval stale binding adds only two
+`StaleSandboxPolicyInputs.safeDetails.field` literals to the existing command
+result codec. It adds no column, table, index, trigger, migration, schema
+version or decision/result row field. Existing `commands.result_json` bytes
+and schema-1/schema-2 receipts remain immutable and replay under their existing
+strict validators; the result decoder accepts the new literals only for new
+terminal receipts. See P1/01/03 and the accepted P10/P1 bootstrap manifest.
+
+## Accepted F18 Verification v2 reconciliation schema (DID v1.58)
+
+The accepted F18 package reserves migration `0051_verification_v2_consumer_reconciliation`,
+`requiresUserVersion: 50`. It captures each currently existing Project's exact
+committed `domain_events` high-water in the same migration transaction before
+enabling the corrected v2 writer. The captured value, capture time and fact
+digest are immutable. Projects created after activation have no compatibility
+row. Historical journal, command receipt, dead-letter, offset, Verification
+and Inbox rows are not updated, rewritten, deleted or reset.
+
+The migration creates five stores owned by P1: immutable per-Project
+activation high-waters; durable `workflow-signals` reconciliation state keyed
+by `(consumer_id, project_id, event_sequence)`; append-only reconciliation
+Attention facts; retained Attention admission queue keyed by
+`(project_id, attention_fact_id)`; and the P10 marker keyed by
+`attention_fact_id`. Constraints enforce the exact terminal/nonterminal phase
+fields and lease generation, one known EventId per Project, immutable fact
+identity and foreign-key linkage. The precise DDL, indexes and trigger/store
+guard implementation are part of the SHA-pinned accepted F18 implementation
+plan and remain subject to code qualification; they cannot change these
+identities or lifecycle rules. Migration preflight/apply is offline, fails
+closed on anything other than the registered schema-50 prefix, and captures
+high-waters atomically with the schema advance to 51.

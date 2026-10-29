@@ -2,7 +2,15 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { Effect, Exit, Fiber, Layer } from "effect";
+import {
+  Duration,
+  Effect,
+  Clock as EffectClock,
+  Exit,
+  Fiber,
+  Layer,
+} from "effect";
+import { TestClock } from "effect/testing";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
@@ -11,6 +19,7 @@ import {
   layer,
   P16_MIGRATIONS,
   ProviderTurnStoreLive,
+  RuntimeClockLive,
   runMigrations,
   TransactionPortLive,
 } from "../adapters/persistence-sqlite/src/index.js";
@@ -32,9 +41,11 @@ import type { ProviderExecutionContext } from "../packages/ports/dist/provider.j
 import {
   type CanonicalProviderEvent,
   type ProviderFailure,
+  type ProviderRunInput,
   ProviderRuntime,
   type ProviderRuntimeExecutionPolicy,
   ProviderTurnStore,
+  RuntimeClock,
   TransactionPort,
 } from "../packages/ports/src/index.js";
 import { ProviderRuntimeLive } from "../packages/provider-runtime/src/index.js";
@@ -94,11 +105,15 @@ const manifestJsonFor = (turnId: ProviderTurnId) =>
     },
   });
 
-const DEFAULT_POLICY: ProviderRuntimeExecutionPolicy = {
-  connectTimeoutMs: 500,
-  firstEventTimeoutMs: 500,
-  streamIdleTimeoutMs: 500,
-  turnTimeoutMs: 2_000,
+const SEMANTIC_TEST_POLICY: ProviderRuntimeExecutionPolicy = {
+  // These integration cases exercise cancellation, protocol/error mapping,
+  // retry evidence, and persistence—not deadline thresholds. Keep their
+  // watchdogs bounded, but leave enough room for a loaded multi-worker check.
+  // Deadline behavior is asserted with explicit policies below.
+  connectTimeoutMs: 10_000,
+  firstEventTimeoutMs: 10_000,
+  streamIdleTimeoutMs: 10_000,
+  turnTimeoutMs: 20_000,
   maxAttempts: 2,
   retryBackoffMs: 0,
 };
@@ -135,12 +150,32 @@ const waitForSignal = (signal: AbortSignal): Promise<void> =>
     signal.addEventListener("abort", () => resolve(), { once: true });
   });
 
-const deferred = () => {
-  let resolve!: () => void;
-  const promise = new Promise<void>((res) => {
+const deferred = <A = void>() => {
+  let resolve!: (value: A) => void;
+  const promise = new Promise<A>((res) => {
     resolve = res;
   });
   return { promise, resolve };
+};
+
+const withWatchdog = async <A>(
+  promise: Promise<A>,
+  label: string,
+): Promise<A> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`Timed out waiting for ${label}`)),
+          5_000,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 };
 
 const seed = Effect.gen(function* () {
@@ -181,12 +216,60 @@ const seed = Effect.gen(function* () {
 
 const makeHarness = (
   client: OpenAISdkClient,
-  policy: ProviderRuntimeExecutionPolicy = DEFAULT_POLICY,
+  policy: ProviderRuntimeExecutionPolicy = SEMANTIC_TEST_POLICY,
+  options: {
+    readonly controlledClock?: boolean;
+    readonly onClockSleep?: (durationMs: number, sequence: number) => void;
+  } = {},
 ) => {
   const root = mkdtempSync(join(tmpdir(), "provider-runtime-phase1-"));
   const databaseFile = join(root, "provider.db");
   const base = layer({ filename: databaseFile });
-  const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
+  let clockSleepSequence = 0;
+  const controlledClock = options.controlledClock
+    ? Layer.provideMerge(
+        Layer.effect(
+          EffectClock.Clock,
+          Effect.gen(function* () {
+            const clock = yield* EffectClock.Clock;
+            return {
+              ...clock,
+              sleep: (duration: Parameters<typeof clock.sleep>[0]) => {
+                clockSleepSequence += 1;
+                options.onClockSleep?.(
+                  Duration.toMillis(duration),
+                  clockSleepSequence,
+                );
+                return clock.sleep(duration);
+              },
+            };
+          }),
+        ),
+        TestClock.layer({ warningDelay: "10 seconds" }),
+      )
+    : undefined;
+  const controlledRuntimeClock =
+    controlledClock === undefined
+      ? undefined
+      : Layer.effect(
+          RuntimeClock,
+          Effect.gen(function* () {
+            const clock = yield* EffectClock.Clock;
+            return RuntimeClock.of({
+              epochMillis: () => clock.currentTimeMillisUnsafe(),
+              monotonicMillis: () =>
+                Number(clock.monotonicTimeNanosUnsafe()) / 1_000_000,
+            });
+          }),
+        ).pipe(Layer.provideMerge(controlledClock));
+  const infra = Layer.mergeAll(
+    base,
+    ClockLive,
+    IdGeneratorLive,
+    ...(controlledRuntimeClock === undefined
+      ? [RuntimeClockLive]
+      : [controlledRuntimeClock]),
+  );
   const transaction = Layer.provide(TransactionPortLive, infra);
   const turnStore = Layer.provide(ProviderTurnStoreLive, infra);
   const providerRuntime = Layer.provide(
@@ -250,6 +333,7 @@ const runtimeEffect = (
   signal?: AbortSignal,
   policyOverrides?: Partial<ProviderRuntimeExecutionPolicy>,
   turnId = providerTurnId,
+  onProgress?: ProviderRunInput["onProgress"],
 ) =>
   Effect.gen(function* () {
     const runtime = yield* ProviderRuntime;
@@ -266,6 +350,7 @@ const runtimeEffect = (
       ...(policyOverrides === undefined
         ? {}
         : { executionPolicyOverrides: policyOverrides }),
+      ...(onProgress === undefined ? {} : { onProgress }),
     });
   });
 
@@ -286,6 +371,36 @@ const client = (options: {
 });
 
 describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter", () => {
+  it("lets a concurrent lease heartbeat run while consuming a dense provider stream", async () => {
+    const controlled = client({
+      stream: async function* () {
+        yield { type: "response_started" };
+        for (let index = 0; index < 512; index += 1) {
+          yield { type: "text", text: "x" };
+        }
+        yield { type: "completed", finishReason: "stop" };
+      },
+    });
+    const harness = makeHarness(controlled, {
+      ...SEMANTIC_TEST_POLICY,
+      turnTimeoutMs: 10_000,
+      firstEventTimeoutMs: 10_000,
+      streamIdleTimeoutMs: 10_000,
+    });
+    try {
+      await initialize(harness);
+      const result = await harness.run(
+        Effect.raceFirst(
+          runtimeEffect().pipe(Effect.as("provider" as const)),
+          Effect.sleep(5).pipe(Effect.as("heartbeat" as const)),
+        ),
+      );
+      expect(result).toBe("heartbeat");
+    } finally {
+      rmSync(harness.root, { recursive: true, force: true });
+    }
+  });
+
   it("commits full Manifest, ProviderTurn, and Attempt(InProgress) before Adapter request dispatch", async () => {
     let callEvidence:
       | {
@@ -363,7 +478,7 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
         sessionId,
         compiledRequestHash: "compiled-request-hash-is-not-manifest-id",
       });
-      expect(callEvidence?.policy).toEqual(DEFAULT_POLICY);
+      expect(callEvidence?.policy).toEqual(SEMANTIC_TEST_POLICY);
       expect(readAttempt(harness.databaseFile)?.outcome).toBe("Success");
     } finally {
       rmSync(harness.root, { recursive: true, force: true });
@@ -386,7 +501,7 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
           yield { type: "completed", finishReason: "stop" };
         },
       }),
-      { ...DEFAULT_POLICY, maxAttempts: 2, retryBackoffMs: 0 },
+      { ...SEMANTIC_TEST_POLICY, maxAttempts: 2, retryBackoffMs: 0 },
     );
     try {
       await initialize(harness);
@@ -422,7 +537,7 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
           });
         },
       }),
-      { ...DEFAULT_POLICY, maxAttempts: 3, retryBackoffMs: 0 },
+      { ...SEMANTIC_TEST_POLICY, maxAttempts: 3, retryBackoffMs: 0 },
     );
     try {
       await initialize(harness);
@@ -473,7 +588,7 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
           yield { type: "completed", finishReason: "stop" };
         },
       }),
-      { ...DEFAULT_POLICY, maxAttempts: 2, retryBackoffMs: 0 },
+      { ...SEMANTIC_TEST_POLICY, maxAttempts: 2, retryBackoffMs: 0 },
     );
     try {
       await initialize(harness);
@@ -573,7 +688,7 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
                 modelRef: request.modelRef,
                 outputContractRef: request.outputContractRef,
                 manifestId,
-                executionPolicy: DEFAULT_POLICY,
+                executionPolicy: SEMANTIC_TEST_POLICY,
                 turnDeadlineAt: "2999-01-01T00:00:00.000Z",
               },
               manifestJsonFor(providerTurnId),
@@ -845,7 +960,7 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
       );
 
     const runtime: HttpProviderRuntime = {
-      endpoint: "http://provider.invalid/v1",
+      endpoint: "http://127.0.0.1:18080/v1",
       model: request.modelRef,
       serverBuildId: "controlled-sse",
       authMode: "none",
@@ -853,6 +968,8 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
       serverProps: {},
       temperature: 0,
       reasoningSettings: "none",
+      contextWindow: 8_192,
+      outputCeiling: 2_048,
     };
     const sdk = makeHttpProviderClient({ runtime, captures: [] });
     const harness = makeHarness(sdk);
@@ -898,7 +1015,7 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
       );
 
     const runtime: HttpProviderRuntime = {
-      endpoint: "http://provider.invalid/v1",
+      endpoint: "http://127.0.0.1:18080/v1",
       model: request.modelRef,
       serverBuildId: "controlled-http-error",
       authMode: "none",
@@ -906,6 +1023,8 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
       serverProps: {},
       temperature: 0,
       reasoningSettings: "none",
+      contextWindow: 8_192,
+      outputCeiling: 2_048,
     };
     const harness = makeHarness(
       makeHttpProviderClient({ runtime, captures: [] }),
@@ -948,11 +1067,13 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
       serverProps: {},
       temperature: 0,
       reasoningSettings: "none",
+      contextWindow: 8_192,
+      outputCeiling: 2_048,
     };
     const sdk = makeHttpProviderClient({ runtime, captures: [] });
     expect(sdk.externalEffectPossible).toBe(true);
     const policy = {
-      ...DEFAULT_POLICY,
+      ...SEMANTIC_TEST_POLICY,
       maxAttempts: 3,
       retryBackoffMs: 0,
     } satisfies ProviderRuntimeExecutionPolicy;
@@ -995,7 +1116,7 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
       });
 
     const runtime: HttpProviderRuntime = {
-      endpoint: "http://provider.invalid/v1",
+      endpoint: "http://127.0.0.1:18080/v1",
       model: request.modelRef,
       serverBuildId: "controlled-truncated-sse",
       authMode: "none",
@@ -1003,6 +1124,8 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
       serverProps: {},
       temperature: 0,
       reasoningSettings: "none",
+      contextWindow: 8_192,
+      outputCeiling: 2_048,
     };
     const harness = makeHarness(
       makeHttpProviderClient({ runtime, captures: [] }),
@@ -1043,7 +1166,7 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
       );
 
     const runtime: HttpProviderRuntime = {
-      endpoint: "http://provider.invalid/v1",
+      endpoint: "http://127.0.0.1:18080/v1",
       model: request.modelRef,
       serverBuildId: "controlled-unknown-finish-reason",
       authMode: "none",
@@ -1051,6 +1174,8 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
       serverProps: {},
       temperature: 0,
       reasoningSettings: "none",
+      contextWindow: 8_192,
+      outputCeiling: 2_048,
     };
     const harness = makeHarness(
       makeHttpProviderClient({ runtime, captures: [] }),
@@ -1094,7 +1219,7 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
       });
     };
     const runtime: HttpProviderRuntime = {
-      endpoint: "http://provider.invalid/v1",
+      endpoint: "http://127.0.0.1:18080/v1",
       model: request.modelRef,
       serverBuildId: "controlled-fetch-abort",
       authMode: "none",
@@ -1102,6 +1227,8 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
       serverProps: {},
       temperature: 0,
       reasoningSettings: "none",
+      contextWindow: 8_192,
+      outputCeiling: 2_048,
     };
     const harness = makeHarness(
       makeHttpProviderClient({ runtime, captures: [] }),
@@ -1144,7 +1271,7 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
       });
     };
     const runtime: HttpProviderRuntime = {
-      endpoint: "http://provider.invalid/v1",
+      endpoint: "http://127.0.0.1:18080/v1",
       model: request.modelRef,
       serverBuildId: "controlled-fetch-timeout",
       authMode: "none",
@@ -1152,9 +1279,10 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
       serverProps: {},
       temperature: 0,
       reasoningSettings: "none",
+      contextWindow: 8_192,
+      outputCeiling: 2_048,
     };
     const policy = {
-      ...DEFAULT_POLICY,
       connectTimeoutMs: 35,
       firstEventTimeoutMs: 300,
       streamIdleTimeoutMs: 300,
@@ -1227,7 +1355,7 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
     };
 
     const runtime: HttpProviderRuntime = {
-      endpoint: "http://provider.invalid/v1",
+      endpoint: "http://127.0.0.1:18080/v1",
       model: request.modelRef,
       serverBuildId: "controlled-cancel",
       authMode: "none",
@@ -1235,6 +1363,8 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
       serverProps: {},
       temperature: 0,
       reasoningSettings: "none",
+      contextWindow: 8_192,
+      outputCeiling: 2_048,
     };
     const base = makeHttpProviderClient({ runtime, captures: [] });
     const sdk: OpenAISdkClient = {
@@ -1277,7 +1407,31 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
   ] as const)(
     "%s timeout aborts the Adapter and has a distinct durable terminal outcome",
     async (_label, mode, phase) => {
-      const connected = deferred();
+      const sdkDispatched = deferred<{
+        readonly signal: AbortSignal;
+        readonly order: number;
+      }>();
+      const phaseStarted = deferred<{
+        readonly signal: AbortSignal;
+        readonly stage: string;
+        readonly order: number;
+      }>();
+      const timeoutRegistered = deferred<{
+        readonly durationMs: number;
+        readonly sequence: number;
+        readonly stage: string;
+        readonly order: number;
+      }>();
+      const sleepRegistrations: Array<{
+        readonly durationMs: number;
+        readonly sequence: number;
+        readonly stage: string;
+        readonly order: number;
+      }> = [];
+      let order = 0;
+      let stage = "pre-dispatch";
+      let controlledTime = 0;
+      let adapterCalls = 0;
       const policy: ProviderRuntimeExecutionPolicy = {
         connectTimeoutMs: mode === "connect" ? 35 : 400,
         firstEventTimeoutMs: mode === "first-event" ? 35 : 400,
@@ -1286,33 +1440,163 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
         maxAttempts: 2,
         retryBackoffMs: 0,
       };
+      const timerExpectation =
+        phase === "ConnectTimeout"
+          ? {
+              durationMs: policy.connectTimeoutMs,
+              sequence: 1,
+              stage: "connect-wait",
+            }
+          : phase === "FirstEventTimeout"
+            ? {
+                durationMs: policy.firstEventTimeoutMs,
+                sequence: 2,
+                stage: "response-started",
+              }
+            : phase === "StreamIdleTimeout"
+              ? {
+                  durationMs: policy.streamIdleTimeoutMs,
+                  sequence: 3,
+                  stage: "text-delta",
+                }
+              : {
+                  durationMs: policy.turnTimeoutMs,
+                  sequence: 1,
+                  stage: "sdk-dispatched",
+                };
       const harness = makeHarness(
         client({
+          onCall: ({ context }) => {
+            adapterCalls += 1;
+            stage = "sdk-dispatched";
+            sdkDispatched.resolve({
+              signal: context.cancellationSignal as AbortSignal,
+              order: ++order,
+            });
+          },
           stream: async function* ({ context }) {
             if (mode !== "connect") yield { type: "response_started" };
+            if (mode !== "connect") stage = "response-started";
             if (mode === "stream-idle") {
               yield { type: "text", text: "first data" };
+              stage = "text-delta";
             }
-            connected.resolve();
+            if (mode === "connect") stage = "connect-wait";
+            phaseStarted.resolve({
+              signal: context.cancellationSignal as AbortSignal,
+              stage,
+              order: ++order,
+            });
             await waitForSignal(context.cancellationSignal as AbortSignal);
           },
         }),
         policy,
+        {
+          controlledClock: true,
+          onClockSleep: (durationMs, sequence) => {
+            const registration = {
+              durationMs,
+              sequence,
+              stage,
+              order: ++order,
+            };
+            sleepRegistrations.push(registration);
+            if (
+              registration.durationMs === timerExpectation.durationMs &&
+              registration.stage === timerExpectation.stage
+            ) {
+              timeoutRegistered.resolve(registration);
+            }
+          },
+        },
       );
       try {
-        await initialize(harness);
-        const failure = (await harness.run(
-          Effect.flip(runtimeEffect()) as never,
-        )) as { readonly _tag: string; readonly phase?: string };
-        expect(failure).toMatchObject({
+        const timeout = (await harness.run(
+          Effect.gen(function* () {
+            yield* runMigrations(P16_MIGRATIONS);
+            yield* seed;
+            controlledTime = Date.now();
+            yield* TestClock.setTime(controlledTime);
+            const fiber = yield* Effect.forkChild(Effect.flip(runtimeEffect()));
+            try {
+              const dispatch = yield* Effect.promise(() =>
+                withWatchdog(sdkDispatched.promise, "provider SDK dispatch"),
+              );
+              const phaseHandshake = yield* Effect.promise(() =>
+                withWatchdog(phaseStarted.promise, "provider timeout phase"),
+              );
+              expect(phaseHandshake.signal).toBe(dispatch.signal);
+              expect(dispatch.order).toBeLessThan(phaseHandshake.order);
+              const timer = yield* Effect.promise(() =>
+                withWatchdog(timeoutRegistered.promise, "timeout registration"),
+              );
+              if (phase === "TurnDeadline") {
+                expect(dispatch.order).toBeLessThan(timer.order);
+                const turnDeadlineAt = readTurn(
+                  harness.databaseFile,
+                )?.turn_deadline_at;
+                expect(turnDeadlineAt).toBeDefined();
+                expect(Date.parse(turnDeadlineAt as string)).toBe(
+                  controlledTime + policy.turnTimeoutMs,
+                );
+              } else {
+                expect(phaseHandshake.order).toBeLessThan(timer.order);
+              }
+              expect(readAttempt(harness.databaseFile)).toMatchObject({
+                outcome: "InProgress",
+              });
+              expect(readTurn(harness.databaseFile)?.finish_reason).toBeNull();
+              expect(dispatch.signal.aborted).toBe(false);
+              expect(
+                sleepRegistrations.filter(
+                  (registration) =>
+                    registration.sequence === timerExpectation.sequence &&
+                    registration.durationMs === timerExpectation.durationMs &&
+                    registration.stage === timerExpectation.stage,
+                ),
+              ).toHaveLength(1);
+              yield* TestClock.adjust(timerExpectation.durationMs + 1);
+              const joined = yield* Effect.raceFirst(
+                Fiber.join(fiber),
+                Effect.callback<never, Error>((resume) => {
+                  const timer = setTimeout(
+                    () =>
+                      resume(
+                        Effect.fail(
+                          new Error(
+                            "Timed out waiting for provider runtime join after timeout",
+                          ),
+                        ),
+                      ),
+                    5_000,
+                  );
+                  return Effect.sync(() => clearTimeout(timer));
+                }),
+              );
+              expect(timer).toMatchObject(timerExpectation);
+              return {
+                result: joined,
+                adapterSignal: dispatch.signal,
+              };
+            } finally {
+              yield* Fiber.interrupt(fiber);
+            }
+          }),
+        )) as {
+          readonly result: { readonly _tag: string; readonly phase?: string };
+          readonly adapterSignal: AbortSignal;
+        };
+        expect(timeout.result).toMatchObject({
           _tag: "ProviderExecutionTimeout",
           phase,
         });
-        await connected.promise;
+        expect(timeout.adapterSignal.aborted).toBe(true);
+        expect(adapterCalls).toBe(1);
         const attempt = readAttempt(harness.databaseFile);
         expect(attempt?.outcome).toBe("TimedOut");
         expect(attempt?.retry_decision).toBe("Stop");
         expect(attempt?.retry_reason).toContain(`Timeout(${phase})`);
+        expect(readAttempt(harness.databaseFile, 1)).toBeUndefined();
         expect(readTurn(harness.databaseFile)?.finish_reason).toBe(phase);
       } finally {
         rmSync(harness.root, { recursive: true, force: true });
@@ -1339,7 +1623,7 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
           void context;
         },
       }),
-      { ...DEFAULT_POLICY, retryBackoffMs: 500 },
+      { ...SEMANTIC_TEST_POLICY, retryBackoffMs: 500 },
     );
     try {
       await initialize(harness);
@@ -1377,9 +1661,19 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
   });
 
   it("turn deadline covers retry backoff and prevents a later attempt", async () => {
+    const attemptStarted = deferred();
+    const adapterStarted = deferred();
+    const attemptFailed = deferred();
+    const backoffRegistered = deferred();
+    let failureObserved = false;
     let calls = 0;
+    let adapterCalls = 0;
     const harness = makeHarness(
       client({
+        onCall: () => {
+          adapterCalls += 1;
+          adapterStarted.resolve();
+        },
         stream: async function* () {
           calls += 1;
           if (calls === 1) {
@@ -1392,23 +1686,66 @@ describe("Provider Runtime Phase 1 — real Runtime + controlled OpenAI Adapter"
         },
       }),
       {
-        ...DEFAULT_POLICY,
+        ...SEMANTIC_TEST_POLICY,
         connectTimeoutMs: 500,
+        firstEventTimeoutMs: 500,
+        streamIdleTimeoutMs: 500,
         turnTimeoutMs: 120,
         maxAttempts: 3,
         retryBackoffMs: 500,
       },
+      {
+        controlledClock: true,
+        onClockSleep: () => {
+          if (failureObserved) backoffRegistered.resolve();
+        },
+      },
     );
     try {
-      await initialize(harness);
       const failure = (await harness.run(
-        Effect.flip(runtimeEffect()) as never,
+        Effect.gen(function* () {
+          yield* runMigrations(P16_MIGRATIONS);
+          yield* seed;
+          yield* TestClock.setTime(Date.now());
+          const fiber = yield* Effect.forkChild(
+            Effect.flip(
+              runtimeEffect(undefined, undefined, providerTurnId, (event) => {
+                if (event._tag === "AttemptStarted" && event.attemptNo === 0) {
+                  attemptStarted.resolve();
+                }
+                if (event._tag === "AttemptFailed" && event.attemptNo === 0) {
+                  failureObserved = true;
+                  attemptFailed.resolve();
+                }
+              }),
+            ),
+          );
+          yield* Effect.promise(() =>
+            withWatchdog(attemptStarted.promise, "Attempt 0 start"),
+          );
+          yield* Effect.promise(() =>
+            withWatchdog(adapterStarted.promise, "Adapter call"),
+          );
+          yield* Effect.promise(() =>
+            withWatchdog(attemptFailed.promise, "Attempt 0 durable failure"),
+          );
+          expect(readAttempt(harness.databaseFile, 0)).toMatchObject({
+            outcome: "RetryableFailure",
+            retry_decision: "Retry",
+          });
+          yield* Effect.promise(() =>
+            withWatchdog(backoffRegistered.promise, "retry backoff sleep"),
+          );
+          yield* TestClock.adjust(121);
+          return yield* Fiber.join(fiber);
+        }),
       )) as { readonly _tag: string; readonly phase?: string };
       expect(failure).toMatchObject({
         _tag: "ProviderExecutionTimeout",
         phase: "TurnDeadline",
       });
       expect(calls).toBe(1);
+      expect(adapterCalls).toBe(1);
       expect(readAttempt(harness.databaseFile, 0)).toMatchObject({
         outcome: "RetryableFailure",
         retry_decision: "Retry",

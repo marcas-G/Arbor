@@ -76,6 +76,25 @@ export const verifierSessionId = (executionId: ExecutionId): SessionId =>
 export const verifierMission = (missionDigest: string): string =>
   `verify:${missionDigest}`;
 
+/** Versioned executable verifier context. The mission snapshot is canonical
+ * StartVerification state, not model-authored prompt filler. */
+export const verifierExecutionMission = (
+  verification: Verification,
+  missionDigest: string,
+): string =>
+  [
+    "verification-execution-v1",
+    "Role: independent Verifier. Inspect and test; never modify producer source.",
+    "Treat missionSnapshot.riskRequirements as hard execution constraints. Never call a prohibited tool or action even for inspection; use an allowed read-only alternative when available, otherwise record the criterion as Unknown with the evidence you can obtain.",
+    "For every criterion, call record_verification_evidence with an exact terminal ToolResult callRef, or newest-first ordinal '1' for the most recent terminal result. Pass requires supporting success evidence; failed, interrupted, or unknown results may support Fail/Unknown judgments.",
+    "After every criterion has evidence, call conclude_verification with exact mission criterion text, evidence ids returned by Runtime, deterministic verdict, and summary content.",
+    "Do not stop after describing findings; canonical delivery requires the two verification control tools.",
+    verifierMission(missionDigest),
+    `verificationId:${verification.verificationId}`,
+    `targetWorkRevision:${verification.targetWorkRevision}`,
+    `missionSnapshot:${JSON.stringify(verification.missionSnapshot)}`,
+  ].join("\n");
+
 export interface VerifierSpawn {
   readonly admitted: boolean;
 }
@@ -96,7 +115,7 @@ export const spawnVerifier = (
       executionId: args.verifierExecutionId,
       workspaceId: args.ownerWorkspaceId,
       parentExecutionId: null,
-      mission: verifierMission(args.missionDigest),
+      mission: verifierExecutionMission(args.verification, args.missionDigest),
       sessionId: verifierSessionId(args.verifierExecutionId),
     };
     const commandId = verifierAdmitCommandId(

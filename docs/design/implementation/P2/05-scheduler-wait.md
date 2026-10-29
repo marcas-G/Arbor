@@ -69,11 +69,18 @@ type WakeReason =
 Every Workspace Execution carries a typed `WakeReason`; the continuation
 program/context selection is customized by it (DID §8.18).
 
+EA-DG-01 uses the existing `HumanIntervention` wake reason for a durable
+`ExecutableApprovalResolved` fact. It wakes the exact still-active Execution
+whose AgentLoopStep/action is Pending; it is not a runnable-Work reevaluation,
+new AdmitExecution, new ExecutionId or new ProviderTurn. Repeated event/wake
+delivery re-dispatches the same Execution idempotently. The approval row plus
+resolved event are the durable wake source after restart.
+
 ## 4. Deterministic re-evaluation
 
 ```text
 reevaluate(workspaceId, wakeReason):
-  if an Active Main Execution exists for the workspace: Noop(ActiveMainExecution)
+  if an Active Execution exists for the workspace: Noop(ActiveExecution)
   else:
     { current, runnable } = RunnableWorkSource.classify(workspaceId)
     apply the table below
@@ -81,13 +88,14 @@ reevaluate(workspaceId, wakeReason):
 
 | Condition | Decision |
 |---|---|
-| `current` Open and no active `WorkWait` | `Admit { focus: Work(current) }` |
-| `current` has active `WorkWait`, runnable = 0 | `Idle` |
-| `current` has active `WorkWait`, runnable = 1 | `SelectCurrentWork(theOne)` |
-| `current` has active `WorkWait`, runnable > 1 | `Admit { focus: Coordination }` |
-| `current` = None, runnable = 0 | `Idle` |
-| `current` = None, runnable = 1 | `SelectCurrentWork(theOne)` |
-| `current` = None, runnable > 1 | `Admit { focus: Coordination }` |
+| Active Execution exists | `Noop(ActiveExecution)` |
+| Exactly one runnable Work | `Admit` one exact Work episode binding |
+| More than one runnable Work and selection needs model judgment | `RequestWorkSelection`; persist the exact candidate set and admit its Decision episode |
+| No eligible input | `Idle` |
+
+ConversationResponse and Inbox episodes are admitted by their exact durable
+input and owning admission paths. Neither uses a Coordination focus or a
+Coordination Agent mode.
 
 - The decision is computed by the Scheduler (deterministic Runtime, not an
   LLM planner, SD §7.6).
@@ -126,6 +134,14 @@ COMMIT
   re-read or lands after registration and will be delivered by the wake path.
 - `clearWorkWait(workId)` runs in the transaction that consumes the wake (the
   re-evaluation / next admission), never as a fire-and-forget side effect.
+
+For `Completed(Blocked)`, P2 registers the exact `Manual` and
+`InboxAdvanced(workspaceId, observedSequence)` pair in the same transaction as
+the Blocked settlement and current `WorkBlocker` rows. It re-reads the bound
+Work revision and Inbox sequence before commit. If either has advanced, the
+stable settlement commits but the Work is immediately re-evaluated instead
+of parked. Only the consumer that consumes the matching InboxAdvanced wake
+clears this WorkWait; SteerWork does not clear it out of band.
 
 ## 6. Timer / wake mechanics
 
@@ -171,7 +187,7 @@ persist via SettleExecution (ExecutionOrigin, fenced)
 ## 8. Single-flight / concurrency
 
 - `reevaluate` is single-flight per `workspaceId`; concurrent schedulers rely
-  on `BEGIN IMMEDIATE` + the partial unique index on active main Execution
+  on `BEGIN IMMEDIATE` + the current active-Execution admission constraint
   (`04` §3.1). A losing admission yields `ActiveExecutionConflict`, after which
   the Scheduler re-reads and becomes `Noop`.
 - Wake delivery and dispatch are at-least-once; duplicate wakes converge to the
@@ -186,3 +202,15 @@ persist via SettleExecution (ExecutionOrigin, fenced)
   signals produced by the source phase.
 - Projection rebuild scheduling (P10).
 - Distributed / multi-process scheduling (P12).
+
+## Accepted full-chain SandboxPolicyRequired park/wake (V21)
+
+A verified NotAdmitted process-capable ToolInvocation with no current
+SandboxPolicyDecision is parked through the existing HumanIntervention lease
+release/wake behavior on the same active Execution/Episode. No new P2 WaitSpec,
+Execution wait row, blocker, scheduler state or migration is introduced. A
+committed DecideSandboxPolicy event is only a wake hint; current P1 decision,
+P4 pending intent and basis are truth. After a human decision, P2/P9 may
+redispatch only the same pending action/invocation under existing lease and
+fence rules; missing/stale decision leaves it parked, and Stop remains
+independent.

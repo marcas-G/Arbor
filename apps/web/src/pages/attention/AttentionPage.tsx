@@ -3,10 +3,13 @@
  * inspection; the only available action navigates to its target workspace.
  */
 import type { AttentionRow, Problem } from "@arbor/api-contracts";
+import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import type { Route } from "../../api/router.js";
 import { navigate } from "../../api/router.js";
 import { useViewQuery } from "../../api/useViewQuery.js";
+import { RetryVerificationForm } from "../../commands/forms/RetryVerificationForm.js";
+import type { CommandReceiptView } from "../../commands/submitCommand.js";
 import { Badge } from "../../components/Badge.js";
 import { Button } from "../../components/Button.js";
 import { Empty } from "../../components/Empty.js";
@@ -15,6 +18,7 @@ import { Sheet } from "../../components/Sheet.js";
 import { StatusBadge } from "../../components/StatusBadge.js";
 import { useCompactLayout } from "../../components/useCompactLayout.js";
 import { ProblemCard } from "../../problems/ProblemCard.js";
+import { useSession } from "../../session/SessionContext.js";
 import { statusTone } from "../../tokens.js";
 import { TimeText } from "../../views/shared.js";
 import styles from "./attention.module.css";
@@ -57,9 +61,15 @@ function groupRows(
 function AttentionInspection({
   row,
   projectId,
+  actor,
+  token,
+  onSubmitted,
 }: {
   readonly row: AttentionRow | null;
   readonly projectId: string;
+  readonly actor: string;
+  readonly token?: string | undefined;
+  readonly onSubmitted: (receipt: CommandReceiptView) => void;
 }) {
   if (row === null) {
     return <Empty>选择一条关注事项查看冻结的诊断信息。</Empty>;
@@ -110,6 +120,43 @@ function AttentionInspection({
             <MonoText>{row.dedupKey}</MonoText>
           </dd>
         </div>
+        {row.terminalProviderFailure === undefined ? null : (
+          <>
+            <div>
+              <dt>Provider failure</dt>
+              <dd>
+                <StatusBadge label={row.terminalProviderFailure.failureCode} />
+              </dd>
+            </div>
+            <div>
+              <dt>Work revision</dt>
+              <dd>{row.terminalProviderFailure.workRevision ?? "不可证明"}</dd>
+            </div>
+          </>
+        )}
+        {row.source === "VerifierOrphan" &&
+        row.workId !== undefined &&
+        row.verificationId !== undefined &&
+        row.targetWorkRevision !== undefined ? (
+          <>
+            <div>
+              <dt>Work</dt>
+              <dd>
+                <MonoText>{row.workId}</MonoText>
+              </dd>
+            </div>
+            <div>
+              <dt>Verification</dt>
+              <dd>
+                <MonoText>{row.verificationId}</MonoText>
+              </dd>
+            </div>
+            <div>
+              <dt>Target Work revision</dt>
+              <dd>{row.targetWorkRevision}</dd>
+            </div>
+          </>
+        ) : null}
       </dl>
       <p className={styles.readOnlyNote}>
         关注事项仅供检查；打开目标工作区不会更改此事项。
@@ -127,6 +174,21 @@ function AttentionInspection({
       >
         打开目标工作区
       </Button>
+      {row.source === "VerifierOrphan" &&
+      row.availableActions?.includes("RetryVerification") === true &&
+      row.workId !== undefined &&
+      row.verificationId !== undefined &&
+      row.targetWorkRevision !== undefined ? (
+        <RetryVerificationForm
+          actor={actor}
+          projectId={projectId}
+          workId={row.workId}
+          verificationId={row.verificationId}
+          expectedWorkRevision={row.targetWorkRevision}
+          token={token}
+          onSubmitted={onSubmitted}
+        />
+      ) : null}
     </div>
   );
 }
@@ -137,12 +199,23 @@ export function AttentionPage({
   readonly route: Extract<Route, { name: "attention" }>;
 }) {
   const compact = useCompactLayout();
+  const session = useSession();
+  const queryClient = useQueryClient();
   const [sourceFilter, setSourceFilter] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const query = useViewQuery("attention", {
     projectId: route.projectId as never,
   });
+  const onSubmitted = (receipt: CommandReceiptView): void => {
+    if (receipt.resolution !== "Committed") return;
+    void queryClient.invalidateQueries({ queryKey: ["view", "attention"] });
+    void queryClient.invalidateQueries({ queryKey: ["view", "verification"] });
+    void queryClient.invalidateQueries({ queryKey: ["view", "work-detail"] });
+  };
   const rows = query.data?.rows ?? [];
+  const resourceActivationPending = rows.some(
+    (row) => row.source === "WorkspaceResourceActivationPending",
+  );
   const unknownSources = [
     ...new Set(
       rows
@@ -178,6 +251,15 @@ export function AttentionPage({
         </div>
         <span className={styles.caption}>诊断面 · 只读</span>
       </header>
+      {query.isError ? (
+        <div className={styles.staleProblem} role="status">
+          无法确认此项目的资源激活状态。请勿重复创建；刷新关注事项后再确认。
+        </div>
+      ) : resourceActivationPending ? (
+        <div className={styles.staleProblem} role="status">
+          项目已创建，但资源尚未激活，文件操作暂不可用。该创建命令已经提交，请勿重复创建；此状态会随资源激活更新。
+        </div>
+      ) : null}
       {query.isPending ? (
         <Empty>正在加载关注事项</Empty>
       ) : query.isError && query.data === undefined ? (
@@ -272,6 +354,9 @@ export function AttentionPage({
                       <AttentionInspection
                         row={selected}
                         projectId={route.projectId}
+                        actor={session.actor ?? ""}
+                        token={session.token ?? undefined}
+                        onSubmitted={onSubmitted}
                       />
                     </aside>
                   ) : null}
@@ -283,6 +368,9 @@ export function AttentionPage({
                     <AttentionInspection
                       row={selected}
                       projectId={route.projectId}
+                      actor={session.actor ?? ""}
+                      token={session.token ?? undefined}
+                      onSubmitted={onSubmitted}
                     />
                   </Sheet>
                 </div>

@@ -6,6 +6,7 @@
 import type {
   Problem,
   VerificationRes,
+  WorkDetailRes,
   WorkspaceDetailRes,
 } from "@arbor/api-contracts";
 
@@ -50,6 +51,36 @@ export const detailPendingOnly: WorkspaceDetailRes = {
   pendingWorks: [{ workId: id(WORK_PENDING), objective: "待办工作目标" }],
 };
 
+export const workDetailCurrent: WorkDetailRes = {
+  workId: id(WORK_CURRENT),
+  projectId: id("prj_1"),
+  workspaceId: id(WS),
+  objective: "当前工作目标",
+  why: "测试当前工作详情",
+  completionExpectation: "显示工作详情",
+  lifecycle: "Open",
+  revision: workRevision(7),
+};
+
+export const workDetailPending: WorkDetailRes = {
+  ...workDetailCurrent,
+  workId: id(WORK_PENDING),
+  objective: "待办工作目标",
+};
+
+export const workDetailCompleted: WorkDetailRes = {
+  ...workDetailCurrent,
+  lifecycle: "Completed",
+  acceptedResult: {
+    acceptanceId: id("acc_1"),
+    verificationId: id("ver_1"),
+    targetWorkRevision: workRevision(7),
+    verdict: "Pass",
+    actor: id("human:root"),
+    acceptedAt: "2026-10-08T00:00:00.000Z",
+  },
+};
+
 export const verificationFull: VerificationRes = {
   verificationId: id("ver_1"),
   targetWorkRevision: workRevision(7),
@@ -57,7 +88,7 @@ export const verificationFull: VerificationRes = {
   criteriaResults: [
     {
       criterionId: "crit-render",
-      requirement: "9 视图 ×3 fixture 全部可渲染",
+      requirement: "10 视图 ×3 fixture 全部可渲染",
       required: true,
       verdict: "Pass",
     },

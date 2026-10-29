@@ -78,14 +78,12 @@ harness pattern (`b12-restart-continuation.test.ts`).
   leaves the consumer blocked; matcher outcome is durable and externally
   readable. The model's intent alone is never success evidence.
 
-## B10 — Verification
+## B10 — Verification — UNBLOCKED / IMPLEMENTED
 
-- **Blocker (design):** G-V2-2 (ToolObservation exact source identity),
-  G-V2-3 (ConcludeVerification durable summary reference), G-V2-4
-  (initialWork/VerificationMission lifecycle) remain DESIGN_UNRESOLVED
-  (`planning/tool-surface-review/40/41/44`).
-- **Unblock condition:** governance rulings land in DID closing G-V2-2/3/4 and
-  the P8 durable Verification→ref association is implemented.
+- **Closure:** accepted DID v1.26 VDC-2/3/4 freezes ToolObservation identity,
+  durable conclusion summaryRef, and initialWork VerificationMission lifecycle.
+- **Qualification:** repeatable real-provider sentinel lives at
+  `tests/capability/real-provider/b10-verification.test.ts`.
 - **Drive:** verifier execution (real provider) over a frozen mission with
   evidence-bearing artifacts created through supported storage/observation
   paths only.

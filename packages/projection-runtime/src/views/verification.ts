@@ -1,5 +1,8 @@
 import type { Acceptance, Verification, Work, WorkId } from "@arbor/domain";
-import type { EvidenceRecordRow } from "@arbor/ports";
+import type {
+  EvidenceRecordRow,
+  ProjectionIntegrityFailure,
+} from "@arbor/ports";
 import { Effect, Option } from "effect";
 import type { ProjectionReadError } from "../errors.js";
 import { projectionReadError } from "../errors.js";
@@ -56,27 +59,128 @@ const rankConcluded = (
   )[0];
 };
 
-/** VerificationRes core derive — read-only. Per-criterion verdicts:
- * canonical persistence carries the aggregate verdict only (P8 frozen
- * stores; the Conclusion command validates per-criterion inputs but does
- * not persist them), so per-criterion verdicts are not reconstructible
- * and render Unknown — the view never invents a criterion verdict from
- * the aggregate (optional criteria may Fail under an aggregate Pass). */
+const unknownCriteria = (
+  verification: Verification,
+): ReadonlyArray<CriterionResultView> =>
+  verification.missionSnapshot.criteria.map((criterion) => ({
+    criterionId: criterion.criterionId,
+    requirement: criterion.requirement,
+    required: criterion.required,
+    verdict: "Unknown",
+  }));
+
+const integrityFailure = (
+  verificationId: string,
+): ProjectionIntegrityFailure => ({
+  _tag: "ProjectionIntegrityFailure",
+  code: "projection/unavailable",
+  category: "unavailable",
+  correlationId: null,
+  retryDisposition: "non-retryable",
+  safeDetails: {
+    view: "verification",
+    reasonCode: "AvailableCriterionSnapshotInvalid",
+    verificationId,
+  },
+});
+
+const exactAvailableCriteria = (
+  verification: Verification,
+  evidence: ReadonlyArray<EvidenceRecordRow>,
+): ReadonlyArray<CriterionResultView> | null => {
+  const snapshot = verification.criteriaResults;
+  if (
+    verification.state.status !== "Concluded" ||
+    verification.snapshotStatus !== "Available" ||
+    verification.state.conclusionReason !== undefined ||
+    snapshot === null ||
+    snapshot.length !== verification.missionSnapshot.criteria.length
+  ) {
+    return null;
+  }
+  const missionIds = new Set<string>();
+  for (const criterion of verification.missionSnapshot.criteria) {
+    if (missionIds.has(criterion.criterionId)) return null;
+    missionIds.add(criterion.criterionId);
+  }
+  const evidenceById = new Map<string, EvidenceRecordRow>();
+  for (const record of evidence) {
+    if (
+      record.verificationId !== verification.verificationId ||
+      evidenceById.has(record.evidenceId) ||
+      !missionIds.has(record.criterionId)
+    ) {
+      return null;
+    }
+    evidenceById.set(record.evidenceId, record);
+  }
+  const criteriaResults: Array<CriterionResultView> = [];
+  for (const [index, result] of snapshot.entries()) {
+    const criterion = verification.missionSnapshot.criteria[index];
+    if (
+      criterion === undefined ||
+      result.criterionId !== criterion.criterionId ||
+      result.requirement !== criterion.requirement ||
+      result.required !== criterion.required ||
+      (result.verdict !== "Pass" &&
+        result.verdict !== "Fail" &&
+        result.verdict !== "Unknown") ||
+      result.evidenceRefs.length === 0 ||
+      new Set(result.evidenceRefs).size !== result.evidenceRefs.length
+    ) {
+      return null;
+    }
+    for (const evidenceId of result.evidenceRefs) {
+      const evidenceRow = evidenceById.get(evidenceId);
+      if (
+        evidenceRow === undefined ||
+        evidenceRow.verificationId !== verification.verificationId ||
+        evidenceRow.criterionId !== criterion.criterionId
+      ) {
+        return null;
+      }
+    }
+    criteriaResults.push({
+      criterionId: result.criterionId,
+      requirement: result.requirement,
+      required: result.required,
+      verdict: result.verdict,
+    });
+  }
+  return criteriaResults;
+};
+
+/** VerificationRes core derive — read-only. Available criterion snapshots
+ * render their exact persisted ordered verdicts. Only Pending and explicitly
+ * UnavailableLegacy rows render Unknown; aggregate verdicts never fill gaps. */
 export const deriveVerificationView = (
   workId: WorkId,
   deps: VerificationViewDeps,
-): Effect.Effect<VerificationViewView, ProjectionReadError> =>
+): Effect.Effect<
+  VerificationViewView,
+  ProjectionReadError | ProjectionIntegrityFailure
+> =>
   Effect.gen(function* () {
     const work = yield* deps.findWork(workId);
     if (Option.isNone(work)) {
       return yield* Effect.fail(projectionReadError(`no work ${workId}`));
     }
     const rows = yield* deps.listVerificationsByWork(workId);
+    const accepted = yield* deps.findAcceptanceByWorkRevision(
+      workId,
+      work.value.revision,
+    );
+    const acceptedVerification = Option.isSome(accepted)
+      ? rows.find((row) => row.verificationId === accepted.value.verificationId)
+      : undefined;
     const open = rows.find((row) => row.state.status === "Open");
     const selected =
-      open ??
-      rankConcluded(rows, work.value.revision) ??
-      (rows.length > 0 ? rows[0] : undefined);
+      acceptedVerification ??
+      (Option.isSome(accepted)
+        ? undefined
+        : (open ??
+          rankConcluded(rows, work.value.revision) ??
+          (rows.length > 0 ? rows[0] : undefined)));
 
     if (selected === undefined) {
       return {
@@ -91,10 +195,59 @@ export const deriveVerificationView = (
     const evidence = yield* deps.listEvidenceByVerification(
       selected.verificationId,
     );
-    const acceptance = yield* deps.findAcceptanceByWorkRevision(
-      selected.workId,
-      selected.targetWorkRevision,
-    );
+    const acceptance =
+      Option.isSome(accepted) &&
+      accepted.value.verificationId === selected.verificationId
+        ? accepted
+        : yield* deps.findAcceptanceByWorkRevision(
+            selected.workId,
+            selected.targetWorkRevision,
+          );
+
+    let criteriaResults: ReadonlyArray<CriterionResultView>;
+    switch (selected.snapshotStatus) {
+      case "Pending":
+        if (
+          selected.state.status !== "Open" ||
+          selected.criteriaResults !== null
+        ) {
+          return yield* Effect.fail(integrityFailure(selected.verificationId));
+        }
+        criteriaResults = unknownCriteria(selected);
+        break;
+      case "UnavailableLegacy":
+        if (
+          selected.state.status !== "Concluded" ||
+          selected.criteriaResults !== null
+        ) {
+          return yield* Effect.fail(integrityFailure(selected.verificationId));
+        }
+        criteriaResults = unknownCriteria(selected);
+        break;
+      case "NotApplicableOrphaned":
+        if (
+          selected.state.status !== "Concluded" ||
+          selected.state.verdict !== "Unknown" ||
+          selected.state.conclusionReason !== "Orphaned" ||
+          selected.criteriaResults === null ||
+          selected.criteriaResults.length !== 0 ||
+          evidence.length !== 0
+        ) {
+          return yield* Effect.fail(integrityFailure(selected.verificationId));
+        }
+        criteriaResults = [];
+        break;
+      case "Available": {
+        const available = exactAvailableCriteria(selected, evidence);
+        if (available === null) {
+          return yield* Effect.fail(integrityFailure(selected.verificationId));
+        }
+        criteriaResults = available;
+        break;
+      }
+      default:
+        return yield* Effect.fail(integrityFailure(selected.verificationId));
+    }
 
     return {
       ...verificationIdentityView(selected),
@@ -102,12 +255,7 @@ export const deriveVerificationView = (
         selected.state.status === "Concluded"
           ? selected.state.verdict
           : undefined,
-      criteriaResults: selected.missionSnapshot.criteria.map((criterion) => ({
-        criterionId: criterion.criterionId,
-        requirement: criterion.requirement,
-        required: criterion.required,
-        verdict: "Unknown",
-      })),
+      criteriaResults,
       evidenceRefs: evidence.map((row) => row.evidenceId),
       acceptance:
         Option.isSome(acceptance) &&

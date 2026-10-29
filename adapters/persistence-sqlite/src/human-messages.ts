@@ -3,14 +3,13 @@ import {
   type HumanMessageConflict,
   type HumanMessageRecord,
   HumanMessageStore,
-  type HumanMessageStoreError,
   type HumanMessageStoreService,
   type ReasoningAttachment,
   TransactionScope,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import type { SqlError } from "effect/unstable/sql/SqlError";
+import { repositoryFailure } from "./repository-error.js";
 
 /**
  * P14 `01` §4 — the durable human-message store (SQLite). Writes happen in
@@ -113,61 +112,6 @@ export const HumanMessageStoreLive: Layer.Layer<
             ? Option.none<HumanMessageRecord>()
             : Option.some(toRecord(row));
         }),
-      pendingOrderedByCreated: (projectId) =>
-        Effect.gen(function* () {
-          yield* TransactionScope;
-          const rows = yield* sql
-            .unsafe<HumanMessageRow>(
-              `SELECT ${SELECT_COLUMNS} FROM human_messages WHERE project_id = ? AND state = 'Pending' ORDER BY created_at ASC, message_id ASC`,
-              [projectId],
-            )
-            .pipe(Effect.mapError(toOperationalFailure));
-          return rows.map(toRecord);
-        }),
-      claim: (messageId, claimedByExecutionId) =>
-        Effect.gen(function* () {
-          yield* TransactionScope;
-          const existing = yield* sql
-            .unsafe<HumanMessageRow>(
-              `SELECT ${SELECT_COLUMNS} FROM human_messages WHERE message_id = ?`,
-              [messageId],
-            )
-            .pipe(Effect.mapError(toOperationalFailure));
-          const row = existing[0];
-          if (row === undefined) {
-            return { _tag: "NotFound" as const };
-          }
-          if (row.state !== "Pending") {
-            return { _tag: "AlreadyClaimed" as const };
-          }
-          // Single-statement CAS: only a still-Pending row flips.
-          const updated = yield* sql
-            .unsafe<{ message_id: string }>(
-              "UPDATE human_messages SET state = 'Claimed', claimed_by_execution_id = ? WHERE message_id = ? AND state = 'Pending' RETURNING message_id",
-              [claimedByExecutionId, messageId],
-            )
-            .pipe(Effect.mapError(toOperationalFailure));
-          return updated.length > 0
-            ? { _tag: "Claimed" as const }
-            : { _tag: "AlreadyClaimed" as const };
-        }),
-      markAnswered: (messageId, settledAt, responseBody, providerReasoning) =>
-        Effect.gen(function* () {
-          yield* TransactionScope;
-          yield* sql
-            .unsafe(
-              "UPDATE human_messages SET state = 'Answered', settled_at = ?, response_body = ?, provider_reasoning_json = ? WHERE message_id = ? AND state = 'Claimed'",
-              [
-                settledAt,
-                responseBody,
-                providerReasoning === undefined || providerReasoning === null
-                  ? null
-                  : JSON.stringify(providerReasoning),
-                messageId,
-              ],
-            )
-            .pipe(Effect.mapError(toOperationalFailure));
-        }),
       listForWorkspace: (workspaceId) =>
         Effect.gen(function* () {
           yield* TransactionScope;
@@ -179,67 +123,9 @@ export const HumanMessageStoreLive: Layer.Layer<
             .pipe(Effect.mapError(toOperationalFailure));
           return rows.map(toRecord);
         }),
-      projectsWithConversationWork: () =>
-        Effect.gen(function* () {
-          yield* TransactionScope;
-          const rows = yield* sql
-            .unsafe<{ project_id: string }>(
-              "SELECT DISTINCT project_id FROM human_messages WHERE state IN ('Pending','Claimed')",
-            )
-            .pipe(Effect.mapError(toOperationalFailure));
-          return rows.map((row) => row.project_id as never);
-        }),
-      claimedOrderedByCreated: (projectId) =>
-        Effect.gen(function* () {
-          yield* TransactionScope;
-          const rows = yield* sql
-            .unsafe<HumanMessageRow>(
-              `SELECT ${SELECT_COLUMNS} FROM human_messages WHERE project_id = ? AND state = 'Claimed' ORDER BY created_at ASC, message_id ASC`,
-              [projectId],
-            )
-            .pipe(Effect.mapError(toOperationalFailure));
-          return rows.map(toRecord);
-        }),
-      findByClaimedExecution: (executionId) =>
-        Effect.gen(function* () {
-          yield* TransactionScope;
-          const rows = yield* sql
-            .unsafe<HumanMessageRow>(
-              `SELECT ${SELECT_COLUMNS} FROM human_messages WHERE claimed_by_execution_id = ? AND state = 'Claimed' LIMIT 1`,
-              [executionId],
-            )
-            .pipe(Effect.mapError(toOperationalFailure));
-          const row = rows[0];
-          return row === undefined
-            ? Option.none<HumanMessageRecord>()
-            : Option.some(toRecord(row));
-        }),
-      rollbackForRetry: (messageId) =>
-        Effect.gen(function* () {
-          yield* TransactionScope;
-          yield* sql
-            .unsafe(
-              "UPDATE human_messages SET state = 'Pending', claimed_by_execution_id = NULL, attempt_no = attempt_no + 1 WHERE message_id = ? AND state = 'Claimed'",
-              [messageId],
-            )
-            .pipe(Effect.mapError(toOperationalFailure));
-        }),
-      rollbackClaim: (messageId) =>
-        Effect.gen(function* () {
-          yield* TransactionScope;
-          yield* sql
-            .unsafe(
-              "UPDATE human_messages SET state = 'Pending', claimed_by_execution_id = NULL WHERE message_id = ? AND state = 'Claimed'",
-              [messageId],
-            )
-            .pipe(Effect.mapError(toOperationalFailure));
-        }),
     };
     return HumanMessageStore.of(service);
   }),
 );
 
-const toOperationalFailure = (cause: SqlError): HumanMessageStoreError => ({
-  _tag: "HumanMessageStoreFailure",
-  cause,
-});
+const toOperationalFailure = repositoryFailure("HumanMessageStore", "message");

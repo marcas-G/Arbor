@@ -3,22 +3,34 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import {
   AcceptanceRepositoryLive,
   ClockLive,
+  CommandStoreLive,
+  DeliverableRepositoryLive,
   DependencyRepositoryLive,
   DomainEventJournalLive,
   EvidenceRepositoryLive,
   ExecutionRepositoryLive,
+  FormationFulfillmentStoreLive,
+  FormationProposalStoreLive,
   IdGeneratorLive,
   InboxProjectionStoreLive,
   layer,
   MessageStoreLive,
+  makeAttentionProjectionStoreLive,
+  makeRecoveryAttentionFactStoreLive,
   P8_MIGRATIONS,
+  P46_VERIFICATION_EVIDENCE_SNAPSHOT_MIGRATION,
+  ProjectRepositoryLive,
   runMigrations,
+  splitStatements,
   TransactionPortLive,
   VerificationRepositoryLive,
   WorkRepositoryLive,
   WorkspaceRepositoryLive,
   WorkWaitStoreLive,
 } from "../../adapters/persistence-sqlite/src/index.js";
+import type { AnyProducerAttentionDependencies } from "../../apps/single-workspace/src/any-producer-attention.js";
+import { listAnyProducerSettledWaits } from "../../apps/single-workspace/src/any-producer-attention.js";
+import type { AnyProducerEvidenceDependencies } from "../../apps/single-workspace/src/any-producer-evidence.js";
 import { DependencyAwareRunnableWorkSourceLive } from "../../apps/single-workspace/src/runnable-source-p7.js";
 import type {
   DomainEvent,
@@ -35,11 +47,16 @@ import {
 } from "../../packages/domain/dist/index.js";
 import {
   AcceptanceRepository,
+  CommandStore,
+  DeliverableRepository,
   DependencyRepository,
   DomainEventJournal,
   EvidenceRepository,
   ExecutionRepository,
+  FormationFulfillmentStore,
+  FormationProposalStore,
   MessageStore,
+  ProjectRepository,
   RunnableWorkSource,
   TransactionPort,
   VerificationRepository,
@@ -62,12 +79,15 @@ import type {
   TreeViewDeps,
   UsageDeps,
   VerificationViewDeps,
+  WorkDetailDeps,
   WorkspaceDetailDeps,
 } from "../../packages/projection-runtime/src/index.js";
 import {
   deriveProjectAttention,
   projectionReadError,
 } from "../../packages/projection-runtime/src/index.js";
+import { NoHoldWorkReadmissionGateStoreLive } from "../../packages/testkit/src/index.js";
+import { ensureLegacyProjectResourceSourceFixture } from "./legacy-project-resource-source.js";
 
 export const p10Project = parse(ProjectId)(
   "prj_00000000-0000-7000-8000-000000000010",
@@ -90,22 +110,48 @@ export const p10Flagged = parse(WorkspaceId)(
 
 /** sqlite infra + the P7 classification source; no command gateway (fixtures
  * seed canonical rows directly via SQL — the p8-ddl precedent). */
-export const makeP10App = () => {
-  const base = layer({ filename: ":memory:" });
+export const makeP10App = (
+  filename = ":memory:",
+  options: {
+    readonly includeSubmittedDecisionFactStore?: boolean;
+    readonly includeSubmittedDecisionMarkerStore?: boolean;
+  } = {},
+) => {
+  const base = layer({ filename });
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
+  const journal = Layer.provide(DomainEventJournalLive, infra);
+  const submittedDecisionFacts = options.includeSubmittedDecisionFactStore
+    ? Layer.provide(
+        makeRecoveryAttentionFactStoreLive(),
+        Layer.mergeAll(infra, journal),
+      )
+    : undefined;
+  const submittedDecisionMarkers = options.includeSubmittedDecisionMarkerStore
+    ? Layer.provide(makeAttentionProjectionStoreLive(), infra)
+    : undefined;
   const stores = Layer.mergeAll(
     Layer.provide(TransactionPortLive, infra),
+    Layer.provide(ProjectRepositoryLive, infra),
     Layer.provide(WorkspaceRepositoryLive, infra),
     Layer.provide(WorkRepositoryLive, infra),
     Layer.provide(ExecutionRepositoryLive, infra),
     Layer.provide(WorkWaitStoreLive, infra),
     Layer.provide(DependencyRepositoryLive, infra),
+    Layer.provide(DeliverableRepositoryLive, infra),
+    Layer.provide(FormationProposalStoreLive, infra),
+    Layer.provide(FormationFulfillmentStoreLive, infra),
+    Layer.provide(CommandStoreLive, infra),
+    NoHoldWorkReadmissionGateStoreLive,
     Layer.provide(VerificationRepositoryLive, infra),
     Layer.provide(EvidenceRepositoryLive, infra),
     Layer.provide(AcceptanceRepositoryLive, infra),
-    Layer.provide(DomainEventJournalLive, infra),
+    journal,
     Layer.provide(MessageStoreLive, infra),
     Layer.provide(InboxProjectionStoreLive, infra),
+    ...(submittedDecisionFacts === undefined ? [] : [submittedDecisionFacts]),
+    ...(submittedDecisionMarkers === undefined
+      ? []
+      : [submittedDecisionMarkers]),
   );
   return Layer.mergeAll(
     infra,
@@ -130,6 +176,7 @@ export interface P10FixtureDeps {
   readonly tree: TreeViewDeps;
   readonly attention: AttentionReadDeps;
   readonly workspaceDetail: WorkspaceDetailDeps;
+  readonly workDetail: WorkDetailDeps;
   readonly currentWork: CurrentWorkDeps;
   readonly verificationView: VerificationViewDeps;
   readonly dependencyView: DependencyViewDeps;
@@ -156,6 +203,11 @@ export const makeP10Deps = (): Effect.Effect<
   | ExecutionRepository
   | WorkWaitStore
   | DependencyRepository
+  | ProjectRepository
+  | DeliverableRepository
+  | FormationProposalStore
+  | FormationFulfillmentStore
+  | CommandStore
   | VerificationRepository
   | EvidenceRepository
   | AcceptanceRepository
@@ -171,6 +223,11 @@ export const makeP10Deps = (): Effect.Effect<
     const executions = yield* ExecutionRepository;
     const waits = yield* WorkWaitStore;
     const dependencies = yield* DependencyRepository;
+    const projects = yield* ProjectRepository;
+    const deliverables = yield* DeliverableRepository;
+    const proposals = yield* FormationProposalStore;
+    const fulfillments = yield* FormationFulfillmentStore;
+    const commands = yield* CommandStore;
     const verifications = yield* VerificationRepository;
     const evidence = yield* EvidenceRepository;
     const acceptances = yield* AcceptanceRepository;
@@ -209,20 +266,111 @@ export const makeP10Deps = (): Effect.Effect<
             workspace_id: string;
             settlement_json: string | null;
             settled_at: string | null;
+            settlement_kind: string | null;
           }>(
-            "SELECT execution_id, workspace_id, settlement_json, settled_at FROM executions WHERE project_id = ? ORDER BY execution_id",
+            "SELECT execution_id, workspace_id, settlement_json, settled_at, settlement_kind FROM executions WHERE project_id = ? ORDER BY execution_id",
             [projectId],
           );
-          const facts: Array<ExecutionSettlementReadFact> = rows.map((row) => ({
-            executionId: row.execution_id,
-            workspaceId: row.workspace_id as WorkspaceId,
-            settlement:
-              row.settlement_json === null
-                ? null
-                : (JSON.parse(row.settlement_json) as ExecutionSettlement),
-            settledAt: row.settled_at,
-          }));
+          const facts: Array<ExecutionSettlementReadFact> = rows.map((row) => {
+            let settlement: ExecutionSettlement | null = null;
+            let settlementMalformed =
+              row.settlement_kind !== null && row.settlement_json === null;
+            if (row.settlement_json !== null) {
+              try {
+                settlement = JSON.parse(
+                  row.settlement_json,
+                ) as ExecutionSettlement;
+              } catch {
+                settlementMalformed = true;
+              }
+            }
+            return {
+              executionId: row.execution_id,
+              workspaceId: row.workspace_id as WorkspaceId,
+              settlement,
+              settledAt: row.settled_at,
+              settlementKind: row.settlement_kind,
+              settlementMalformed,
+            };
+          });
           return facts;
+        }),
+      );
+
+    const listAttentionSourceExecutionBindings = (
+      _projectId: ProjectId,
+      executionIds: ReadonlyArray<string>,
+    ) =>
+      inTx(
+        Effect.gen(function* () {
+          if (executionIds.length === 0) return [];
+          const rows = yield* sql.unsafe<{
+            readonly execution_id: string;
+            readonly project_id: string;
+            readonly workspace_id: string;
+            readonly episode_json: string | null;
+          }>(
+            `SELECT e.execution_id, e.project_id, e.workspace_id,
+                    state.episode_json
+               FROM executions AS e
+               LEFT JOIN agent_execution_state AS state
+                 ON state.execution_id = e.execution_id
+              WHERE e.execution_id IN (${executionIds.map(() => "?").join(",")})
+              ORDER BY e.execution_id`,
+            [...executionIds],
+          );
+          const episodeWorkIds = new Map<string, string>();
+          for (const row of rows) {
+            if (row.episode_json === null) continue;
+            try {
+              const episode = JSON.parse(row.episode_json) as {
+                readonly _tag?: unknown;
+                readonly workId?: unknown;
+              };
+              if (
+                episode._tag === "WorkEpisode" &&
+                typeof episode.workId === "string"
+              ) {
+                episodeWorkIds.set(row.execution_id, episode.workId);
+              }
+            } catch {
+              // Return the invalid raw episode for the P10 typed failure.
+            }
+          }
+          const workIds = [...new Set(episodeWorkIds.values())];
+          const workRows =
+            workIds.length === 0
+              ? []
+              : yield* sql.unsafe<{
+                  readonly work_id: string;
+                  readonly project_id: string;
+                  readonly workspace_id: string;
+                  readonly revision: number;
+                }>(
+                  `SELECT work_id, project_id, workspace_id, revision FROM works
+                    WHERE work_id IN (${workIds.map(() => "?").join(",")})`,
+                  workIds,
+                );
+          const worksById = new Map(
+            workRows.map((work) => [work.work_id, work]),
+          );
+          return rows.map((row) => {
+            const workId = episodeWorkIds.get(row.execution_id);
+            const work =
+              workId === undefined ? undefined : worksById.get(workId);
+            return {
+              executionId: row.execution_id,
+              projectId: row.project_id as ProjectId,
+              workspaceId: row.workspace_id as WorkspaceId,
+              episodeJson: row.episode_json,
+              workId: work?.work_id ?? null,
+              workProjectId:
+                (work?.project_id as ProjectId | undefined) ?? null,
+              workWorkspaceId:
+                (work?.workspace_id as WorkspaceId | undefined) ?? null,
+              workRevision: work === undefined ? null : Number(work.revision),
+            };
+          });
         }),
       );
 
@@ -311,9 +459,37 @@ export const makeP10Deps = (): Effect.Effect<
       listWorksByWorkspace: (workspaceId) =>
         inTx(works.listByWorkspace(workspaceId)),
       listExecutionSettlementFacts,
+      listAttentionSourceExecutionBindings,
       listOpenVerifications: () => inTx(verifications.listOpen()),
       listUnsatisfiedDependencies: (projectId) =>
         inTx(dependencies.listUnsatisfiedByProject(projectId)),
+      listAnyProducerSettledWaits: (projectId) =>
+        listAnyProducerSettledWaits(
+          {
+            evidence: {
+              projects,
+              workspaces,
+              listWorkspaceIdsByProject: (targetProjectId) =>
+                Effect.map(
+                  sql.unsafe<{ readonly workspace_id: string }>(
+                    "SELECT workspace_id FROM workspaces WHERE project_id = ? ORDER BY workspace_id",
+                    [targetProjectId],
+                  ),
+                  (rows) => rows.map((row) => row.workspace_id as WorkspaceId),
+                ),
+              works,
+              proposals,
+              fulfillments,
+              deliverables,
+              tx,
+            } satisfies AnyProducerEvidenceDependencies,
+            executions,
+            waits,
+            dependencies,
+            commandReceipts: commands,
+          } satisfies AnyProducerAttentionDependencies,
+          projectId,
+        ).pipe(Effect.mapError(projectionReadError)),
       findDependency: (dependencyId) =>
         inTx(dependencies.findById(dependencyId as never)),
       readEvents,
@@ -412,6 +588,14 @@ export const makeP10Deps = (): Effect.Effect<
         inTx(acceptances.findByWorkRevision(workId, targetWorkRevision)),
     };
 
+    const workDetail: WorkDetailDeps = {
+      findWork: (workId) => inTx(works.findById(workId)),
+      findAcceptanceByWorkRevision: (workId, revision) =>
+        inTx(acceptances.findByWorkRevision(workId, revision)),
+      findVerification: (verificationId) =>
+        inTx(verifications.findById(verificationId as never)),
+    };
+
     const dependencyView: DependencyViewDeps = {
       listDependenciesByProject: (projectId) =>
         inTx(dependencies.listByProject(projectId)),
@@ -472,6 +656,9 @@ export const makeP10Deps = (): Effect.Effect<
       listUnconsumedInbox: workspaceDetail.listUnconsumedInbox,
       journalLastSequence,
       projectIdOfWorkspace,
+      findExecutableApproval: () => Effect.succeed(Option.none()),
+      findToolDefinitionHash: () => Effect.succeed(Option.none()),
+      resolveToolDefinition: () => Effect.succeed(Option.none()),
     };
 
     const effectiveFacts: EffectiveFactsDeps = {
@@ -543,6 +730,7 @@ export const makeP10Deps = (): Effect.Effect<
       tree,
       attention,
       workspaceDetail,
+      workDetail,
       currentWork,
       verificationView,
       dependencyView,
@@ -572,7 +760,13 @@ const BOUNDARY = JSON.stringify({
 });
 const MISSION = JSON.stringify({
   goal: "g",
-  criteria: [],
+  criteria: [
+    {
+      criterionId: "p10-fixture-criterion",
+      requirement: "fixture criterion passes",
+      required: true,
+    },
+  ],
   riskRequirements: [],
 });
 
@@ -605,6 +799,7 @@ export const insertProjectRootRow = (
         "t0",
       ],
     );
+    yield* ensureLegacyProjectResourceSourceFixture();
   });
 
 export const insertSessionRow = (
@@ -744,12 +939,39 @@ export const insertExecutionRow = (
         seed.settledAt ?? null,
       ],
     );
+    if (seed.focusWorkId !== null && seed.focusWorkId !== undefined) {
+      const workRows = yield* sql.unsafe<{ readonly revision: number }>(
+        "SELECT revision FROM works WHERE work_id = ? AND project_id = ? AND workspace_id = ?",
+        [seed.focusWorkId, projectId, seed.workspaceId],
+      );
+      const revision = workRows[0]?.revision;
+      if (revision !== undefined) {
+        yield* sql.unsafe(
+          `INSERT INTO agent_execution_state (
+             execution_id, focus_json, episode_json, wake_reason,
+             current_mode, active_skill_refs_json, turn_no,
+             recent_directive_refs_json, recent_action_fingerprints_json,
+             updated_at
+           ) VALUES (?, ?, ?, 'Seed', NULL, '[]', 0, '[]', '[]', 't0')`,
+          [
+            seed.executionId,
+            JSON.stringify({ _tag: "Work", workId: seed.focusWorkId }),
+            JSON.stringify({
+              _tag: "WorkEpisode",
+              workId: seed.focusWorkId,
+              targetWorkRevision: Number(revision),
+            }),
+          ],
+        );
+      }
+    }
   });
 
 export const insertEventRow = (input: {
   readonly eventId: string;
   readonly projectId: ProjectId;
   readonly eventType: string;
+  readonly aggregateRef?: string;
   readonly payload: unknown;
   readonly occurredAt: string;
 }): Effect.Effect<void, unknown, SqlClient> =>
@@ -769,7 +991,7 @@ export const insertEventRow = (input: {
         input.eventType,
         1,
         input.occurredAt,
-        input.eventType,
+        input.aggregateRef ?? input.eventType,
         "user:gov",
         null,
         null,
@@ -787,6 +1009,20 @@ export const insertVerificationRow = (input: {
   readonly executionIds: ReadonlyArray<string>;
   readonly state?: "Open" | "Concluded";
   readonly verdict?: "Pass" | "Fail" | "Unknown";
+  readonly conclusionReason?: "Orphaned" | null;
+  readonly summaryRef?: string | null;
+  readonly snapshotStatus?:
+    | "Pending"
+    | "Available"
+    | "NotApplicableOrphaned"
+    | "UnavailableLegacy";
+  readonly criteriaResults?: ReadonlyArray<{
+    readonly criterionId: string;
+    readonly requirement: string;
+    readonly required: boolean;
+    readonly verdict: "Pass" | "Fail" | "Unknown";
+    readonly evidenceRefs: ReadonlyArray<string>;
+  }> | null;
   readonly criteria?: ReadonlyArray<{
     readonly criterionId: string;
     readonly requirement: string;
@@ -800,8 +1036,18 @@ export const insertVerificationRow = (input: {
       criteria: unknown[];
       riskRequirements: string[];
     };
+    const state = input.state ?? "Open";
+    const snapshotStatus =
+      input.snapshotStatus ??
+      (state === "Open" ? "Pending" : "UnavailableLegacy");
+    const summaryRef =
+      input.summaryRef ??
+      (snapshotStatus === "Available" ||
+      snapshotStatus === "NotApplicableOrphaned"
+        ? "sha256:p10-fixture-summary"
+        : null);
     yield* sql.unsafe(
-      "INSERT INTO verifications (verification_id, project_id, work_id, target_work_revision, owner_workspace_id, mission_snapshot, target_deliverables, target_artifact_versions, target_environment_revision, environment_snapshot_ref, verification_execution_ids, state, verdict, conclusion_reason, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO verifications (verification_id, project_id, work_id, target_work_revision, owner_workspace_id, mission_snapshot, target_deliverables, target_artifact_versions, target_environment_revision, environment_snapshot_ref, verification_execution_ids, state, verdict, conclusion_reason, summary_ref, criteria_results, snapshot_status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [
         input.verificationId,
         p10Project,
@@ -817,9 +1063,14 @@ export const insertVerificationRow = (input: {
         null,
         null,
         JSON.stringify(input.executionIds),
-        input.state ?? "Open",
+        state,
         input.verdict ?? null,
-        null,
+        input.conclusionReason ?? null,
+        summaryRef,
+        input.criteriaResults === undefined || input.criteriaResults === null
+          ? null
+          : JSON.stringify(input.criteriaResults),
+        snapshotStatus,
         "t0",
         "t0",
       ],
@@ -1033,6 +1284,27 @@ export const insertProposalRow = (input: {
 /** Migrations first (the p1/p7 pattern). */
 export const migrate = Effect.gen(function* () {
   yield* runMigrations(P8_MIGRATIONS);
+  const sql = yield* SqlClient;
+  yield* sql.withTransaction(
+    Effect.gen(function* () {
+      yield* sql.unsafe(
+        "ALTER TABLE verifications ADD COLUMN summary_ref TEXT",
+      );
+      for (const statement of splitStatements(
+        P46_VERIFICATION_EVIDENCE_SNAPSHOT_MIGRATION.sql,
+      )) {
+        yield* sql.unsafe(statement);
+      }
+    }),
+  );
+  const columns = yield* sql.unsafe<{ readonly name: string }>(
+    "PRAGMA table_info(agent_execution_state)",
+  );
+  if (!columns.some((column) => column.name === "episode_json")) {
+    yield* sql.unsafe(
+      "ALTER TABLE agent_execution_state ADD COLUMN episode_json TEXT",
+    );
+  }
 });
 
 /** Deferred FKs (projects→workspaces, workspaces→works/sessions) require a

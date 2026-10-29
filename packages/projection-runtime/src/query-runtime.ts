@@ -2,9 +2,11 @@ import type {
   FreshnessRequirement,
   ProjectId,
   QueryResult,
+  VerificationId,
   ViewId,
   Work,
   WorkId,
+  WorkRevision,
   WorkspaceId,
 } from "@arbor/domain";
 import type {
@@ -40,6 +42,8 @@ import type { DependencyViewDeps } from "./views/dependency.js";
 import { deriveDependencyRows } from "./views/dependency.js";
 import type { VerificationViewDeps } from "./views/verification.js";
 import { deriveVerificationView } from "./views/verification.js";
+import type { WorkDetailDeps } from "./views/work-detail.js";
+import { deriveWorkDetail } from "./views/work-detail.js";
 import type { WorkspaceDetailDeps } from "./views/workspace-detail.js";
 import { deriveWorkspaceDetail } from "./views/workspace-detail.js";
 
@@ -76,6 +80,7 @@ export interface ProjectionQueryRuntimeDeps {
   readonly tree: TreeViewDeps;
   readonly attention: AttentionReadDeps;
   readonly workspaceDetail: WorkspaceDetailDeps;
+  readonly workDetail: WorkDetailDeps;
   readonly currentWork: CurrentWorkDeps;
   readonly verification: VerificationViewDeps;
   readonly dependency: DependencyViewDeps;
@@ -92,7 +97,15 @@ const unavailable = (cause: ProjectionReadError): ProjectionUnavailable => ({
   category: "unavailable",
   correlationId: null,
   retryDisposition: "retryable",
-  safeDetails: { cause: cause.cause },
+  safeDetails: {
+    sourceTag:
+      typeof cause.cause === "object" &&
+      cause.cause !== null &&
+      "_tag" in cause.cause &&
+      typeof cause.cause._tag === "string"
+        ? cause.cause._tag
+        : "ProjectionReadFailure",
+  },
 });
 
 const invalidRequest = (
@@ -110,7 +123,7 @@ interface ViewPlan {
   readonly projectId: Effect.Effect<ProjectId, ProjectionReadError>;
   readonly loadValue: (
     projectId: ProjectId,
-  ) => Effect.Effect<unknown, ProjectionReadError>;
+  ) => Effect.Effect<unknown, ProjectionReadError | ProjectionQueryError>;
 }
 
 /** Local structural restatement of api-contracts TreeViewRes. Projection
@@ -208,6 +221,37 @@ const planView = (
                 dedupKey: row.dedupKey,
                 summaryRef: row.summary,
                 occurredAt: row.occurredAt ?? "",
+                ...(row.failureCode === undefined
+                  ? {}
+                  : { failureCode: row.failureCode }),
+                ...(row.workId === undefined ? {} : { workId: row.workId }),
+                ...(row.verificationId === undefined
+                  ? {}
+                  : { verificationId: row.verificationId as VerificationId }),
+                ...(row.targetWorkRevision === undefined
+                  ? {}
+                  : { targetWorkRevision: row.targetWorkRevision }),
+                ...(row.terminalProviderFailure === undefined
+                  ? {}
+                  : {
+                      terminalProviderFailure: {
+                        kind: row.terminalProviderFailure.kind,
+                        ...(row.terminalProviderFailure.workId === undefined
+                          ? {}
+                          : {
+                              workId: row.terminalProviderFailure.workId,
+                            }),
+                        ...(row.terminalProviderFailure.workRevision ===
+                        undefined
+                          ? {}
+                          : {
+                              workRevision: row.terminalProviderFailure
+                                .workRevision as WorkRevision,
+                            }),
+                        occurredAt: row.terminalProviderFailure.occurredAt,
+                        failureCode: row.terminalProviderFailure.failureCode,
+                      },
+                    }),
               })),
             }),
           ),
@@ -224,6 +268,28 @@ const planView = (
         projectId: deps.projectIdOfWorkspace(workspaceId),
         loadValue: () =>
           deriveWorkspaceDetail(workspaceId, deps.workspaceDetail),
+      });
+    }
+    case "work-detail": {
+      if (
+        typeof req.projectId !== "string" ||
+        typeof req.workspaceId !== "string" ||
+        typeof req.workId !== "string"
+      ) {
+        return Effect.fail(
+          invalidRequest({
+            view,
+            message: "projectId, workspaceId and workId required",
+          }),
+        );
+      }
+      const projectId = req.projectId as ProjectId;
+      const workspaceId = req.workspaceId as WorkspaceId;
+      const workId = req.workId as WorkId;
+      return Effect.succeed({
+        projectId: Effect.succeed(projectId),
+        loadValue: () =>
+          deriveWorkDetail({ projectId, workspaceId, workId }, deps.workDetail),
       });
     }
     case "current-work": {
@@ -374,7 +440,10 @@ const isProjectionQueryError = (
   return (
     error._tag === "ProjectionStale" ||
     error._tag === "ProjectionUnavailable" ||
-    error._tag === "ProjectionInvalidRequest"
+    error._tag === "ProjectionInvalidRequest" ||
+    error._tag === "ProjectionNotFound" ||
+    error._tag === "ProjectionIntegrityFailure" ||
+    error._tag === "SandboxProviderUnavailableProjection"
   );
 };
 

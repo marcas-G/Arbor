@@ -1,6 +1,7 @@
 import type {
   AcceptanceId,
   Actor,
+  CommandId,
   DeliverableId,
   DependencyId,
   DependencyLifecycle,
@@ -12,7 +13,12 @@ import type {
   ProjectId,
   ResourceBoundary,
   ResponsibilityDefinition,
+  SandboxPolicyCandidateReadV2,
+  SandboxPolicyPreconditionsV1,
+  SandboxPolicyStatusViewV1,
   SessionId,
+  Sha256,
+  TerminalActionDenial,
   UsageCost,
   VerificationId,
   VerificationVerdict,
@@ -28,6 +34,7 @@ import type {
 export interface ExecutionSummary {
   readonly executionId: ExecutionId;
   readonly admittedAt: string;
+  readonly sandboxPolicy?: SandboxPolicyStatusViewV1;
 }
 
 export interface CurrentWorkSummary {
@@ -53,12 +60,24 @@ export interface UsageSummary {
   readonly turns: number;
 }
 
-/** The six frozen attention fact sources (P10 `02` §1). */
+/** The frozen attention fact sources (P10 `02` §1). */
 export type AttentionSource =
   | "DependencyUnfulfillable"
   | "Deadlock"
   | "RuntimeSafetyEnvelope"
   | "RecoveryEscalation"
+  | "AssignWorkTargetBindingFailure"
+  | "DeliverReplayFailure"
+  | "WorkspaceResourceActivationPending"
+  | "ToolObservationReplayEvidenceFailure"
+  | "LegacyAdoptionEvidenceInsufficient"
+  | "SandboxProviderUnavailable"
+  | "SandboxRecoveryBindingFailure"
+  | "SandboxPolicyDecisionRequired"
+  | "ProcessExecutionUnavailable"
+  | "F18VerificationSignalReconciliation"
+  | "TerminalProviderFailure"
+  | "TerminalProviderFailureIntegrity"
   | "VerifierOrphan"
   | "VacantProducer";
 
@@ -67,6 +86,17 @@ export const ATTENTION_SOURCES: ReadonlyArray<AttentionSource> = [
   "Deadlock",
   "RuntimeSafetyEnvelope",
   "RecoveryEscalation",
+  "AssignWorkTargetBindingFailure",
+  "DeliverReplayFailure",
+  "ToolObservationReplayEvidenceFailure",
+  "LegacyAdoptionEvidenceInsufficient",
+  "SandboxProviderUnavailable",
+  "SandboxRecoveryBindingFailure",
+  "SandboxPolicyDecisionRequired",
+  "ProcessExecutionUnavailable",
+  "F18VerificationSignalReconciliation",
+  "TerminalProviderFailure",
+  "TerminalProviderFailureIntegrity",
   "VerifierOrphan",
   "VacantProducer",
 ];
@@ -81,6 +111,23 @@ export interface InboxUnconsumedEntry {
   readonly kind: InboxEntryKind;
   readonly summary: string;
   readonly watermark: number;
+  readonly target?:
+    | ExecutableApprovalInboxTarget
+    | RetryVerificationUnboundLegacyInboxTarget
+    | undefined;
+}
+
+export interface RetryVerificationUnboundLegacyInboxTarget {
+  readonly kind: "RetryVerificationUnboundLegacy";
+  readonly commandId: CommandId;
+  readonly projectId: ProjectId;
+  readonly sourceWorkId: WorkId;
+  readonly sourceVerificationId: VerificationId;
+  readonly disposition: "UnboundLegacy";
+  readonly reasonCode: "OriginEvidenceIncomplete";
+  readonly createdAt: string;
+  readonly revision: number;
+  readonly updatedAt: string;
 }
 
 export interface PendingWorkRef {
@@ -159,6 +206,57 @@ export interface AttentionReq {
   readonly projectId: ProjectId;
 }
 
+export type TerminalProviderFailureIntegrityCode =
+  | "ReadmissionTargetMissing"
+  | "ReadmissionTargetScopeMismatch"
+  | "ReadmissionTargetRevisionMismatch"
+  | "SourceExecutionMissing"
+  | "SourceExecutionNonUnique"
+  | "SourceEpisodeStateMissing"
+  | "SourceEpisodeStateNonUnique"
+  | "EpisodeMalformed"
+  | "EpisodeVersionUnsupported"
+  | "SourceFactEventMismatch"
+  | "SourceEventExecutionMismatch"
+  | "SourceProjectMismatch"
+  | "SourceWorkspaceMismatch"
+  | "WorkMissing"
+  | "WorkScopeMismatch"
+  | "FutureWorkRevision"
+  | "SettlementMalformed"
+  | "SourceSettlementStepMissing"
+  | "SourceSettlementStepNonUnique"
+  | "SourceSettlementMismatch"
+  | "SourceProviderTurnMissing"
+  | "SourceProviderTurnNonUnique"
+  | "SourceProviderTurnMismatch"
+  | "SourceProviderAttemptMissing"
+  | "SourceProviderAttemptNonUnique"
+  | "SourceProviderAttemptMismatch"
+  | "SourceManifestMissing"
+  | "SourceManifestMismatch"
+  | "FailureTaxonomyUnsupported"
+  | "FailureOccurrenceTimeInvalid";
+
+export type TerminalProviderFailureView =
+  | {
+      readonly kind: "TerminalProviderFailure";
+      readonly workId: WorkId;
+      readonly workRevision: WorkRevision;
+      readonly occurredAt: string;
+      readonly failureCode:
+        | "AuthenticationFailed"
+        | "RequestRejected"
+        | "ProtocolViolation";
+    }
+  | {
+      readonly kind: "TerminalProviderFailureIntegrity";
+      readonly workId?: WorkId | undefined;
+      readonly workRevision?: WorkRevision | undefined;
+      readonly occurredAt: string;
+      readonly failureCode: TerminalProviderFailureIntegrityCode;
+    };
+
 export interface AttentionRow {
   readonly source: AttentionSource;
   readonly severity: AttentionSeverity;
@@ -166,6 +264,16 @@ export interface AttentionRow {
   readonly dedupKey: string;
   readonly summaryRef: string;
   readonly occurredAt: string;
+  readonly terminalProviderFailure?: TerminalProviderFailureView | undefined;
+  readonly failureCode?: string;
+  /** Present only for a verifier-orphan row; binds any recovery UI to the
+   * exact open Verification and Work snapshot that produced this Attention. */
+  readonly workId?: WorkId;
+  readonly verificationId?: VerificationId;
+  readonly targetWorkRevision?: number;
+  /** Server-resolved actions for this exact row/principal. Absent or empty
+   * means no action is currently exposed. */
+  readonly availableActions?: ReadonlyArray<"RetryVerification">;
 }
 
 export interface AttentionRes {
@@ -176,7 +284,7 @@ export interface WorkspaceDetailReq {
   readonly workspaceId: WorkspaceId;
 }
 
-export interface WorkspaceDetailRes {
+interface WorkspaceDetailResCore {
   readonly responsibility: ResponsibilityDefinition;
   readonly boundary: ResourceBoundary;
   readonly currentWork?: CurrentWorkSummary | undefined;
@@ -186,6 +294,73 @@ export interface WorkspaceDetailRes {
   readonly inboxUnconsumed: ReadonlyArray<InboxUnconsumedEntry>;
   readonly verification?: VerificationView | undefined;
   readonly auditTimeline: ReadonlyArray<AuditTimelineEntry>;
+}
+
+/** Candidate choice and singular preconditions are alternative response
+ * shapes; neither is present when policy input is not currently required. */
+export type WorkspaceDetailRes = WorkspaceDetailResCore &
+  (
+    | {
+        readonly sandboxPolicyPreconditions?: SandboxPolicyPreconditionsV1;
+        readonly sandboxPolicyCandidateRead?: never;
+      }
+    | {
+        readonly sandboxPolicyPreconditions?: never;
+        readonly sandboxPolicyCandidateRead?: SandboxPolicyCandidateReadV2;
+      }
+  );
+
+export interface AcceptedWorkResult {
+  readonly acceptanceId: AcceptanceId;
+  readonly verificationId: VerificationId;
+  readonly targetWorkRevision: WorkRevision;
+  readonly verdict: "Pass";
+  readonly actor: Actor;
+  readonly acceptedAt: string;
+}
+
+export interface WorkDetailReq {
+  readonly projectId: ProjectId;
+  readonly workspaceId: WorkspaceId;
+  readonly workId: WorkId;
+}
+
+export interface WorkDetailRes {
+  readonly workId: WorkId;
+  readonly projectId: ProjectId;
+  readonly workspaceId: WorkspaceId;
+  readonly objective: string;
+  readonly why: string;
+  readonly completionExpectation: string;
+  readonly lifecycle: WorkLifecycle;
+  readonly revision: WorkRevision;
+  readonly acceptedResult?: AcceptedWorkResult | undefined;
+  readonly blockedEpisode?: BlockedWorkEpisode | undefined;
+  readonly terminalProviderFailure?: TerminalProviderFailureView | undefined;
+}
+
+export type BlockedActionDenialCategory =
+  | Extract<
+      TerminalActionDenial,
+      { readonly _tag: "P4NoEffectDenied" }
+    >["reasonCode"]
+  | "HandlerRejected";
+
+export interface BlockedWorkEpisode {
+  readonly sourceExecutionId: ExecutionId;
+  readonly blockers: ReadonlyArray<{
+    readonly blockerId: Sha256;
+    readonly disposition: "Blocked";
+    readonly failedActions: ReadonlyArray<{
+      readonly actionId: string;
+      readonly actionKind: "Executable" | "P4NoEffectDenied";
+      readonly status: "Denied";
+      readonly denialCategory: BlockedActionDenialCategory;
+      readonly request: string;
+      readonly observationRef: string;
+    }>;
+    readonly recoveryGuidance: string;
+  }>;
 }
 
 export interface CurrentWorkReq {
@@ -219,6 +394,37 @@ export interface TranscriptReq {
   readonly conversationOnly?: boolean | undefined;
 }
 
+export type ConversationResponseStatus =
+  | { readonly state: "Queued"; readonly revision: number }
+  | {
+      readonly state: "Running";
+      readonly revision: number;
+      readonly executionId: string;
+      readonly attemptNo: number;
+    }
+  | {
+      readonly state: "RetryScheduled";
+      readonly revision: number;
+      readonly nextEligibleAt: string;
+      readonly safeReason: string;
+    }
+  | {
+      readonly state: "NeedsAttention";
+      readonly revision: number;
+      readonly reason: string;
+      readonly canResume: true;
+    }
+  | {
+      readonly state: "Answered";
+      readonly revision: number;
+      readonly executionId: string;
+    }
+  | {
+      readonly state: "Cancelled";
+      readonly revision: number;
+      readonly reason: string;
+    };
+
 /** P14 `03` §1 (DID v1.16 G-C): conversation turns + the legacy session-entry
  * arm. Bounded bodies; the browser reads this shape only (no streaming). */
 export type TranscriptEntry =
@@ -227,6 +433,7 @@ export type TranscriptEntry =
       readonly messageId: string;
       readonly body: string;
       readonly occurredAt: string;
+      readonly responseStatus?: ConversationResponseStatus;
     }
   | {
       readonly kind: "AssistantConversationTurn";
@@ -271,6 +478,30 @@ export interface InboxViewReq {
   readonly workspaceId: WorkspaceId;
 }
 
+/** Read-only, route-specific review details for an Executable approval.
+ * This display projection is not authority and must never be posted back as a
+ * decision binding. Control approvals retain their separate `cap:` route. */
+export interface ExecutableApprovalInboxTarget {
+  readonly kind: "ExecutableApproval";
+  readonly approvalId: string;
+  readonly revision: number;
+  readonly executionId: string;
+  readonly toolName: string;
+  readonly toolVersion: string;
+  /** Bounded preview produced from validated arguments and the exact tool
+   * version schema. Free-form values and paths are redacted. */
+  readonly validatedArgumentsPreview: string;
+  readonly targetResourceSpaceIds: ReadonlyArray<string>;
+  readonly capabilities: ReadonlyArray<string>;
+  readonly sideEffectSemantics:
+    | "ReadOnly"
+    | "Idempotent"
+    | "Reconcilable"
+    | "NonIdempotent";
+  readonly expiresAt: string;
+  readonly actionDigest: string;
+}
+
 export interface InboxViewRes {
   readonly unconsumed: ReadonlyArray<InboxUnconsumedEntry>;
 }
@@ -281,6 +512,7 @@ export interface ViewRequestMap {
   readonly "responsibility-tree": TreeViewReq;
   readonly attention: AttentionReq;
   readonly "workspace-detail": WorkspaceDetailReq;
+  readonly "work-detail": WorkDetailReq;
   readonly "current-work": CurrentWorkReq;
   readonly verification: VerificationReq;
   readonly "dependency-view": DependencyReq;
@@ -293,6 +525,7 @@ export interface ViewResponseMap {
   readonly "responsibility-tree": TreeViewRes;
   readonly attention: AttentionRes;
   readonly "workspace-detail": WorkspaceDetailRes;
+  readonly "work-detail": WorkDetailRes;
   readonly "current-work": CurrentWorkRes;
   readonly verification: VerificationRes;
   readonly "dependency-view": DependencyRes;

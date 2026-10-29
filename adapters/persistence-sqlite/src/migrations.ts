@@ -1,4 +1,17 @@
 import type { MigrationFile } from "./migrate.js";
+import { P38_EXECUTABLE_APPROVAL_MIGRATION } from "./p38-executable-approval-migration.js";
+import { P39_RECONCILIATION_DDL } from "./p39-reconciliation-ddl.js";
+import { P42_PROJECT_RESOURCE_SOURCE_MIGRATION } from "./p42-project-resource-source-migration.js";
+import { P43_BLOCKED_WORKEPISODE_MIGRATION } from "./p43-blocked-workepisode-migration.js";
+import { P45_RETRY_VERIFICATION_ORIGIN_MIGRATION } from "./p45-retry-verification-origin-migration.js";
+import { P46_VERIFICATION_EVIDENCE_SNAPSHOT_MIGRATION } from "./p46-verification-evidence-snapshot-migration.js";
+import { P47_AH14_LEGACY_ADOPTION_ATTENTION_MIGRATION } from "./p47-ah14-legacy-adoption-attention-migration.js";
+import { P48_AH19_CONVERSATION_CHECKPOINT_OWNER_MIGRATION } from "./p48-ah19-conversation-checkpoint-owner-migration.js";
+import { P49_SANDBOX_POLICY_AND_GRANT_PROVENANCE_MIGRATION } from "./p49-sandbox-policy-and-grant-provenance-migration.js";
+import { P50_SANDBOX_PROVIDER_UNAVAILABLE_FACT_MIGRATION } from "./p50-sandbox-provider-unavailable-fact-migration.js";
+import { P51_VERIFICATION_V2_CONSUMER_RECONCILIATION_MIGRATION } from "./p51-verification-v2-consumer-reconciliation-migration.js";
+import { P52_WORK_CONTRACT_REVISION_MIGRATION } from "./p52-work-contract-revision-migration.js";
+import { P53_CANONICAL_OWNERSHIP_CARVEOUTS_MIGRATION } from "./p53-canonical-ownership-carveouts-migration.js";
 
 const DDL = `
 CREATE TABLE projects (
@@ -352,11 +365,67 @@ CREATE TABLE invocation_approvals (
 );
 `;
 
+/** AH7-DG-03 accepted P4 owner amendment; user_version 36. Existing rows are
+ * conservatively LegacyUnknown because the prior schema did not record the
+ * effect-admission boundary. Denied is only valid before effect admission. */
+export const P36_TOOL_INVOCATION_ADMISSION_DDL = `
+ALTER TABLE tool_invocations RENAME TO tool_invocations_legacy_ah7_dg03;
+
+CREATE TABLE tool_invocations (
+  invocation_id          TEXT PRIMARY KEY,
+  execution_id           TEXT NOT NULL REFERENCES executions(execution_id),
+  workspace_id           TEXT NOT NULL REFERENCES workspaces(workspace_id),
+  tool_name              TEXT NOT NULL,
+  tool_version           TEXT NOT NULL,
+  side_effect_semantics  TEXT NOT NULL CHECK (side_effect_semantics IN
+                           ('ReadOnly','Idempotent','Reconcilable','NonIdempotent')),
+  arguments_json         TEXT NOT NULL,
+  resolved_regions_json  TEXT NOT NULL,
+  approval_id            TEXT,
+  effect_admission_state TEXT NOT NULL DEFAULT 'LegacyUnknown' CHECK
+                           (effect_admission_state IN
+                             ('NotAdmitted','MayHaveStarted','LegacyUnknown')),
+  intent_at              TEXT NOT NULL,
+  settled_at             TEXT,
+  settlement_kind        TEXT CHECK (settlement_kind IN
+                           ('Success','ExpectedFailure','Denied','Interrupted','OutcomeUnknown','RuntimeFailure')),
+  settlement_json        TEXT,
+  result_ref             TEXT,
+  CHECK ((settled_at IS NULL) = (settlement_kind IS NULL)),
+  CHECK (settlement_kind <> 'Denied' OR
+         (effect_admission_state = 'NotAdmitted' AND result_ref IS NULL))
+);
+
+INSERT INTO tool_invocations (
+  invocation_id, execution_id, workspace_id, tool_name, tool_version,
+  side_effect_semantics, arguments_json, resolved_regions_json, approval_id,
+  effect_admission_state, intent_at, settled_at, settlement_kind,
+  settlement_json, result_ref
+)
+SELECT invocation_id, execution_id, workspace_id, tool_name, tool_version,
+       side_effect_semantics, arguments_json, resolved_regions_json, approval_id,
+       'LegacyUnknown', intent_at, settled_at, settlement_kind,
+       settlement_json, result_ref
+FROM tool_invocations_legacy_ah7_dg03;
+
+DROP TABLE tool_invocations_legacy_ah7_dg03;
+
+CREATE INDEX idx_tool_invocations_execution ON tool_invocations(execution_id);
+CREATE INDEX idx_tool_invocations_unsettled
+  ON tool_invocations(settled_at) WHERE settled_at IS NULL;
+`;
+
 export const P4_MIGRATIONS: ReadonlyArray<MigrationFile> = [
   { id: 1, name: "init", sql: DDL },
   { id: 2, name: "execution_session_kernel", sql: P2_DDL },
   { id: 3, name: "provider_model_context", sql: P3_DDL },
   { id: 4, name: "tool_runtime", sql: P4_DDL },
+  {
+    id: 36,
+    name: "ah7_tool_invocation_admission",
+    sql: P36_TOOL_INVOCATION_ADMISSION_DDL,
+    foreignKeysOff: true,
+  },
 ];
 
 /** P6 `01` §4.1 (D1), `02` §3/§4 (D2), `01` §3 (D3). The composite primary
@@ -836,3 +905,1724 @@ export const P16_MIGRATIONS: ReadonlyArray<MigrationFile> = [
     sql: P16_REASONING_ATTACHMENT_DDL,
   },
 ];
+
+/** DID v1.21 ALS-I1: durable AgentLoopStep handoff. The source columns are
+ * nullable only for pre-0017 rows; triggers require new/updated rows to use an
+ * all-null legacy shape or an all-present source identity. */
+const P17_AGENT_LOOP_STEP_HANDOFF_DDL = `
+ALTER TABLE provider_attempts ADD COLUMN success_evidence_version TEXT;
+
+ALTER TABLE session_entries RENAME TO session_entries_legacy_v1;
+
+CREATE TABLE session_entries (
+  session_id   TEXT NOT NULL REFERENCES sessions(session_id),
+  sequence     INTEGER NOT NULL,
+  entry_kind   TEXT NOT NULL CHECK (entry_kind IN
+                 ('Input','ModelOutput','Observation','CheckpointReference','ContextUpdate')),
+  payload_json TEXT NOT NULL,
+  created_at   TEXT NOT NULL,
+  source_kind  TEXT,
+  source_ref   TEXT,
+  content_hash TEXT,
+  PRIMARY KEY (session_id, sequence),
+  CHECK (
+    (source_kind IS NULL AND source_ref IS NULL AND content_hash IS NULL)
+    OR
+    (source_kind IS NOT NULL AND source_ref IS NOT NULL AND content_hash IS NOT NULL)
+  )
+);
+
+INSERT INTO session_entries (
+  session_id, sequence, entry_kind, payload_json, created_at,
+  source_kind, source_ref, content_hash
+)
+SELECT
+  session_id, sequence, entry_kind, payload_json, created_at,
+  NULL, NULL, NULL
+FROM session_entries_legacy_v1;
+
+DROP TABLE session_entries_legacy_v1;
+
+CREATE UNIQUE INDEX idx_session_entries_source
+  ON session_entries(session_id, entry_kind, source_kind, source_ref)
+  WHERE source_kind IS NOT NULL;
+
+CREATE TABLE agent_loop_steps (
+  execution_id                  TEXT NOT NULL REFERENCES executions(execution_id),
+  logical_step_no               INTEGER NOT NULL CHECK (logical_step_no >= 0),
+  repair_attempt                INTEGER NOT NULL CHECK (repair_attempt >= 0),
+  provider_turn_id              TEXT NOT NULL UNIQUE,
+  predecessor_logical_step_no   INTEGER,
+  predecessor_repair_attempt    INTEGER,
+  manifest_id                   TEXT,
+  state                         TEXT NOT NULL CHECK (state IN
+    ('Prepared','ProviderResultAvailable','OutputRejected','OutputAccepted',
+     'ActionsInProgress','StepEffectsCommitted','NextStepReady',
+     'SettlementProposed')),
+  decoder_version               TEXT,
+  provider_failure_json         TEXT,
+  repair_disposition_json       TEXT,
+  successor_json                TEXT,
+  next_step_reason              TEXT,
+  decoded_output_hash           TEXT,
+  model_output_session_sequence INTEGER,
+  next_action_index             INTEGER NOT NULL DEFAULT 0 CHECK (next_action_index >= 0),
+  settlement_json               TEXT,
+  migration_provenance_json     TEXT,
+  revision                      INTEGER NOT NULL CHECK (revision >= 0),
+  updated_at                    TEXT NOT NULL,
+  PRIMARY KEY (execution_id, logical_step_no, repair_attempt),
+  CHECK ((predecessor_logical_step_no IS NULL) =
+         (predecessor_repair_attempt IS NULL)),
+  CHECK ((state = 'SettlementProposed') = (settlement_json IS NOT NULL))
+);
+
+CREATE INDEX idx_agent_loop_steps_execution_state
+  ON agent_loop_steps(execution_id, state);
+
+CREATE TABLE agent_loop_step_actions (
+  execution_id           TEXT NOT NULL,
+  logical_step_no        INTEGER NOT NULL,
+  repair_attempt         INTEGER NOT NULL,
+  action_index           INTEGER NOT NULL CHECK (action_index >= 0),
+  logical_action_id      TEXT NOT NULL UNIQUE,
+  call_ref               TEXT NOT NULL,
+  route_kind             TEXT NOT NULL CHECK (route_kind IN ('Executable','Control')),
+  action_kind            TEXT NOT NULL,
+  input_hash             TEXT NOT NULL,
+  state                  TEXT NOT NULL CHECK (state IN
+    ('Pending','Applied','SkippedStale','SkippedEarlySettlement',
+     'TerminalRejected','ReconciliationPending')),
+  result_ref             TEXT,
+  settlement_ref         TEXT,
+  disposition_json       TEXT,
+  observation_source_ref TEXT,
+  revision               INTEGER NOT NULL CHECK (revision >= 0),
+  updated_at              TEXT NOT NULL,
+  PRIMARY KEY (execution_id, logical_step_no, repair_attempt, action_index),
+  FOREIGN KEY (execution_id, logical_step_no, repair_attempt)
+    REFERENCES agent_loop_steps(execution_id, logical_step_no, repair_attempt)
+);
+`;
+
+/** AgentLoopStep implementation baseline; settles user_version at 17. */
+export const P17_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P16_MIGRATIONS,
+  {
+    id: 17,
+    name: "agent_loop_step_handoff",
+    sql: P17_AGENT_LOOP_STEP_HANDOFF_DDL,
+  },
+];
+
+const P18_PROJECT_ARCHIVE_DDL = `
+ALTER TABLE human_messages RENAME TO human_messages_p17;
+CREATE TABLE human_messages (
+  message_id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  root_workspace_id TEXT NOT NULL,
+  human_principal TEXT NOT NULL,
+  body_ref TEXT NOT NULL,
+  command_id TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('Pending','Claimed','Answered','Declined')),
+  claimed_by_execution_id TEXT,
+  created_at TEXT NOT NULL,
+  settled_at TEXT,
+  response_body TEXT,
+  attempt_no INTEGER NOT NULL DEFAULT 0,
+  provider_reasoning_json TEXT,
+  UNIQUE (command_id, fingerprint)
+);
+INSERT INTO human_messages
+SELECT message_id, project_id, root_workspace_id, human_principal, body_ref,
+       command_id, fingerprint, state, claimed_by_execution_id, created_at,
+       settled_at, response_body, attempt_no, provider_reasoning_json
+FROM human_messages_p17;
+DROP TABLE human_messages_p17;
+CREATE INDEX human_messages_pending ON human_messages (project_id, state, created_at);
+`;
+
+export const P18_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P17_MIGRATIONS,
+  {
+    id: 18,
+    name: "project_archive_human_message_terminal",
+    sql: P18_PROJECT_ARCHIVE_DDL,
+  },
+];
+
+/** DID v1.22 / SCRC-002: versioned typed Session Timeline carrier. Legacy
+ * rows remain byte-preserved evidence and intentionally receive no inferred
+ * callRef or context epoch. */
+const P19_SESSION_CONTEXT_RUNTIME_CONVERGENCE_DDL = `
+ALTER TABLE session_entries RENAME TO session_entries_legacy_v2;
+
+CREATE TABLE session_entries (
+  session_id    TEXT NOT NULL REFERENCES sessions(session_id),
+  sequence      INTEGER NOT NULL,
+  entry_kind    TEXT NOT NULL CHECK (entry_kind IN
+                  ('Input','ModelOutput','Observation','CheckpointReference','ContextUpdate')),
+  item_type     TEXT NOT NULL CHECK (item_type IN
+                  ('LegacyInput','LegacyModelOutput','LegacyObservation',
+                   'LegacyCheckpointReference','LegacyContextUpdate',
+                   'UserMessage','AssistantMessage','ToolCall','ToolResult',
+                   'ControlResult','ContextUpdate','CompactionCheckpoint','AttachmentRef')),
+  schema_version INTEGER NOT NULL CHECK (schema_version IN (1,2)),
+  context_epoch INTEGER,
+  payload_json  TEXT NOT NULL,
+  created_at    TEXT NOT NULL,
+  source_kind   TEXT,
+  source_ref    TEXT,
+  content_hash  TEXT,
+  PRIMARY KEY (session_id, sequence),
+  CHECK (
+    (source_kind IS NULL AND source_ref IS NULL AND content_hash IS NULL)
+    OR
+    (source_kind IS NOT NULL AND source_ref IS NOT NULL AND content_hash IS NOT NULL)
+  ),
+  CHECK (
+    (schema_version = 1 AND item_type LIKE 'Legacy%' AND context_epoch IS NULL)
+    OR
+    (schema_version = 2 AND item_type NOT LIKE 'Legacy%' AND context_epoch IS NOT NULL)
+  )
+);
+
+INSERT INTO session_entries (
+  session_id, sequence, entry_kind, item_type, schema_version, context_epoch,
+  payload_json, created_at, source_kind, source_ref, content_hash
+)
+SELECT
+  session_id, sequence, entry_kind, 'Legacy' || entry_kind, 1, NULL,
+  payload_json, created_at, source_kind, source_ref, content_hash
+FROM session_entries_legacy_v2;
+
+DROP TABLE session_entries_legacy_v2;
+
+CREATE UNIQUE INDEX idx_session_entries_source
+  ON session_entries(session_id, item_type, source_kind, source_ref)
+  WHERE source_kind IS NOT NULL;
+`;
+
+/** SCRC implementation baseline; settles user_version at 19. */
+export const P19_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P18_MIGRATIONS,
+  {
+    id: 19,
+    name: "session_context_runtime_convergence",
+    sql: P19_SESSION_CONTEXT_RUNTIME_CONVERGENCE_DDL,
+  },
+];
+
+const P20_AGENT_LOOP_STEP_PROVIDER_TURN_CHAIN_DDL = `
+CREATE TABLE agent_loop_step_provider_turns (
+  execution_id TEXT NOT NULL,
+  logical_step_no INTEGER NOT NULL,
+  repair_attempt INTEGER NOT NULL,
+  overflow_ordinal INTEGER NOT NULL CHECK (overflow_ordinal = 0),
+  role TEXT NOT NULL CHECK (role IN ('Inference','OverflowCompaction','OverflowReplacement')),
+  provider_turn_id TEXT NOT NULL UNIQUE,
+  predecessor_provider_turn_id TEXT,
+  context_epoch INTEGER NOT NULL,
+  manifest_id TEXT,
+  state TEXT NOT NULL CHECK (state IN ('Prepared','SettledSuccess','SettledFailure')),
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (execution_id, logical_step_no, repair_attempt, overflow_ordinal, role),
+  FOREIGN KEY (execution_id, logical_step_no, repair_attempt)
+    REFERENCES agent_loop_steps(execution_id, logical_step_no, repair_attempt)
+);
+`;
+
+export const P20_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P19_MIGRATIONS,
+  {
+    id: 20,
+    name: "agent_loop_step_provider_turn_chain",
+    sql: P20_AGENT_LOOP_STEP_PROVIDER_TURN_CHAIN_DDL,
+  },
+];
+
+const P21_CONVERSATION_DELIVERY_RUNTIME_DDL = `
+CREATE TABLE conversation_response_jobs (
+  message_id TEXT PRIMARY KEY REFERENCES human_messages(message_id),
+  project_id TEXT NOT NULL,
+  root_workspace_id TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN
+    ('Queued','Running','RetryScheduled','NeedsAttention','Answered','Cancelled')),
+  active_execution_id TEXT UNIQUE,
+  next_attempt_no INTEGER NOT NULL CHECK (next_attempt_no >= 0),
+  next_eligible_at TEXT,
+  attention_reason TEXT,
+  last_failure_class TEXT,
+  last_failure_fingerprint TEXT,
+  policy_version TEXT NOT NULL,
+  response_body TEXT,
+  response_execution_id TEXT,
+  provider_reasoning_json TEXT,
+  revision INTEGER NOT NULL CHECK (revision >= 0),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX idx_conversation_jobs_eligible
+  ON conversation_response_jobs(state, next_eligible_at, created_at);
+
+CREATE TABLE conversation_attempts (
+  message_id TEXT NOT NULL REFERENCES human_messages(message_id),
+  attempt_no INTEGER NOT NULL CHECK (attempt_no >= 0),
+  execution_id TEXT NOT NULL UNIQUE,
+  admitted_at TEXT NOT NULL,
+  settled_at TEXT,
+  settlement_kind TEXT,
+  failure_class TEXT,
+  failure_fingerprint TEXT,
+  retry_decision_json TEXT,
+  policy_version TEXT NOT NULL,
+  PRIMARY KEY (message_id, attempt_no)
+);
+
+CREATE TABLE provider_deployment_breakers (
+  binding_fingerprint TEXT PRIMARY KEY,
+  state TEXT NOT NULL CHECK (state IN ('Closed','Open','HalfOpen')),
+  consecutive_failures INTEGER NOT NULL CHECK (consecutive_failures >= 0),
+  cooldown_until TEXT,
+  failure_class TEXT,
+  configuration_revision TEXT NOT NULL,
+  half_open_execution_id TEXT,
+  revision INTEGER NOT NULL CHECK (revision >= 0),
+  updated_at TEXT NOT NULL
+);
+
+INSERT INTO conversation_response_jobs (
+  message_id, project_id, root_workspace_id, state, active_execution_id,
+  next_attempt_no, next_eligible_at, attention_reason, last_failure_class,
+  last_failure_fingerprint, policy_version, response_body,
+  response_execution_id, provider_reasoning_json, revision, created_at,
+  updated_at
+)
+SELECT
+  message_id,
+  project_id,
+  root_workspace_id,
+  CASE
+    WHEN state = 'Pending' THEN 'Queued'
+    WHEN state = 'Claimed' THEN 'Running'
+    WHEN state = 'Answered' AND response_body IS NOT NULL THEN 'Answered'
+    WHEN state = 'Answered' THEN 'Cancelled'
+    ELSE 'Cancelled'
+  END,
+  CASE WHEN state = 'Claimed' THEN claimed_by_execution_id ELSE NULL END,
+  CASE WHEN state = 'Pending' THEN attempt_no ELSE attempt_no + 1 END,
+  NULL,
+  CASE
+    WHEN state = 'Answered' AND response_body IS NULL THEN 'LegacyInterrupted'
+    WHEN state = 'Declined' THEN 'ProjectClosed'
+    ELSE NULL
+  END,
+  NULL,
+  NULL,
+  'conversation-retry-v1',
+  CASE WHEN state = 'Answered' THEN response_body ELSE NULL END,
+  CASE WHEN state = 'Answered' THEN claimed_by_execution_id ELSE NULL END,
+  provider_reasoning_json,
+  0,
+  created_at,
+  COALESCE(settled_at, created_at)
+FROM human_messages;
+
+INSERT INTO conversation_attempts (
+  message_id, attempt_no, execution_id, admitted_at, settled_at,
+  settlement_kind, failure_class, failure_fingerprint, retry_decision_json,
+  policy_version
+)
+SELECT
+  hm.message_id,
+  hm.attempt_no,
+  hm.claimed_by_execution_id,
+  COALESCE(e.admitted_at, hm.created_at),
+  e.settled_at,
+  e.settlement_kind,
+  NULL,
+  NULL,
+  NULL,
+  'conversation-retry-v1'
+FROM human_messages hm
+LEFT JOIN executions e ON e.execution_id = hm.claimed_by_execution_id
+WHERE hm.claimed_by_execution_id IS NOT NULL;
+`;
+
+/** DID v1.24 / P17 Conversation Delivery Runtime; user_version 21. */
+export const P21_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P20_MIGRATIONS,
+  {
+    id: 21,
+    name: "conversation_delivery_runtime",
+    sql: P21_CONVERSATION_DELIVERY_RUNTIME_DDL,
+  },
+];
+
+export const P22_VERIFICATION_DELIVERY_CONVERGENCE_DDL = `
+ALTER TABLE verifications ADD COLUMN summary_ref TEXT;
+
+CREATE TRIGGER verifications_conclusion_summary_update
+BEFORE UPDATE OF state, summary_ref ON verifications
+WHEN NEW.state = 'Concluded'
+  AND (NEW.summary_ref IS NULL OR length(trim(NEW.summary_ref)) = 0)
+BEGIN
+  SELECT RAISE(ABORT, 'concluded verification requires summary_ref');
+END;
+
+CREATE TRIGGER verifications_conclusion_summary_insert
+BEFORE INSERT ON verifications
+WHEN NEW.state = 'Concluded'
+  AND (NEW.summary_ref IS NULL OR length(trim(NEW.summary_ref)) = 0)
+BEGIN
+  SELECT RAISE(ABORT, 'concluded verification requires summary_ref');
+END;
+`;
+
+/** DID v1.26 Verification Delivery Convergence; user_version 22. */
+export const P22_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P21_MIGRATIONS,
+  {
+    id: 22,
+    name: "verification_delivery_convergence",
+    sql: P22_VERIFICATION_DELIVERY_CONVERGENCE_DDL,
+  },
+];
+
+export const P23_VERIFICATION_EVIDENCE_IDENTITY_DDL = `
+ALTER TABLE verification_evidence ADD COLUMN tool_invocation_id TEXT;
+ALTER TABLE verification_evidence ADD COLUMN observation_ref TEXT;
+ALTER TABLE verification_evidence ADD COLUMN call_ref TEXT;
+
+CREATE INDEX idx_verification_evidence_tool_invocation
+  ON verification_evidence(tool_invocation_id);
+`;
+
+/** DID v1.26 Verification ToolObservation source identity; user_version 23. */
+export const P23_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P22_MIGRATIONS,
+  {
+    id: 23,
+    name: "verification_evidence_identity",
+    sql: P23_VERIFICATION_EVIDENCE_IDENTITY_DDL,
+  },
+];
+
+export const P24_EXECUTION_EPISODE_BINDING_DDL = `
+ALTER TABLE executions ADD COLUMN episode_kind TEXT;
+ALTER TABLE executions ADD COLUMN episode_ref TEXT;
+ALTER TABLE executions ADD COLUMN episode_revision INTEGER;
+
+UPDATE executions
+SET episode_kind = 'WorkEpisode',
+    episode_ref = focus_work_id,
+    episode_revision = 0
+WHERE binding_kind = 'workspace'
+  AND focus_kind = 'work'
+  AND focus_work_id IS NOT NULL;
+
+UPDATE executions
+SET episode_kind = 'ConversationResponseEpisode',
+    episode_ref = (
+      SELECT ca.message_id
+      FROM conversation_attempts ca
+      WHERE ca.execution_id = executions.execution_id
+    ),
+    episode_revision = 0
+WHERE binding_kind = 'workspace'
+  AND focus_kind = 'coordination'
+  AND EXISTS (
+    SELECT 1 FROM conversation_attempts ca
+    WHERE ca.execution_id = executions.execution_id
+  );
+
+CREATE INDEX idx_executions_episode
+  ON executions(episode_kind, episode_ref);
+
+CREATE TABLE work_plans (
+  work_id TEXT PRIMARY KEY REFERENCES works(work_id),
+  target_work_revision INTEGER NOT NULL CHECK (target_work_revision >= 0),
+  plan_revision INTEGER NOT NULL CHECK (plan_revision >= 1),
+  items_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE work_selection_decision_requests (
+  decision_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id),
+  candidate_work_ids_json TEXT NOT NULL,
+  workspace_revision INTEGER NOT NULL CHECK (workspace_revision >= 0),
+  state TEXT NOT NULL CHECK (state IN ('Pending','Submitted')),
+  selected_work_id TEXT REFERENCES works(work_id),
+  revision INTEGER NOT NULL CHECK (revision >= 0),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CHECK ((state = 'Submitted') = (selected_work_id IS NOT NULL))
+);
+
+CREATE UNIQUE INDEX idx_work_selection_pending_workspace
+  ON work_selection_decision_requests(workspace_id)
+  WHERE state = 'Pending';
+`;
+
+/** DID v1.28 EGP exact EpisodeBinding; user_version 24. */
+export const P24_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P23_MIGRATIONS,
+  {
+    id: 24,
+    name: "execution_episode_binding",
+    sql: P24_EXECUTION_EPISODE_BINDING_DDL,
+  },
+];
+
+export const P25_EXECUTION_EPISODE_ONLY_DDL = `
+ALTER TABLE executions RENAME TO executions_legacy_focus;
+
+CREATE TABLE executions (
+  execution_id        TEXT PRIMARY KEY,
+  project_id          TEXT NOT NULL REFERENCES projects(project_id),
+  binding_kind        TEXT NOT NULL CHECK (binding_kind IN ('workspace','execution_bound')),
+  workspace_id        TEXT NOT NULL REFERENCES workspaces(workspace_id),
+  episode_kind        TEXT CHECK (episode_kind IN
+                        ('WorkEpisode','ConversationResponseEpisode','InboxEpisode',
+                         'DecisionEpisode','LegacyAmbiguousEpisode')),
+  episode_ref         TEXT,
+  episode_revision    INTEGER CHECK (episode_revision IS NULL OR episode_revision >= 0),
+  parent_execution_id TEXT REFERENCES executions(execution_id),
+  mission             TEXT,
+  session_id          TEXT NOT NULL REFERENCES sessions(session_id),
+  admitted_at         TEXT NOT NULL,
+  stop_requested_at   TEXT,
+  settlement_kind     TEXT CHECK (settlement_kind IN
+                        ('Completed','Interrupted','Failed','OutcomeUnknown')),
+  settlement_json     TEXT,
+  settled_at          TEXT,
+  CHECK ((binding_kind = 'workspace') = (episode_kind IS NOT NULL)),
+  CHECK ((binding_kind = 'workspace') = (episode_ref IS NOT NULL)),
+  CHECK ((binding_kind = 'workspace') = (episode_revision IS NOT NULL)),
+  CHECK ((binding_kind = 'execution_bound') = (parent_execution_id IS NOT NULL OR mission IS NOT NULL)),
+  CHECK ((settlement_kind IS NULL) = (settled_at IS NULL)),
+  CHECK ((settlement_kind IS NULL) = (settlement_json IS NULL))
+);
+
+INSERT INTO executions (
+  execution_id, project_id, binding_kind, workspace_id,
+  episode_kind, episode_ref, episode_revision,
+  parent_execution_id, mission, session_id, admitted_at, stop_requested_at,
+  settlement_kind, settlement_json, settled_at
+)
+SELECT
+  execution_id, project_id, binding_kind, workspace_id,
+  CASE
+    WHEN binding_kind = 'workspace' AND episode_kind IS NULL
+      THEN 'LegacyAmbiguousEpisode'
+    ELSE episode_kind
+  END,
+  CASE
+    WHEN binding_kind = 'workspace' AND episode_ref IS NULL
+      THEN execution_id
+    ELSE episode_ref
+  END,
+  CASE
+    WHEN binding_kind = 'workspace' AND episode_revision IS NULL
+      THEN 0
+    ELSE episode_revision
+  END,
+  parent_execution_id, mission, session_id, admitted_at, stop_requested_at,
+  settlement_kind, settlement_json, settled_at
+FROM executions_legacy_focus;
+
+DROP TABLE executions_legacy_focus;
+
+CREATE UNIQUE INDEX idx_executions_active_main
+  ON executions(workspace_id)
+  WHERE binding_kind = 'workspace' AND settled_at IS NULL;
+CREATE INDEX idx_executions_project ON executions(project_id);
+CREATE INDEX idx_executions_unsettled
+  ON executions(settled_at) WHERE settled_at IS NULL;
+CREATE INDEX idx_executions_episode
+  ON executions(episode_kind, episode_ref);
+`;
+
+/** DID v1.28 EGP Wave E legacy focus retirement; user_version 25. */
+export const P25_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P24_MIGRATIONS,
+  {
+    id: 25,
+    name: "execution_episode_only",
+    sql: P25_EXECUTION_EPISODE_ONLY_DDL,
+    foreignKeysOff: true,
+  },
+];
+
+export const P26_AGENT_STATE_EPISODE_ONLY_DDL = `
+ALTER TABLE agent_execution_state RENAME TO agent_execution_state_legacy_focus;
+
+CREATE TABLE agent_execution_state (
+  execution_id                    TEXT PRIMARY KEY REFERENCES executions(execution_id),
+  episode_json                    TEXT NOT NULL,
+  wake_reason                     TEXT NOT NULL,
+  current_mode                    TEXT,
+  active_skill_refs_json          TEXT NOT NULL,
+  turn_no                         INTEGER NOT NULL,
+  recent_directive_refs_json      TEXT NOT NULL,
+  recent_action_fingerprints_json TEXT NOT NULL,
+  updated_at                      TEXT NOT NULL
+);
+
+INSERT INTO agent_execution_state (
+  execution_id, episode_json, wake_reason, current_mode,
+  active_skill_refs_json, turn_no, recent_directive_refs_json,
+  recent_action_fingerprints_json, updated_at
+)
+SELECT
+  state.execution_id,
+  CASE execution.episode_kind
+    WHEN 'WorkEpisode' THEN json_object(
+      '_tag', 'WorkEpisode',
+      'workId', execution.episode_ref,
+      'targetWorkRevision', execution.episode_revision
+    )
+    WHEN 'ConversationResponseEpisode' THEN json_object(
+      '_tag', 'ConversationResponseEpisode',
+      'messageId', execution.episode_ref,
+      'responseJobRevision', execution.episode_revision
+    )
+    WHEN 'InboxEpisode' THEN json_object(
+      '_tag', 'InboxEpisode',
+      'entryKey', execution.episode_ref,
+      'inputKind', 'LegacyMigrated'
+    )
+    WHEN 'DecisionEpisode' THEN json_object(
+      '_tag', 'DecisionEpisode',
+      'decisionId', execution.episode_ref,
+      'decisionKind', 'SelectCurrentWork',
+      'requestRevision', execution.episode_revision
+    )
+    WHEN 'LegacyAmbiguousEpisode' THEN json_object(
+      '_tag', 'LegacyAmbiguousEpisode',
+      'executionId', state.execution_id
+    )
+    ELSE json_object(
+      '_tag', 'ExecutionBoundEpisode',
+      'executionId', state.execution_id
+    )
+  END,
+  state.wake_reason, state.current_mode, state.active_skill_refs_json,
+  state.turn_no, state.recent_directive_refs_json,
+  state.recent_action_fingerprints_json, state.updated_at
+FROM agent_execution_state_legacy_focus AS state
+JOIN executions AS execution ON execution.execution_id = state.execution_id;
+
+DROP TABLE agent_execution_state_legacy_focus;
+`;
+
+/** DID v1.28 EGP Wave E agent-state focus retirement; user_version 26. */
+export const P26_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P25_MIGRATIONS,
+  {
+    id: 26,
+    name: "agent_state_episode_only",
+    sql: P26_AGENT_STATE_EPISODE_ONLY_DDL,
+  },
+];
+
+export const P27_FORMATION_GOVERNANCE_INBOX_BACKFILL_DDL = `
+INSERT INTO inbox_entries (
+  workspace_id, entry_key, kind, summary, correlation_id, admitted_at, consumed_at
+)
+SELECT
+  parent_workspace_id,
+  'gov:' || proposal_id || ':' || revision,
+  'Governance',
+  'formation proposal "' || json_extract(proposal_json, '$.name') ||
+    '" revision ' || revision || ' awaiting human decision',
+  NULL,
+  updated_at,
+  NULL
+FROM formation_proposals
+WHERE state = 'Pending'
+ON CONFLICT(workspace_id, entry_key) DO NOTHING;
+`;
+
+/** DID v1.29 CRAC recovery: every pending formation proposal is actionable. */
+export const P27_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P26_MIGRATIONS,
+  {
+    id: 27,
+    name: "formation_governance_inbox_backfill",
+    sql: P27_FORMATION_GOVERNANCE_INBOX_BACKFILL_DDL,
+  },
+];
+
+export const P28_SETTLED_GOVERNANCE_INBOX_CLEANUP_DDL = `
+UPDATE inbox_entries AS inbox
+SET consumed_at = COALESCE(consumed_at, CURRENT_TIMESTAMP)
+WHERE inbox.kind = 'Governance'
+  AND inbox.consumed_at IS NULL
+  AND EXISTS (
+    SELECT 1
+    FROM formation_proposals AS proposal
+    WHERE proposal.state <> 'Pending'
+      AND proposal.parent_workspace_id = inbox.workspace_id
+      AND inbox.entry_key =
+        'gov:' || proposal.proposal_id || ':' || proposal.revision
+  );
+`;
+
+/** DID v1.29 CRAC recovery: settled decisions leave no actionable stale row. */
+export const P28_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P27_MIGRATIONS,
+  {
+    id: 28,
+    name: "settled_governance_inbox_cleanup",
+    sql: P28_SETTLED_GOVERNANCE_INBOX_CLEANUP_DDL,
+  },
+];
+
+export const P29_SUBJECT_BOUND_PERMISSION_GRANTS_DDL = `
+ALTER TABLE permission_grants ADD COLUMN subject_kind TEXT
+  CHECK (subject_kind IS NULL OR subject_kind IN
+    ('HumanPrincipal','WorkspaceAgent','Execution'));
+ALTER TABLE permission_grants ADD COLUMN subject_ref TEXT;
+ALTER TABLE permission_grants ADD COLUMN capability TEXT;
+ALTER TABLE permission_grants ADD COLUMN target TEXT;
+ALTER TABLE permission_grants ADD COLUMN valid_from TEXT;
+ALTER TABLE permission_grants ADD COLUMN expires_at TEXT;
+ALTER TABLE permission_grants ADD COLUMN revision INTEGER
+  CHECK (revision IS NULL OR revision >= 0);
+
+UPDATE permission_grants
+SET state = 'Revoked'
+WHERE subject_kind IS NULL OR subject_ref IS NULL OR capability IS NULL;
+
+CREATE INDEX permission_grants_subject_active
+  ON permission_grants(project_id, subject_kind, subject_ref, capability, state);
+`;
+
+/** CAPA-1: legacy unbound grants fail closed; user_version 29. */
+export const P29_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P28_MIGRATIONS,
+  {
+    id: 29,
+    name: "subject_bound_permission_grants",
+    sql: P29_SUBJECT_BOUND_PERMISSION_GRANTS_DDL,
+  },
+];
+
+export const P30_CONTROL_ACTION_APPROVALS_DDL = `
+CREATE TABLE control_action_approvals (
+  approval_id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(project_id),
+  workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id),
+  execution_id TEXT NOT NULL REFERENCES executions(execution_id),
+  stable_action_id TEXT NOT NULL,
+  action_digest TEXT NOT NULL,
+  arguments_json TEXT NOT NULL,
+  target_ref TEXT NOT NULL,
+  control_basis_digest TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN
+    ('Pending','Approved','Rejected','Consumed','Expired')),
+  revision INTEGER NOT NULL CHECK (revision >= 0),
+  requested_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  decided_at TEXT,
+  decided_by TEXT,
+  decision_reason TEXT,
+  consumed_at TEXT,
+  CHECK ((state IN ('Approved','Rejected','Consumed')) = (decided_at IS NOT NULL)),
+  CHECK ((state = 'Consumed') = (consumed_at IS NOT NULL))
+);
+
+CREATE UNIQUE INDEX control_action_approvals_exact_action
+  ON control_action_approvals(execution_id, action_digest, control_basis_digest);
+CREATE INDEX control_action_approvals_pending
+  ON control_action_approvals(workspace_id, state, requested_at);
+`;
+
+/** CAPA-2: durable exact-action approval interruption; user_version 30. */
+export const P30_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P29_MIGRATIONS,
+  {
+    id: 30,
+    name: "control_action_approvals",
+    sql: P30_CONTROL_ACTION_APPROVALS_DDL,
+  },
+];
+
+export const P31_FORMATION_FULFILLMENT_DDL = `
+CREATE TABLE formation_fulfillments (
+  proposal_id TEXT NOT NULL REFERENCES formation_proposals(proposal_id),
+  proposal_revision INTEGER NOT NULL CHECK (proposal_revision >= 1),
+  expected_child_workspace_id TEXT NOT NULL,
+  expected_initial_work_id TEXT,
+  state TEXT NOT NULL CHECK (state IN
+    ('AwaitingDecision','PendingApplication','WorkspaceCreated','Applied','Blocked')),
+  typed_block TEXT,
+  last_attempt_at TEXT,
+  revision INTEGER NOT NULL CHECK (revision >= 0),
+  PRIMARY KEY (proposal_id, proposal_revision),
+  CHECK ((state = 'Blocked') = (typed_block IS NOT NULL))
+);
+
+CREATE INDEX formation_fulfillments_state
+  ON formation_fulfillments(state, last_attempt_at);
+
+INSERT INTO formation_fulfillments (
+  proposal_id, proposal_revision, expected_child_workspace_id,
+  expected_initial_work_id, state, typed_block, last_attempt_at, revision
+)
+SELECT proposal_id, revision,
+       'ws_' || substr(proposal_id, 5),
+       CASE WHEN json_type(proposal_json, '$.initialWork') IS NULL
+            THEN NULL ELSE 'wrk_' || substr(proposal_id, 5) END,
+       CASE state
+         WHEN 'Pending' THEN 'AwaitingDecision'
+         WHEN 'Approved' THEN 'PendingApplication'
+         ELSE 'Blocked'
+       END,
+       CASE state WHEN 'Rejected' THEN 'FormationRejected' ELSE NULL END,
+       NULL,
+       0
+FROM formation_proposals;
+`;
+
+/** MAC-P2: durable distinction between formation decision and application. */
+export const P31_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P30_MIGRATIONS,
+  {
+    id: 31,
+    name: "formation_fulfillment",
+    sql: P31_FORMATION_FULFILLMENT_DDL,
+  },
+];
+
+export const P32_ACTION_APPROVALS_DDL = `
+CREATE TABLE action_approvals (
+  approval_id TEXT PRIMARY KEY,
+  route_kind TEXT NOT NULL CHECK (route_kind IN ('Control','Executable')),
+  project_id TEXT,
+  workspace_id TEXT,
+  execution_id TEXT,
+  subject_ref TEXT NOT NULL,
+  stable_action_id TEXT NOT NULL,
+  action_version TEXT NOT NULL,
+  side_effect_semantics TEXT NOT NULL,
+  action_digest TEXT NOT NULL,
+  arguments_json TEXT NOT NULL,
+  target_ref TEXT NOT NULL,
+  target_resource_space_ids_json TEXT NOT NULL DEFAULT '[]',
+  control_basis_digest TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN
+    ('Pending','Approved','Rejected','Consumed','Expired')),
+  revision INTEGER NOT NULL CHECK (revision >= 0),
+  requested_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  decided_at TEXT,
+  decided_by TEXT,
+  decision_reason TEXT,
+  consumed_at TEXT,
+  consumed_by TEXT,
+  binding_proven INTEGER NOT NULL CHECK (binding_proven IN (0,1)),
+  source_state TEXT,
+  CHECK ((state IN ('Approved','Rejected','Consumed')) = (decided_at IS NOT NULL)),
+  CHECK ((state = 'Consumed') = (consumed_at IS NOT NULL OR consumed_by IS NOT NULL))
+);
+
+INSERT INTO action_approvals (
+  approval_id, route_kind, project_id, workspace_id, execution_id,
+  subject_ref, stable_action_id, action_version, side_effect_semantics,
+  action_digest, arguments_json,
+  target_ref, target_resource_space_ids_json, control_basis_digest,
+  state, revision, requested_at, expires_at, decided_at, decided_by,
+  decision_reason, consumed_at, consumed_by, binding_proven, source_state
+)
+SELECT approval_id, 'Control', project_id, workspace_id, execution_id,
+       'legacy:unbound', stable_action_id, 'legacy', 'InternalControl',
+       action_digest, arguments_json,
+       target_ref, '[]', control_basis_digest,
+       CASE WHEN state IN ('Pending','Approved') THEN 'Expired' ELSE state END,
+       revision, requested_at,
+       CASE WHEN state IN ('Pending','Approved') THEN '1970-01-01T00:00:00.000Z' ELSE expires_at END,
+       CASE WHEN state IN ('Pending','Approved','Expired') THEN NULL ELSE decided_at END,
+       CASE WHEN state IN ('Pending','Approved','Expired') THEN NULL ELSE decided_by END,
+       CASE WHEN state IN ('Pending','Approved') THEN 'MigrationUnprovableSubject' ELSE decision_reason END,
+       CASE WHEN state = 'Consumed' THEN consumed_at ELSE NULL END,
+       NULL, 0, state
+FROM control_action_approvals;
+
+INSERT INTO action_approvals (
+  approval_id, route_kind, project_id, workspace_id, execution_id,
+  subject_ref, stable_action_id, action_version, side_effect_semantics,
+  action_digest, arguments_json,
+  target_ref, target_resource_space_ids_json, control_basis_digest,
+  state, revision, requested_at, expires_at, decided_at, decided_by,
+  decision_reason, consumed_at, consumed_by, binding_proven, source_state
+)
+SELECT approval_id, 'Executable', NULL, NULL, NULL,
+       'legacy:unbound', tool_name, tool_version, 'LegacyUnknown',
+       action_digest, '{}',
+       target_resource_space_ids_json, target_resource_space_ids_json,
+       control_basis_digest,
+       CASE WHEN consumed_by IS NULL THEN 'Expired' ELSE 'Consumed' END,
+       CASE WHEN consumed_by IS NULL THEN 1 ELSE 2 END,
+       expires_at,
+       CASE WHEN consumed_by IS NULL THEN '1970-01-01T00:00:00.000Z' ELSE expires_at END,
+       CASE WHEN consumed_by IS NULL THEN NULL ELSE expires_at END,
+       CASE WHEN consumed_by IS NULL THEN NULL ELSE 'migration:p4' END,
+       CASE WHEN consumed_by IS NULL THEN 'MigrationUnprovableSubject' ELSE NULL END,
+       CASE WHEN consumed_by IS NULL THEN NULL ELSE expires_at END,
+       consumed_by, 0,
+       CASE WHEN consumed_by IS NULL THEN 'Approved' ELSE 'Consumed' END
+FROM invocation_approvals;
+
+DROP TABLE invocation_approvals;
+DROP TABLE control_action_approvals;
+
+CREATE UNIQUE INDEX action_approvals_exact_action
+  ON action_approvals(route_kind, execution_id, action_digest, control_basis_digest)
+  WHERE execution_id IS NOT NULL;
+CREATE INDEX action_approvals_pending
+  ON action_approvals(workspace_id, state, requested_at);
+`;
+
+/** MAC-P4: one physical exact-intent approval ledger; user_version 32. */
+export const P32_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P31_MIGRATIONS,
+  {
+    id: 32,
+    name: "action_approval_convergence",
+    sql: P32_ACTION_APPROVALS_DDL,
+  },
+];
+
+export const P33_ASSIGN_WORK_TARGET_BINDINGS_DDL = `
+CREATE UNIQUE INDEX commands_id_project ON commands(command_id, project_id);
+CREATE UNIQUE INDEX executions_id_project_workspace
+  ON executions(execution_id, project_id, workspace_id);
+CREATE UNIQUE INDEX workspaces_id_project_parent
+  ON workspaces(workspace_id, project_id, parent_workspace_id);
+CREATE UNIQUE INDEX works_id_project ON works(work_id, project_id);
+CREATE UNIQUE INDEX permission_grants_id_project
+  ON permission_grants(permission_grant_id, project_id);
+CREATE UNIQUE INDEX action_approvals_id_project
+  ON action_approvals(approval_id, project_id);
+
+CREATE TABLE assign_work_target_bindings (
+  command_id TEXT PRIMARY KEY,
+  schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+  project_id TEXT NOT NULL,
+  execution_id TEXT NOT NULL,
+  provider_turn_id TEXT NOT NULL,
+  logical_action_id TEXT NOT NULL,
+  call_ref TEXT NOT NULL,
+  parent_workspace_id TEXT NOT NULL,
+  parent_work_id TEXT NOT NULL,
+  parent_work_revision_at_command INTEGER NOT NULL CHECK (parent_work_revision_at_command >= 0),
+  target_workspace_ref TEXT NOT NULL,
+  target_ref_encoding_version INTEGER NOT NULL CHECK (target_ref_encoding_version = 1),
+  parent_workspace_revision_at_command INTEGER NOT NULL CHECK (parent_workspace_revision_at_command >= 0),
+  target_workspace_revision_at_resolution INTEGER NOT NULL CHECK (target_workspace_revision_at_resolution >= 0),
+  target_workspace_id TEXT NOT NULL,
+  target_lifecycle_at_commit TEXT NOT NULL CHECK (target_lifecycle_at_commit = 'Active'),
+  work_id TEXT NOT NULL,
+  predecessor_work_id TEXT NOT NULL,
+  work_provenance_json TEXT NOT NULL,
+  authority_kind TEXT NOT NULL CHECK (authority_kind IN ('PermissionGrant','ActionApproval')),
+  permission_grant_id TEXT,
+  action_approval_id TEXT,
+  authority_evidence_json TEXT NOT NULL,
+  authority_checked_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE (execution_id, logical_action_id),
+  UNIQUE (work_id),
+  FOREIGN KEY (command_id, project_id) REFERENCES commands(command_id, project_id),
+  FOREIGN KEY (execution_id, project_id, parent_workspace_id) REFERENCES executions(execution_id, project_id, workspace_id),
+  FOREIGN KEY (parent_workspace_id, project_id) REFERENCES workspaces(workspace_id, project_id),
+  FOREIGN KEY (target_workspace_id, project_id, parent_workspace_id) REFERENCES workspaces(workspace_id, project_id, parent_workspace_id),
+  FOREIGN KEY (parent_work_id, project_id) REFERENCES works(work_id, project_id),
+  FOREIGN KEY (work_id, project_id) REFERENCES works(work_id, project_id),
+  FOREIGN KEY (predecessor_work_id, project_id) REFERENCES works(work_id, project_id),
+  FOREIGN KEY (permission_grant_id, project_id) REFERENCES permission_grants(permission_grant_id, project_id),
+  FOREIGN KEY (action_approval_id, project_id) REFERENCES action_approvals(approval_id, project_id),
+  CHECK (
+    (authority_kind = 'PermissionGrant' AND permission_grant_id IS NOT NULL AND action_approval_id IS NULL)
+    OR
+    (authority_kind = 'ActionApproval' AND permission_grant_id IS NULL AND action_approval_id IS NOT NULL)
+  )
+);
+CREATE INDEX assign_work_target_bindings_target
+  ON assign_work_target_bindings(project_id, target_workspace_id, target_workspace_ref);
+CREATE INDEX assign_work_target_bindings_parent_work
+  ON assign_work_target_bindings(project_id, parent_work_id, created_at);
+
+CREATE TABLE assign_work_binding_attention_facts (
+  attention_fact_id TEXT PRIMARY KEY,
+  event_id TEXT NOT NULL UNIQUE REFERENCES domain_events(event_id),
+  project_id TEXT NOT NULL,
+  execution_id TEXT NOT NULL,
+  target_workspace_id TEXT NOT NULL,
+  logical_action_id TEXT NOT NULL,
+  committed_command_id TEXT NOT NULL,
+  failure_code TEXT NOT NULL CHECK (failure_code IN (
+    'LegacyUnbound','MissingBinding','DuplicateBinding','MalformedBinding',
+    'RefMismatch','AuthorityMismatch','ForeignTarget','PlacementMismatch',
+    'SourceActionMismatch','ReceiptMismatch','WorkMismatch',
+    'ProvenanceMismatch','EventMismatch','CommitLifecycleMismatch'
+  )),
+  first_detected_at TEXT NOT NULL,
+  UNIQUE (execution_id, logical_action_id, committed_command_id),
+  FOREIGN KEY (execution_id, project_id, target_workspace_id)
+    REFERENCES executions(execution_id, project_id, workspace_id),
+  FOREIGN KEY (committed_command_id, project_id)
+    REFERENCES commands(command_id, project_id)
+);
+CREATE INDEX assign_work_binding_attention_target
+  ON assign_work_binding_attention_facts(project_id, target_workspace_id, first_detected_at);
+`;
+
+export const P33_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P32_MIGRATIONS,
+  {
+    id: 33,
+    name: "assign_work_target_bindings",
+    sql: P33_ASSIGN_WORK_TARGET_BINDINGS_DDL,
+  },
+];
+
+export const P34_ATTENTION_PROJECTION_DDL = `
+CREATE TABLE attention_projection_rows (
+  project_id TEXT NOT NULL,
+  dedup_key TEXT NOT NULL,
+  source TEXT NOT NULL CHECK (source = 'AssignWorkTargetBindingFailure'),
+  severity TEXT NOT NULL CHECK (severity = 'ActionRequired'),
+  target_workspace_id TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  failure_code TEXT NOT NULL CHECK (failure_code IN (
+    'LegacyUnbound','MissingBinding','DuplicateBinding','MalformedBinding',
+    'RefMismatch','AuthorityMismatch','ForeignTarget','PlacementMismatch',
+    'SourceActionMismatch','ReceiptMismatch','WorkMismatch',
+    'ProvenanceMismatch','EventMismatch','CommitLifecycleMismatch'
+  )),
+  occurred_at TEXT NOT NULL,
+  source_event_id TEXT NOT NULL REFERENCES domain_events(event_id),
+  source_fact_id TEXT NOT NULL REFERENCES assign_work_binding_attention_facts(attention_fact_id),
+  PRIMARY KEY (project_id, dedup_key),
+  UNIQUE (project_id, source_event_id),
+  FOREIGN KEY (target_workspace_id, project_id)
+    REFERENCES workspaces(workspace_id, project_id)
+);
+CREATE INDEX attention_projection_target
+  ON attention_projection_rows(project_id, target_workspace_id, occurred_at);
+`;
+
+/** P10 durable Attention business rows; user_version 34. */
+export const P34_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P33_MIGRATIONS,
+  {
+    id: 34,
+    name: "p10_attention_projection",
+    sql: P34_ATTENTION_PROJECTION_DDL,
+  },
+];
+
+/** FT-DG-01 OPEN-3 P1 intent source; user_version 35. No historical rows are
+ * inferred from Workspace boundaries, receipts, or ownership claims. */
+export const P35_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P34_MIGRATIONS,
+  {
+    id: 35,
+    name: "workspace_resource_activation_intents",
+    sql: `
+      CREATE TABLE workspace_resource_activation_intents (
+        project_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        resource_boundary_revision INTEGER NOT NULL CHECK (resource_boundary_revision >= 0),
+        status TEXT NOT NULL CHECK (status IN ('Pending','Active')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        activated_at TEXT,
+        PRIMARY KEY (project_id, workspace_id, resource_boundary_revision),
+        FOREIGN KEY (workspace_id, project_id)
+          REFERENCES workspaces(workspace_id, project_id),
+        CHECK ((status = 'Active') = (activated_at IS NOT NULL))
+      );
+      CREATE INDEX idx_workspace_resource_activation_pending
+        ON workspace_resource_activation_intents(project_id, created_at,
+          workspace_id, resource_boundary_revision)
+        WHERE status = 'Pending';
+
+      CREATE TABLE workspace_resource_activation_attention_rows (
+        project_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        resource_boundary_revision INTEGER NOT NULL,
+        occurred_at TEXT NOT NULL,
+        PRIMARY KEY (project_id, workspace_id, resource_boundary_revision),
+        FOREIGN KEY (project_id, workspace_id, resource_boundary_revision)
+          REFERENCES workspace_resource_activation_intents
+            (project_id, workspace_id, resource_boundary_revision)
+      );
+
+      CREATE INDEX workspace_resource_activation_attention_target
+        ON workspace_resource_activation_attention_rows
+          (project_id, workspace_id, occurred_at);
+    `,
+  },
+];
+
+/** AH7-DG-02 P39 owner migration descriptor. It is applied by the privileged
+ * maintenance path after the P37/P38 descriptors; the P39 runtime remains
+ * stopped at version 39 until P40 is available. */
+export const P39_RECONCILIATION_MIGRATION: MigrationFile = {
+  id: 39,
+  name: "ah7_reconciliation_attempts",
+  sql: P39_RECONCILIATION_DDL,
+  foreignKeysOff: true,
+};
+
+/** AH7-DG-03 accepted forward migration; preserves legacy rows as
+ * LegacyUnknown and advances the production SQLite baseline to user_version 36. */
+export const P36_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P35_MIGRATIONS.filter((migration) => migration.id !== 36),
+  {
+    id: 36,
+    name: "ah7_tool_invocation_admission",
+    sql: P36_TOOL_INVOCATION_ADMISSION_DDL,
+    foreignKeysOff: true,
+  },
+];
+
+/** AH10 DeliverReplay durable fact, projection marker and fair Attention poll
+ * state; user_version 37. This is forward-only after P36. */
+export const P37_DELIVER_REPLAY_DDL = `
+CREATE TABLE deliver_replay_attention_facts (
+  attention_fact_id       TEXT PRIMARY KEY,
+  event_id                TEXT NOT NULL UNIQUE,
+  project_id              TEXT NOT NULL,
+  execution_id            TEXT NOT NULL,
+  target_workspace_id     TEXT NOT NULL,
+  logical_action_id       TEXT NOT NULL,
+  message_id              TEXT NOT NULL,
+  failure_code            TEXT NOT NULL CHECK (failure_code IN (
+    'LegacyMessageMissingEvent','LegacyEventMissingMessage',
+    'LegacyMessageBindingMismatch','LegacyInboxConflict',
+    'PriorReceiptDecodeMismatch','PriorReceiptResultMismatch',
+    'RejectedReceiptEffectConflict','PriorReceiptEffectConflict'
+  )),
+  first_detected_at       TEXT NOT NULL,
+  UNIQUE (execution_id, logical_action_id, message_id),
+  UNIQUE (attention_fact_id, project_id),
+  FOREIGN KEY (execution_id, project_id, target_workspace_id)
+    REFERENCES executions(execution_id, project_id, workspace_id)
+);
+CREATE INDEX deliver_replay_attention_target
+  ON deliver_replay_attention_facts(project_id, target_workspace_id, first_detected_at);
+CREATE INDEX deliver_replay_attention_project_fact
+  ON deliver_replay_attention_facts(project_id, attention_fact_id);
+
+CREATE TABLE deliver_replay_attention_pending (
+  queue_sequence     INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id         TEXT NOT NULL,
+  attention_fact_id  TEXT NOT NULL UNIQUE,
+  enqueued_at        TEXT NOT NULL,
+  FOREIGN KEY (attention_fact_id, project_id)
+    REFERENCES deliver_replay_attention_facts(attention_fact_id, project_id)
+);
+CREATE INDEX deliver_replay_attention_pending_project_order
+  ON deliver_replay_attention_pending(project_id, queue_sequence);
+
+CREATE TABLE deliver_replay_attention_rows (
+  attention_fact_id TEXT PRIMARY KEY
+    REFERENCES deliver_replay_attention_facts(attention_fact_id)
+);
+
+CREATE TRIGGER deliver_replay_pending_delete_requires_marker
+BEFORE DELETE ON deliver_replay_attention_pending
+FOR EACH ROW
+WHEN NOT EXISTS (
+  SELECT 1 FROM deliver_replay_attention_rows
+   WHERE attention_fact_id = OLD.attention_fact_id
+)
+BEGIN
+  SELECT RAISE(ABORT, 'DeliverReplay pending item requires a P10 marker');
+END;
+
+CREATE TABLE p10_attention_project_poll_state (
+  project_id                    TEXT PRIMARY KEY,
+  last_attempt_sequence          INTEGER NOT NULL DEFAULT 0 CHECK (last_attempt_sequence >= 0),
+  consecutive_failed_attempts   INTEGER NOT NULL DEFAULT 0 CHECK (consecutive_failed_attempts >= 0),
+  next_eligible_at               TEXT NOT NULL,
+  last_failure_code              TEXT CHECK (last_failure_code IS NULL OR last_failure_code IN (
+    'PollLeaseExpired','JournalIdentityUnprovable','MissingP9Fact',
+    'FactTupleMismatch','FactProjectMismatch','EventBindingMismatch',
+    'QueueFactMismatch','MarkerBindingMismatch','QueueDeleteWithoutMarker'
+  )),
+  last_failure_at                 TEXT
+);
+CREATE INDEX p10_attention_project_due
+  ON p10_attention_project_poll_state(next_eligible_at,last_attempt_sequence,project_id);
+CREATE TABLE p10_attention_dispatch_state (
+  singleton                INTEGER PRIMARY KEY CHECK (singleton = 1),
+  next_attempt_sequence    INTEGER NOT NULL CHECK (next_attempt_sequence >= 1),
+  active_project_id        TEXT,
+  lease_owner              TEXT,
+  lease_generation         INTEGER NOT NULL DEFAULT 0 CHECK (lease_generation >= 0),
+  claim_started_at         TEXT,
+  lease_expires_at         TEXT,
+  CHECK ((active_project_id IS NULL) = (lease_owner IS NULL)),
+  CHECK ((lease_owner IS NULL) = (claim_started_at IS NULL)),
+  CHECK ((lease_owner IS NULL) = (lease_expires_at IS NULL))
+);
+INSERT INTO p10_attention_dispatch_state(singleton,next_attempt_sequence)
+VALUES (1,1);
+`;
+
+export const P37_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P36_MIGRATIONS,
+  {
+    id: 37,
+    name: "ah10_deliver_replay_attention_rows",
+    sql: P37_DELIVER_REPLAY_DDL,
+  },
+];
+
+/** EA-DG-01 P38 forward migration. P37/0037 must already be present in the
+ * cumulative prefix; the runner preserves the accepted FK-off rebuild. */
+export const P38_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P37_MIGRATIONS,
+  {
+    id: P38_EXECUTABLE_APPROVAL_MIGRATION.migrationVersion,
+    name: "executable_approval_handoff",
+    sql: P38_EXECUTABLE_APPROVAL_MIGRATION.sql,
+    foreignKeysOff: P38_EXECUTABLE_APPROVAL_MIGRATION.foreignKeysOff,
+  },
+];
+
+/** P41 / 0041 physical storage descriptor; its exact cumulative predecessor
+ * is enforced by requiresUserVersion before the descriptor transaction. */
+export const P41_SUBMITTED_DECISION_BINDING_ATTENTION_DDL = `
+CREATE TABLE submitted_decision_binding_attention_facts (
+  attention_fact_id TEXT NOT NULL PRIMARY KEY,
+  event_id TEXT NOT NULL UNIQUE,
+  project_id TEXT NOT NULL,
+  execution_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  logical_step_no INTEGER NOT NULL CHECK (logical_step_no >= 0),
+  repair_attempt INTEGER NOT NULL CHECK (repair_attempt >= 0),
+  provider_turn_id TEXT NOT NULL,
+  logical_action_id TEXT NOT NULL,
+  failure_code TEXT NOT NULL CHECK (failure_code IN (
+    'DecisionRequestWorkspaceMismatch',
+    'StepManifestMismatch',
+    'SettledExecutionWithPendingDecisionAction'
+  )),
+  first_detected_at TEXT NOT NULL,
+  UNIQUE (execution_id, logical_step_no, repair_attempt, logical_action_id),
+  UNIQUE (attention_fact_id, project_id, workspace_id),
+  FOREIGN KEY (execution_id, project_id, workspace_id)
+    REFERENCES executions(execution_id, project_id, workspace_id)
+);
+
+CREATE INDEX submitted_decision_binding_fact_project_time
+  ON submitted_decision_binding_attention_facts
+    (project_id, first_detected_at, attention_fact_id);
+
+CREATE TRIGGER submitted_decision_binding_fact_no_update
+BEFORE UPDATE ON submitted_decision_binding_attention_facts
+BEGIN
+  SELECT RAISE(ABORT, 'submitted decision binding facts are immutable');
+END;
+
+CREATE TRIGGER submitted_decision_binding_fact_no_delete
+BEFORE DELETE ON submitted_decision_binding_attention_facts
+BEGIN
+  SELECT RAISE(ABORT, 'submitted decision binding facts are retained');
+END;
+
+CREATE TABLE submitted_decision_binding_attention_rows (
+  project_id TEXT NOT NULL,
+  attention_fact_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL,
+  PRIMARY KEY (project_id, attention_fact_id),
+  FOREIGN KEY (attention_fact_id, project_id, workspace_id)
+    REFERENCES submitted_decision_binding_attention_facts
+      (attention_fact_id, project_id, workspace_id)
+);
+`;
+
+/** Fingerprint of LF UTF-8 descriptor lines: 41, migration name, DDL SHA-256. */
+export const P41_SUBMITTED_DECISION_BINDING_ATTENTION_FINGERPRINT =
+  "1c4b30b9fc08569c8b50a9333ea115562a2ac93ee81cc869cda97d5fe75149a1";
+
+export const P41_SUBMITTED_DECISION_BINDING_ATTENTION_MIGRATION: MigrationFile =
+  {
+    id: 41,
+    name: "p41_submitted_decision_binding_attention",
+    sql: P41_SUBMITTED_DECISION_BINDING_ATTENTION_DDL,
+    requiresUserVersion: 40,
+  };
+/** Trusted maintenance-only suffix. IDs and SQL pins are ordered after P36;
+ * schema 39 is never part of ordinary runtime migration registration. */
+export const P39_MAINTENANCE_MIGRATIONS: ReadonlyArray<MigrationFile> =
+  Object.freeze([
+    ...P37_MIGRATIONS.filter(({ id }) => id === 37).map((migration) =>
+      Object.freeze(migration),
+    ),
+    ...P38_MIGRATIONS.filter(({ id }) => id === 38).map((migration) =>
+      Object.freeze(migration),
+    ),
+    Object.freeze(P39_RECONCILIATION_MIGRATION),
+  ]);
+
+/** Pin every executable SQL body in the privileged migration path. */
+export const P39_MAINTENANCE_MIGRATION_MANIFEST: Readonly<
+  Record<number, { readonly name: string; readonly sha256: string }>
+> = Object.freeze({
+  37: Object.freeze({
+    name: "ah10_deliver_replay_attention_rows",
+    sha256: "0d23988891b3a19a36b6a836a9697d674667681dde2123be4dcae6659e39e737",
+  }),
+  38: Object.freeze({
+    name: "executable_approval_handoff",
+    sha256: "fa109e056d88c49dada808a7b0bcc9edce4595d1812990c0fa4facd0b248110d",
+  }),
+  39: Object.freeze({
+    name: "ah7_reconciliation_attempts",
+    sha256: "6e791168987f23f5c282ce7d6bd2c5b5ad8361942dab968adbcca64aab753aec",
+  }),
+});
+/** P40 owner DDL; the descriptor below is executable only after trusted P39
+ * maintenance has committed version 39. */
+const P40_VALID_ARTIFACT_REF_SQL = `
+length(NEW.result_ref) = 40 AND substr(NEW.result_ref, 1, 4) = 'art_' AND
+substr(NEW.result_ref, 13, 1) = '-' AND substr(NEW.result_ref, 18, 1) = '-' AND
+substr(NEW.result_ref, 23, 1) = '-' AND substr(NEW.result_ref, 28, 1) = '-' AND
+lower(substr(NEW.result_ref, 5, 8)) NOT GLOB '*[^0-9a-f]*' AND
+lower(substr(NEW.result_ref, 14, 4)) NOT GLOB '*[^0-9a-f]*' AND
+lower(substr(NEW.result_ref, 19, 4)) NOT GLOB '*[^0-9a-f]*' AND
+lower(substr(NEW.result_ref, 24, 4)) NOT GLOB '*[^0-9a-f]*' AND
+lower(substr(NEW.result_ref, 29, 12)) NOT GLOB '*[^0-9a-f]*' AND
+substr(NEW.result_ref, 19, 1) = '7' AND
+lower(substr(NEW.result_ref, 24, 1)) IN ('8','9','a','b')`;
+
+const P40_SETTLEMENT_PROVENANCE_SQL = `(
+  (NEW.settlement_provenance = 'Ordinary'
+   AND NEW.selected_attempt_no IS NULL AND NEW.selected_fact_id IS NULL)
+  OR
+  (NEW.settlement_provenance = 'Reconciliation'
+   AND NEW.recovery_binding_state = 'Bound'
+   AND NEW.recovery_binding_sha256 IS NOT NULL
+   AND NEW.selected_attempt_no IS NOT NULL AND NEW.selected_fact_id IS NOT NULL)
+)`;
+
+export const P40_TOOL_OBSERVATION_REPLAY_DDL = `
+ALTER TABLE tool_invocations ADD COLUMN observation_format_version TEXT
+  CHECK (observation_format_version IS NULL OR
+         observation_format_version = 'p4-canonical-tool-observation-v1');
+ALTER TABLE tool_invocations ADD COLUMN observation_json BLOB
+  CHECK (observation_json IS NULL OR
+         (typeof(observation_json) = 'blob'
+          AND length(observation_json) BETWEEN 1 AND 16384
+          AND json_valid(CAST(observation_json AS TEXT))));
+ALTER TABLE tool_invocations ADD COLUMN observation_sha256 TEXT
+  CHECK (observation_sha256 IS NULL OR
+         (length(observation_sha256) = 64
+          AND observation_sha256 NOT GLOB '*[^0-9a-f]*'));
+
+CREATE TRIGGER tool_invocations_observation_insert_guard
+BEFORE INSERT ON tool_invocations
+WHEN COALESCE(CASE
+  WHEN NEW.settled_at IS NULL THEN
+    NEW.settlement_kind IS NOT NULL OR NEW.settlement_json IS NOT NULL OR
+    NEW.result_ref IS NOT NULL OR NEW.observation_format_version IS NOT NULL OR
+    NEW.observation_json IS NOT NULL OR NEW.observation_sha256 IS NOT NULL
+  WHEN NEW.settlement_kind = 'Denied' THEN NOT (
+    NEW.effect_admission_state = 'NotAdmitted' AND NEW.result_ref IS NULL AND
+    NEW.observation_format_version IS NULL AND NEW.observation_json IS NULL AND
+    NEW.observation_sha256 IS NULL AND json_valid(NEW.settlement_json) AND
+    json_extract(NEW.settlement_json, '$._tag') = 'Denied' AND
+    json_extract(NEW.settlement_json, '$.projectionVersion') = 1 AND
+    json_type(NEW.settlement_json, '$.reasonCode') = 'text' AND
+    json_extract(NEW.settlement_json, '$.reasonCode') IN (
+      'InvocationAuthorityDenied','ApprovalRequired','ApprovalNotFound',
+      'ApprovalMismatch','ApprovalExpired','ApprovalConsumedByOtherInvocation',
+      'ResourceResolutionDenied','ResourceAdmissionDenied','ApprovalNoLongerAuthorized'
+    )
+  )
+  WHEN NEW.settlement_kind IN
+    ('Success','ExpectedFailure','Interrupted','OutcomeUnknown','RuntimeFailure','ReconciledNoEffect')
+  THEN NOT (
+    NEW.settlement_json IS NOT NULL AND
+    NEW.observation_format_version = 'p4-canonical-tool-observation-v1' AND
+    NEW.observation_json IS NOT NULL AND NEW.observation_sha256 IS NOT NULL AND
+    json_valid(NEW.settlement_json) AND
+    json_valid(CAST(NEW.observation_json AS TEXT)) AND
+    json_extract(NEW.settlement_json, '$._tag') = NEW.settlement_kind AND
+    json_extract(CAST(NEW.observation_json AS TEXT), '$._tag') = NEW.settlement_kind AND
+    CASE NEW.settlement_kind
+      WHEN 'Success' THEN
+        NEW.effect_admission_state = 'MayHaveStarted' AND
+        ${P40_SETTLEMENT_PROVENANCE_SQL} AND
+        json_type(CAST(NEW.observation_json AS TEXT), '$.observation.text') = 'text' AND
+        json_type(CAST(NEW.observation_json AS TEXT), '$.observation.truncated') IN ('true','false') AND
+        ((NEW.result_ref IS NULL AND
+          json_type(CAST(NEW.observation_json AS TEXT), '$.resultRef') IS 'null') OR
+         (NEW.result_ref IS NOT NULL AND
+          json_type(CAST(NEW.observation_json AS TEXT), '$.resultRef') = 'text' AND
+          json_extract(CAST(NEW.observation_json AS TEXT), '$.resultRef') = NEW.result_ref AND
+          ${P40_VALID_ARTIFACT_REF_SQL}))
+      WHEN 'ExpectedFailure' THEN
+        NEW.effect_admission_state = 'MayHaveStarted' AND
+        ${P40_SETTLEMENT_PROVENANCE_SQL} AND
+        NEW.result_ref IS NULL AND
+        json_type(CAST(NEW.observation_json AS TEXT), '$.observation.text') = 'text' AND
+        json_type(CAST(NEW.observation_json AS TEXT), '$.observation.truncated') IN ('true','false')
+      WHEN 'Interrupted' THEN
+        NEW.effect_admission_state IN ('NotAdmitted','MayHaveStarted') AND
+        NEW.settlement_provenance = 'Ordinary' AND
+        NEW.selected_attempt_no IS NULL AND NEW.selected_fact_id IS NULL AND
+        NEW.result_ref IS NULL
+      WHEN 'OutcomeUnknown' THEN
+        NEW.effect_admission_state = 'MayHaveStarted' AND
+        NEW.settlement_provenance = 'Ordinary' AND
+        NEW.selected_attempt_no IS NULL AND NEW.selected_fact_id IS NULL AND
+        NEW.result_ref IS NULL AND
+        json_type(CAST(NEW.observation_json AS TEXT), '$.reconciliationRefs') = 'array' AND
+        json_array_length(CAST(NEW.observation_json AS TEXT), '$.reconciliationRefs') BETWEEN 1 AND 8 AND
+        NOT EXISTS (
+          SELECT 1 FROM json_each(CAST(NEW.observation_json AS TEXT), '$.reconciliationRefs')
+           WHERE type <> 'text' OR length(CAST(value AS BLOB)) NOT BETWEEN 1 AND 128
+        ) AND
+        json(json_extract(CAST(NEW.observation_json AS TEXT), '$.reconciliationRefs')) =
+          json(json_extract(NEW.settlement_json, '$.reconciliationRefs'))
+      WHEN 'RuntimeFailure' THEN
+        NEW.effect_admission_state = 'MayHaveStarted' AND
+        NEW.settlement_provenance = 'Ordinary' AND
+        NEW.selected_attempt_no IS NULL AND NEW.selected_fact_id IS NULL AND
+        NEW.result_ref IS NULL AND
+        json_type(CAST(NEW.observation_json AS TEXT), '$.cause') = 'text' AND
+        length(CAST(json_extract(CAST(NEW.observation_json AS TEXT), '$.cause') AS BLOB)) <= 1024 AND
+        json_extract(CAST(NEW.observation_json AS TEXT), '$.cause') =
+          json_extract(NEW.settlement_json, '$.cause')
+      WHEN 'ReconciledNoEffect' THEN
+        NEW.settlement_provenance = 'Reconciliation' AND
+        NEW.effect_admission_state = 'MayHaveStarted' AND
+        NEW.recovery_binding_state = 'Bound' AND
+        NEW.recovery_binding_sha256 IS NOT NULL AND
+        NEW.selected_attempt_no IS NOT NULL AND NEW.selected_fact_id IS NOT NULL AND
+        NEW.result_ref IS NOT NULL AND
+        json_extract(NEW.settlement_json, '$.reasonCode') IN (
+          'AuthoritySnapshotChanged','ResourceSnapshotChanged',
+          'ApprovalNoLongerAuthorized','StopRequested','ReplayLimitReached'
+        ) AND
+        json_extract(CAST(NEW.observation_json AS TEXT), '$.reasonCode') =
+          json_extract(NEW.settlement_json, '$.reasonCode') AND
+        json_extract(NEW.settlement_json, '$.reconciliationFactRef') = NEW.selected_fact_id AND
+        json_extract(CAST(NEW.observation_json AS TEXT), '$.reconciliationFactRef') = NEW.selected_fact_id AND
+        json_type(CAST(NEW.observation_json AS TEXT), '$.observation.text') = 'text' AND
+        json_type(CAST(NEW.observation_json AS TEXT), '$.observation.truncated') IN ('true','false') AND
+        json_type(CAST(NEW.observation_json AS TEXT), '$.resultRef') = 'text' AND
+        json_extract(CAST(NEW.observation_json AS TEXT), '$.resultRef') = NEW.result_ref AND
+        ${P40_VALID_ARTIFACT_REF_SQL} AND
+        EXISTS (
+          SELECT 1 FROM tool_reconciliation_facts AS f
+           WHERE f.fact_id = NEW.selected_fact_id
+             AND f.invocation_id = NEW.invocation_id
+             AND f.attempt_no = NEW.selected_attempt_no
+             AND f.fact_origin = 'ProfileReconciliation'
+             AND f.fact_disposition = 'RecoveryInput'
+             AND f.binding_sha256 = NEW.recovery_binding_sha256
+             AND f.outcome = 'NotOccurred' AND f.reason_code IS NULL
+             AND f.evidence_ref IS NOT NULL AND f.evidence_sha256 IS NOT NULL
+             AND length(f.evidence_sha256) = 64
+             AND f.evidence_sha256 NOT GLOB '*[^0-9a-f]*'
+             AND f.result_ref IS NULL
+        )
+      ELSE 0
+    END
+  )
+  ELSE 1
+END, 1) = 1
+BEGIN
+  SELECT RAISE(ABORT, 'invalid P40 tool observation evidence');
+END;
+
+CREATE TRIGGER tool_invocations_observation_update_guard
+BEFORE UPDATE ON tool_invocations
+WHEN (OLD.settled_at IS NULL AND COALESCE(CASE
+  WHEN NEW.settled_at IS NULL THEN
+    NEW.settlement_kind IS NOT NULL OR NEW.settlement_json IS NOT NULL OR
+    NEW.result_ref IS NOT NULL OR NEW.observation_format_version IS NOT NULL OR
+    NEW.observation_json IS NOT NULL OR NEW.observation_sha256 IS NOT NULL
+  WHEN NEW.settlement_kind = 'Denied' THEN NOT (
+    NEW.effect_admission_state = 'NotAdmitted' AND NEW.result_ref IS NULL AND
+    NEW.observation_format_version IS NULL AND NEW.observation_json IS NULL AND
+    NEW.observation_sha256 IS NULL AND json_valid(NEW.settlement_json) AND
+    json_extract(NEW.settlement_json, '$._tag') = 'Denied' AND
+    json_extract(NEW.settlement_json, '$.projectionVersion') = 1 AND
+    json_type(NEW.settlement_json, '$.reasonCode') = 'text' AND
+    json_extract(NEW.settlement_json, '$.reasonCode') IN (
+      'InvocationAuthorityDenied','ApprovalRequired','ApprovalNotFound',
+      'ApprovalMismatch','ApprovalExpired','ApprovalConsumedByOtherInvocation',
+      'ResourceResolutionDenied','ResourceAdmissionDenied','ApprovalNoLongerAuthorized'
+    )
+  )
+  WHEN NEW.settlement_kind IN
+    ('Success','ExpectedFailure','Interrupted','OutcomeUnknown','RuntimeFailure','ReconciledNoEffect')
+  THEN NOT (
+    NEW.settlement_json IS NOT NULL AND
+    NEW.observation_format_version = 'p4-canonical-tool-observation-v1' AND
+    NEW.observation_json IS NOT NULL AND NEW.observation_sha256 IS NOT NULL AND
+    json_valid(NEW.settlement_json) AND
+    json_valid(CAST(NEW.observation_json AS TEXT)) AND
+    json_extract(NEW.settlement_json, '$._tag') = NEW.settlement_kind AND
+    json_extract(CAST(NEW.observation_json AS TEXT), '$._tag') = NEW.settlement_kind AND
+    CASE NEW.settlement_kind
+      WHEN 'Success' THEN
+        NEW.effect_admission_state = 'MayHaveStarted' AND
+        ${P40_SETTLEMENT_PROVENANCE_SQL} AND
+        json_type(CAST(NEW.observation_json AS TEXT), '$.observation.text') = 'text' AND
+        json_type(CAST(NEW.observation_json AS TEXT), '$.observation.truncated') IN ('true','false') AND
+        ((NEW.result_ref IS NULL AND json_type(CAST(NEW.observation_json AS TEXT), '$.resultRef') IS 'null') OR
+         (NEW.result_ref IS NOT NULL AND json_extract(CAST(NEW.observation_json AS TEXT), '$.resultRef') = NEW.result_ref AND
+          ${P40_VALID_ARTIFACT_REF_SQL}))
+      WHEN 'ExpectedFailure' THEN NEW.effect_admission_state = 'MayHaveStarted' AND
+        ${P40_SETTLEMENT_PROVENANCE_SQL} AND NEW.result_ref IS NULL AND
+        json_type(CAST(NEW.observation_json AS TEXT), '$.observation.text') = 'text' AND
+        json_type(CAST(NEW.observation_json AS TEXT), '$.observation.truncated') IN ('true','false')
+      WHEN 'Interrupted' THEN NEW.effect_admission_state IN ('NotAdmitted','MayHaveStarted') AND
+        NEW.settlement_provenance = 'Ordinary' AND NEW.selected_attempt_no IS NULL AND
+        NEW.selected_fact_id IS NULL AND NEW.result_ref IS NULL
+      WHEN 'OutcomeUnknown' THEN NEW.effect_admission_state = 'MayHaveStarted' AND
+        NEW.settlement_provenance = 'Ordinary' AND NEW.selected_attempt_no IS NULL AND
+        NEW.selected_fact_id IS NULL AND NEW.result_ref IS NULL AND
+        json_type(CAST(NEW.observation_json AS TEXT), '$.reconciliationRefs') = 'array' AND
+        json_array_length(CAST(NEW.observation_json AS TEXT), '$.reconciliationRefs') BETWEEN 1 AND 8 AND
+        NOT EXISTS (SELECT 1 FROM json_each(CAST(NEW.observation_json AS TEXT), '$.reconciliationRefs')
+          WHERE type <> 'text' OR length(CAST(value AS BLOB)) NOT BETWEEN 1 AND 128) AND
+        json(json_extract(CAST(NEW.observation_json AS TEXT), '$.reconciliationRefs')) =
+        json(json_extract(NEW.settlement_json, '$.reconciliationRefs'))
+      WHEN 'RuntimeFailure' THEN NEW.effect_admission_state = 'MayHaveStarted' AND
+        NEW.settlement_provenance = 'Ordinary' AND NEW.selected_attempt_no IS NULL AND
+        NEW.selected_fact_id IS NULL AND NEW.result_ref IS NULL AND
+        json_type(CAST(NEW.observation_json AS TEXT), '$.cause') = 'text' AND
+        length(CAST(json_extract(CAST(NEW.observation_json AS TEXT), '$.cause') AS BLOB)) <= 1024 AND
+        json_extract(CAST(NEW.observation_json AS TEXT), '$.cause') = json_extract(NEW.settlement_json, '$.cause')
+      WHEN 'ReconciledNoEffect' THEN
+        NEW.settlement_provenance = 'Reconciliation' AND
+        NEW.effect_admission_state = 'MayHaveStarted' AND NEW.recovery_binding_state = 'Bound' AND
+        NEW.recovery_binding_sha256 IS NOT NULL AND NEW.selected_attempt_no IS NOT NULL AND
+        NEW.selected_fact_id IS NOT NULL AND NEW.result_ref IS NOT NULL AND
+        json_extract(NEW.settlement_json, '$.reasonCode') IN (
+          'AuthoritySnapshotChanged','ResourceSnapshotChanged',
+          'ApprovalNoLongerAuthorized','StopRequested','ReplayLimitReached') AND
+        json_extract(CAST(NEW.observation_json AS TEXT), '$.reasonCode') =
+          json_extract(NEW.settlement_json, '$.reasonCode') AND
+        json_extract(NEW.settlement_json, '$.reconciliationFactRef') = NEW.selected_fact_id AND
+        json_extract(CAST(NEW.observation_json AS TEXT), '$.reconciliationFactRef') = NEW.selected_fact_id AND
+        json_type(CAST(NEW.observation_json AS TEXT), '$.observation.text') = 'text' AND
+        json_type(CAST(NEW.observation_json AS TEXT), '$.observation.truncated') IN ('true','false') AND
+        json_extract(CAST(NEW.observation_json AS TEXT), '$.resultRef') = NEW.result_ref AND
+        EXISTS (SELECT 1 FROM tool_reconciliation_facts f
+          WHERE f.fact_id = NEW.selected_fact_id AND f.invocation_id = NEW.invocation_id
+            AND f.attempt_no = NEW.selected_attempt_no AND f.fact_origin = 'ProfileReconciliation'
+            AND f.fact_disposition = 'RecoveryInput' AND f.binding_sha256 = NEW.recovery_binding_sha256
+            AND f.outcome = 'NotOccurred' AND f.reason_code IS NULL
+            AND f.evidence_ref IS NOT NULL AND f.evidence_sha256 IS NOT NULL
+            AND length(f.evidence_sha256) = 64
+            AND f.evidence_sha256 NOT GLOB '*[^0-9a-f]*' AND f.result_ref IS NULL)
+      ELSE 0
+    END
+  )
+  ELSE 1
+END, 1) = 1)
+OR (OLD.settled_at IS NOT NULL AND (
+  NEW.invocation_id IS NOT OLD.invocation_id OR
+  NEW.execution_id IS NOT OLD.execution_id OR
+  NEW.workspace_id IS NOT OLD.workspace_id OR
+  NEW.tool_name IS NOT OLD.tool_name OR
+  NEW.tool_version IS NOT OLD.tool_version OR
+  NEW.side_effect_semantics IS NOT OLD.side_effect_semantics OR
+  NEW.arguments_json IS NOT OLD.arguments_json OR
+  NEW.resolved_regions_json IS NOT OLD.resolved_regions_json OR
+  NEW.approval_id IS NOT OLD.approval_id OR
+  NEW.effect_admission_state IS NOT OLD.effect_admission_state OR
+  NEW.intent_at IS NOT OLD.intent_at OR
+  NEW.settled_at IS NOT OLD.settled_at OR
+  NEW.settlement_kind IS NOT OLD.settlement_kind OR
+  NEW.settlement_json IS NOT OLD.settlement_json OR
+  NEW.result_ref IS NOT OLD.result_ref OR
+  NEW.observation_format_version IS NOT OLD.observation_format_version OR
+  NEW.observation_json IS NOT OLD.observation_json OR
+  NEW.observation_sha256 IS NOT OLD.observation_sha256 OR
+  NEW.settlement_provenance IS NOT OLD.settlement_provenance OR
+  NEW.recovery_binding_state IS NOT OLD.recovery_binding_state OR
+  NEW.recovery_binding_sha256 IS NOT OLD.recovery_binding_sha256 OR
+  NEW.selected_attempt_no IS NOT OLD.selected_attempt_no OR
+  NEW.selected_fact_id IS NOT OLD.selected_fact_id
+))
+BEGIN
+  SELECT RAISE(ABORT, 'invalid or immutable P40 tool observation evidence');
+END;
+
+CREATE TABLE tool_observation_replay_attention_facts (
+  attention_fact_id TEXT PRIMARY KEY,
+  event_id TEXT NOT NULL UNIQUE REFERENCES domain_events(event_id),
+  project_id TEXT NOT NULL,
+  execution_id TEXT NOT NULL,
+  target_workspace_id TEXT NOT NULL,
+  logical_action_id TEXT NOT NULL,
+  provider_turn_id TEXT NOT NULL,
+  call_ref TEXT NOT NULL,
+  invocation_id TEXT NOT NULL REFERENCES tool_invocations(invocation_id),
+  failure_code TEXT NOT NULL CHECK (failure_code IN (
+    'Missing','UnsupportedVersion','Malformed','HashMismatch',
+    'SettlementMismatch','IntentMismatch','ResultRefMismatch','UnexpectedResultRef'
+  )),
+  first_detected_at TEXT NOT NULL,
+  UNIQUE (execution_id, invocation_id),
+  UNIQUE (attention_fact_id, project_id, target_workspace_id, event_id),
+  FOREIGN KEY (execution_id, project_id, target_workspace_id)
+    REFERENCES executions(execution_id, project_id, workspace_id)
+);
+CREATE INDEX tool_observation_replay_fact_target
+  ON tool_observation_replay_attention_facts
+    (project_id, target_workspace_id, first_detected_at);
+CREATE TRIGGER tool_observation_replay_attention_fact_no_update
+BEFORE UPDATE ON tool_observation_replay_attention_facts
+BEGIN SELECT RAISE(ABORT, 'tool observation replay facts are immutable'); END;
+CREATE TRIGGER tool_observation_replay_attention_fact_no_delete
+BEFORE DELETE ON tool_observation_replay_attention_facts
+BEGIN SELECT RAISE(ABORT, 'tool observation replay facts are retained'); END;
+
+CREATE TABLE tool_observation_replay_attention_rows (
+  project_id TEXT NOT NULL,
+  dedup_key TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'ToolObservationReplayEvidenceFailure'
+    CHECK (source = 'ToolObservationReplayEvidenceFailure'),
+  severity TEXT NOT NULL DEFAULT 'ActionRequired' CHECK (severity = 'ActionRequired'),
+  target_workspace_id TEXT NOT NULL,
+  summary TEXT NOT NULL DEFAULT 'A terminal tool outcome could not be replayed from durable observation evidence; recovery is paused.'
+    CHECK (summary = 'A terminal tool outcome could not be replayed from durable observation evidence; recovery is paused.'),
+  failure_code TEXT NOT NULL CHECK (failure_code IN (
+    'Missing','UnsupportedVersion','Malformed','HashMismatch',
+    'SettlementMismatch','IntentMismatch','ResultRefMismatch','UnexpectedResultRef'
+  )),
+  occurred_at TEXT NOT NULL,
+  source_event_id TEXT NOT NULL UNIQUE REFERENCES domain_events(event_id),
+  source_fact_id TEXT NOT NULL,
+  PRIMARY KEY (project_id, dedup_key),
+  CHECK (dedup_key = source_fact_id),
+  FOREIGN KEY (source_fact_id, project_id, target_workspace_id, source_event_id)
+    REFERENCES tool_observation_replay_attention_facts
+      (attention_fact_id, project_id, target_workspace_id, event_id),
+  FOREIGN KEY (target_workspace_id, project_id)
+    REFERENCES workspaces(workspace_id, project_id)
+);
+CREATE INDEX tool_observation_replay_row_target
+  ON tool_observation_replay_attention_rows
+    (project_id, target_workspace_id, occurred_at);
+`;
+
+export const P40_TOOL_OBSERVATION_REPLAY_MIGRATION: MigrationFile = {
+  id: 40,
+  name: "tool_observation_replay_evidence",
+  sql: P40_TOOL_OBSERVATION_REPLAY_DDL,
+  requiresUserVersion: 39,
+};
+
+const p40InvocationObservationGuardsForP44 = (() => {
+  const startMarker =
+    "CREATE TRIGGER tool_invocations_observation_insert_guard";
+  const endMarker = "CREATE TABLE tool_observation_replay_attention_facts";
+  const start = P40_TOOL_OBSERVATION_REPLAY_DDL.indexOf(startMarker);
+  const end = P40_TOOL_OBSERVATION_REPLAY_DDL.indexOf(endMarker, start);
+  if (start < 0 || end < 0) {
+    throw new Error("P40 invocation observation guards are unavailable.");
+  }
+  const source = P40_TOOL_OBSERVATION_REPLAY_DDL.slice(start, end).trim();
+  const oldAllowlistEntry =
+    "'InvocationAuthorityDenied','ApprovalRequired','ApprovalNotFound',";
+  if (source.split(oldAllowlistEntry).length - 1 !== 2) {
+    throw new Error("P40 Denied guard shape changed; refusing P44 derivation.");
+  }
+  return source.replaceAll(
+    oldAllowlistEntry,
+    "'InvocationAuthorityDenied','ApprovalRequired','ApprovalRejected','ApprovalNotFound',",
+  );
+})();
+
+/** P4 approval rejection is a frozen terminal no-effect Denied outcome. This
+ * one-way repair preserves the P40 trigger predicates and adds only its reason
+ * code. */
+export const P44_APPROVAL_REJECTED_NO_EFFECT_DENIAL_MIGRATION = {
+  id: 44,
+  name: "approval_rejected_no_effect_denial",
+  requiresUserVersion: 43,
+  sql: `
+DROP TRIGGER tool_invocations_observation_insert_guard;
+DROP TRIGGER tool_invocations_observation_update_guard;
+${p40InvocationObservationGuardsForP44}
+`,
+} satisfies MigrationFile & { readonly requiresUserVersion: 43 };
+
+const p40InvocationObservationGuardsForP54 = (() => {
+  const allowlist =
+    "'ResourceResolutionDenied','ResourceAdmissionDenied','ApprovalNoLongerAuthorized'";
+  if (p40InvocationObservationGuardsForP44.split(allowlist).length - 1 !== 2) {
+    throw new Error(
+      "P40 Denied guard allowlists changed; refusing Native V2 derivation.",
+    );
+  }
+  return p40InvocationObservationGuardsForP44.replaceAll(
+    allowlist,
+    "'ResourceResolutionDenied','ResourceAdmissionDenied','ApprovalNoLongerAuthorized','ProcessExecutionDisabled','NativeOsTupleUnavailable'",
+  );
+})();
+
+/** Native V2 adds only two closed P4 Denied codes to the current P40 guards. */
+export const P54_NATIVE_PROCESS_MODE_NO_EFFECT_DENIAL_MIGRATION = {
+  id: 54,
+  name: "native_process_mode_no_effect_denial",
+  requiresUserVersion: 53,
+  sql: `
+DROP TRIGGER tool_invocations_observation_insert_guard;
+DROP TRIGGER tool_invocations_observation_update_guard;
+${p40InvocationObservationGuardsForP54}
+`,
+} satisfies MigrationFile & { readonly requiresUserVersion: 53 };
+
+/**
+ * Schema 44 is the current runtime target. P39 remains an exact privileged
+ * maintenance-only step and is deliberately absent from this registry; the
+ * trusted offline coordinator applies it before this ordinary suffix.
+ */
+export const P43_MIGRATION = {
+  id: P43_BLOCKED_WORKEPISODE_MIGRATION.migrationVersion,
+  name: "blocked_workepisode_and_inbox_workspace_sequence",
+  requiresUserVersion: 42,
+  sql: P43_BLOCKED_WORKEPISODE_MIGRATION.sql,
+} satisfies MigrationFile & { readonly requiresUserVersion: 42 };
+
+export const CURRENT_SCHEMA_VERSION = 54 as const;
+export const CURRENT_MIGRATIONS: ReadonlyArray<MigrationFile> = Object.freeze([
+  ...P38_MIGRATIONS,
+  P40_TOOL_OBSERVATION_REPLAY_MIGRATION,
+  P41_SUBMITTED_DECISION_BINDING_ATTENTION_MIGRATION,
+  P42_PROJECT_RESOURCE_SOURCE_MIGRATION,
+  P43_MIGRATION,
+  P44_APPROVAL_REJECTED_NO_EFFECT_DENIAL_MIGRATION,
+  P45_RETRY_VERIFICATION_ORIGIN_MIGRATION,
+  P46_VERIFICATION_EVIDENCE_SNAPSHOT_MIGRATION,
+  P47_AH14_LEGACY_ADOPTION_ATTENTION_MIGRATION,
+  P48_AH19_CONVERSATION_CHECKPOINT_OWNER_MIGRATION,
+  P49_SANDBOX_POLICY_AND_GRANT_PROVENANCE_MIGRATION,
+  P50_SANDBOX_PROVIDER_UNAVAILABLE_FACT_MIGRATION,
+  P51_VERIFICATION_V2_CONSUMER_RECONCILIATION_MIGRATION,
+  P52_WORK_CONTRACT_REVISION_MIGRATION,
+  P53_CANONICAL_OWNERSHIP_CARVEOUTS_MIGRATION,
+  P54_NATIVE_PROCESS_MODE_NO_EFFECT_DENIAL_MIGRATION,
+]);
+export const CURRENT_MIGRATION_BASELINE = CURRENT_SCHEMA_VERSION;

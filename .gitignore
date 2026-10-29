@@ -4,11 +4,24 @@ coverage/
 *.tsbuildinfo
 .pnpm-store/
 *.log
+*.db
+*.db-shm
+*.db-wal
 .worktrees/
 
 # capability real-provider config (may contain a literal apiKey)
 capability.config.json
 .vitest/
+.functional-test-results/
+.test-results/
+playwright-report/
+
+# Disposable local database/workspace fixtures created by functional and
+# runtime-safety tests. Their manifests are evidence, not repository source.
+.arbor-functional-schema44-*/
+arbor-schema*-clone-*/
+p12-runtime-safety-template-*/
+.arbor-p39-writer-*.sqlite*
 
 # Local provider configuration — may contain inline credentials
 arbor.config.json

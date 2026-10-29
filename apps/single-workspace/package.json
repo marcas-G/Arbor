@@ -28,14 +28,20 @@
     "@arbor/worker-local": "workspace:*",
     "@arbor/provider-fake": "workspace:*",
     "@arbor/provider-openai": "workspace:*",
+    "@arbor/provider-testecho": "workspace:*",
     "@arbor/sandbox-local": "workspace:*",
+    "@arbor/sandbox-native-posix": "workspace:*",
+    "@arbor/sandbox-windows": "workspace:*",
     "@arbor/secret-env": "workspace:*",
     "@arbor/secret-file": "workspace:*",
     "@arbor/blob-local": "workspace:*",
     "ws": "8.21.3"
   },
   "scripts": {
-    "build": "tsc -b"
+    "build": "tsc -b",
+    "schema:upgrade": "node dist/schema-upgrade.js",
+    "p6:inbox-rebuild": "node dist/p6-inbox-rebuild.js",
+    "sandbox:authority-upgrade": "node dist/transport/sandbox-authority-provisioning-cli.js"
   },
   "devDependencies": {
     "@types/ws": "8.18.1"

@@ -1,4 +1,5 @@
 export * from "./actions.js";
+export * from "./activation-attention-reconciliation.js";
 export * from "./attention.js";
 export * from "./attention-loader.js";
 export * from "./effective-facts.js";
@@ -17,4 +18,5 @@ export * from "./views/current-work.js";
 export * from "./views/dependency.js";
 export * from "./views/shared.js";
 export * from "./views/verification.js";
+export * from "./views/work-detail.js";
 export * from "./views/workspace-detail.js";

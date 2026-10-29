@@ -444,6 +444,48 @@ export interface ReasoningAttachment {
   readonly receivedAt: string;
 }
 
+/** Stable blob encoding. Only the envelope is decoded; opaquePayload is
+ * never interpreted or normalized outside the protocol adapter. */
+export const encodeReasoningAttachment = (
+  attachment: ReasoningAttachment,
+): Uint8Array => new TextEncoder().encode(JSON.stringify(attachment));
+
+export const decodeReasoningAttachment = (
+  bytes: Uint8Array,
+): ReasoningAttachment | undefined => {
+  let value: unknown;
+  try {
+    value = JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    return undefined;
+  }
+  if (typeof value !== "object" || value === null) return undefined;
+  const record = value as Record<string, unknown>;
+  if (
+    record.attachmentType !== "provider-reasoning-v1" ||
+    typeof record.modelRef !== "string" ||
+    record.modelRef.length === 0 ||
+    typeof record.protocolFamily !== "string" ||
+    record.protocolFamily.length === 0 ||
+    typeof record.bindingFingerprint !== "string" ||
+    !/^p16fp_[0-9a-f]{64}$/.test(record.bindingFingerprint) ||
+    typeof record.opaquePayload !== "string" ||
+    record.opaquePayload.length === 0 ||
+    typeof record.receivedAt !== "string" ||
+    record.receivedAt.length === 0
+  ) {
+    return undefined;
+  }
+  return {
+    attachmentType: "provider-reasoning-v1",
+    modelRef: record.modelRef,
+    protocolFamily: record.protocolFamily,
+    bindingFingerprint: record.bindingFingerprint,
+    opaquePayload: record.opaquePayload,
+    receivedAt: record.receivedAt,
+  };
+};
+
 /** Model Context's complete decision set over a reasoning attachment. */
 export type ReasoningAttachmentDecision =
   | { readonly _tag: "Preserve" }

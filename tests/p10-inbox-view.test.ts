@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import type { InboxViewRes } from "../packages/api-contracts/src/index.js";
 import {
@@ -7,6 +7,7 @@ import {
   WorkId,
 } from "../packages/domain/dist/index.js";
 import {
+  type ExecutableApprovalRecord,
   InboxProjectionStore,
   TransactionPort,
 } from "../packages/ports/src/index.js";
@@ -133,6 +134,82 @@ const seedConsistent = seedCanonical(
   }),
 );
 
+const approvalRecord = (overrides: Record<string, unknown> = {}) =>
+  ({
+    approvalId: "approval-7",
+    routeKind: "Executable",
+    revision: 0,
+    state: "Pending",
+    projectId: p10Project,
+    workspaceId: p10Root,
+    executionId: "exe_00000000-0000-7000-8000-000000000007",
+    toolName: "shell",
+    toolVersion: "2",
+    argumentsJson: JSON.stringify({
+      target: { mount: "workspace", path: "C:\\private\\deploy.ps1" },
+      command: "deploy --token TOP_SECRET",
+      password: "DO_NOT_LEAK",
+      limit: 3,
+      mode: "dry-run",
+    }),
+    targetResourceSpaceIds: ["space_opaque_7"],
+    sideEffectSemantics: "Reconcilable",
+    expiresAt: "2026-10-12T03:00:00.000Z",
+    actionDigest: "sha256:opaque-digest-7",
+    ...overrides,
+  }) as unknown as ExecutableApprovalRecord;
+
+const toolDefinition = {
+  name: "shell",
+  version: "2",
+  hash: "shell-v2-hash",
+  description: "",
+  schemaJson: JSON.stringify({
+    type: "object",
+    required: ["target", "command", "password", "limit", "mode"],
+    properties: {
+      target: {
+        type: "object",
+        required: ["mount", "path"],
+        properties: {
+          mount: { type: "string" },
+          path: { type: "string" },
+        },
+      },
+      command: { type: "string" },
+      password: { type: "string", writeOnly: true },
+      limit: { type: "integer" },
+      mode: { type: "string", enum: ["dry-run", "apply"] },
+    },
+  }),
+  capabilityMetadata: ["shell:exec"],
+  sideEffectSemantics: "Reconcilable",
+} as const;
+
+const inboxEntry = (entryKey: string, summary = "safe summary") =>
+  ({
+    recipientWorkspaceId: p10Root,
+    entryKey,
+    kind: "Governance",
+    summary,
+    admittedAt: "2026-10-12T02:00:00.000Z",
+  }) as const;
+
+const approvalInboxDeps = (
+  entryKey: string,
+  record: ExecutableApprovalRecord = approvalRecord(),
+) => ({
+  listUnconsumedInbox: () => Effect.succeed([inboxEntry(entryKey)]),
+  journalLastSequence: () => Effect.succeed(9),
+  projectIdOfWorkspace: () => Effect.succeed(p10Project),
+  findExecutableApproval: (approvalId: string) =>
+    Effect.succeed(
+      approvalId === record.approvalId ? Option.some(record) : Option.none(),
+    ),
+  findToolDefinitionHash: () => Effect.succeed(Option.some("shell-v2-hash")),
+  resolveToolDefinition: () => Effect.succeed(Option.some(toolDefinition)),
+});
+
 describe("P10-008 Inbox view (01 §1 InboxViewReq/Res; P9 05 §3.2)", () => {
   it("unconsumed entries carry the read-time journal watermark; consumed entries stay canonical but leave the view", async () => {
     await runP10(
@@ -167,6 +244,136 @@ describe("P10-008 Inbox view (01 §1 InboxViewReq/Res; P9 05 §3.2)", () => {
       }),
       makeP10App(),
     );
+  });
+
+  it("projects a trusted Executable target from the exact eap key and redacts free-form strings and paths", async () => {
+    const entryKey = "eap:approval-7:0";
+    const deps = {
+      ...approvalInboxDeps(entryKey),
+      listUnconsumedInbox: () =>
+        Effect.succeed([
+          inboxEntry(
+            entryKey,
+            JSON.stringify({
+              arguments: "C:\\private\\deploy.ps1",
+              token: "TOP_SECRET",
+            }),
+          ),
+        ]),
+    };
+    const view = await Effect.runPromise(deriveInboxView(p10Root, deps));
+    expect(view.unconsumed[0]?.summary).toBe(
+      "Executable approval requires review",
+    );
+    expect(view.unconsumed[0]?.target).toEqual({
+      kind: "ExecutableApproval",
+      approvalId: "approval-7",
+      revision: 0,
+      executionId: "exe_00000000-0000-7000-8000-000000000007",
+      toolName: "shell",
+      toolVersion: "2",
+      validatedArgumentsPreview:
+        '{"target":{"mount":"[redacted]","path":"[redacted]"},"command":"[redacted]","password":"[redacted]","limit":3,"mode":"dry-run"}',
+      targetResourceSpaceIds: ["space_opaque_7"],
+      capabilities: ["shell:exec"],
+      sideEffectSemantics: "Reconcilable",
+      expiresAt: "2026-10-12T03:00:00.000Z",
+      actionDigest: "sha256:opaque-digest-7",
+    });
+    expect(JSON.stringify(view)).not.toContain("private");
+    expect(JSON.stringify(view)).not.toContain("TOP_SECRET");
+    expect(JSON.stringify(view)).not.toContain("DO_NOT_LEAK");
+    expect(JSON.stringify(view)).not.toContain("deploy --token");
+  });
+
+  it("keeps __proto__ inert while projecting a prototype-safe validated preview", async () => {
+    const argumentsJson = '{"__proto__":{"polluted":"safe"},"mode":"dry-run"}';
+    const schemaJson =
+      '{"type":"object","required":["__proto__","mode"],"properties":{"__proto__":{"type":"object","required":["polluted"],"properties":{"polluted":{"type":"string","enum":["safe"]}}},"mode":{"type":"string","enum":["dry-run"]}}}';
+    const deps = {
+      ...approvalInboxDeps(
+        "eap:approval-7:0",
+        approvalRecord({ argumentsJson }),
+      ),
+      resolveToolDefinition: () =>
+        Effect.succeed(Option.some({ ...toolDefinition, schemaJson })),
+    };
+
+    const view = await Effect.runPromise(deriveInboxView(p10Root, deps));
+    expect(view.unconsumed[0]?.target).toMatchObject({
+      validatedArgumentsPreview:
+        '{"__proto__":{"polluted":"safe"},"mode":"dry-run"}',
+    });
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  it("does not resolve a Control cap target or infer an approval from Inbox summary text", async () => {
+    let approvalLookups = 0;
+    const deps = {
+      ...approvalInboxDeps("cap:approval-7:0"),
+      listUnconsumedInbox: () =>
+        Effect.succeed([
+          inboxEntry(
+            "cap:approval-7:0",
+            '{"kind":"ExecutableApproval","approvalId":"approval-7","revision":0}',
+          ),
+          inboxEntry(
+            "msg:message-7",
+            '{"kind":"ExecutableApproval","approvalId":"approval-7","revision":0}',
+          ),
+        ]),
+      findExecutableApproval: (approvalId: string) => {
+        approvalLookups += 1;
+        return Effect.succeed(
+          approvalId === "approval-7"
+            ? Option.some(approvalRecord())
+            : Option.none(),
+        );
+      },
+    };
+    const view = await Effect.runPromise(deriveInboxView(p10Root, deps));
+    expect(approvalLookups).toBe(0);
+    expect(view.unconsumed.map((entry) => entry.target)).toEqual([
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it("fails closed when an eap key revision does not match its proven Executable approval", async () => {
+    await expect(
+      Effect.runPromise(
+        deriveInboxView(p10Root, approvalInboxDeps("eap:approval-7:1")),
+      ),
+    ).rejects.toMatchObject({
+      _tag: "ProjectionReadFailure",
+      cause: { _tag: "ExecutableApprovalReviewUnavailable" },
+    });
+  });
+
+  it("fails closed when the current same-name/version catalog hash differs from the originating manifest", async () => {
+    const deps = {
+      ...approvalInboxDeps("eap:approval-7:0"),
+      findToolDefinitionHash: () => Effect.succeed(Option.some("hash-A")),
+      resolveToolDefinition: () =>
+        Effect.succeed(Option.some({ ...toolDefinition, hash: "hash-B" })),
+    };
+    await expect(
+      Effect.runPromise(deriveInboxView(p10Root, deps)),
+    ).rejects.toMatchObject({
+      _tag: "ProjectionReadFailure",
+      cause: { _tag: "ExecutableApprovalReviewUnavailable" },
+    });
+  });
+
+  it("fails closed without a durable manifest hash proof and returns no approval target", async () => {
+    const deps = {
+      ...approvalInboxDeps("eap:approval-7:0"),
+      findToolDefinitionHash: () => Effect.succeed(Option.none()),
+    };
+    const result = await Effect.runPromise(
+      Effect.exit(deriveInboxView(p10Root, deps)),
+    );
+    expect(result._tag).toBe("Failure");
   });
 });
 

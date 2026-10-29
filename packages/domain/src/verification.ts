@@ -7,6 +7,7 @@ import type {
   ExecutionId,
   VerificationId,
   WorkId,
+  WorkspaceId,
 } from "./ids.js";
 import type { WorkRevision } from "./ordinals.js";
 import type { DomainResult } from "./result.js";
@@ -41,6 +42,20 @@ export type VerificationVerdict = Schema.Schema.Type<
 
 export type ConclusionReason = "Orphaned";
 
+export type VerificationSnapshotStatus =
+  | "Pending"
+  | "Available"
+  | "NotApplicableOrphaned"
+  | "UnavailableLegacy";
+
+export interface VerificationCriterionResult {
+  readonly criterionId: string;
+  readonly requirement: string;
+  readonly required: boolean;
+  readonly verdict: VerificationVerdict;
+  readonly evidenceRefs: ReadonlyArray<EvidenceId>;
+}
+
 /** v1.11 G1: required-qualified deterministic aggregation (SD §9.6). */
 export const aggregateVerdict = (
   results: ReadonlyArray<{
@@ -71,14 +86,20 @@ export type VerificationState =
 export interface Verification {
   readonly verificationId: VerificationId;
   readonly workId: WorkId;
+  /** Persisted G4 owner snapshot; absent only in legacy/in-memory fixtures. */
+  readonly ownerWorkspaceId?: WorkspaceId;
   readonly targetWorkRevision: WorkRevision;
   readonly missionSnapshot: VerificationMission;
+  readonly criteriaResults: ReadonlyArray<VerificationCriterionResult> | null;
+  readonly snapshotStatus: VerificationSnapshotStatus;
   readonly targetDeliverables: ReadonlyArray<DeliverableId>;
   readonly targetArtifactVersions: ReadonlyArray<ArtifactId>;
   readonly targetEnvironmentRevision: string | null;
   readonly environmentSnapshotRef: string | null;
   readonly evidenceRefs: ReadonlyArray<EvidenceId>;
   readonly verificationExecutionIds: ReadonlyArray<ExecutionId>;
+  /** Durable BlobRef for the verifier-authored conclusion summary. */
+  readonly summaryRef: string | null;
   readonly state: VerificationState;
 }
 
@@ -107,6 +128,9 @@ export const startVerification = (
   environmentSnapshotRef: input.environmentSnapshotRef ?? null,
   evidenceRefs: [],
   verificationExecutionIds: input.verificationExecutionIds ?? [],
+  summaryRef: null,
+  criteriaResults: null,
+  snapshotStatus: "Pending",
   state: { status: "Open" },
 });
 
@@ -132,7 +156,9 @@ export const recordVerificationEvidence = (
 export const concludeVerification = (
   verification: Verification,
   verdict: VerificationVerdict,
-  conclusionReason?: ConclusionReason,
+  summaryRef: string,
+  conclusionReason: ConclusionReason | undefined,
+  criteriaResults: ReadonlyArray<VerificationCriterionResult>,
 ): DomainResult<Verification> => {
   if (verification.state.status !== "Open") {
     return err(concludedError());
@@ -144,8 +170,18 @@ export const concludeVerification = (
         "conclusionReason Orphaned pairs only with verdict Unknown (v1.11 G5)",
     });
   }
+  if (summaryRef.trim().length === 0) {
+    return err({
+      _tag: "AuthorityDenied",
+      reason: "concluded Verification requires a non-empty summaryRef",
+    });
+  }
   return ok({
     ...verification,
+    summaryRef,
+    criteriaResults,
+    snapshotStatus:
+      conclusionReason === "Orphaned" ? "NotApplicableOrphaned" : "Available",
     state:
       conclusionReason === undefined
         ? { status: "Concluded", verdict }

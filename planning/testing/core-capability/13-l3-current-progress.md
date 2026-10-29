@@ -13,7 +13,7 @@ DeepSeek `deepseek-flash` via `capability.config.json` (env-overridable).
 | B03 Control Action | FAIL (near) | model invokes arbor_wait; remaining gap = **work_waits row not written** (settle path not reached — same observation-return wiring suspect) |
 | B05 Human Steer | FAIL (expected) | durable half passes; steer-to-cognition promotion unimplemented (sentinel documents the full oracle) |
 | B06–B09, B11 | BLOCKED → **AUTHORIZED** | DID v1.19 ACR-6 unblocks implementation; sentinel specs ready in `12-l3-blocked-specifications.md` |
-| B10 Verification | BLOCKED_BY_DESIGN_GAP | unchanged; awaits G-V2-2/3/4 rulings |
+| B10 Verification | **PASS** | G-V2-2/3/4 closed by accepted DID v1.26 VDC; repeatable B10-only real-provider sentinel extracted and green |
 | B12 Restart / Continuation | FAIL (harness verified) | spawn/SIGKILL/restart mechanics work; attribution oracle refined (history replay ≠ side effect); needs a rerun after the observation-return fix |
 | B13 Failure Recovery | FAIL (near) | injected fault + recovery verified in probe; needs rerun |
 | B14 Web Projection | FAIL (near) | pagination oracle rewritten on messageId; needs rerun |

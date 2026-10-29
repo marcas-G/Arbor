@@ -1,8 +1,44 @@
 # P2 — Contract Index
 
-**Authority:** DID v1.7 (phase-scoped closure). These documents are **not** a
+**RAI-DG-01 amendment (DID v1.37 §8.18A.1):** P2 `02`/`05` own the
+transaction-scoped exact-Work-revision readmission source query and
+authoritative Work-bound admission recheck. It adds no gate table, migration,
+WorkWait state or runnable port signature.
+
+**Accepted Blocked WorkEpisode amendment:** P2 `01`/`02`/`04`/`05` own
+atomic Blocked settlement, current WorkBlocker ledger writes, exact
+Manual+InboxAdvanced Wait registration, and the transaction-scoped blocker
+store. It does not infer blockers from legacy rows or add a Work lifecycle.
+
+**Accepted ProviderTurnId V2 codec amendment (DID v1.58):** P2 `01` validates
+`failedActionRefs[].providerTurnId` through the closed DID §2.2.1 codec and
+binds it to the exact P3 source; P2 `04` preserves the exact value in the
+existing TEXT Step key. Legacy UUIDv7 values are read/replay-only. No P2 DDL,
+backfill, or identifier rewrite is added.
+
+> **MAC successor (DID v1.31):** generic durable Execution, Lease/Fencing,
+> Wait and recovery contracts remain. Active new-write temporary parallel Agent
+> semantics and MAC phase gates are owned by `docs/design/implementation/MAC/**`.
+> Conflicts resolve in favor of MAC; historical rows remain fail-closed.
+
+**Authority:** DID v1.28 (P2 phase-scoped closure plus EGP supersession). These documents are **not** a
 fifth design layer; they are the P2-owned implementation contracts authorized
 by DID §13.
+
+## Accepted owner amendment — AH7-DG-03 (2026-10-10)
+
+Decision: `ACCEPT_TOOL_APPROVAL_SETTLEMENT_ATOMICITY`. Accepted proposal SHA-256:
+`E818CC208F6A3B233FEF213E54E02AA30A1E96D6147313870C75FDE38DC94CBE`;
+source and delegated decision record are
+`planning/proposals/AH7-approval-settlement-fixed-decision-draft.md` and
+`planning/results/AH7-DG-03-governance-acceptance-and-landing.review.md`.
+
+P2 `03` §3–§4 now identifies P4 intent, approval, effect-admission,
+no-effect-settlement and ToolInvocation settlement writes as fenced Worker
+mutations, and freezes the independent `stop_requested_at` check at P4 claim
+and effect admission. Existing RecoveryController stop/unresolved-side-effect
+disposition in P2 `06` is unchanged. This is an additive owner-contract
+amendment; DID versions and lease identity semantics are unchanged.
 
 ```text
 Detailed Implementation Design v1.7 (frozen)
@@ -10,17 +46,59 @@ Detailed Implementation Design v1.7 (frozen)
 docs/design/implementation/P2/**   (these contracts)
 ```
 
+## Accepted owner amendment — EA-DG-01 (2026-10-11)
+
+Decision `ACCEPT_EXECUTABLE_APPROVAL_ISSUANCE_DECISION_RESUME`, fixed proposal
+SHA-256 `E4F1B2935E0397292049BB3FDB1AB5847B02443CCE1B55A9827F823C63F145EB`.
+P2 `03` §4.1 freezes the full Worker-fenced issuance transaction and
+Stop/issuance commit ordering; `05` uses the existing `HumanIntervention` wake
+and `06` recovers a durable ApprovalRequired pause to the same active
+Execution after resolution. External Stop retains authenticated P2 command
+authority without a Worker-lease requirement. Control/CAPA behavior is
+unchanged. Acceptance:
+`planning/results/EA-DG-01-governance-acceptance.md`;
+landing audit: `planning/results/EA-DG-01-contract-landing.result.md`.
+
 DID §13 points at `docs/design/implementation/P2/**`; a conflict resolves in
 favor of the DID.
+
+## Accepted owner amendment — AH10 Submitted DecisionEpisode binding failure (DID v1.42)
+
+Fixed proposal SHA-256:
+`10D5A2532810B65DFBD3E397B141F6C0765AD32F4992BDDD0FE17F468975339A`;
+acceptance and landing audit:
+`planning/results/AH10-submitted-decision-binding-P41-governance-acceptance-and-landing.md`.
+P2 `06` forbids ordinary recovery settlement of the exact fact-blocked
+DecisionEpisode. After existing authorized StopExecution, it requires a
+current full lease, P3/P9 stop-only quiescence, a persisted
+`SettlementProposed(Interrupted(StopRequested))`, and the existing unresolved
+P4 side-effect gate to be clear before RecoveryController uses the existing
+SettleExecution. This frees the active slot without clearing public P9/P10
+Attention or replaying the old selection. Migration 0041 remains conditional
+on integrated/qualified 0036–0040; this landing authorizes no implementation.
+
+**DID v1.28 EGP supersession:** every P2 statement that admits, persists,
+schedules or settles `ExecutionFocus=Coordination` is historical. New writes
+use exact `ExecutionEpisodeBinding`; migration 0024 retains the old focus
+columns only as migration/audit evidence. Multiple runnable Work that requires
+model judgment creates a durable WorkSelectionDecisionRequest and exact
+DecisionEpisode. `CoordinationCompleted` is not a valid new settlement.
+Implementation migrations 0025/0026 subsequently remove the focus columns from
+the current `executions` and `agent_execution_state` schemas; legacy decoding
+is compatibility-only and cannot admit or drive a new execution.
+
+P41 does not change the accepted EGP binding, formation, or settlement
+semantics; it adds only P2 RecoveryController handling for the exact
+fact-blocked Submitted DecisionEpisode case described above.
 
 ## Documents
 
 | Doc | Owns |
 |---|---|
 | `01-command-contracts.md` | P2 command set, runtime authority facts, mutation classes, payload/result/rejection/events |
-| `02-port-contracts.md` | P2 ports (ExecutionRepository, Session append, WorkerDispatch, ExecutionDriver, RuntimeSafetyGate, ExecutionScheduler, WorkWaitStore, timers), Effect A/E/R |
-| `03-lease-fencing-model.md` | lease lifecycle, generation, fence/stop predicates, quiescence-control admission, recovery authority |
-| `04-sqlite-schema.md` | P2 DDL (`executions`, `execution_leases`, `agent_execution_state`, `session_entries`, `work_waits`, `scheduler_timers`), indexes, CAS SQL |
+| `02-port-contracts.md` | P2 ports (ExecutionRepository, Session append/idempotent source write, AgentLoopStepStore, WorkerDispatch, ExecutionDriver, RuntimeSafetyGate, ExecutionScheduler, WorkWaitStore, timers), Effect A/E/R |
+| `03-lease-fencing-model.md` | lease lifecycle, generation, fence/stop predicates, quiescence-control admission, recovery authority; AH10 DeliverMessage inherits the existing NormalExecutionMutation fence |
+| `04-sqlite-schema.md` | P2 DDL (`executions`, `execution_leases`, `agent_execution_state`, `session_entries`, `work_waits`, `scheduler_timers`) + DID v1.20 `agent_loop_steps`/`agent_loop_step_actions` successor migration, indexes, CAS SQL |
 | `05-scheduler-wait.md` | ExecutionScheduler, deterministic re-evaluation trigger, durable WorkWait, wake/timer, lost-wake-up protection |
 | `06-recovery-skeleton.md` | recovery order, expired-lease invalidation, unsettled detection, RecoveryController settlement, DurabilityEnvelope |
 | `00-contract-index.md` | this index |
@@ -40,7 +118,7 @@ facts only.
 | G2 `RecordEnvironmentChange` → P11 | `01` §1 |
 | G3 P2 scheduler/WorkWait/wake vs P7 runnability | `02` §6–§8, `05` |
 | G4 ExecutionDriverPort + Fake Driver + P2 Runtime Safety gate | `02` §5, `05` §7 |
-| G5 WorkspaceMain/ExecutionBound admission + atomic session + IDs | `01` §5, `02` §2, `04` §3.1 |
+| G5 exact ExecutionEpisodeBinding admission + binding/session/ID checks | `01` §5, `02` §2, `04` §3.1; EGP v1.28 supersedes WorkspaceMain/ExecutionBound focus-era new writes |
 
 ## Phase-scoped closures owned here
 
@@ -54,6 +132,7 @@ facts only.
 | `Fake Driver` contract | `02` §5, `05` §7 |
 | tool/provider reconciliation boundary (skeleton only) | `06` §5 |
 | `AgentExecutionState` persistence | `04` §3.3 |
+| DID v1.20 durable AgentLoopStep fencing / idempotent Session source seam | `02` §3/§3A, `04` §3.4/§3.7, `06` §4A |
 
 ## Inherited-artifact evolutions (authorized by DID v1.7 G1)
 
@@ -98,3 +177,20 @@ No open Blocking item after R1/R2. R3–R5 are non-blocking closures.
 FROZEN — P2 phase-scoped contracts; review Blocking = 0 (P2 FORMALLY CLOSED).
 `planning/gaps/` once review starts. No P2 planning is generated until
 Blocking = 0.
+
+**v1.20 successor:** the AgentLoopStep additions are additive cross-phase design
+contracts. They do not reopen P2 completion and do not authorize migration or
+runtime implementation.
+
+**v1.22 SCRC successor:** typed Session Timeline append/frontier/checkpoint,
+source-key Inbox promotion and checkpoint/epoch recovery are additive
+cross-phase design contracts in `02`/`04`/`06`. They do not reopen historical
+P2 completion. Migration 0019 and implementation require separate authorization.
+
+## V21 RecoveryBinding Attention compatibility note
+
+P2/04's already-existing EGP `executions.episode_revision` is the direct
+expectedEpisodeRevision source; this landing adds no column/migration. P2/05/06
+continue the existing HumanIntervention park/wake of the same active
+Execution/action/invocation, with no new wait state or execution record. The
+V21 P10 binding-failure source remains read-only derived Attention.

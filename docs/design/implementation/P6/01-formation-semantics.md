@@ -34,7 +34,10 @@ interface ChildWorkspaceProposal {
 ```
 
 - `responsibilityDraft.resourceBoundary` 的 `basisResponsibilityRevision` 一致性由 P1 `01` §6 precondition 承担；P6 不重复校验。
-- `initialWork.verificationMission` 不在 proposal 中：P6 不拥有 Verification 语义（P8）；`AssignWork` 需要该字段时使用 P1 冻结的 minimal 占位 mission，P8 到位后收紧。
+- DID v1.26 VDC：`initialWork` 若存在，proposal 必须带完整
+  `verificationMission`（goal、structured criteria、至少一个 required criterion、
+  riskRequirements）。Parent 提供该语义；Runtime 不得从 objective/why 自动生成
+  placeholder mission。没有 initialWork 的 child proposal 仍合法。
 
 ## 3. `SpawnSpecialist`（P6 冻结载荷；含 D3 约束）
 
@@ -115,6 +118,11 @@ CreateChildWorkspace（P1 §6 全契约；CommandId = deterministic f(proposalId
 - 幂等：同 `(proposalId, proposalRevision)` 的 approve 重投 → 既有 Receipt（P1 §8 规则）；对已 Approved 的 proposal 再 RecordDecision → terminal-state rejection。
 - human gate 的裁决不跳过任何 P1 precondition；裁决不是 authority 豁免。
 - 裁决结果（含 reject）作为 Observation 回到发起 Execution 的 Workspace Inbox。
+
+FT-DG-03: `RecordDecision`'s strict registered codec and typed internal
+validator are derived from the exact payload/closed outcome union owned here;
+the codec does not change the human-only authority or deterministic
+`CreateChildWorkspace` consumer path (DID §4.1B; P13 `02`).
 
 ### 4.3 深层链路（无 gate）
 

@@ -7,7 +7,7 @@ const events = (
 ): ReadonlyArray<CanonicalProviderEvent> => [
   {
     _tag: "TurnStarted",
-    providerTurnId: "ptn_x" as never,
+    providerTurnId: "ptn_exe_018f2b3c-4d5e-7abc-8def-0123456789a1_0" as never,
     attemptNo: 0,
     modelRef: "m",
   },
@@ -40,13 +40,32 @@ describe("P3 decodeTurn", () => {
     if (result.ok) {
       expect(result.output.toolInvocations).toEqual([
         {
-          providerTurnId: "ptn_x",
+          providerTurnId: "ptn_exe_018f2b3c-4d5e-7abc-8def-0123456789a1_0",
           outputPosition: 0,
           callRef: "c1",
           toolName: "read",
           argumentsJson: '{"path":"README.md"}',
         },
       ]);
+    }
+  });
+
+  it("reassembles reasoning chunks byte-for-byte without parsing them", () => {
+    const result = decodeTurn(
+      events([
+        { _tag: "ReasoningDelta", text: 'opaque:{"step":' },
+        { _tag: "ReasoningDelta", text: "1}" },
+        {
+          _tag: "ToolCallProposed",
+          callRef: "call-reasoned",
+          toolName: "read",
+          argumentsJson: '{"path":"README.md"}',
+        },
+      ]),
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.output.reasoningOpaquePayload).toBe('opaque:{"step":1}');
     }
   });
 

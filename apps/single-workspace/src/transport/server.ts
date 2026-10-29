@@ -3,6 +3,10 @@ import { createServer } from "node:http";
 import type { Duplex } from "node:stream";
 import type { ConversationStreamFrame } from "@arbor/api-contracts";
 import type { Principal } from "@arbor/domain";
+import type {
+  ProjectDirectoryService,
+  ProjectResourceProfilePortService,
+} from "@arbor/ports";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { type WebSocket, WebSocketServer } from "ws";
@@ -34,9 +38,15 @@ export interface WebTransportConfig {
   readonly http: HttpShell;
   readonly webSocket: WebSocketShell;
   readonly authenticator?: AuthenticatorService | undefined;
+  /** Explicit composition fact; do not infer configured auth from the
+   * AuthenticatorService object because Composition supplies a local fallback. */
+  readonly authenticatorConfigured: boolean;
   readonly conversationProgress?: ConversationProgressHub | undefined;
   /** Journal-tail watermark source (SqlClient-backed). */
   readonly sql: SqlClient;
+  readonly projectDirectory: ProjectDirectoryService;
+  /** P12 host-owned immutable Profile snapshot; absent means an empty catalog. */
+  readonly projectResourceProfiles?: ProjectResourceProfilePortService;
   /** Vite build output; absent disables static hosting. */
   readonly staticRoot?: string | undefined;
   readonly host?: string | undefined;
@@ -47,6 +57,8 @@ export interface WebTransportConfig {
 export interface WebTransportHandle {
   readonly port: number;
   readonly fanout: InvalidationFanout;
+  /** Current count of local sockets admitted to the invalidation fanout. */
+  readonly webSocketSubscriberCount: () => number;
   /** Force one watermark poll (test hook). */
   readonly pollNow: () => Promise<void>;
   readonly close: () => Promise<void>;
@@ -60,6 +72,8 @@ const isStaticCandidate = (method: string, path: string): boolean =>
 
 const isApiPath = (path: string): boolean =>
   path === "/commands" ||
+  path === "/projects" ||
+  path === "/project-resources" ||
   path.startsWith("/views/") ||
   path === "/views" ||
   path.startsWith("/conversation-progress/");
@@ -123,31 +137,76 @@ const bearerToken = (authorization: string | undefined): string | null => {
   return match?.[1] ?? null;
 };
 
+const isLoopbackListenerHost = (host: string | undefined): boolean => {
+  const normalized = (host ?? "127.0.0.1")
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/gu, "");
+  if (normalized === "localhost" || normalized === "::1") return true;
+  if (normalized.startsWith("::ffff:")) {
+    return isLoopbackListenerHost(normalized.slice("::ffff:".length));
+  }
+  const octets = normalized.split(".");
+  return (
+    octets.length === 4 &&
+    octets.every((octet) => /^(0|[1-9][0-9]{0,2})$/u.test(octet)) &&
+    octets.every((octet) => Number(octet) <= 255) &&
+    Number(octets[0]) === 127
+  );
+};
+
+const authenticateLocalSensitiveRead = async (
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: WebTransportConfig,
+  unsupportedPrincipal: { readonly status: number; readonly code: string },
+): Promise<Principal | null> => {
+  if (!config.authenticatorConfigured && !isLoopbackListenerHost(config.host)) {
+    sendJson(response, 503, {
+      ok: false,
+      problem: { code: "auth/local-listener-required" },
+    });
+    return null;
+  }
+  const token = bearerToken(request.headers.authorization);
+  const principal = !config.authenticatorConfigured
+    ? (LOCAL_PRINCIPAL as unknown as Principal)
+    : config.authenticator === undefined
+      ? null
+      : await Effect.runPromise(
+          config.authenticator.authenticate(token === null ? null : { token }),
+        ).catch(() => null);
+  if (principal === null) {
+    sendJson(response, 401, {
+      ok: false,
+      problem: { code: "auth/unauthenticated" },
+    });
+    return null;
+  }
+  if (String(principal) !== LOCAL_PRINCIPAL) {
+    sendJson(response, unsupportedPrincipal.status, {
+      ok: false,
+      problem: { code: unsupportedPrincipal.code },
+    });
+    return null;
+  }
+  return principal;
+};
+
 const streamConversationProgress = async (
   request: IncomingMessage,
   response: ServerResponse,
   messageId: string,
   config: WebTransportConfig,
 ): Promise<void> => {
-  const authenticator = config.authenticator;
   const hub = config.conversationProgress ?? defaultConversationProgressHub;
-  const token = bearerToken(request.headers.authorization);
-  // Local single-user form: no configured authenticator = every request is
-  // the local principal (product decision 2026-09-29). Configured
-  // authenticators keep full 401 semantics.
-  const principal =
-    authenticator === undefined
-      ? (LOCAL_PRINCIPAL as unknown as Principal)
-      : token === null
-        ? null
-        : await Effect.runPromise(authenticator.authenticate({ token })).catch(
-            () => null,
-          );
+  const principal = await authenticateLocalSensitiveRead(
+    request,
+    response,
+    config,
+    { status: 403, code: "conversation-progress/forbidden" },
+  );
   if (principal === null) {
-    sendJson(response, 401, {
-      ok: false,
-      problem: { code: "auth/unauthenticated" },
-    });
     return;
   }
   const rows = await Effect.runPromise(
@@ -216,9 +275,108 @@ const streamConversationProgress = async (
   response.on("close", cleanup);
 };
 
+/** P15 local-single-user directory face. It deliberately is not a `/views`
+ * endpoint: no individual Project watermark can truthfully describe a
+ * cross-project list. A multi-principal deployment must install the future
+ * visibility resolver rather than silently exposing this SQL listing. */
+const readLocalProjectDirectory = async (
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: WebTransportConfig,
+): Promise<void> => {
+  const principal = await authenticateLocalSensitiveRead(
+    request,
+    response,
+    config,
+    { status: 503, code: "project-directory/visibility-resolver-required" },
+  );
+  if (principal === null) {
+    return;
+  }
+  const rows = await Effect.runPromise(config.projectDirectory.list());
+  sendJson(response, 200, {
+    ok: true,
+    status: 200,
+    body: {
+      projects: rows.map((row) => ({
+        projectId: row.projectId,
+        name: row.name,
+        lifecycle: row.lifecycle,
+        rootWorkspaceId: row.rootWorkspaceId,
+        revision: row.revision,
+        updatedAt: row.updatedAt,
+        resourceSource: row.resourceSource,
+      })),
+    },
+  });
+};
+
+/** P12 `10` §9: authenticated, path-free host Profile catalog. Like the
+ * local project directory this cross-project bootstrap surface is restricted
+ * to the configured local principal until a multi-principal visibility
+ * contract exists. */
+const readLocalProjectResourceProfiles = async (
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: WebTransportConfig,
+): Promise<void> => {
+  // The no-auth LOCAL_PRINCIPAL fallback is only the local desktop identity.
+  // Do not let a wildcard/non-loopback bind turn it into remote access to host
+  // resource metadata. Other routes retain their existing auth behavior.
+  if (!config.authenticatorConfigured && !isLoopbackListenerHost(config.host)) {
+    sendJson(response, 503, {
+      ok: false,
+      problem: { code: "project-resource-profiles/local-listener-required" },
+    });
+    return;
+  }
+  const token = bearerToken(request.headers.authorization);
+  const principal = !config.authenticatorConfigured
+    ? (LOCAL_PRINCIPAL as unknown as Principal)
+    : config.authenticator === undefined
+      ? null
+      : await Effect.runPromise(
+          config.authenticator.authenticate(token === null ? null : { token }),
+        ).catch(() => null);
+  if (principal === null) {
+    sendJson(response, 401, {
+      ok: false,
+      problem: { code: "auth/unauthenticated" },
+    });
+    return;
+  }
+  if (String(principal) !== LOCAL_PRINCIPAL) {
+    sendJson(response, 503, {
+      ok: false,
+      problem: {
+        code: "project-resource-profiles/visibility-resolver-required",
+      },
+    });
+    return;
+  }
+  const profiles =
+    config.projectResourceProfiles === undefined
+      ? []
+      : await Effect.runPromise(config.projectResourceProfiles.list());
+  sendJson(response, 200, {
+    ok: true,
+    status: 200,
+    body: {
+      profiles,
+      conversationOnlySupported: true,
+    },
+  });
+};
+
 export const startWebTransport = async (
   config: WebTransportConfig,
 ): Promise<WebTransportHandle> => {
+  if (!config.authenticatorConfigured && !isLoopbackListenerHost(config.host)) {
+    throw new Error(
+      "web transport: a non-loopback listener requires an explicitly configured authenticator",
+    );
+  }
+
   const fanout = makeInvalidationFanout();
   const lastWatermark = { value: 0 };
 
@@ -235,6 +393,63 @@ export const startWebTransport = async (
           response,
           decodeURIComponent(progressMatch[1] ?? ""),
           config,
+        );
+        return;
+      }
+
+      if (path === "/projects" && method === "GET") {
+        await readLocalProjectDirectory(request, response, config);
+        return;
+      }
+
+      if (path === "/project-resources" && method === "GET") {
+        await readLocalProjectResourceProfiles(request, response, config);
+        return;
+      }
+
+      if (path.startsWith("/views/")) {
+        if (method !== "POST") {
+          sendJson(response, 400, {
+            ok: false,
+            problem: { code: "transport/invalid-request" },
+          });
+          return;
+        }
+        if (
+          !config.authenticatorConfigured &&
+          !isLoopbackListenerHost(config.host)
+        ) {
+          sendJson(response, 503, {
+            ok: false,
+            problem: { code: "auth/local-listener-required" },
+          });
+          return;
+        }
+        const authorizationFailure = await Effect.runPromise(
+          config.http.authorizeSensitiveRead(request.headers.authorization),
+        );
+        if (authorizationFailure !== null) {
+          sendJson(response, authorizationFailure.status, authorizationFailure);
+          return;
+        }
+        const body = await readBody(request);
+        const result = await Effect.runPromise(
+          config.http.handleAuthorizedView({
+            method,
+            path,
+            ...(request.headers.authorization === undefined
+              ? {}
+              : { authorization: request.headers.authorization }),
+            body,
+          }),
+        );
+        sendBytes(
+          response,
+          result.status,
+          "application/json; charset=utf-8",
+          "no-store",
+          Buffer.from(JSON.stringify(result)),
+          false,
         );
         return;
       }
@@ -306,9 +521,24 @@ export const startWebTransport = async (
       socket.destroy();
       return;
     }
+    if (
+      (!config.authenticatorConfigured &&
+        !isLoopbackListenerHost(config.host)) ||
+      (config.authenticatorConfigured && config.authenticator === undefined)
+    ) {
+      socket.write(
+        "HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+      );
+      socket.destroy();
+      return;
+    }
     wss.handleUpgrade(request, socket, head, (ws) => {
-      sockets.add(ws);
+      let viewAuthenticated = !config.authenticatorConfigured;
+      let connectionClosed = false;
+      let firstViewAuthenticationInFlight = false;
+      if (viewAuthenticated) sockets.add(ws);
       ws.on("close", () => {
+        connectionClosed = true;
         sockets.delete(ws);
       });
       ws.on("message", (data) => {
@@ -324,11 +554,36 @@ export const startWebTransport = async (
                 problem: { code: "transport/invalid-request" },
               }),
             );
+            if (!viewAuthenticated) {
+              ws.close(1008, "view authentication required");
+            }
             return;
           }
-          const response = await Effect.runPromise(
-            config.webSocket.handleFrame(frame),
-          );
+          let response: TransportResponse<unknown>;
+          if (frame.kind === "view") {
+            if (!viewAuthenticated) {
+              if (firstViewAuthenticationInFlight) return;
+              firstViewAuthenticationInFlight = true;
+              const authorizationFailure = await Effect.runPromise(
+                config.webSocket.authorizeViewFrame(frame),
+              );
+              firstViewAuthenticationInFlight = false;
+              if (connectionClosed || ws.readyState !== ws.OPEN) return;
+              if (authorizationFailure !== null) {
+                ws.close(1008, "view authentication required");
+                return;
+              }
+              viewAuthenticated = true;
+              sockets.add(ws);
+            }
+            response = await Effect.runPromise(
+              config.webSocket.handleAuthorizedViewFrame(frame),
+            );
+          } else {
+            response = await Effect.runPromise(
+              config.webSocket.handleFrame(frame),
+            );
+          }
           if (ws.readyState === ws.OPEN) {
             ws.send(JSON.stringify(response));
           }
@@ -382,6 +637,7 @@ export const startWebTransport = async (
   return {
     port,
     fanout,
+    webSocketSubscriberCount: () => sockets.size,
     pollNow: pollOnce,
     close: async () => {
       clearInterval(timer);

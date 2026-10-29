@@ -14,7 +14,11 @@ import type {
   Workspace,
   WorkspaceId,
 } from "@arbor/domain";
-import type { EvidenceRecordRow } from "@arbor/ports";
+import type {
+  EvidenceRecordRow,
+  ProjectionQueryError,
+  RetryVerificationUnboundLegacyInboxProjection,
+} from "@arbor/ports";
 import { Effect, Option } from "effect";
 import type { ProjectionReadError } from "../errors.js";
 import { projectionReadError } from "../errors.js";
@@ -47,7 +51,7 @@ export type {
 // in the test suite. ⑥ = audit timeline from domain_events (the frozen
 // Memory/Decisions-store substitute — P10 `00` boundary list).
 
-export interface WorkspaceDetailView {
+interface WorkspaceDetailViewCore {
   readonly responsibility: ResponsibilityDefinition;
   readonly boundary: ResourceBoundary;
   readonly currentWork?: CurrentWorkSummaryView | undefined;
@@ -58,6 +62,31 @@ export interface WorkspaceDetailView {
   readonly verification?: VerificationViewView | undefined;
   readonly auditTimeline: ReadonlyArray<AuditTimelineEntryView>;
 }
+
+export type WorkspaceDetailView = WorkspaceDetailViewCore &
+  (
+    | {
+        readonly sandboxPolicyPreconditions?: import("@arbor/domain").SandboxPolicyPreconditionsV1;
+        readonly sandboxPolicyCandidateRead?: never;
+      }
+    | {
+        readonly sandboxPolicyPreconditions?: never;
+        readonly sandboxPolicyCandidateRead?: import("@arbor/domain").SandboxPolicyCandidateReadV2;
+      }
+  );
+
+export type WorkspaceDetailSandboxPolicyProjection = {
+  readonly sandboxPolicy?: ExecutionSummaryView["sandboxPolicy"];
+} & (
+  | {
+      readonly sandboxPolicyPreconditions?: import("@arbor/domain").SandboxPolicyPreconditionsV1;
+      readonly sandboxPolicyCandidateRead?: never;
+    }
+  | {
+      readonly sandboxPolicyPreconditions?: never;
+      readonly sandboxPolicyCandidateRead?: import("@arbor/domain").SandboxPolicyCandidateReadV2;
+    }
+);
 
 /** Read faces the Workspace Detail derives from (P10 `01` §1 derive
  * inputs: workspaces / works / executions / dependencies+messages+inbox /
@@ -75,12 +104,24 @@ export interface WorkspaceDetailDeps {
   readonly findActiveMainExecution: (
     workspaceId: WorkspaceId,
   ) => Effect.Effect<Option.Option<Execution>, ProjectionReadError>;
+  readonly sandboxPolicyForExecution?: (
+    execution: Execution,
+  ) => Effect.Effect<
+    WorkspaceDetailSandboxPolicyProjection,
+    ProjectionReadError | ProjectionQueryError
+  >;
   readonly listDependenciesByWorkspace: (
     workspaceId: WorkspaceId,
   ) => Effect.Effect<ReadonlyArray<Dependency>, ProjectionReadError>;
   readonly listUnconsumedInbox: (
     workspaceId: WorkspaceId,
   ) => Effect.Effect<ReadonlyArray<InboxEntry>, ProjectionReadError>;
+  readonly listUnboundLegacyInbox?: (
+    workspaceId: WorkspaceId,
+  ) => Effect.Effect<
+    ReadonlyArray<RetryVerificationUnboundLegacyInboxProjection>,
+    ProjectionReadError
+  >;
   readonly listVerificationsByWork: (
     workId: WorkId,
   ) => Effect.Effect<ReadonlyArray<Verification>, ProjectionReadError>;
@@ -113,6 +154,7 @@ export interface WorkspaceDetailDeps {
 export const AUDIT_TIMELINE_EVENT_TYPES: ReadonlyArray<EventTypeName> = [
   "HumanInterventionApplied",
   "WorkSteered",
+  "WorkAmended",
   "DecisionRecorded",
 ];
 
@@ -182,7 +224,10 @@ const readAllEvents = (
 export const deriveWorkspaceDetail = (
   workspaceId: WorkspaceId,
   deps: WorkspaceDetailDeps,
-): Effect.Effect<WorkspaceDetailView, ProjectionReadError> =>
+): Effect.Effect<
+  WorkspaceDetailView,
+  ProjectionReadError | ProjectionQueryError
+> =>
   Effect.gen(function* () {
     const found = yield* deps.findWorkspace(workspaceId);
     if (Option.isNone(found)) {
@@ -197,14 +242,39 @@ export const deriveWorkspaceDetail = (
     const openWorks = works.filter((work) => work.lifecycle === "Open");
 
     const activeMain = yield* deps.findActiveMainExecution(workspaceId);
-    const executionSummary: ExecutionSummaryView | undefined = Option.isSome(
-      activeMain,
-    )
-      ? {
-          executionId: activeMain.value.executionId,
-          admittedAt: activeMain.value.admittedAt,
-        }
-      : undefined;
+    let executionSummary: ExecutionSummaryView | undefined;
+    let sandboxPolicyPreconditions:
+      | import("@arbor/domain").SandboxPolicyPreconditionsV1
+      | undefined;
+    let sandboxPolicyCandidateRead:
+      | import("@arbor/domain").SandboxPolicyCandidateReadV2
+      | undefined;
+    if (Option.isSome(activeMain)) {
+      const sandboxPolicyProjection = yield* deps.sandboxPolicyForExecution?.(
+        activeMain.value,
+      ) ?? Effect.succeed(undefined);
+      sandboxPolicyPreconditions =
+        sandboxPolicyProjection?.sandboxPolicyPreconditions;
+      sandboxPolicyCandidateRead =
+        sandboxPolicyProjection?.sandboxPolicyCandidateRead;
+      if (
+        sandboxPolicyPreconditions !== undefined &&
+        sandboxPolicyCandidateRead !== undefined
+      ) {
+        return yield* Effect.fail(
+          projectionReadError(
+            "sandbox policy candidate read and singular preconditions cannot coexist",
+          ),
+        );
+      }
+      executionSummary = {
+        executionId: activeMain.value.executionId,
+        admittedAt: activeMain.value.admittedAt,
+        ...(sandboxPolicyProjection?.sandboxPolicy === undefined
+          ? {}
+          : { sandboxPolicy: sandboxPolicyProjection.sandboxPolicy }),
+      };
+    }
 
     let currentWork: CurrentWorkSummaryView | undefined;
     if (workspace.currentWorkId !== null) {
@@ -222,6 +292,8 @@ export const deriveWorkspaceDetail = (
 
     const dependencies = yield* deps.listDependenciesByWorkspace(workspaceId);
     const inbox = yield* deps.listUnconsumedInbox(workspaceId);
+    const unboundLegacy = yield* deps.listUnboundLegacyInbox?.(workspaceId) ??
+      Effect.succeed([]);
     const watermark = yield* deps.journalLastSequence(workspace.projectId);
 
     // ⑤ verification: the Open verification of the current work first,
@@ -294,7 +366,7 @@ export const deriveWorkspaceDetail = (
       (proposalId) => proposalOrigins.get(proposalId) ?? null,
     );
 
-    return {
+    const view = {
       responsibility: workspace.responsibilityDefinition,
       boundary: workspace.resourceBoundary,
       currentWork,
@@ -313,13 +385,46 @@ export const deriveWorkspaceDetail = (
         state: dependency.state,
         satisfiedBy: dependency.satisfiedByDeliverableId ?? undefined,
       })),
-      inboxUnconsumed: inbox.map((entry) => ({
-        entryKey: entry.entryKey,
-        kind: entry.kind,
-        summary: entry.summary,
-        watermark,
-      })),
+      inboxUnconsumed: [
+        ...inbox
+          .filter(
+            (entry) =>
+              !entry.entryKey.startsWith("retry-verification-unbound:"),
+          )
+          .map((entry) => ({
+            entryKey: entry.entryKey,
+            kind: entry.kind,
+            summary: entry.summary,
+            watermark,
+          })),
+        ...unboundLegacy.map((projection) => ({
+          entryKey: `retry-verification-unbound:${projection.commandId}`,
+          kind: "Governance" as const,
+          summary:
+            "A historical RetryVerification receipt has incomplete origin evidence.",
+          watermark,
+          target: {
+            kind: "RetryVerificationUnboundLegacy" as const,
+            commandId: projection.commandId,
+            projectId: projection.projectId,
+            sourceWorkId: projection.sourceWorkId,
+            sourceVerificationId: projection.sourceVerificationId,
+            disposition: projection.disposition,
+            reasonCode: projection.reasonCode,
+            createdAt: projection.createdAt,
+            revision: projection.revision,
+            updatedAt: projection.updatedAt,
+          },
+        })),
+      ],
       verification: verificationView,
       auditTimeline,
     };
+    if (sandboxPolicyCandidateRead !== undefined) {
+      return { ...view, sandboxPolicyCandidateRead };
+    }
+    if (sandboxPolicyPreconditions !== undefined) {
+      return { ...view, sandboxPolicyPreconditions };
+    }
+    return view;
   });

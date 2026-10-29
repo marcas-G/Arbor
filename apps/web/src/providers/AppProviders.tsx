@@ -19,11 +19,14 @@ import {
   type ReactNode,
   useContext,
   useEffect,
+  useRef,
   useState,
 } from "react";
+import { parseRoute } from "../api/router.js";
+import { fetchProjectDirectory } from "../api/transport.js";
 import { connectInvalidation } from "../data/invalidation.js";
 import { ErrorBoundary } from "../ErrorBoundary.js";
-import { SessionProvider } from "../session/SessionContext.js";
+import { SessionProvider, useSession } from "../session/SessionContext.js";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -58,34 +61,158 @@ function WSInvalidationProvider({
   readonly children: ReactNode;
 }) {
   const client = useQueryClient();
+  const session = useSession();
+  const path = usePath();
+  const routeProjectId = parseRoute(path)?.projectId ?? null;
+  const routeSelection = useRef({
+    path,
+    token: session.token,
+    generation: 0,
+    pendingGeneration: null as number | null,
+    validatedGeneration: null as number | null,
+  });
   const [freshness, setFreshness] = useState<FreshnessValue>({
     state: "offline",
     lastWatermark: null,
   });
+
+  // The route is the project identity. Mirror a verified route into the
+  // Session's recent-project memory so the invalidation socket follows direct
+  // links, refreshes, and popstate navigation. Each distinct path receives a
+  // generation so an old A request cannot win after A → B → A.
   useEffect(() => {
-    let hasOpened = false;
-    const channel = connectInvalidation(wsUrl(), {
-      onOpen: () => {
-        if (hasOpened) {
-          void client.invalidateQueries({ queryKey: ["view"] });
+    if (
+      routeSelection.current.path !== path ||
+      routeSelection.current.token !== session.token
+    ) {
+      routeSelection.current = {
+        path,
+        token: session.token,
+        generation: routeSelection.current.generation + 1,
+        pendingGeneration: null,
+        validatedGeneration: null,
+      };
+    }
+    const generation = routeSelection.current.generation;
+    const isCurrentGeneration = (): boolean =>
+      routeSelection.current.path === path &&
+      routeSelection.current.token === session.token &&
+      routeSelection.current.generation === generation;
+
+    if (path === "/" || path === "") {
+      routeSelection.current = {
+        ...routeSelection.current,
+        pendingGeneration: null,
+        validatedGeneration: generation,
+      };
+      return;
+    }
+    if (session.token === null || routeProjectId === null) {
+      routeSelection.current = {
+        ...routeSelection.current,
+        pendingGeneration: null,
+        validatedGeneration: generation,
+      };
+      session.setProjectId(null);
+      return;
+    }
+    if (routeSelection.current.validatedGeneration === generation) return;
+    if (routeSelection.current.pendingGeneration === generation) return;
+
+    routeSelection.current = {
+      ...routeSelection.current,
+      pendingGeneration: generation,
+    };
+
+    // Disconnect any prior project's invalidation stream while the route is
+    // checked against the canonical local directory.
+    if (session.projectId !== routeProjectId) {
+      session.setProjectId(null);
+    }
+    void client
+      .fetchQuery({
+        queryKey: ["project-directory", "route-selection", path, generation],
+        queryFn: ({ signal }) =>
+          fetchProjectDirectory({
+            token: session.token,
+            signal,
+            onUnauthenticated: session.reportUnauthenticated,
+          }),
+        staleTime: 0,
+      })
+      .then((data) => {
+        if (!isCurrentGeneration()) return;
+        routeSelection.current = {
+          ...routeSelection.current,
+          pendingGeneration: null,
+          validatedGeneration: generation,
+        };
+        const routeExists =
+          data?.ok === true &&
+          data.dto.projects.some(
+            (project) => project.projectId === routeProjectId,
+          );
+        session.setProjectId(routeExists ? routeProjectId : null);
+      })
+      .catch(() => {
+        if (isCurrentGeneration()) {
+          routeSelection.current = {
+            ...routeSelection.current,
+            pendingGeneration: null,
+            validatedGeneration: generation,
+          };
+          session.setProjectId(null);
         }
-        hasOpened = true;
-        setFreshness((previous) => ({ ...previous, state: "fresh" }));
+      });
+  }, [
+    path,
+    client,
+    routeProjectId,
+    session.projectId,
+    session.reportUnauthenticated,
+    session.setProjectId,
+    session.token,
+  ]);
+
+  useEffect(() => {
+    if (session.token === null || session.projectId === null) {
+      setFreshness({ state: "offline", lastWatermark: null });
+      return;
+    }
+    let hasOpened = false;
+    const channel = connectInvalidation(
+      wsUrl(),
+      {
+        onOpen: () => {
+          if (hasOpened) {
+            void client.invalidateQueries({ queryKey: ["view"] });
+          }
+          hasOpened = true;
+          setFreshness((previous) => ({ ...previous, state: "fresh" }));
+        },
+        onClose: () => {
+          setFreshness((previous) => ({ ...previous, state: "offline" }));
+        },
+        onUnauthenticated: session.reportUnauthenticated,
+        onInvalidate: (view: ViewId, watermark: number) => {
+          setFreshness({ state: "fresh", lastWatermark: watermark });
+          void client.invalidateQueries({
+            queryKey: ["view", view],
+          });
+        },
       },
-      onClose: () => {
-        setFreshness((previous) => ({ ...previous, state: "offline" }));
+      {
+        firstView: {
+          token: session.token,
+          view: "attention",
+          request: { projectId: session.projectId },
+        },
       },
-      onInvalidate: (view: ViewId, watermark: number) => {
-        setFreshness({ state: "fresh", lastWatermark: watermark });
-        void client.invalidateQueries({
-          queryKey: ["view", view],
-        });
-      },
-    });
+    );
     return () => {
       channel.close();
     };
-  }, [client]);
+  }, [client, session.projectId, session.reportUnauthenticated, session.token]);
   return (
     <FreshnessContext.Provider value={freshness}>
       {children}

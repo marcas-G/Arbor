@@ -17,7 +17,10 @@ P6 已接: InboxAdvanced→InputArrived（settlement/specialist wakeReason 先�
 SatisfyDependency（及 Withdraw/MarkUnfulfillable/ContractRevised）handler 事务内：
   新 dependency.revision = r'
   对每个 consumer Work 的 active WorkWait：
-    若 conditions 含 DependencyChanged(dependencyId, observedRevision=r) 且 r < r'
+    若事实是 DependencySatisfied，且 conditions 含相同 dependencyId 的
+      DependencyChanged，则无条件幂等清除该 wait；satisfaction 是终态事实，
+      不要求 revision 前进（WSC-1）。
+    若事实是其他 revision change，仍要求 observedRevision=r 且 r < r'
       → 发布 wake(workspaceId=consumer Work 所属 Workspace,
                  reason=<WakeReason>, detail={dependencyId, fromRevision:r, toRevision:r'})
   WakeReason 是 P2 冻结的无载荷 _tag 判别联合（scheduler.ts:10-18），**不扩展**：
@@ -27,7 +30,8 @@ SatisfyDependency（及 Withdraw/MarkUnfulfillable/ContractRevised）handler 事
   与审计），不进入 WakeReason 类型。
 ```
 
-- 注册等待与检查事实变化同一一致性边界（SD:813）——由 handler 事务保证；若 observedRevision 已前移（r ≥ r'），不发 wake（该等待早已被更高版本事实唤醒或将被其消费）。
+- DependencySatisfied 保持既有 revision-stable transition；相同 dependencyId 的等待
+  由终态事实本身清除。其他非终态 revision change 继续使用严格 `r < r'`。
 
 ## 3. 消费侧（P7 补齐的最小管线）
 
@@ -35,7 +39,7 @@ SatisfyDependency（及 Withdraw/MarkUnfulfillable/ContractRevised）handler 事
 |---|---|
 | `reevaluate` 忽略 `_wakeReason` | wakeReason→目标 workspace 集合路由（DependencySatisfied→consumer Work 的 Workspace；其余→reason 携带的目标） |
 | `AdmissionOutcome.wakeReason` 零消费方 | 统一 wake sink：daemon-lite（composition 内的后台 fiber：消费 journal 事件表驱动 reevaluate 循环）或同步 consumer 管线直调——**实现选择**，契约只冻结"事件提交后最终至少触发一次 reevaluate，at-least-once，幂等" |
-| `clearWorkWait` 零调用 | reevaluate 判定 Work 已 runnable 时清除对应 wait（P2 冻结机制的正确接线） |
+| `clearWorkWait` 零调用 | durable WorkflowSignalConsumer 在 reevaluate 前幂等清除对应 wait |
 
 - 禁止模型轮询（No.53 原文：等待期间禁止**模型轮询**）：一切唤醒由 durable 事实驱动。
 - `ChildDelivered`（scheduler.ts:16 已预留）自 v1.10 G2 起由 Deliver 的成功 Inbox delivery 接线（`02` §6）。

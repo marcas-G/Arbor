@@ -21,6 +21,7 @@ import {
   WorkspaceRepository,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
+import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
   ClockLive,
@@ -70,6 +71,10 @@ const boundary = {
 
 const program = Effect.gen(function* () {
   yield* runMigrations(P1_MIGRATIONS);
+  const sql = yield* SqlClient;
+  yield* sql.unsafe(
+    `ALTER TABLE projects ADD COLUMN resource_source_json TEXT NOT NULL DEFAULT '{"_tag":"LegacyUnknown"}' CHECK (json_valid(resource_source_json))`,
+  );
   const tx = yield* TransactionPort;
   const sessions = yield* SessionRepository;
   const workspaces = yield* WorkspaceRepository;
@@ -86,6 +91,11 @@ const program = Effect.gen(function* () {
         projectPolicyRevision: parse(Revision)(0),
         defaultConfiguration: {},
         environmentRef: "local",
+        resourceSource: {
+          _tag: "Profile",
+          resourceProfileRef: "repo-default",
+          version: "7",
+        },
         lifecycle: "Open",
         revision: parse(Revision)(0),
       });
@@ -133,6 +143,33 @@ const program = Effect.gen(function* () {
       const loadedWorkspace = yield* workspaces.findById(workspaceId);
       const loadedWork = yield* works.findById(workId);
       const loadedSession = yield* sessions.findById(sessionId);
+      const resourceSourceDecodeFailures: Array<string | undefined> = [];
+      yield* sql.unsafe("PRAGMA ignore_check_constraints = ON");
+      for (const invalidSource of [
+        "not-json",
+        `{"_tag":"Unknown"}`,
+        `{"_tag":"ConversationOnly","path":"C:/private"}`,
+        `{"_tag":"Profile","resourceProfileRef":"","version":"7"}`,
+      ]) {
+        yield* sql.unsafe(
+          "UPDATE projects SET resource_source_json = ? WHERE project_id = ?",
+          [invalidSource, projectId],
+        );
+        const decodeError = yield* Effect.flip(projects.findById(projectId));
+        resourceSourceDecodeFailures.push(decodeError._tag);
+      }
+      yield* sql.unsafe("PRAGMA ignore_check_constraints = OFF");
+      yield* sql.unsafe(
+        "UPDATE projects SET resource_source_json = ? WHERE project_id = ?",
+        [
+          JSON.stringify({
+            _tag: "Profile",
+            resourceProfileRef: "repo-default",
+            version: "7",
+          }),
+          projectId,
+        ],
+      );
 
       const updated = yield* projects.updatePolicyIfRevision(
         projectId,
@@ -155,6 +192,10 @@ const program = Effect.gen(function* () {
 
       return {
         project: Option.isSome(loadedProject),
+        projectSource: Option.isSome(loadedProject)
+          ? loadedProject.value.resourceSource
+          : undefined,
+        resourceSourceDecodeFailures,
         workspace: Option.isSome(loadedWorkspace),
         work: Option.isSome(loadedWork),
         session: Option.isSome(loadedSession),
@@ -171,6 +212,17 @@ describe("repositories", () => {
   it("round-trips aggregates and enforces CAS", async () => {
     const result = await Effect.runPromise(Effect.provide(program, app));
     expect(result.project).toBe(true);
+    expect(result.projectSource).toEqual({
+      _tag: "Profile",
+      resourceProfileRef: "repo-default",
+      version: "7",
+    });
+    expect(result.resourceSourceDecodeFailures).toEqual([
+      "PersistenceCorruption",
+      "PersistenceCorruption",
+      "PersistenceCorruption",
+      "PersistenceCorruption",
+    ]);
     expect(result.workspace).toBe(true);
     expect(result.work).toBe(true);
     expect(result.session).toBe(true);

@@ -1,7 +1,8 @@
 # G-V2-3 — Verification Conclusion Summary Closure
 
 **Date:** 2026-09-27
-**Status:** Closure assessment — source/ref path adjudicated; durable P8 binding remains unresolved
+**Status:** RESOLVED — accepted DID v1.26 VDC-3 durably binds Runtime-created
+summaryRef to Verification state and event
 **Scope:** `AgentDirective v2` / `ConcludeVerification.summaryRef` only
 **Authority:** G-V2-3 assessment; no frozen contract, code, Prompt, or
 model-facing schema changed

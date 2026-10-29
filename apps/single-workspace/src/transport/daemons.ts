@@ -1,20 +1,26 @@
 import type {
+  AttentionPollLoopError,
   CompletionConsumerDependencies,
   ConsumerLoopError,
   ConsumerLoopResult,
   ConsumerLoopStores,
+  DependencyCoordinatorDependencies,
   DriftError,
   DriftReport,
   EnvironmentDriftDeps,
   VerificationConsumerDependencies,
+  WorkflowSignalConsumerService,
 } from "@arbor/application";
 import {
   completionConsumerLoop,
+  dependencyCoordinatorLoop,
   type FormationConsumerDependencies,
   pollOnce,
   probeDrift,
   runFormationConsumer,
   verificationConsumerLoop,
+  workflowSignalAtomicConsumerHandler,
+  workflowSignalConsumerLoop,
 } from "@arbor/application";
 import type { Principal, ProjectId, ResourceAddress } from "@arbor/domain";
 import { startupRecovery, sweepRecovery } from "@arbor/execution-runtime";
@@ -55,11 +61,15 @@ export const recoveryDaemonFromPrincipal = (principal: Principal) => ({
 
 export interface ConsumerLoopDaemon<R = never> {
   readonly consumerId: string;
-  readonly projectId: ProjectId;
+  readonly projectId?: ProjectId;
   readonly batchSize: number;
   /** One offset-driven poll: read the batch after the stored offset, apply,
    * advance atomically (P1 `05` §4; P9 `05` §1). */
-  readonly poll: Effect.Effect<ConsumerLoopResult, ConsumerLoopError, R>;
+  readonly poll: Effect.Effect<
+    ConsumerLoopResult,
+    ConsumerLoopError | AttentionPollLoopError,
+    R
+  >;
 }
 
 export const makeConsumerLoopDaemon = <R>(deps: {
@@ -114,10 +124,33 @@ export const formationConsumerDaemon = (deps: {
             eventType: event.eventType,
             payload: event.payload,
             eventId: String(event.eventId),
+            occurredAt: event.occurredAt,
           })),
           deps.dependencies,
           deps.projectId,
         ),
+    }),
+  });
+
+export const dependencyCoordinatorDaemon = <R>(deps: {
+  readonly consumerId: string;
+  readonly projectId: ProjectId;
+  readonly principal: Principal;
+  readonly batchSize: number;
+  readonly stores: ConsumerLoopStores;
+  readonly dependencies: DependencyCoordinatorDependencies<R>;
+}): ConsumerLoopDaemon<R> =>
+  makeConsumerLoopDaemon({
+    consumerId: deps.consumerId,
+    projectId: deps.projectId,
+    batchSize: deps.batchSize,
+    poll: pollOnce(deps.consumerId, deps.projectId, deps.batchSize, {
+      ...deps.stores,
+      handlers: dependencyCoordinatorLoop(
+        deps.projectId,
+        deps.principal,
+        deps.dependencies,
+      ),
     }),
   });
 
@@ -141,6 +174,28 @@ export const completionConsumerDaemon = (deps: {
         deps.principal,
         deps.dependencies,
       ),
+    }),
+  });
+
+/** One durable consumer for cross-workflow wake/admission signals. */
+export const workflowSignalConsumerDaemon = (deps: {
+  readonly consumerId: string;
+  readonly projectId: ProjectId;
+  readonly batchSize: number;
+  readonly stores: ConsumerLoopStores;
+  readonly consumer: Pick<
+    WorkflowSignalConsumerService,
+    "consume" | "applyBlockedWorkEpisodeAtomically"
+  >;
+}): ConsumerLoopDaemon =>
+  makeConsumerLoopDaemon({
+    consumerId: deps.consumerId,
+    projectId: deps.projectId,
+    batchSize: deps.batchSize,
+    poll: pollOnce(deps.consumerId, deps.projectId, deps.batchSize, {
+      ...deps.stores,
+      handlers: workflowSignalConsumerLoop(deps.consumer),
+      atomicHandler: workflowSignalAtomicConsumerHandler(deps.consumer),
     }),
   });
 

@@ -1,0 +1,388 @@
+import type {
+  CommandId,
+  CommandSubmissionContext,
+  EvidenceId,
+  Execution,
+  ExecutionSettlement,
+  MessageId,
+  MessageKind,
+  ResourceAddress,
+  TerminalActionDenial,
+  VerificationVerdict,
+  WaitSpec,
+  WorkId,
+  WorkspaceId,
+} from "@arbor/domain";
+import type { ControlBasis, ToolInvocation } from "@arbor/model-context";
+import type {
+  BoundedObservation,
+  ControlToolCatalogPortService,
+  ModelFacingControlToolDefinition,
+  RecoveryBindingPolicyRevisions,
+  RecoveryBindingSourceIdentity,
+  SandboxProviderUnavailableOutcome,
+} from "@arbor/ports";
+import { Context, type Effect } from "effect";
+import type { AgentLoopQualificationProbe } from "./qualification-probe.js";
+
+export type AgentAction =
+  | { readonly _tag: "SelectCurrentWork"; readonly workId: WorkId }
+  | {
+      readonly _tag: "AssignWork";
+      readonly targetWorkspaceRef?: string;
+      /** Replay/internal compatibility only; new model schema advertises ref. */
+      readonly targetWorkspaceId?: WorkspaceId;
+      readonly objective: string;
+      readonly why: string;
+      readonly constraints: ReadonlyArray<string>;
+      readonly completionExpectation: string;
+      readonly verificationMission: {
+        readonly goal: string;
+        readonly criteria: ReadonlyArray<{
+          readonly criterionId: string;
+          readonly requirement: string;
+          readonly required: boolean;
+        }>;
+        readonly riskRequirements: ReadonlyArray<string>;
+      };
+      /** VDC-1: human-readable causal reason is model-authored; predecessor
+       * identity remains Runtime-bound from the current parent Work. */
+      readonly reason: string;
+    }
+  | {
+      readonly _tag: "ListWorkspaces";
+      readonly cursor?: string;
+      readonly query?: string;
+    }
+  | { readonly _tag: "ReadWorkspace"; readonly workspaceRef: string }
+  | { readonly _tag: "AcceptResult"; readonly resultRef: string }
+  | {
+      readonly _tag: "ResolveWorkBlocker";
+      readonly resolutions: readonly [
+        {
+          readonly blockerId: string;
+          readonly successfulActionRefs: readonly [string, ...string[]];
+        },
+        ...{
+          readonly blockerId: string;
+          readonly successfulActionRefs: readonly [string, ...string[]];
+        }[],
+      ];
+    }
+  | {
+      readonly _tag: "UpdatePlan";
+      readonly items: ReadonlyArray<{
+        readonly itemId: string;
+        readonly text: string;
+        readonly status: "Pending" | "InProgress" | "Completed" | "Blocked";
+      }>;
+    }
+  | {
+      readonly _tag: "RecordVerificationEvidence";
+      readonly criterionId: string;
+      /** Model selects a visible ToolResult by callRef; Runtime binds every
+       * canonical source-identity field. */
+      readonly sourceCallRef: string;
+    }
+  | {
+      readonly _tag: "ConcludeVerification";
+      readonly verdict: VerificationVerdict;
+      readonly criteriaResults: ReadonlyArray<{
+        readonly criterionId: string;
+        readonly requirement: string;
+        readonly required: boolean;
+        readonly verdict: VerificationVerdict;
+        readonly evidenceRefs: ReadonlyArray<EvidenceId>;
+      }>;
+      /** Human-readable content; Runtime persists bytes and binds BlobRef. */
+      readonly summary: string;
+    }
+  | {
+      readonly _tag: "Wait";
+      readonly disposition: "Yielded";
+      readonly reason: string;
+      readonly waitSpec: WaitSpec;
+    }
+  | {
+      readonly _tag: "Wait";
+      readonly disposition: "Blocked";
+      readonly request: string;
+    }
+  | {
+      readonly _tag: "SendMessage";
+      readonly kind: Exclude<MessageKind, "Deliver">;
+      readonly body: string;
+      readonly recipientWorkspaceId?: WorkspaceId;
+      readonly queryMessageId?: MessageId;
+    }
+  | {
+      /** ACR-8 (DID v1.19): P8 completion-claim chain is semantically
+       * closed — the producer agent claims its Work is complete; the
+       * workRevision is a trusted Runtime fact bound at the handler, never
+       * model-supplied; the downstream StartVerification is driven by the
+       * existing verification consumer (no command from the agent). */
+      readonly _tag: "ClaimCompletion";
+      readonly claim: string;
+    }
+  | {
+      /** ACR-8 (DID v1.19): P2 execution-bound admission is closed. The
+       * specialist is a temporary ExecutionBound execution bound to the
+       * spawning execution; ids are deterministic Runtime facts derived
+       * from the provider-turn occurrence. No durable Workspace or
+       * responsibility is created. */
+      readonly _tag: "SpawnSpecialist";
+      readonly mission: string;
+      readonly constraints: ReadonlyArray<string>;
+    }
+  | {
+      /** ACR-8 (DID v1.19): P7 dependency lifecycle is frozen. The
+       * dependencyId/consumerWorkId/expectedConsumerWorkRevision are
+       * trusted Runtime facts bound at the handler; the matcher — never
+       * the model — decides satisfaction. */
+      readonly _tag: "DeclareDependency";
+      readonly producerBinding:
+        | { readonly _tag: "AnyProducer" }
+        | { readonly _tag: "WorkspaceBound"; readonly workspaceId: WorkspaceId }
+        | { readonly _tag: "WorkBound"; readonly workId: WorkId };
+      readonly expectedDeliverable: {
+        readonly kind: string;
+        readonly requiredArtifactRoles: ReadonlyArray<string>;
+      };
+    }
+  | {
+      readonly _tag: "ProduceDeliverable";
+      readonly kind: string;
+      readonly artifacts: ReadonlyArray<{
+        readonly role: string;
+        readonly artifactId: import("@arbor/domain").ArtifactId;
+      }>;
+    }
+  | {
+      readonly _tag: "Deliver";
+      readonly deliverableId: import("@arbor/domain").DeliverableId;
+      readonly summary: string;
+    }
+  | {
+      /** The model proposes; a human RecordDecision remains the governance
+       * gate. When initial Work is proposed, its verification mission is
+       * explicit and survives formation unchanged (DID v1.26 VDC). */
+      readonly _tag: "ProposeChildWorkspace";
+      readonly proposal: {
+        readonly name: string;
+        readonly rationale: string;
+        readonly responsibilityDraft: {
+          readonly purpose: string;
+          readonly ownedResponsibilities: ReadonlyArray<string>;
+          readonly obligations: ReadonlyArray<string>;
+          readonly includes: ReadonlyArray<string>;
+          readonly excludes: ReadonlyArray<string>;
+          readonly interfaces: ReadonlyArray<string>;
+        };
+        readonly resourceBoundaryDraft: {
+          readonly addresses: ReadonlyArray<
+            | { readonly _tag: "FileTree"; readonly path: string }
+            | { readonly _tag: "GitWorktree"; readonly path: string }
+          >;
+        };
+        readonly resourceOwnershipDelegation?: {
+          readonly addresses: ReadonlyArray<ResourceAddress>;
+        };
+        readonly initialWork?: {
+          readonly objective: string;
+          readonly why: string;
+          readonly constraints: ReadonlyArray<string>;
+          readonly completionExpectation: string;
+          readonly verificationMission: {
+            readonly goal: string;
+            readonly criteria: ReadonlyArray<{
+              readonly criterionId: string;
+              readonly requirement: string;
+              readonly required: boolean;
+            }>;
+            readonly riskRequirements: ReadonlyArray<string>;
+          };
+        };
+      };
+    };
+
+export interface ControlToolInvocation {
+  readonly invocation: ToolInvocation;
+  readonly action: AgentAction;
+}
+
+export type ControlToolDecodeError =
+  | { readonly _tag: "UnknownControlTool"; readonly toolName: string }
+  | {
+      readonly _tag: "InvalidControlArguments";
+      readonly toolName: string;
+      readonly reason: string;
+    };
+
+export type AgentActionOutcome =
+  | {
+      readonly _tag: "Observation";
+      readonly source: "Runtime";
+      readonly observation: BoundedObservation;
+      /** Exact Control approval consumption performed by AssignWork's
+       * Command Gateway transaction. */
+      readonly approvalConsumption?: {
+        readonly approvalId: string;
+        readonly commandId: CommandId;
+        readonly consumedRevision: number;
+      };
+      readonly durableActionCommit?: {
+        readonly loopStep: import("@arbor/ports").AgentLoopStepRecord;
+      };
+    }
+  | {
+      readonly _tag: "Settle";
+      readonly settlement: ExecutionSettlement;
+      /** Internal P9 handoff only: commit a direct Control effect atomically
+       * with the terminal ActionResult and SettlementProposed cursor. */
+      readonly durableSettlementEffect?: Effect.Effect<
+        void,
+        unknown,
+        import("@arbor/ports").TransactionScope
+      >;
+    }
+  | { readonly _tag: "BlockedWorkEpisodeRequest"; readonly request: string };
+
+export interface AgentActionHandlerInput {
+  readonly action: AgentAction;
+  readonly invocation: ToolInvocation;
+  readonly execution: Execution;
+  readonly context: CommandSubmissionContext;
+  /** Durable AgentLoopStep identity for this pinned control action. */
+  readonly logicalActionId?: string;
+  readonly actionContext?: {
+    readonly identity: import("@arbor/ports").AgentLoopStepIdentity;
+    readonly actionIndex: number;
+    readonly providerTurnId: import("@arbor/domain").ProviderTurnId;
+    readonly callRef: string;
+    readonly contextEpoch: import("@arbor/domain").ContextEpochNumber;
+  };
+  readonly loopStepFence?: import("@arbor/ports").AgentLoopStepFence;
+  /** Process-local fault injection seam; never serialized or persisted. */
+  readonly qualificationProbe?: AgentLoopQualificationProbe;
+  /** Exact process-local authorization evidence from the trusted authorizer. */
+  readonly assignWorkEvidence?: import("@arbor/ports").AssignWorkControlAuthorizationEvidence;
+  readonly assignWorkReplay?: boolean;
+  readonly assignWorkCommandReplay?: {
+    readonly commandId: CommandId;
+    readonly approvalId: string;
+    readonly approvalRevision: number;
+    readonly consumedRevision: number;
+  };
+}
+
+export interface AgentActionHandler {
+  readonly action: AgentAction["_tag"];
+  readonly handle: (
+    input: AgentActionHandlerInput,
+  ) => Effect.Effect<AgentActionOutcome, AgentActionError>;
+}
+
+/** A semantic/precondition rejection is useful Agent feedback. It stays
+ * bounded and safe for the next model turn; native causes never cross this
+ * branch. */
+export interface AgentActionRejected {
+  readonly _tag: "AgentActionRejected";
+  readonly code:
+    | "action/not-applicable"
+    | "action/precondition"
+    | "action/target-unavailable"
+    | "action/canonical-rejected"
+    | "action/tool-unavailable";
+  readonly safeMessage: string;
+  readonly correction:
+    | "RetryWithChangedInput"
+    | "WaitForStateChange"
+    | "ChooseAlternative";
+}
+
+/** Infrastructure/configuration failure that the model cannot repair. The
+ * native cause is retained inside Runtime only and is never projected into
+ * model context. */
+export interface AgentActionOperationalFailure {
+  readonly _tag: "AgentActionOperationalFailure";
+  readonly operation: string;
+  readonly cause: unknown;
+}
+
+export interface AgentActionRecoveryBlocked {
+  readonly _tag: "AgentActionRecoveryBlocked";
+  readonly executionId: import("@arbor/domain").ExecutionId;
+  readonly logicalActionId: string;
+}
+
+export type AgentActionError =
+  | AgentActionRejected
+  | AgentActionOperationalFailure
+  | AgentActionRecoveryBlocked;
+
+export type ExecutableInvocationOutcome =
+  | {
+      readonly _tag: "ApprovalRequired";
+      readonly approvalId: string;
+      readonly revision: number;
+    }
+  | {
+      readonly _tag: "Observation";
+      readonly source: "Runtime" | "Tool";
+      readonly observation: BoundedObservation;
+      readonly status?: import("@arbor/ports").PortableToolResultStatus;
+      readonly disposition?: string;
+      readonly resultRef?: string;
+      readonly artifactRefs?: ReadonlyArray<string>;
+      readonly invocationId?: import("@arbor/domain").ToolInvocationId;
+      readonly terminalDenial?: TerminalActionDenial;
+      readonly reconciliationFactRef?: string;
+    }
+  | { readonly _tag: "Settle"; readonly settlement: ExecutionSettlement }
+  | {
+      readonly _tag: "SandboxProviderUnavailable";
+      readonly outcome: SandboxProviderUnavailableOutcome;
+    }
+  | { readonly _tag: "SandboxPolicyRequiredInterruption" };
+
+export interface ExecutableInvocationInput {
+  readonly invocation: ToolInvocation;
+  readonly execution: Execution;
+  readonly context: CommandSubmissionContext;
+  readonly controlBasis: ControlBasis;
+  readonly action?: {
+    readonly logicalStepNo: number;
+    readonly repairAttempt: number;
+    readonly actionIndex: number;
+    readonly logicalActionId: string;
+  };
+  /** Exact trusted P3 source identity for the durable AgentLoopStep action. */
+  readonly recoveryBindingIdentity?: RecoveryBindingSourceIdentity;
+  readonly recoveryBindingPolicyRevisions?: RecoveryBindingPolicyRevisions;
+  readonly executionFence?: import("@arbor/ports").AgentLoopStepFence;
+  readonly providerTurnId?: string;
+  readonly logicalActionId?: string;
+}
+
+export interface ExecutableInvocationHandler {
+  readonly handle: (
+    input: ExecutableInvocationInput,
+  ) => Effect.Effect<ExecutableInvocationOutcome, AgentActionError>;
+}
+
+export interface ControlToolRegistryService
+  extends ControlToolCatalogPortService {
+  readonly definitions: () => ReadonlyArray<ModelFacingControlToolDefinition>;
+  readonly classify: (toolName: string) => "Control" | "NotControl";
+  readonly decode: (
+    invocation: ToolInvocation,
+  ) => Effect.Effect<ControlToolInvocation, ControlToolDecodeError>;
+  readonly handle: (
+    input: AgentActionHandlerInput,
+  ) => Effect.Effect<AgentActionOutcome, AgentActionError>;
+}
+
+export class ControlToolRegistry extends Context.Service<
+  ControlToolRegistry,
+  ControlToolRegistryService
+>()("arbor/ControlToolRegistry") {}

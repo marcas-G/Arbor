@@ -2,15 +2,14 @@ import type { WaitSpec, WorkId, WorkspaceId } from "@arbor/domain";
 import {
   type SchedulerTimer,
   SchedulerTimerStore,
-  type SchedulerTimerStoreError,
   TransactionScope,
   type WorkWait,
   WorkWaitStore,
-  type WorkWaitStoreError,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
+import { repositoryFailure } from "./repository-error.js";
 
 interface WaitRow {
   readonly work_id: string;
@@ -53,10 +52,7 @@ export const WorkWaitStoreLive: Layer.Layer<WorkWaitStore, never, SqlClient> =
     WorkWaitStore,
     Effect.gen(function* () {
       const sql = yield* SqlClient;
-      const failure = (cause: unknown): WorkWaitStoreError => ({
-        _tag: "WorkWaitStoreFailure",
-        cause,
-      });
+      const failure = repositoryFailure("WorkWaitStore", "work-wait");
       const run = <A>(effect: Effect.Effect<A, SqlError>) =>
         effect.pipe(Effect.mapError(failure));
       return WorkWaitStore.of({
@@ -120,10 +116,7 @@ export const SchedulerTimerStoreLive: Layer.Layer<
   SchedulerTimerStore,
   Effect.gen(function* () {
     const sql = yield* SqlClient;
-    const failure = (cause: unknown): SchedulerTimerStoreError => ({
-      _tag: "SchedulerTimerStoreFailure",
-      cause,
-    });
+    const failure = repositoryFailure("SchedulerTimerStore", "timer");
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(Effect.mapError(failure));
     return SchedulerTimerStore.of({

@@ -42,15 +42,25 @@ const seedProposal = Effect.gen(function* () {
   yield* runMigrations(P6_MIGRATIONS);
   yield* p6SeedProject;
   const proposals = yield* FormationProposalStore;
+  const inbox = yield* InboxProjectionStore;
   const tx = yield* TransactionPort;
   yield* tx.transact(
-    proposals.insert(
-      admitFormationProposal({
-        proposalId: FPR_1,
-        parentWorkspaceId: p6RootWorkspace,
-        proposal: minimalProposal(),
-      }),
-    ),
+    Effect.gen(function* () {
+      yield* proposals.insert(
+        admitFormationProposal({
+          proposalId: FPR_1,
+          parentWorkspaceId: p6RootWorkspace,
+          proposal: minimalProposal(),
+        }),
+      );
+      yield* inbox.admitUpsert({
+        recipientWorkspaceId: p6RootWorkspace,
+        entryKey: `gov:${FPR_1}:1`,
+        kind: "Governance",
+        summary: "formation proposal awaiting human decision",
+        admittedAt: "t",
+      });
+    }),
   );
 });
 
@@ -109,9 +119,16 @@ describe("P6-003 RecordDecision governance (D1)", () => {
         expectedProposalRevision: 1,
         outcome: "Approve",
       });
-      return { receipt, events: yield* p6EventTypes };
+      const inbox = yield* InboxProjectionStore;
+      const tx = yield* TransactionPort;
+      return {
+        receipt,
+        events: yield* p6EventTypes,
+        inbox: yield* tx.transact(inbox.listUnconsumed(p6RootWorkspace)),
+      };
     });
-    const { receipt, events } = await runP6(program, makeP6App());
+    const result = await runP6(program, makeP6App());
+    const { receipt, events } = result;
     expect(receipt.resolution._tag).toBe("Committed");
     expect(events).toContain("DecisionRecorded");
     // The only WorkspaceCreated is the CreateProject bootstrap's root
@@ -119,6 +136,8 @@ describe("P6-003 RecordDecision governance (D1)", () => {
     expect(events.indexOf("DecisionRecorded")).toBeGreaterThan(
       events.lastIndexOf("WorkspaceCreated"),
     );
+    expect(result.inbox).toHaveLength(1);
+    expect(result.inbox[0]?.summary).toContain("approved");
   });
 
   it("rejects a stale revision with RevisionConflict", async () => {
@@ -165,8 +184,13 @@ describe("P6-003 RecordDecision governance (D1)", () => {
     expect(result.receipt.resolution._tag).toBe("Committed");
     expect(result.state).toBe("Pending");
     expect(result.revision).toBe(2);
-    expect(result.entries).toHaveLength(1);
-    expect(result.entries[0]?.kind).toBe("Governance");
+    expect(result.entries).toHaveLength(2);
+    expect(result.entries.every((entry) => entry.kind === "Governance")).toBe(
+      true,
+    );
+    expect(result.entries.map((entry) => entry.entryKey)).toEqual(
+      expect.arrayContaining([`dec:${FPR_1}:1:Modify`, `gov:${FPR_1}:2`]),
+    );
   });
 
   it("terminal proposals refuse further decisions; unknown proposals are a typed rejection", async () => {

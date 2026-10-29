@@ -15,8 +15,17 @@ export const SANDBOX_ENV_ALLOWLIST: ReadonlyArray<string> = [
 export const sandboxEnvironment = (
   ambient: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv => {
+  return projectSandboxEnvironment(ambient, SANDBOX_ENV_ALLOWLIST);
+};
+
+/** Project ambient variables through the exact allow-list bound by a durable
+ * SandboxProcessPolicy. Provider adapters call this before process creation. */
+export const projectSandboxEnvironment = (
+  ambient: NodeJS.ProcessEnv,
+  allowlist: ReadonlyArray<string>,
+): NodeJS.ProcessEnv => {
   const projected: Record<string, string> = {};
-  for (const key of SANDBOX_ENV_ALLOWLIST) {
+  for (const key of allowlist) {
     const value = ambient[key];
     if (value !== undefined) {
       projected[key] = value;

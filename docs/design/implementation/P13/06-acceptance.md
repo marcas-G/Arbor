@@ -1,7 +1,7 @@
 # P13 — 06 Acceptance
 
 **Owns:** P13 验收标准与 completion 定义
-**Baseline:** DID v1.15 G1–G4 · DID v1.17 TR-WPU-A visual successor · contracts `00`–`05`
+**Baseline:** DID v1.15 G1–G4 · DID v1.17 TR-WPU-A visual successor · contracts `00`–`05` · FT-DG-02 additive amendment
 
 ## 1. End-to-end acceptance story
 
@@ -15,16 +15,28 @@ StopExecution 紧急停止控件（显式确认）中止 → 全程未见 Select
 选择控件与任何 chat 输入框；拔掉 token 后所有命令得到 `unauthenticated`
 Problem 呈现。
 
+### F22 — completed Work remains publicly inspectable
+
+After a Work receives its exact Parent Acceptance and `CompleteWork` commits,
+open the same `/p/:projectId/workspace/:workspaceId/work/:workId` URL and
+render its canonical Completed lifecycle, objective, and the accepted
+same-revision PASS Verification/Acceptance details. Repeat after daemon
+restart. Also verify `Open + acceptedResult` remains “已验收、待完成”,
+Cancelled remains canonical Cancelled, and absent versus foreign target
+identities produce the same typed `projection/work-not-found` / HTTP 404
+presentation with no target facts. WorkPage consumes P10 Work Detail; it does
+not reconstruct lifecycle from `workspace-detail.currentWork/pendingWorks`.
+
 ## 2. Exit criteria matrix
 
 | # | Criterion | Evidence（机械化） |
 |---|---|---|
 | EC-1 | `pnpm check` 全绿（含 web build + web tests 并入根编排） | root `pnpm check` exit 0 |
 | EC-2 | `apps/web` 零禁依赖（硬要求 1） | architecture test：按 `@arbor/*` 白名单实现——`@arbor/api-contracts` 唯一允许；禁止 `@arbor/domain` / `@arbor/application` / `@arbor/projection-runtime` / `@arbor/adapters/*` / `@arbor/ports` / 其余一切 `@arbor/*` 与 `apps/*` 源码引用 |
-| EC-3 | 9 个 frozen view 均有 fixture/render coverage（硬要求 2） | render tests：9 view × (typical / minimal / unknown-enum) |
+| EC-3 | 10 个 frozen view 均有 fixture/render coverage（硬要求 2） | render tests：10 view × (typical / minimal / unknown-enum) |
 | EC-4 | Problem DTO 主要 typed failures 明确 UI rendering（硬要求 3） | render tests：六 category（unauthenticated/forbidden/not-found/invalid-request/stale/其他503）+ `TerminalRejected` 内联态 |
 | EC-5 | WS invalidation → server refetch，不自行 replay（硬要求 4） | 单测：帧处理只触发 refetch、cache 无事件性写入；e2e：invalidation 后数据来自 server 响应 |
-| EC-6 | 命令一律经 `/commands`，暴露集合 == `02` Human-actionable 七项（硬要求 5） | UI command catalog 常量 + 机械测试：表单可达命令集合相等；architecture test：写路径白名单（`01` I3） |
+| EC-6 | 命令一律经 `/commands`，暴露集合 == `02` Human-actionable 十六项（accepted sandbox addendum；硬要求 5） | UI command catalog 常量 + 机械测试：表单可达命令集合相等；architecture test：写路径白名单（`01` I3） |
 | EC-7 | `SelectCurrentWork` 无人工选择控件（`02` §4） | 测试：runnable/current 呈现组件不含 command 发起；catalog 不含该 type |
 | EC-8 | `SendMessage` 无 chat 控件（`02` §5） | 测试：transcript/detail 视图无消息输入；catalog 不含该 type |
 | EC-9 | Search 保持 out-of-v1（硬要求 6） | 测试：无 search 端点调用/输入；architecture test：无 `/search` 类路径 |
@@ -57,3 +69,108 @@ P13 FORMALLY CLOSED = result record（planning/results/P13.result.md）
 - 不决定 P14 chat 语义；
 - 不决定新 view / Search；
 - 不决定矩阵类别变更（U-2）。
+
+## Accepted Native OS Sandbox browser acceptance
+
+Add a browser story proving the human may inspect the exact current profile,
+variant, provider/network fields where applicable, revision, expiry and
+Committed/Unavailable/NeedsDecision status;
+select a profile and submit only through authenticated `/commands`; explicit
+`FullAccess` requires confirmation. Prove model-originated input cannot
+submit or change policy, ordinary approval does not widen the profile, and
+provider failure displays the fixed safe Attention/503 state without a spawn
+or TrustedLocal fallback. Verify restart/refresh reconstructs the same
+durable status, and no host path, environment value, network destination or
+provider diagnostic is displayed. This additive contract does not reopen P13
+completion or claim implementation evidence.
+
+
+## V21 final Native Sandbox UI qualification
+
+Assert the exact human-only policy variant chooser and explicit FullAccess
+high-risk confirmation; no automatic fallback, profile widening by approval or
+model-originated policy submission. Test NeedsDecision vs Committed/Unavailable
+status, precondition refetch after stale terminal receipt, immutable policy
+revision and no silent old-receipt mutation. Test SandboxPolicySummaryTooLarge
+as HTTP 200 TerminalRejected inline message (no Problem/409, no truncation and
+no sensitive details). Provider failure shows fixed safe summary/503 or current
+P9 Unavailable Attention without spawn; no browser timer/poll retry. Policy
+required is NeedsDecision, not provider-unavailable/503. RecoveryBinding
+failure Attention has immutable intent_at, safe summary and no repair action.
+No raw paths, target refs, hashes, env values, provider diagnostics or broker
+responses are rendered.
+
+## Accepted Sandbox Policy Candidate Read Model V5 browser qualification
+
+Add browser/process coverage for the existing Workspace Detail candidate
+read, with no new route or command:
+
+- Initial exact active Execution with a verified pending P4/P3 requirement
+  renders the coherent candidate list and common preconditions; singular
+  preconditions are absent when the candidate read is present.
+- Human selection maps existing common fields, only the selected candidate's
+  profile-specific handle digest, and selected variant to
+  `/commands`; `candidateId`, candidate list/reason and evidence refs are not
+  submitted. OsEnforced includes its exact registry pair and matching
+  NetworkPolicy mode; TrustedLocal omits registry fields and requires the
+  existing high-risk confirmation.
+- Commit a TrustedLocal decision, change only the provider registry within
+  the full V2 bundle, and verify Workspace Detail becomes NeedsDecision with
+  a refreshed candidate read and requires an explicit human choice. Do not
+  display a provider-unavailable state or imply TrustedLocal is OS-enforced.
+- A command based on the old candidate read receives the existing durable
+  stale receipt; only after invalidation/refetch of the whole candidate list
+  can the human choose again, including when the `candidateId` is unchanged
+  but that candidate's digest differs.
+  No automatic selection, submit, polling, retry, dispatch or spawn occurs.
+- Candidate list rendering uses only safe exact provider/profile/network
+  fields and candidate IDs; no paths, target refs, invocation/binding proof,
+  qualification evidence refs or diagnostics are exposed.
+
+These are contract qualification requirements, not implementation evidence;
+this design landing runs no tests and changes no database or migration.
+
+V6 additionally qualifies initial and refreshed candidate reads against the
+same complete current boundary/ownership barrier: an owned mount can yield
+distinct ReadOnly versus WorkspaceWrite/FullAccess digests; without a claim,
+ReadOnly and WorkspaceWrite may share a digest. The selected digest alone maps
+to the unchanged P1 expected field. Missing or inconsistent source projection
+returns a typed failure with no partial list. Candidate IDs, order, safe
+presentation and separate TrustedLocal confirmation remain V5.
+
+## Accepted Option A selector qualification (2026-10-20)
+
+For each OsEnforced V2 candidate, verify the displayed
+`providerId/providerVersion/capabilityRevision` is exact and the human's
+selection maps all three values to the closed P1 OsEnforced request. Two
+candidates that differ only by `capabilityRevision` remain distinct and
+selectable; neither `candidateId` nor list order is submitted or used to infer
+the selector. The P1 semantic fingerprint/receipt uses handler schema 2 for
+new requests. An exact previously stored schema-1 receipt replays unchanged;
+a legacy-shaped request without such a receipt receives the current-schema
+durable `SandboxAuthorityUnavailable` rejection and creates no decision/event.
+Stale registry/bundle refs retain the existing stable stale receipt. No
+browser auto-selection, fallback or provider execution is part of this UI
+qualification. This design landing does not run browser tests or authorize
+implementation.
+
+## Accepted pre-intent CandidateRead bootstrap qualification (2026-10-21)
+
+The same existing Workspace Detail candidate view is shown when P4 has
+returned the nonterminal `ApprovalRequired` pause, P3's exact Executable
+Action remains Pending, and the exact P4 approval is Pending/unconsumed. P13
+exposes only the existing safe candidate DTO; no P3
+action, approval, ToolInvocation, RecoveryBinding or source-provenance
+identifier is rendered. Human order is policy selection/DecideSandboxPolicy
+first, then the existing ResolveExecutableApproval command. The candidate
+view neither creates nor consumes approval, and no automatic selection/
+submission occurs. P1 checks immutable approval expiry against trusted
+transaction time at commit.
+
+The existing stale HTTP 200 receipt handles `ActionRevision` and
+`ExecutableApprovalRevision` with one fixed generic stale/refetch message.
+P13 refetches through the existing invalidation/explicit-refetch path, never
+replays the old selection, and never displays revision numbers or expiry
+details. UI qualification must include time-only approval expiry with
+unchanged row revision and dual Action/approval mismatch; the latter always
+uses the stable P1 Action-first safe field. P9 terminal behavior is unchanged.

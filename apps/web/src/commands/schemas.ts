@@ -20,8 +20,62 @@ const verificationId = z
   .regex(/^ver_[A-Za-z0-9_-]+$/, "ver_ 前缀的验证 ID");
 const grantId = z.string().regex(/^pgr_[A-Za-z0-9_-]+$/, "pgr_ 前缀的授权 ID");
 
+const isStrictIsoTimestamp = (value: string): boolean => {
+  const match =
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|[+-](\d{2}):(\d{2}))$/u.exec(
+      value,
+    );
+  if (match === null) return false;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  const offsetHour = match[7] === undefined ? 0 : Number(match[7]);
+  const offsetMinute = match[8] === undefined ? 0 : Number(match[8]);
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [
+    31,
+    leapYear ? 29 : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31,
+  ];
+
+  return (
+    year > 0 &&
+    month >= 1 &&
+    month <= 12 &&
+    day >= 1 &&
+    day <= (daysInMonth[month - 1] ?? 0) &&
+    hour <= 23 &&
+    minute <= 59 &&
+    second <= 59 &&
+    offsetHour <= 23 &&
+    offsetMinute <= 59 &&
+    Number.isFinite(Date.parse(value))
+  );
+};
+
 export const createProjectSchema = z.object({
   name: z.string().trim().min(1, "项目名称必填"),
+});
+
+export const renameProjectSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1, "项目名称必填")
+    .max(120, "项目名称最多 120 个字符"),
 });
 
 export const recordDecisionSchema = z.object({
@@ -50,25 +104,61 @@ export const acceptWorkOutcomeSchema = z.object({
   verificationId,
 });
 
+export const retryVerificationSchema = z.object({
+  workId,
+  verificationId,
+  expectedWorkRevision: z.number().int().min(0),
+  summaryContent: z.string().trim().min(1, "说明必填").max(8192),
+  successorVerificationId: verificationId,
+  verifierExecutionId: executionId,
+});
+
 export const stopExecutionSchema = z.object({
   executionId,
   confirmed: z.literal(true, { message: "必须显式确认停止" }),
 });
 
 export const grantPermissionSchema = z.object({
+  subjectKind: z.enum(["HumanPrincipal", "WorkspaceAgent", "Execution"]),
+  subjectRef: z.string().trim().min(1, "授权主体必填"),
   capability: z.string().trim().min(1, "capability 必填"),
-  target: z.string().trim(),
-  lifetime: z
+  target: z
     .string()
-    .regex(
-      /^P(?!$)(\d+Y)?(\d+M)?(\d+D)?(T(?=\d)(\d+H)?(\d+M)?(\d+S)?)?$/,
-      "ISO 8601 时长，如 PT1H",
+    .min(1, "授权目标必填；请填写精确的资源 ID")
+    .refine((value) => value === value.trim(), "授权目标不能包含首尾空格"),
+  expiresAt: z
+    .string()
+    .min(1, "过期时间必填；GrantPermission 必须有有效期")
+    .refine(isStrictIsoTimestamp, "请输入有效的 ISO 时间，并明确包含时区")
+    .refine(
+      (value) => Date.parse(value) > Date.now(),
+      "过期时间必须晚于当前时间",
     ),
 });
 
 export const revokePermissionSchema = z.object({
   permissionGrantId: grantId,
 });
+
+/** Local deliberate-choice state only. The candidateId is used to identify an
+ * option in the refreshed read model and is never sent in the P1 command. */
+export const sandboxPolicySelectionSchema = z
+  .object({
+    candidateId: z.string().regex(/^spc2_[0-9a-f]{64}$/u),
+    decisionExpiresAt: z
+      .string()
+      .min(1, "策略过期时间必填")
+      .refine(isStrictIsoTimestamp, "请输入有效的 ISO 时间，并明确包含时区")
+      .refine(
+        (value) => Date.parse(value) > Date.now(),
+        "策略过期时间必须晚于当前时间",
+      ),
+    networkDestinations: z
+      .array(z.string().trim().min(1))
+      .max(64, "网络目的地过多"),
+    trustedLocalConfirmed: z.boolean(),
+  })
+  .strict();
 
 export const submitHumanMessageSchema = z.object({
   bodyRef: z.string().trim().min(1).max(8192),

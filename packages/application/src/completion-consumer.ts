@@ -1,4 +1,5 @@
 import {
+  type Acceptance,
   Actor,
   CommandId,
   type Principal,
@@ -10,11 +11,21 @@ import {
   WorkRevision,
   type WorkspaceId,
 } from "@arbor/domain";
+import type {
+  AcceptanceRepositoryError,
+  TransactionOperationalFailure,
+  VerificationRepositoryError,
+  WorkRepositoryError,
+} from "@arbor/ports";
 import { Effect, Option } from "effect";
 import type { CompleteWorkPayload } from "./commands/accept-complete.js";
 import { semanticRequestFingerprint } from "./fingerprint.js";
 import { newUuid7 } from "./formation-plan.js";
-import type { CommandGatewayService, GatewayEnvelope } from "./gateway.js";
+import type {
+  CommandGatewayError,
+  CommandGatewayService,
+  GatewayEnvelope,
+} from "./gateway.js";
 
 /** P8 `03` §2 (DID v1.11 GQ4/G3): the deterministic completion consumer —
  * the chain-end symmetric closure. `WorkOutcomeAccepted` stays the
@@ -58,7 +69,7 @@ export interface CompletionConsumerDependencies {
       verificationId: import("@arbor/domain").VerificationId,
     ) => Effect.Effect<
       Option.Option<import("@arbor/domain").Verification>,
-      unknown,
+      VerificationRepositoryError | TransactionOperationalFailure,
       never
     >;
   };
@@ -66,7 +77,11 @@ export interface CompletionConsumerDependencies {
     readonly findByWorkRevision: (
       workId: import("@arbor/domain").WorkId,
       targetWorkRevision: number,
-    ) => Effect.Effect<Option.Option<unknown>, unknown, never>;
+    ) => Effect.Effect<
+      Option.Option<Acceptance>,
+      AcceptanceRepositoryError | TransactionOperationalFailure,
+      never
+    >;
   };
   readonly works: {
     readonly findById: (workId: WorkId) => Effect.Effect<
@@ -74,11 +89,24 @@ export interface CompletionConsumerDependencies {
         readonly workspaceId: WorkspaceId;
         readonly lifecycle: WorkLifecycle;
       }>,
-      unknown,
+      WorkRepositoryError | TransactionOperationalFailure,
       never
     >;
   };
 }
+
+export interface CompletionConsumerInvariantViolation {
+  readonly _tag: "CompletionConsumerInvariantViolation";
+  readonly reason: string;
+}
+
+export type CompletionConsumerError =
+  | AcceptanceRepositoryError
+  | CommandGatewayError
+  | CompletionConsumerInvariantViolation
+  | TransactionOperationalFailure
+  | VerificationRepositoryError
+  | WorkRepositoryError;
 
 interface WorkOutcomeAcceptedEvent {
   readonly acceptanceId: string;
@@ -136,7 +164,7 @@ export const runCompletionConsumer = (
   dependencies: CompletionConsumerDependencies,
   projectId: ProjectId,
   principal: Principal,
-): Effect.Effect<ReadonlyArray<string>, unknown> =>
+): Effect.Effect<ReadonlyArray<string>, CompletionConsumerError> =>
   Effect.gen(function* () {
     const records: string[] = [];
     const actor = parse(Actor)(principal);
@@ -149,15 +177,12 @@ export const runCompletionConsumer = (
       if (accepted === null) {
         continue;
       }
-      const found = yield* dependencies.works
-        .findById(accepted.workId)
-        .pipe(Effect.orDie);
+      const found = yield* dependencies.works.findById(accepted.workId);
       if (Option.isNone(found)) {
-        // Referential-integrity break, same convention as the handler and
-        // the P7 coordinator — defect, not a domain rejection.
-        return yield* Effect.die(
-          new Error(`work row not found: ${accepted.workId}`),
-        );
+        return yield* Effect.fail<CompletionConsumerInvariantViolation>({
+          _tag: "CompletionConsumerInvariantViolation",
+          reason: `accepted Work row not found: ${accepted.workId}`,
+        });
       }
       const work = found.value;
       if (work.lifecycle !== "Open") {
@@ -192,31 +217,29 @@ export const runCompletionConsumer = (
       // defect: the AcceptWorkOutcome produce transaction already
       // committed and is never rolled back by consumption; recovery is
       // catch-up/replay, absorbed by the deterministic CommandId.
-      const receipt = yield* dependencies.gateway
-        .execute(
-          envelope,
-          {
-            _tag: "System",
-            principal,
-            causationRef: `p8-completion-consumer:${event.eventId}`,
-          },
-          {
-            _tag: "CompleteWorkAuthority",
-            principal,
-            commandId,
-            semanticRequestFingerprint: semanticRequestFingerprint({
-              commandType: "CompleteWork",
-              projectId,
-              actor,
-              schemaVersion: "1",
-              payload,
-            }),
+      const receipt = yield* dependencies.gateway.execute(
+        envelope,
+        {
+          _tag: "System",
+          principal,
+          causationRef: `p8-completion-consumer:${event.eventId}`,
+        },
+        {
+          _tag: "CompleteWorkAuthority",
+          principal,
+          commandId,
+          semanticRequestFingerprint: semanticRequestFingerprint({
+            commandType: "CompleteWork",
             projectId,
-            targetWorkspaceId: work.workspaceId,
-            workId: accepted.workId,
-          },
-        )
-        .pipe(Effect.orDie);
+            actor,
+            schemaVersion: "1",
+            payload,
+          }),
+          projectId,
+          targetWorkspaceId: work.workspaceId,
+          workId: accepted.workId,
+        },
+      );
       if (receipt.resolution._tag === "Committed") {
         records.push("CompleteWork");
       } else {

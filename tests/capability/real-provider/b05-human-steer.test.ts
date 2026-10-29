@@ -84,7 +84,8 @@ describe("B05 L3 — human steer reaches durable state and the next cognition", 
                   workId: fixture.workId,
                   workspaceId: project.rootWorkspaceId,
                   expectedWorkRevision: 0,
-                  guidance: steerText,
+                  steer: { severity: "Normal", guidance: steerText },
+                  provenance: { source: "HumanInput" },
                 },
               });
               steerReceipt = steered.payload;

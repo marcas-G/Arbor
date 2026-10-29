@@ -115,7 +115,10 @@ describe("real-provider capability sentinels", () => {
               : { apiKey: process.env.ARBOR_CAPABILITY_API_KEY }),
             captures: calls,
           });
-          const projectA = makePublicProject("b04-session-a");
+          const projectA = makePublicProject(
+            "b04-session-a",
+            databaseDirectory,
+          );
           const sameRoot = await runPublicConversation({
             databaseFile,
             project: projectA,
@@ -132,7 +135,16 @@ describe("real-provider capability sentinels", () => {
           const turn2 = sameRoot.transcripts[1];
           const sameRootReply = responseBodyFrom(turn2 ?? { entries: [] })[0];
 
-          const projectB = makePublicProject("b04-unrelated-root");
+          const projectBRoot = join(
+            tmpdir(),
+            `arbor-b04-unrelated-${randomUUID()}`,
+          );
+          mkdirSync(projectBRoot, { recursive: true });
+          temporaryDirectories.push(projectBRoot);
+          const projectB = makePublicProject(
+            "b04-unrelated-root",
+            projectBRoot,
+          );
           const callsBeforeUnrelatedRoot = calls.length;
           const unrelated = await runPublicConversation({
             databaseFile,

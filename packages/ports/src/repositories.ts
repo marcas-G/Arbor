@@ -1,5 +1,6 @@
 import type {
   CanonicalResourceRegion,
+  ContextEpochNumber,
   ExecutionId,
   LeaseGeneration,
   Project,
@@ -21,11 +22,19 @@ import type {
   LeaseFencingRejected,
   ProjectRepositoryError,
   ResourceOwnershipRepositoryError,
+  SessionEpochConflict,
   SessionRepositoryError,
+  SessionSourceConflict,
   WorkRepositoryError,
   WorkspaceRepositoryError,
 } from "./errors.js";
 import type { TransactionScope } from "./session.js";
+import type {
+  SessionCompactionCommit,
+  SessionItemRecord,
+  SessionItemWrite,
+  SessionWriteFence,
+} from "./session-timeline.js";
 
 export interface ProjectRepositoryService {
   readonly findById: (
@@ -43,6 +52,12 @@ export interface ProjectRepositoryService {
     expectedRevision: Revision,
     policy: ProjectPolicy,
     newPolicyRevision: Revision,
+    newRevision: Revision,
+  ) => Effect.Effect<void, ProjectRepositoryError, TransactionScope>;
+  readonly renameIfRevision: (
+    projectId: ProjectId,
+    expectedRevision: Revision,
+    name: string,
     newRevision: Revision,
   ) => Effect.Effect<void, ProjectRepositoryError, TransactionScope>;
   readonly closeIfRevision: (
@@ -114,9 +129,21 @@ export interface WorkspaceRepositoryService {
     expectedRevision: Revision,
     newRevision: Revision,
   ) => Effect.Effect<void, WorkspaceRepositoryError, TransactionScope>;
+  readonly bumpRevisionIfRevision: (
+    workspaceId: WorkspaceId,
+    expectedRevision: Revision,
+    newRevision: Revision,
+  ) => Effect.Effect<void, WorkspaceRepositoryError, TransactionScope>;
   readonly countActiveChildren: (
     workspaceId: WorkspaceId,
   ) => Effect.Effect<number, WorkspaceRepositoryError, TransactionScope>;
+  readonly listActiveChildren: (
+    workspaceId: WorkspaceId,
+  ) => Effect.Effect<
+    ReadonlyArray<Workspace>,
+    WorkspaceRepositoryError,
+    TransactionScope
+  >;
   readonly hasOpenWork: (
     workspaceId: WorkspaceId,
   ) => Effect.Effect<boolean, WorkspaceRepositoryError, TransactionScope>;
@@ -147,6 +174,19 @@ export interface WorkRepositoryService {
     >,
     newRevision: Work["revision"],
   ) => Effect.Effect<void, WorkRepositoryError, TransactionScope>;
+  readonly replaceContractIfRevision: (
+    workId: WorkId,
+    expectedRevision: Work["revision"],
+    contract: Pick<
+      Work,
+      | "objective"
+      | "why"
+      | "constraints"
+      | "completionExpectation"
+      | "verificationMission"
+    >,
+    newRevision: Work["revision"],
+  ) => Effect.Effect<void, WorkRepositoryError, TransactionScope>;
   readonly completeIfRevision: (
     workId: WorkId,
     expectedRevision: Work["revision"],
@@ -171,6 +211,11 @@ export class WorkRepository extends Context.Service<
 >()("arbor/WorkRepository") {}
 
 export interface SessionRepositoryService {
+  readonly supportsTypedTimeline: () => Effect.Effect<
+    boolean,
+    SessionRepositoryError,
+    TransactionScope
+  >;
   readonly findById: (
     sessionId: SessionId,
   ) => Effect.Effect<
@@ -200,6 +245,59 @@ export interface SessionRepositoryService {
     SessionRepositoryError | LeaseFencingRejected,
     TransactionScope
   >;
+  readonly appendEntryIdempotent: (
+    sessionId: SessionId,
+    source: SessionEntrySource,
+    entry: { readonly entryKind: SessionEntryKind; readonly payload: unknown },
+    contentHash: string,
+    fence: {
+      readonly executionId: ExecutionId;
+      readonly workerId: string;
+      readonly workerIncarnationId: string;
+      readonly fencingGeneration: LeaseGeneration;
+    },
+  ) => Effect.Effect<
+    { readonly sequence: number; readonly inserted: boolean },
+    SessionRepositoryError | LeaseFencingRejected | SessionSourceConflict,
+    TransactionScope
+  >;
+  readonly appendItemIdempotent: (
+    sessionId: SessionId,
+    write: SessionItemWrite,
+    fence: SessionWriteFence,
+  ) => Effect.Effect<
+    { readonly sequence: number; readonly inserted: boolean },
+    | SessionRepositoryError
+    | LeaseFencingRejected
+    | SessionSourceConflict
+    | SessionEpochConflict,
+    TransactionScope
+  >;
+  readonly listActiveFrontier: (
+    sessionId: SessionId,
+    contextEpoch: ContextEpochNumber,
+    limit: number,
+  ) => Effect.Effect<
+    ReadonlyArray<SessionItemRecord>,
+    SessionRepositoryError,
+    TransactionScope
+  >;
+  readonly commitCompaction: (
+    sessionId: SessionId,
+    input: SessionCompactionCommit,
+    fence: SessionWriteFence,
+  ) => Effect.Effect<
+    {
+      readonly sequence: number;
+      readonly inserted: boolean;
+      readonly newEpoch: ContextEpochNumber;
+    },
+    | SessionRepositoryError
+    | LeaseFencingRejected
+    | SessionSourceConflict
+    | SessionEpochConflict,
+    TransactionScope
+  >;
   /** P10-007 deps 申报: minimal read-only production read path over
    * session_entries for the Transcript view (on-demand debug projection,
    * never truth — SD §12.4 note). Deterministic (sequence-ascending)
@@ -208,6 +306,32 @@ export interface SessionRepositoryService {
     sessionId: SessionId,
     afterSequence: number,
     limit: number,
+  ) => Effect.Effect<
+    ReadonlyArray<SessionEntryRecord>,
+    SessionRepositoryError,
+    TransactionScope
+  >;
+  /** Runtime context read: newest entries, returned in ascending sequence
+   * order so provider messages preserve causal order. */
+  readonly listRecentEntries: (
+    sessionId: SessionId,
+    limit: number,
+  ) => Effect.Effect<
+    ReadonlyArray<SessionEntryRecord>,
+    SessionRepositoryError,
+    TransactionScope
+  >;
+  /** Work-only provider-context frontier. Excludes rows/checkpoints owned by
+   * ConversationResponseEpisodes even when both streams share WorkspacePrimary
+   * storage. Work history may span multiple Work executions in the same
+   * WorkspacePrimary Session. Before the first typed Work checkpoint, selects
+   * the latest 64 raw Session rows by sequence, then applies schema and owner
+   * filters without causal backfill. Provider reasoning is limited to the exact
+   * current Execution. After a Work checkpoint, returns it and every later
+   * eligible Work item without that cap. */
+  readonly listWorkActiveFrontier: (
+    sessionId: SessionId,
+    currentExecutionId?: ExecutionId,
   ) => Effect.Effect<
     ReadonlyArray<SessionEntryRecord>,
     SessionRepositoryError,
@@ -232,6 +356,12 @@ export interface SessionEntryRecord {
   readonly entryKind: SessionEntryKind;
   readonly payload: unknown;
   readonly createdAt: string;
+  readonly source?: SessionEntrySource & { readonly contentHash: string };
+}
+
+export interface SessionEntrySource {
+  readonly kind: string;
+  readonly ref: string;
 }
 
 export type SessionEntryKind =
@@ -255,6 +385,10 @@ export interface ResourceOwnershipClaimRecord {
   readonly resolvedAtEnvironmentRevision: string;
   readonly createdAt: string;
   readonly releasedAt: string | null;
+  readonly exclusions?: ReadonlyArray<CanonicalResourceRegion>;
+  readonly delegatingWorkspaceId?: WorkspaceId | null;
+  readonly delegationSourceId?: string | null;
+  readonly claimRevision?: number;
 }
 
 export interface ResourceOwnershipRepositoryService {
@@ -268,11 +402,38 @@ export interface ResourceOwnershipRepositoryService {
   readonly insertClaim: (
     claim: ResourceOwnershipClaimRecord,
   ) => Effect.Effect<void, ResourceOwnershipRepositoryError, TransactionScope>;
+  /** Atomically replace the Parent's exact claim post-image and insert the
+   * Child claim. Caller must provide the encompassing BEGIN IMMEDIATE scope. */
+  readonly applyDelegation: (input: {
+    readonly parentClaimId: string;
+    readonly expectedParentClaimRevision: number;
+    readonly parentPostImage: ResourceOwnershipClaimRecord;
+    readonly childClaim: ResourceOwnershipClaimRecord;
+  }) => Effect.Effect<void, ResourceOwnershipRepositoryError, TransactionScope>;
+  readonly applyReclaim: (input: {
+    readonly childClaimId: string;
+    readonly expectedChildClaimRevision: number;
+    readonly childReleasedAt: string;
+    readonly childNextClaimRevision: number;
+    readonly parentClaimId: string | null;
+    readonly expectedParentClaimRevision: number | null;
+    readonly parentPostImage: ResourceOwnershipClaimRecord | null;
+    readonly restoredParentClaim: ResourceOwnershipClaimRecord | null;
+  }) => Effect.Effect<void, ResourceOwnershipRepositoryError, TransactionScope>;
   readonly releaseClaim: (
     claimId: string,
     releasedAt: string,
   ) => Effect.Effect<void, ResourceOwnershipRepositoryError, TransactionScope>;
   readonly listActiveByWorkspace: (
+    workspaceId: WorkspaceId,
+  ) => Effect.Effect<
+    ReadonlyArray<ResourceOwnershipClaimRecord>,
+    ResourceOwnershipRepositoryError,
+    TransactionScope
+  >;
+  /** P10/V6 read-only full snapshot, including released records. Optional on
+   * legacy test adapters; candidate reads fail closed when unavailable. */
+  readonly listByWorkspace?: (
     workspaceId: WorkspaceId,
   ) => Effect.Effect<
     ReadonlyArray<ResourceOwnershipClaimRecord>,

@@ -23,7 +23,7 @@ export interface SessionContextValue {
   readonly unauthenticatedProblem: Problem | null;
   readonly setSession: (token: string, actor: string) => void;
   readonly clearSession: () => void;
-  readonly setProjectId: (projectId: string) => void;
+  readonly setProjectId: (projectId: string | null) => void;
   readonly reportUnauthenticated: (problem: Problem) => void;
 }
 
@@ -57,7 +57,7 @@ export function SessionProvider({
     setUnauthenticatedProblem(null);
   }, []);
 
-  const setProjectId = useCallback((nextProjectId: string): void => {
+  const setProjectId = useCallback((nextProjectId: string | null): void => {
     setProjectIdState(nextProjectId);
   }, []);
 

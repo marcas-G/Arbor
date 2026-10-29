@@ -6,10 +6,13 @@ import {
   createProject,
   isProjectClosed,
   isProjectOpen,
+  isProjectResourceSource,
   makeProjectPolicy,
+  normalizeProjectName,
   ProjectId,
   parse,
   Revision,
+  renameProject,
   updateProjectPolicy,
   WorkspaceId,
 } from "../src/index.js";
@@ -28,9 +31,41 @@ const makeProject = (value = 0, policyValue = 0): Project =>
     projectPolicy: makeProjectPolicy(),
     projectPolicyRevision: revision(policyValue),
     revision: revision(value),
+    resourceSource: { _tag: "ConversationOnly" },
   });
 
 describe("project aggregate", () => {
+  it("strictly recognizes only the closed ProjectResourceSource shapes", () => {
+    expect(
+      isProjectResourceSource({
+        _tag: "Profile",
+        resourceProfileRef: "repo-default",
+        version: "7",
+      }),
+    ).toBe(true);
+    expect(isProjectResourceSource({ _tag: "ConversationOnly" })).toBe(true);
+    expect(isProjectResourceSource({ _tag: "LegacyUnknown" })).toBe(true);
+    expect(
+      isProjectResourceSource({
+        _tag: "Profile",
+        resourceProfileRef: "repo-default",
+        version: "7",
+        path: "C:/private",
+      }),
+    ).toBe(false);
+    expect(
+      isProjectResourceSource({
+        _tag: "Profile",
+        resourceProfileRef: "",
+        version: "7",
+      }),
+    ).toBe(false);
+    expect(
+      isProjectResourceSource({ _tag: "ConversationOnly", path: "x" }),
+    ).toBe(false);
+    expect(isProjectResourceSource({ _tag: "Unknown" })).toBe(false);
+  });
+
   it("creates an Open project with exactly one root workspace", () => {
     const project = makeProject();
     expect(project.lifecycle).toBe("Open");
@@ -66,6 +101,34 @@ describe("project aggregate", () => {
       expect(isProjectClosed(result.value)).toBe(true);
       expect(allowsNewAutonomousExecution(result.value)).toBe(false);
     }
+  });
+
+  it("RenameProject changes only name and aggregate revision", () => {
+    const result = renameProject(makeProject(4, 2), {
+      authorized: true,
+      expectedRevision: revision(4),
+      name: "Arbor Next",
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.name).toBe("Arbor Next");
+      expect(result.value.revision).toBe(5);
+      expect(result.value.projectPolicyRevision).toBe(2);
+    }
+  });
+
+  it("normalizes safe names and rejects invisible control characters", () => {
+    const normalized = normalizeProjectName("  Arbor\t研究  ");
+    expect(normalized).toEqual({ ok: true, value: "Arbor 研究" });
+
+    const invisible = normalizeProjectName("Arbor\u200B研究");
+    expect(invisible.ok).toBe(false);
+    if (!invisible.ok) {
+      expect(invisible.error._tag).toBe("InvalidProjectName");
+    }
+
+    const empty = normalizeProjectName(" \n\t ");
+    expect(empty.ok).toBe(false);
   });
 
   it("rejects every lifecycle mutation on a Closed project", () => {

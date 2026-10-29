@@ -2,16 +2,24 @@ import { describe, expect, it } from "vitest";
 import type { DomainEvent } from "../src/index.js";
 import {
   Actor,
+  decodeSupportedEventPayload,
   EVENT_CATALOG,
+  EVENT_VERSION_REGISTRY,
   EventId,
   EventSequence,
+  isSupportedEventReadPair,
+  isSupportedEventWritePair,
   ProjectId,
   parse,
 } from "../src/index.js";
 
 const EXPECTED_EVENTS = [
+  "ControlApprovalResolved",
+  "ExecutableApprovalRequested",
+  "ExecutableApprovalResolved",
   "ProjectCreated",
   "ProjectPolicyChanged",
+  "ProjectRenamed",
   "ProjectClosed",
   "WorkspaceCreated",
   "ResponsibilityChanged",
@@ -21,12 +29,19 @@ const EXPECTED_EVENTS = [
   "WorkspaceRetired",
   "WorkspaceLineageRecorded",
   "PrimarySessionReplaced",
+  "AssignWorkTargetBindingEscalated",
+  "SubmittedDecisionBindingEscalated",
+  "ToolObservationReplayEvidenceEscalated",
+  "WorkspaceResourceActivationChanged",
   "WorkAssigned",
   "CurrentWorkChanged",
   "WorkRefined",
   "WorkCompleted",
   "WorkCancelled",
   "WorkSteered",
+  "WorkAmended",
+  "WorkBlockerResolved",
+  "WorkBlockerSuperseded",
   "DependencyDeclared",
   "DependencySatisfied",
   "DependencyWithdrawn",
@@ -34,6 +49,9 @@ const EXPECTED_EVENTS = [
   "DependencyContractRevised",
   "DeadlockAttentionRequested",
   "ReconciliationEscalated",
+  "LegacyAdoptionEvidenceEscalated",
+  "LegacyAdoptionEvidenceResolved",
+  "DeliverReplayEscalated",
   "WorktreeCreated",
   "WorktreeRetired",
   "DeliverableProduced",
@@ -45,6 +63,9 @@ const EXPECTED_EVENTS = [
   "ExecutionStopRequested",
   "ExecutionSettled",
   "PermissionChanged",
+  "SandboxPolicyGrantIssued",
+  "SandboxPolicyDecisionRecorded",
+  "SandboxProviderUnavailable",
   "DecisionRecorded",
   "EnvironmentChanged",
   "HumanInterventionApplied",
@@ -52,6 +73,8 @@ const EXPECTED_EVENTS = [
   // deliberately not reusing MessageSent (whose payload semantics are a
   // workspace sender).
   "HumanMessageSubmitted",
+  "ConversationResponseResumed",
+  "ConversationResponseCancelled",
 ].sort();
 
 const AGGREGATE_SNAPSHOT_FIELDS = [
@@ -79,6 +102,147 @@ describe("domain event catalog", () => {
     expect(Object.keys(EVENT_CATALOG).sort()).toEqual(EXPECTED_EVENTS);
   });
 
+  it("has explicit exact writer and reader versions for every catalog event", () => {
+    expect(Object.keys(EVENT_VERSION_REGISTRY).sort()).toEqual(
+      Object.keys(EVENT_CATALOG).sort(),
+    );
+    for (const eventType of Object.keys(EVENT_CATALOG)) {
+      if (eventType === "VerificationConcluded") {
+        expect(isSupportedEventWritePair(eventType, 2)).toBe(true);
+        expect(isSupportedEventWritePair(eventType, 1)).toBe(false);
+        expect(isSupportedEventReadPair(eventType, 1)).toBe(true);
+        expect(isSupportedEventReadPair(eventType, 2)).toBe(true);
+      } else if (eventType === "ResourceOwnershipChanged") {
+        expect(isSupportedEventWritePair(eventType, 2)).toBe(true);
+        expect(isSupportedEventWritePair(eventType, 1)).toBe(false);
+        expect(isSupportedEventReadPair(eventType, 1)).toBe(true);
+        expect(isSupportedEventReadPair(eventType, 2)).toBe(true);
+      } else {
+        expect(isSupportedEventWritePair(eventType, 1)).toBe(true);
+        expect(isSupportedEventWritePair(eventType, 2)).toBe(false);
+        expect(isSupportedEventReadPair(eventType, 1)).toBe(true);
+        expect(isSupportedEventReadPair(eventType, 2)).toBe(false);
+      }
+      expect(isSupportedEventReadPair(eventType, 3)).toBe(false);
+    }
+    expect(isSupportedEventReadPair("UnknownEvent", 1)).toBe(false);
+  });
+
+  it("strictly decodes VerificationConcluded v2 and requires explicit null reason", () => {
+    const payload = {
+      verificationId: "ver_018f2b3c-4d5e-7abc-8def-0123456789ab",
+      workId: "wrk_018f2b3c-4d5e-7abc-8def-0123456789ab",
+      targetWorkRevision: 1,
+      verdict: "Pass",
+      conclusionReason: null,
+      evidenceRefs: ["evd_018f2b3c-4d5e-7abc-8def-0123456789ab"],
+      summaryRef: "sha256:summary",
+      missionSnapshot: {
+        goal: "verify goal",
+        criteria: [{ criterionId: "c1", requirement: "proof", required: true }],
+        riskRequirements: [],
+      },
+      criteriaResults: [
+        {
+          criterionId: "c1",
+          requirement: "proof",
+          required: true,
+          verdict: "Pass",
+          evidenceRefs: ["evd_018f2b3c-4d5e-7abc-8def-0123456789ab"],
+        },
+      ],
+      snapshotStatus: "Available",
+    };
+    expect(
+      decodeSupportedEventPayload("VerificationConcluded", 2, payload)._tag,
+    ).toBe("Decoded");
+    const { conclusionReason: _reason, ...omittedReason } = payload;
+    expect(
+      decodeSupportedEventPayload("VerificationConcluded", 2, omittedReason)
+        ._tag,
+    ).toBe("MalformedPayload");
+    expect(
+      decodeSupportedEventPayload("VerificationConcluded", 2, {
+        ...payload,
+        conclusionReason: "",
+      })._tag,
+    ).toBe("MalformedPayload");
+    expect(decodeSupportedEventPayload("WorkCompleted", 2, {})._tag).toBe(
+      "UnsupportedPair",
+    );
+  });
+
+  it("strictly decodes complete ResourceOwnershipChanged v2 post-images", () => {
+    const claim = {
+      claimId: "claim-1",
+      workspaceId: "ws-parent",
+      region: {
+        resourceSpaceId: "filesystem",
+        normalizedRegion: { kind: "FileTree", path: "/repo" },
+      },
+      sourceAddressSnapshot: { _tag: "FileTree", path: "/repo" },
+      resourceBoundaryRevision: 1,
+      resolvedAtEnvironmentRevision: "env-1",
+      createdAt: "2026-10-26T00:00:00.000Z",
+      releasedAt: null,
+      claimRevision: 2,
+      exclusions: [],
+      delegatingWorkspaceId: null,
+      delegationSourceId: null,
+    };
+    const payload = {
+      _tag: "ResourceOwnershipChanged",
+      operation: "Delegated",
+      delegation: {
+        delegationSourceId: "formation:proposal-1:1",
+        formationProposalId: "proposal-1",
+        formationProposalRevision: 1,
+        parentWorkspaceId: "ws-parent",
+        childWorkspaceId: "ws-child",
+        approvedBy: "user:gaolei",
+        causedByCommandId: "cmd-1",
+      },
+      parentClaim: {
+        ...claim,
+        exclusions: [
+          {
+            resourceSpaceId: "filesystem",
+            normalizedRegion: { kind: "FileTree", path: "/repo/child" },
+          },
+        ],
+      },
+      childClaim: {
+        ...claim,
+        claimId: "claim-child",
+        workspaceId: "ws-child",
+        region: {
+          resourceSpaceId: "filesystem",
+          normalizedRegion: { kind: "FileTree", path: "/repo/child" },
+        },
+        sourceAddressSnapshot: {
+          _tag: "FileTree",
+          path: "/repo/child",
+        },
+        delegatingWorkspaceId: "ws-parent",
+        delegationSourceId: "formation:proposal-1:1",
+      },
+    };
+    expect(
+      decodeSupportedEventPayload("ResourceOwnershipChanged", 2, payload)._tag,
+    ).toBe("Decoded");
+    expect(
+      decodeSupportedEventPayload("ResourceOwnershipChanged", 2, {
+        ...payload,
+        childClaim: { ...payload.childClaim, delegationSourceId: null },
+      })._tag,
+    ).toBe("MalformedPayload");
+    expect(
+      decodeSupportedEventPayload("ResourceOwnershipChanged", 1, {
+        _tag: "ResourceOwnershipChanged",
+      })._tag,
+    ).toBe("Decoded");
+  });
+
   it("excludes high-frequency runtime trace records", () => {
     for (const trace of [
       "ProviderTurn",
@@ -88,6 +252,36 @@ describe("domain event catalog", () => {
     ]) {
       expect(Object.keys(EVENT_CATALOG)).not.toContain(trace);
     }
+  });
+
+  it("keeps SandboxPolicyGrantIssued as the exact P1 audit/wake tuple", () => {
+    const schema = EVENT_CATALOG.SandboxPolicyGrantIssued as unknown as {
+      readonly fields: Readonly<Record<string, unknown>>;
+    };
+    expect(Object.keys(schema.fields)).toEqual([
+      "_tag",
+      "permissionGrantId",
+      "grantPermissionCommandId",
+      "executionId",
+      "operatorConfigRevision",
+      "operatorConfigDigest",
+    ]);
+  });
+
+  it("keeps SandboxPolicyDecisionRecorded as the exact minimal P1 wake tuple", () => {
+    const schema = EVENT_CATALOG.SandboxPolicyDecisionRecorded as unknown as {
+      readonly fields: Readonly<Record<string, unknown>>;
+    };
+    expect(Object.keys(schema.fields)).toEqual([
+      "_tag",
+      "workspaceId",
+      "executionId",
+      "episodeBinding",
+      "policyRevision",
+      "permissionGrantId",
+      "operatorConfigRevision",
+      "operatorConfigDigest",
+    ]);
   });
 
   it("payloads carry change facts, not aggregate snapshots", () => {

@@ -22,6 +22,7 @@ import {
   RunnableWorkSource,
   type SchedulerDecision,
   TransactionPort,
+  WorkReadmissionGateStore,
 } from "../packages/ports/src/index.js";
 import {
   makeP7App,
@@ -58,17 +59,33 @@ const otherWorkspace = parse(WorkspaceId)(
   "ws_018f2b3c-4d5e-7abc-8def-0123456789f1",
 );
 
-const makeClassificationApp = () => {
+const makeClassificationApp = (
+  heldWorkIds: ReadonlySet<WorkId> = new Set(),
+  includeReadmissionGate = true,
+) => {
   const base = makeP7App();
   const waits = Layer.provide(WorkWaitStoreLive, base);
-  return Layer.mergeAll(
-    base,
-    waits,
-    Layer.provide(
-      DependencyAwareRunnableWorkSourceLive,
-      Layer.mergeAll(base, waits),
-    ),
+  const readmissionGate = Layer.succeed(WorkReadmissionGateStore, {
+    hasBlockingSource: ({ workId }) =>
+      Effect.succeed(
+        heldWorkIds.has(workId)
+          ? Option.some({
+              sourceKind: "RuntimeSafetyStopSettlement" as const,
+              executionId: "exe_018f2b3c-4d5e-7abc-8def-0123456789c1" as never,
+            })
+          : Option.none(),
+      ),
+  });
+  const dependencies = includeReadmissionGate
+    ? Layer.mergeAll(base, waits, readmissionGate)
+    : Layer.mergeAll(base, waits);
+  const classifier = Layer.provide(
+    DependencyAwareRunnableWorkSourceLive,
+    dependencies,
   );
+  return includeReadmissionGate
+    ? Layer.mergeAll(base, waits, readmissionGate, classifier)
+    : Layer.mergeAll(base, waits, classifier);
 };
 
 const seedWork = (workId: WorkId, commandId: CommandId) =>
@@ -156,12 +173,12 @@ const decideFromTable = (
   runnable: ReadonlyArray<WorkId>,
 ): SchedulerDecision =>
   Option.isSome(current)
-    ? { _tag: "Admit", focus: { _tag: "Work", workId: current.value } }
+    ? { _tag: "AdmitWork", workId: current.value }
     : runnable.length === 0
       ? { _tag: "Idle" }
       : runnable.length === 1
         ? { _tag: "SelectCurrentWork", workId: runnable[0] as WorkId }
-        : { _tag: "Admit", focus: { _tag: "Coordination" } };
+        : { _tag: "RequestWorkSelection", candidateWorkIds: runnable };
 
 describe("P7-008 dependency-aware classification (03 §2/§3)", () => {
   it("wait × dependency matrix: waiting and blocked works leave runnable; unreferenced Unsatisfied stays runnable", async () => {
@@ -190,7 +207,10 @@ describe("P7-008 dependency-aware classification (03 §2/§3)", () => {
         expect([...classified.runnable]).toEqual([WORK_DEP_ONLY, WORK_CLEAN]);
         expect(
           decideFromTable(classified.current, classified.runnable),
-        ).toEqual({ _tag: "Admit", focus: { _tag: "Coordination" } });
+        ).toEqual({
+          _tag: "RequestWorkSelection",
+          candidateWorkIds: [WORK_DEP_ONLY, WORK_CLEAN],
+        });
       }),
       makeClassificationApp(),
     );
@@ -252,12 +272,41 @@ describe("P7-008 dependency-aware classification (03 §2/§3)", () => {
         expect([...classified.runnable]).toEqual([]);
         expect(
           decideFromTable(classified.current, classified.runnable),
-        ).toEqual({
-          _tag: "Admit",
-          focus: { _tag: "Work", workId: WORK_CLEAN },
-        });
+        ).toEqual({ _tag: "AdmitWork", workId: WORK_CLEAN });
       }),
       makeClassificationApp(),
+    );
+  });
+
+  it("excludes the exact held revision from both current and runnable", async () => {
+    await runP7(
+      Effect.gen(function* () {
+        yield* seedWorks([
+          [WORK_CLEAN, CMD_CLEAN],
+          [WORK_DEP_ONLY, CMD_DEP_ONLY],
+        ]);
+        yield* setCurrentWork(WORK_CLEAN);
+        const classified = yield* classifyRoot;
+        expect(classified.current).toEqual(Option.none());
+        expect([...classified.runnable]).toEqual([WORK_DEP_ONLY]);
+      }),
+      makeClassificationApp(new Set([WORK_CLEAN])),
+    );
+  });
+
+  it("fails closed when an Open Work exists but the readmission gate port is missing", async () => {
+    await runP7(
+      Effect.gen(function* () {
+        yield* seedWorks([[WORK_CLEAN, CMD_CLEAN]]);
+        const exit = yield* Effect.exit(classifyRoot);
+        expect(exit._tag).toBe("Failure");
+        if (exit._tag === "Failure") {
+          expect(JSON.stringify(exit.cause)).toContain(
+            '"_tag":"PersistenceUnavailable"',
+          );
+        }
+      }),
+      makeClassificationApp(new Set(), false),
     );
   });
 });

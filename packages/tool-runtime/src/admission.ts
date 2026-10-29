@@ -1,19 +1,20 @@
 import {
   type CanonicalResourceRegion,
+  isValidOwnershipRegion,
+  ownershipRegionRelation,
+  ownershipRegionsOverlap,
   regionContains,
   type WorkspaceId,
 } from "@arbor/domain";
 import {
   type AdmissionResult,
-  ProjectEnvironmentPort,
   ResourceAdmission,
   type ResourceAdmissionError,
   ResourceOwnershipRepository,
   resourceRegionComparator,
   type TransactionScope,
-  WorkspaceRepository,
 } from "@arbor/ports";
-import { Effect, Layer, Option } from "effect";
+import { Effect, Layer } from "effect";
 
 /** P4 `05` §3; DID v1.8 G4; SD v1.3 §4.4. Validate-only: never mutates
  * `resource_ownership`. */
@@ -29,17 +30,16 @@ const contains = (
 export const ResourceAdmissionLive: Layer.Layer<
   ResourceAdmission,
   never,
-  WorkspaceRepository | ResourceOwnershipRepository | ProjectEnvironmentPort
+  ResourceOwnershipRepository
 > = Layer.effect(
   ResourceAdmission,
   Effect.gen(function* () {
-    const workspaces = yield* WorkspaceRepository;
     const ownership = yield* ResourceOwnershipRepository;
-    const environment = yield* ProjectEnvironmentPort;
 
     const admit = (input: {
       readonly workspaceId: WorkspaceId;
       readonly regions: ReadonlyArray<CanonicalResourceRegion>;
+      readonly resolvedBoundaryRegions: ReadonlyArray<CanonicalResourceRegion>;
       readonly write: boolean;
     }): Effect.Effect<
       AdmissionResult,
@@ -47,27 +47,77 @@ export const ResourceAdmissionLive: Layer.Layer<
       TransactionScope
     > =>
       Effect.gen(function* () {
-        const workspace = yield* workspaces.findById(input.workspaceId);
-        if (Option.isNone(workspace)) {
-          return deny("workspace not found");
-        }
-        const resolved = yield* environment.resolve(
-          workspace.value.projectId,
-          workspace.value.resourceBoundary.addresses,
-        );
         for (const region of input.regions) {
           if (
-            !resolved.regions.some((boundary) => contains(boundary, region))
+            !input.resolvedBoundaryRegions.some((boundary) =>
+              contains(boundary, region),
+            )
           ) {
             return deny("region outside ResourceBoundary");
           }
         }
         if (input.write) {
-          const claims = yield* ownership.listActiveByWorkspace(
-            input.workspaceId,
+          const resourceSpaceIds = [
+            ...new Set(input.regions.map((region) => region.resourceSpaceId)),
+          ];
+          const claimsBySpace = yield* Effect.forEach(
+            resourceSpaceIds,
+            (resourceSpaceId) => ownership.loadActiveConflicts(resourceSpaceId),
           );
+          const claims = claimsBySpace.flat();
+          if (
+            claims.some(
+              (claim) =>
+                !isValidOwnershipRegion(
+                  {
+                    allow: claim.region,
+                    exclusions: claim.exclusions ?? [],
+                  },
+                  resourceRegionComparator,
+                ),
+            )
+          ) {
+            return deny("active ownership claim is malformed");
+          }
+          for (let left = 0; left < claims.length; left += 1) {
+            const leftClaim = claims[left];
+            if (leftClaim === undefined) continue;
+            for (let right = left + 1; right < claims.length; right += 1) {
+              const rightClaim = claims[right];
+              if (
+                rightClaim !== undefined &&
+                ownershipRegionsOverlap(
+                  {
+                    allow: leftClaim.region,
+                    exclusions: leftClaim.exclusions ?? [],
+                  },
+                  {
+                    allow: rightClaim.region,
+                    exclusions: rightClaim.exclusions ?? [],
+                  },
+                  resourceRegionComparator,
+                )
+              ) {
+                return deny("active effective ownership claims overlap");
+              }
+            }
+          }
           for (const region of input.regions) {
-            if (!claims.some((claim) => contains(claim.region, region))) {
+            if (
+              !claims.some(
+                (claim) =>
+                  claim.workspaceId === input.workspaceId &&
+                  claim.region.resourceSpaceId === region.resourceSpaceId &&
+                  ownershipRegionRelation(
+                    {
+                      allow: claim.region,
+                      exclusions: claim.exclusions ?? [],
+                    },
+                    region,
+                    resourceRegionComparator,
+                  ) === "Contained",
+              )
+            ) {
               return deny("region not owned");
             }
           }

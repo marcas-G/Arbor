@@ -112,7 +112,21 @@ describe("cross-aggregate invariants", () => {
       targetWorkRevision: w.revision,
       missionSnapshot: mission,
     });
-    const concluded = concludeVerification(started, "Pass");
+    const concluded = concludeVerification(
+      started,
+      "Pass",
+      "summary:test",
+      undefined,
+      [
+        {
+          criterionId: "c1",
+          requirement: "r1",
+          required: true,
+          verdict: "Pass",
+          evidenceRefs: [],
+        },
+      ],
+    );
     if (!concluded.ok) {
       throw new Error("expected conclude");
     }

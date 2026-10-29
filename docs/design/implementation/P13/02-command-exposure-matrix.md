@@ -5,9 +5,11 @@
 
 ## 1. Policy（frozen）
 
-每个 wire 级 commandType 归入四类之一，**分类只约束 UI 主动暴露，不改变
-服务器对任意 envelope 的接收与裁决**（Authority Resolver 仍是唯一
-enforcement；`02` 分类不是权限系统）：
+每个 wire 级 commandType 归入四类之一，**分类只约束 UI 主动暴露**；该
+矩阵不是服务端 codec 或 authority 注册表。服务端外部接收还要求
+DID §4.1B / P12 `10` §3 的认证、当前 `RegisteredCommandType` 严格 wire-v1
+codec 和原有起源政策；通过 codec 不授予权限，Authority Resolver 与
+Command Gateway 仍执行各自的 authority gate。
 
 | 类别 | 定义 | UI 政策 |
 |---|---|---|
@@ -18,19 +20,94 @@ enforcement；`02` 分类不是权限系统）：
 
 ## 2. Matrix（wire 级 commandType 全集）
 
+UI 暴露矩阵与外部 codec 注册是两个独立集合。当前外部 codec descriptor
+coverage 与 origin policy 由下表登记；本节既有矩阵仍只拥有 UI 暴露类别。
+Factory-only commands 不进入 `RegisteredCommandType` 或当前 codec 集合。
+Future composition registration 需先更新并接受 codec/origin scope，不会
+因存在 handler factory 而自动变为 UI 可见。
+
+### 2.1 当前 production 外部 codec 注册（DID §4.1B）
+
+下表在接受的 sandbox addendum 后与 `apps/single-workspace/src/registry.ts`
+目标组合的 29 个 required commandType 一一对应；`ControlApprovalStore`
+存在时另包含 1 个 optional `ResolveControlApproval` descriptor（30 total）。
+Codec owner 列指向 semantic payload 的唯一权威
+契约；codec 只做严格结构验证。External policy 重述 owning phase 的起源
+政策，不新增授权。无 External 入口的类型仍须有 typed 内部 semantic
+validator。
+
+| commandType | Payload / codec owner | External origin policy |
+|---|---|---|
+| `CreateProject` | P1 `01` §5 | human/bootstrap; v2 form selects a host Profile or ConversationOnly; never accepts a client filesystem path |
+| `CreateChildWorkspace` | P1 `01` §6 | reject external |
+| `AssignWork` | P1 `01` §7 | reject external; agent-originated |
+| `RenameProject` | P15 project-management `01` | authenticated local human external governance only; P12 authenticated-human classification and exact actor/principal match; exact P15 ProjectGovernanceAuthority; no Agent origin |
+| `CloseProject` | P15 project-management `01` | authenticated local human external governance only; P12 authenticated-human classification and exact actor/principal match; exact P15 ProjectGovernanceAuthority; no Agent origin |
+| `SelectCurrentWork` | P5 `01` §3.1 / owning handler contract | reject external; scheduler-originated |
+| `AdmitExecution` | P2 `01` §5 | reject external under P13 U-3 |
+| `StopExecution` | P2 `01` §6 | external human/parent path allowed; runtime path remains typed internal |
+| `SettleExecution` | P2 `01` §7 | reject external; ExecutionOrigin/RecoveryController |
+| `SendMessage` | P6 `02` §3 | reject external; Agent-originated |
+| `DeliverMessage` | P6 `02` §3 | reject external; agent-originated |
+| `DeclareDependency` | P7 `01` §2 | reject external; producer Agent |
+| `SatisfyDependency` | P7 `01` §4 | reject external; dependency coordinator |
+| `ProduceDeliverable` | P7 `01` §3 | reject external; producer Agent |
+| `RecordDecision` | P6 `01` §4 | external human governance path |
+| `ResolveControlApproval` | DID §4.2 / P4/P12 approval-decision contract | external human approval path |
+| `ResolveExecutableApproval` | DID v1.30 CAPA / P4 approval contract | external human approval path |
+| `SteerWork` | P6 `04` §2 | external human path |
+| `AcceptWorkOutcome` | P8 `01` §4 | external root-parent/human path; parent-agent path remains typed internal |
+| `CompleteWork` | P8 `01` §5 | reject external; completion consumer |
+| `StartVerification` | P8 `01` §1 | reject external; Verification consumer/runtime |
+| `RecordVerificationEvidence` | P8 `01` §2 | reject external; verifier runtime |
+| `ConcludeVerification` | P8 `01` §3 | reject external; Verification consumer/runtime |
+| `RetryVerification` | P8 `01`/`02` | authenticated human governance only: exact Root-local human or Parent Workspace human; exact OrphanConclusionAuthority; no Agent origin |
+| `GrantPermission` | P12 `02` §5 | external only when P12 authority resolves the principal |
+| `DecideSandboxPolicy` | P1 `01` / P12 `02` accepted Native OS Sandbox amendment | authenticated human only; exact CAPA Grant, issuer provenance and Execution binding; reject Agent/system origins |
+| `RevokePermission` | P12 `02` §5 | external only when P12 authority resolves the principal |
+| `SubmitHumanMessage` | P14 `01` §1 | external authenticated human path |
+| `ResumeConversationResponse` | P17 `05` §1 | reject external unless P17 explicitly establishes that route |
+| `CancelConversationResponse` | P17 `05` §2 | reject external unless P17 explicitly establishes that route |
+
+The following handler factories are not composed into the current production
+registry. They have no current descriptor, are not `RegisteredCommandType`
+members, and are excluded from the current F23 qualification matrix:
+
+| Factory command | Payload owner | Current status |
+|---|---|---|
+| `ReviseDependencyContract` | P7 `01` §7 | factory only; separate accepted registration/codec scope update required before reachability |
+| `WithdrawDependency` | P7 `01` §5 | factory only; separate accepted registration/codec scope update required before reachability |
+| `MarkDependencyUnfulfillable` | P7 `01` §6 | factory only; separate accepted registration/codec scope update required before reachability |
+| `RegisterProjectTool` | P12 `01` §5 | factory only; separate accepted registration/codec scope update required before reachability |
+| `CreateWorktree` | P11 `09` | factory only; separate accepted registration/codec scope update required before reachability |
+| `RetireWorktree` | P11 `09` | factory only; separate accepted registration/codec scope update required before reachability |
+
+These six names do not add or remove any UI exposure classification. In
+particular, the three P7 dependency factories keep their existing P7 semantics
+but remain outside this production registry and codec set.
+
 来源：`packages/application/src/commands/**` 注册表 + P2 runtime 路径。
 
-### Human-actionable（v1 暴露，7）
+### Human-actionable（accepted sandbox addendum: current 16）
 
 | commandType | 冻结依据 | UI 形态 |
 |---|---|---|
 | `CreateProject` | P1 bootstrap（DID §4.1 CreateProject single-transaction） | 引导表单（项目名/根责任定义） |
+| `RenameProject` | P15 `01` exact project governance and revision CAS | Settings：重命名当前 Open 项目；target is the route ProjectId |
+| `CloseProject` | P15 `01` archive, explicit confirmation, Open→Closed and cooperative stop | Settings：带归档说明的明确归档操作；不提供硬删除或 Reopen；target is the route ProjectId |
 | `RecordDecision` | P6 D1 第一层 formation human gate：`RequestGovernance(FormationApproval)` + `RecordDecision` 绑定 exact proposal revision | 决策表单：对 pending FormationProposal / governance proposal 记录 Approve/Reject/Adjust，必须绑定 proposal revision |
+| `ResolveControlApproval` | P4 `03` / P12 CAPA exact control approval | ControlApprovalStore available 时队列中的精确控制审批项：Approve/Reject，绑定 ApprovalId 与 revision |
+| `ResolveExecutableApproval` | P4 `03` / P12 CAPA exact executable approval | 队列中的精确可执行审批项：Approve/Reject，绑定 ApprovalId 与 revision |
+| `DecideSandboxPolicy` | P1 `01` / P12 `02` accepted Native OS Sandbox authority | 精确当前 Execution 的 profile/provider/network 选择；`FullAccess` 单独警示并确认；仅经 `/commands` |
 | `SteerWork` | P6 `04` human steer（普通/Critical；quiescence 集成） | 纠偏表单（work 目标 + steer 文本；Critical 需显式确认） |
 | `AcceptWorkOutcome` | S1 Parent 接收；human-as-root-parent 路径 | 验收表单：对 root 直接子 workspace 的 delivered outcome 记录接受/拒绝 |
+| `RetryVerification` | P8 `01`/`02` exact orphan governance command | Verification Detail / VerifierOrphan：显式将 exact open Verification conclude 为 `Unknown(Orphaned)` 并创建一个 successor；Root Work 由 authenticated local human、child Work 由 exact Parent Workspace human 操作 |
 | `StopExecution`（external Human/Parent Stop 路径） | P12 `02` §4 External Human/Parent Stop（resolver 产出 `submissionOrigin:"External"` 的 VerifiedRuntimeCommandAuthority）；DID v1.13 G4/G7（human-originated canonical command 路径，发射 HumanInterventionApplied）；S2 §6 用户明确要求立即停止 | 紧急停止控件：workspace-detail 的 activeExecution 卡上"停止该执行"，需显式确认（§6 U-3） |
 | `GrantPermission` | P12 `02` §5 PermissionGrant governance（唯一 durable writer） | admin 表单（principal、commandType scope、边界） |
 | `RevokePermission` | 同上 | admin 表单（选择现存 grant） |
+| `SubmitHumanMessage` | P14 `01` authenticated human message | Workspace 对话表单提交人类消息 |
+| `ResumeConversationResponse` | P17 `05` response job command | 对话响应状态的继续操作；沿既有 same-Attempt resume path |
+| `CancelConversationResponse` | P17 `05` response job command | 对话响应状态的取消操作；沿既有 response-job cancellation path |
 
 ### System-internal（不暴露，10）
 
@@ -46,12 +123,13 @@ enforcement；`02` 分类不是权限系统）：
 | `StopExecution`（runtime-origin 路径） | P2 runtime authority | 同上；external Human/Parent 路径见 §2 Human-actionable 与 §6 U-3 |
 | `SettleExecution` | P2 settlement / recovery | 运行时通道 |
 
-### Agent-originated（不暴露，11）
+### Agent-originated（不暴露，12）
 
 | commandType | 拥有者 | 说明 |
 |---|---|---|
 | `AssignWork` | parent agent（含 Main） | 第一层划分经 formation gate，不走 UI 直发 |
 | `SendMessage` | P6 `02` communication protocol | **§5 特殊约束**；agent↔agent 通道 |
+| `DeliverMessage` | P6 `02` communication protocol | agent-originated delivery/admission |
 | `ProduceDeliverable` | P7 deliver primitive（producer） | 执行期产出 |
 | `DeclareDependency` / `ReviseDependencyContract` / `SatisfyDependency` / `WithdrawDependency` / `MarkDependencyUnfulfillable` | P6/P7 dependency coordination | agent/parent 协调 |
 | `StartVerification` / `RecordVerificationEvidence` | P8 verifier（ExecutionBound） | 验证执行 |
@@ -69,6 +147,31 @@ Recovery / ops 通道（如 recovery settlement）不经过外部 command regist
    提交前不可变；网络失败重试必须**复用同一 commandId**（服务器幂等）；
 3. `projectId` / `actor` / `issuedAt`：按 `01` §4；
 4. `payload`：仅由表单字段构造；不嵌入 server 未要求的字段。
+
+For CreateProject v2, the form's resource selector is populated only from the
+authenticated P12 `GET /project-resources` catalog or the explicit
+ConversationOnly choice. It constructs the closed P1 `01` ResourceSelection;
+it MUST NOT construct or submit rootWorkspace.resourceBoundary.addresses,
+absolute paths, Profile-derived canonical addresses, or a GitWorktree. The
+Profile ref/version is an input selector, not an authority fact. A retry keeps
+the exact commandId and selection; changing the selection starts a new logical
+request and requires a new commandId. The UI displays a friendly Profile name
+and availability but never renders the host path.
+
+The bootstrap form follows the catalog state without silently widening or
+changing the user's resource choice:
+
+- If exactly one catalog entry is available, the form preselects that exact
+  Profile ref/version. The displayed friendly name makes the selection visible;
+  submitting the form uses that selected Profile.
+- If there are no available Profiles, the form MUST NOT infer an empty
+  ResourceBoundary or submit CreateProject by default. It explains that a
+  ConversationOnly Project cannot use file tools or complete Work requiring
+  file evidence, and requires the user to explicitly select ConversationOnly
+  before submission.
+- Unavailable catalog entries are not auto-selected. The form does not
+  reinterpret a stale/unavailable Profile selection as ConversationOnly; the
+  user must make an explicit valid selection.
 
 ## 4. 特殊约束：`SelectCurrentWork`
 
@@ -116,5 +219,50 @@ decision 属 scheduler evaluator；`SelectCurrentWork` handler 只应用 evaluat
 
 ## 8. Verification
 
-`06` EC-6（UI command catalog 机械测试：暴露集合 == §2 Human-actionable 七项）、
+`06` EC-6（UI command catalog 机械测试：暴露集合 == §2 Human-actionable 十六项，含已接受的 `DecideSandboxPolicy`）、
 EC-7（无 SelectCurrentWork 人工选择控件）、EC-8（无 SendMessage chat 控件）。
+
+## Accepted Native OS Sandbox command exposure
+
+`DecideSandboxPolicy` is Human-actionable only. It is absent from
+model/Agent ActionCall, control-tool and automated-origin catalogs. The UI
+choice is bound to the selected authenticated human and exact current
+Execution, expected revisions, explicit profile/provider/network policy and
+expiry; it submits only through the existing `/commands` Gateway path. A
+`FullAccess` selection requires explicit warning/confirmation. The matrix
+does not create service-side authority; P12/P1 enforce the exact Grant and
+durable decision.
+
+
+## V21 sandbox command/status UI contract
+
+The existing human-only DecideSandboxPolicy is submitted through /commands
+using exact current Workspace Detail preconditions. StaleSandboxPolicyInputs is
+an HTTP 200 durable TerminalRejected receipt with field-enum-safe inline
+message; there is no HTTP 409/Problem mapping and same CommandId replays the
+same receipt. The user refetches current refs and uses a fresh CommandId.
+FullAccess is explicit TrustedLocal/Unconfined with warning and confirmation,
+never an automatic provider fallback. NeedsDecision is policy-required pause;
+Unavailable is reserved for actual current provider no-spawn fact/outcome. No
+browser auto-retry or model-originated decision is permitted.
+
+## Accepted Option A command selection (2026-10-20)
+
+For OsEnforced, the human-actionable DecideSandboxPolicy command exposes the
+exact selected candidate's providerId, providerVersion and
+capabilityRevision, in addition to the existing profile/network and CAS
+fields. Candidate IDs remain presentation-only; there is no inferred or
+default provider tuple. This maps to the P1 handler schema 2 contract, not a
+new command or route. Accepted proposal SHA-256
+`02D2687AA87D6E2B08D06090F293961CCBCFDFF884B6348872D42AFAA59B3013`.
+
+## Accepted pre-intent CandidateRead bootstrap (2026-10-21)
+
+The existing human-only DecideSandboxPolicy route remains the only command
+that records sandbox policy. P13 may expose the same Workspace Detail
+CandidateRead while a P3 Executable Action is Pending and its exact P4
+Executable approval remains Pending/unconsumed. The human submits the
+existing policy command before resolving that approval through the existing
+`ResolveExecutableApproval` route. No ActionId, ApprovalId, source digest,
+candidate ID, new command, command payload field, auto-submit or approval
+mutation is introduced by the CandidateRead.

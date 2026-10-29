@@ -55,7 +55,16 @@
       "path": "../../adapters/provider-openai"
     },
     {
+      "path": "../../adapters/provider-testecho"
+    },
+    {
       "path": "../../adapters/sandbox-local"
+    },
+    {
+      "path": "../../adapters/sandbox-native-posix"
+    },
+    {
+      "path": "../../adapters/sandbox-windows"
     },
     {
       "path": "../../adapters/secret-env"

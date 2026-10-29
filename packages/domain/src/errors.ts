@@ -2,6 +2,7 @@ export const DOMAIN_ERROR_TAGS = [
   "IdempotencyConflict",
   "AuthorityDenied",
   "RevisionConflict",
+  "InvalidProjectName",
   "WorkNotOpen",
   "TerminalLifecycleMutation",
   "RetirePreconditionFailed",
@@ -9,6 +10,7 @@ export const DOMAIN_ERROR_TAGS = [
   "VerificationAcceptanceMismatch",
   "DependencyNotSatisfiable",
   "PermissionRevoked",
+  "WorkPlanInvalid",
 ] as const;
 
 export type DomainErrorTag = (typeof DOMAIN_ERROR_TAGS)[number];
@@ -21,6 +23,7 @@ export type DomainError =
       readonly expected: number;
       readonly actual: number;
     }
+  | { readonly _tag: "InvalidProjectName"; readonly reason: string }
   | { readonly _tag: "WorkNotOpen"; readonly workId: string }
   | {
       readonly _tag: "TerminalLifecycleMutation";
@@ -44,7 +47,8 @@ export type DomainError =
   | {
       readonly _tag: "PermissionRevoked";
       readonly permissionGrantId: string;
-    };
+    }
+  | { readonly _tag: "WorkPlanInvalid"; readonly reason: string };
 
 export const isDomainErrorTag = (value: unknown): value is DomainErrorTag =>
   typeof value === "string" &&

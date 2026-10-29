@@ -1,13 +1,52 @@
 import type { ExecutionId, LeaseGeneration } from "@arbor/domain";
 
+export interface PersistenceUnavailable<Tag extends string = string> {
+  readonly _tag: "PersistenceUnavailable";
+  readonly repository: Tag;
+  readonly operation: string;
+  readonly retryDisposition: "retryable" | "non-retryable";
+  readonly sourceTag: string;
+  readonly cause: unknown;
+}
+
+export interface PersistenceConstraintViolation<Tag extends string = string> {
+  readonly _tag: "PersistenceConstraintViolation";
+  readonly repository: Tag;
+  readonly operation: string;
+  readonly constraintKind: "Unique" | "Constraint";
+  readonly constraint: string;
+}
+
+export interface PersistenceCorruption<Tag extends string = string> {
+  readonly _tag: "PersistenceCorruption";
+  readonly repository: Tag;
+  readonly operation: string;
+  readonly reason: string;
+}
+
 export type RepositoryFailure<Tag extends string> =
   | { readonly _tag: `${Tag}RevisionConflict` }
-  | { readonly _tag: `${Tag}Failure`; readonly cause: unknown };
+  | PersistenceUnavailable<Tag>
+  | PersistenceConstraintViolation<Tag>
+  | PersistenceCorruption<Tag>;
 
 export type ProjectRepositoryError = RepositoryFailure<"ProjectRepository">;
 export type WorkspaceRepositoryError = RepositoryFailure<"WorkspaceRepository">;
 export type WorkRepositoryError = RepositoryFailure<"WorkRepository">;
 export type SessionRepositoryError = RepositoryFailure<"SessionRepository">;
+export interface SessionSourceConflict {
+  readonly _tag: "SessionSourceConflict";
+  readonly sessionId: string;
+  readonly entryKind: string;
+  readonly sourceKind: string;
+  readonly sourceRef: string;
+}
+export interface SessionEpochConflict {
+  readonly _tag: "SessionEpochConflict";
+  readonly sessionId: string;
+  readonly expectedEpoch: number;
+  readonly currentEpoch: number;
+}
 export type ResourceOwnershipRepositoryError =
   RepositoryFailure<"ResourceOwnershipRepository">;
 export type CommandStoreError = RepositoryFailure<"CommandStore">;
@@ -33,6 +72,12 @@ export interface ResourceResolutionStale {
 
 export type ExecutionRepositoryError = RepositoryFailure<"ExecutionRepository">;
 export type WorkWaitStoreError = RepositoryFailure<"WorkWaitStore">;
+export type WorkBlockerStoreError = RepositoryFailure<"WorkBlockerStore">;
+export type LocalPlanStoreError = RepositoryFailure<"LocalPlanStore">;
+/** @deprecated MAC compatibility alias; active code uses LocalPlanStoreError. */
+export type WorkPlanStoreError = LocalPlanStoreError;
+export type DecisionRequestStoreError =
+  RepositoryFailure<"DecisionRequestStore">;
 export type SchedulerTimerStoreError = RepositoryFailure<"SchedulerTimerStore">;
 
 export interface LeaseFencingRejected {
@@ -46,10 +91,56 @@ export interface WorkerDispatchError {
   readonly cause: unknown;
 }
 
-export interface ExecutionDriverError {
-  readonly _tag: "ExecutionDriverError";
+export const EXECUTION_DRIVER_OPERATIONAL_STAGES = [
+  "ModelCapability",
+  "LoopStepStore",
+  "InboxProjection",
+  "InputPromotion",
+  "ControlBasis",
+  "ConversationStore",
+  "SessionStore",
+  "WorkspaceStore",
+  "WorkStore",
+  "TurnProfile",
+  "ModelContext",
+  "Compaction",
+  "ProviderTurnStore",
+  "ProviderRuntime",
+  "ActionLedger",
+  "DriverDependency",
+] as const;
+
+export type ExecutionDriverOperationalStage =
+  (typeof EXECUTION_DRIVER_OPERATIONAL_STAGES)[number];
+
+export interface ExecutionDriverOperationalFailure {
+  readonly _tag: "ExecutionDriverOperationalFailure";
+  readonly stage: ExecutionDriverOperationalStage;
+  readonly sourceTag: string;
   readonly cause: unknown;
 }
+
+export interface ExecutionDriverOwnershipLost {
+  readonly _tag: "ExecutionDriverOwnershipLost";
+  readonly executionId: ExecutionId;
+  readonly generation: LeaseGeneration;
+}
+
+export interface ExecutionDriverInvariantFailure {
+  readonly _tag: "ExecutionDriverInvariantFailure";
+  readonly stage:
+    | "SessionTimeline"
+    | "AgentLoopStep"
+    | "ProviderReplay"
+    | "ContextAssembly"
+    | "DriverContract";
+  readonly reason: string;
+}
+
+export type ExecutionDriverError =
+  | ExecutionDriverOperationalFailure
+  | ExecutionDriverOwnershipLost
+  | ExecutionDriverInvariantFailure;
 
 export interface ExecutionSchedulerError {
   readonly _tag: "ExecutionSchedulerError";
@@ -121,10 +212,55 @@ export interface ModelContextError {
 
 // --- P4 ---
 
-export interface ToolRuntimeError {
-  readonly _tag: "ToolRuntimeError";
+export const TOOL_RUNTIME_OPERATIONAL_STAGES = [
+  "WorkspaceLookup",
+  "EnvironmentResolution",
+  "AuthorityResolution",
+  "ResourceResolutionStale",
+  "ApprovalLookup",
+  "IntentJournal",
+  "ApprovalConsumption",
+  "RecoveryBinding",
+  "ResourceAdmission",
+  "SandboxOpen",
+  "Executor",
+  "SettlementJournal",
+] as const;
+
+export type ToolRuntimeOperationalStage =
+  (typeof TOOL_RUNTIME_OPERATIONAL_STAGES)[number];
+
+/** A stage-owned infrastructure failure. Callers classify on `stage`, never
+ * on the adapter-native cause. The cause remains Runtime-private. */
+export interface ToolRuntimeOperationalFailure {
+  readonly _tag: "ToolRuntimeOperationalFailure";
+  readonly stage: ToolRuntimeOperationalStage;
+  readonly effectDisposition: "NotStarted" | "OutcomeUncertain";
+  readonly invocationRef: string;
   readonly cause: unknown;
 }
+
+/** Cleanup failed after the executor was entered. The executor's own typed
+ * failure is retained separately when both execution and cleanup fail; raw
+ * causes are never flattened or projected to the model. */
+export interface ToolRuntimeCleanupFailure {
+  readonly _tag: "ToolRuntimeCleanupFailure";
+  readonly stage: "SandboxClose";
+  readonly effectDisposition: "OutcomeUncertain";
+  readonly invocationRef: string;
+  readonly cause: unknown;
+  readonly priorFailure?: ToolRuntimeOperationalFailure;
+}
+
+export type ToolRuntimeError =
+  | ToolRuntimeOperationalFailure
+  | ToolRuntimeCleanupFailure
+  | {
+      readonly _tag: "ToolObservationRecoveryBlocked";
+      readonly executionId: ExecutionId;
+      readonly logicalActionId: string;
+    }
+  | LeaseFencingRejected;
 export interface SandboxError {
   readonly _tag: "SandboxError";
   readonly cause: unknown;
@@ -133,10 +269,9 @@ export interface ResourceAdmissionError {
   readonly _tag: "ResourceAdmissionError";
   readonly cause: unknown;
 }
-export interface ToolInvocationStoreError {
-  readonly _tag: "ToolInvocationStoreError";
-  readonly cause: unknown;
-}
+export type ToolInvocationStoreError =
+  | RepositoryFailure<"ToolInvocationStore">
+  | LeaseFencingRejected;
 export interface ArtifactError {
   readonly _tag: "ArtifactError";
   readonly cause: unknown;
@@ -145,10 +280,8 @@ export interface BlobStoreError {
   readonly _tag: "BlobStoreError";
   readonly cause: unknown;
 }
-export interface ArtifactMetadataError {
-  readonly _tag: "ArtifactMetadataError";
-  readonly cause: unknown;
-}
+export type ArtifactMetadataError =
+  RepositoryFailure<"ArtifactMetadataRepository">;
 
 // --- P10 (DID §10.5 Problem DTO vocabulary; P10 `05` §1) ---
 
@@ -158,6 +291,7 @@ export const PROJECTION_QUERY_ERROR_CODES = [
   "projection/stale",
   "projection/unavailable",
   "projection/invalid-request",
+  "projection/work-not-found",
 ] as const;
 
 export type ProjectionQueryErrorCode =
@@ -191,7 +325,43 @@ export interface ProjectionInvalidRequest {
   readonly safeDetails: Readonly<Record<string, unknown>>;
 }
 
+export interface ProjectionNotFound {
+  readonly _tag: "ProjectionNotFound";
+  readonly code: "projection/work-not-found";
+  readonly category: "not-found";
+  readonly correlationId: string | null;
+  readonly retryDisposition: "non-retryable";
+  readonly safeDetails: Readonly<Record<string, unknown>>;
+}
+
+/** Canonical rows contradict an integrity condition required by a read view. */
+export interface ProjectionIntegrityFailure {
+  readonly _tag: "ProjectionIntegrityFailure";
+  readonly code: "projection/unavailable";
+  readonly category: "unavailable";
+  readonly correlationId: string | null;
+  readonly retryDisposition: "non-retryable";
+  readonly safeDetails: Readonly<Record<string, unknown>>;
+}
+
+export interface SandboxProviderUnavailableProjection {
+  readonly _tag: "SandboxProviderUnavailableProjection";
+  readonly code: "sandbox/provider-unavailable";
+  readonly category: "unavailable";
+  readonly correlationId: null;
+  readonly retryDisposition: "retryable";
+  readonly message: "required sandbox capability was unavailable or could not be verified; execution did not start";
+  readonly safeDetails: {
+    readonly executionId: string;
+    readonly workspaceId: string;
+    readonly policyRevision: number;
+  };
+}
+
 export type ProjectionQueryError =
   | ProjectionStale
   | ProjectionUnavailable
-  | ProjectionInvalidRequest;
+  | ProjectionInvalidRequest
+  | ProjectionNotFound
+  | ProjectionIntegrityFailure
+  | SandboxProviderUnavailableProjection;

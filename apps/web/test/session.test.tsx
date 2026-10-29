@@ -8,7 +8,14 @@
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "../src/App.js";
 import { LoginCard } from "../src/session/LoginCard.js";
@@ -39,6 +46,50 @@ const unauthenticatedProblem = {
   safeDetails: {},
 };
 
+const directoryResponse = () =>
+  jsonResponse(200, {
+    ok: true,
+    status: 200,
+    body: {
+      projects: [
+        {
+          projectId: "prj_demo",
+          name: "Demo",
+          lifecycle: "Open",
+          rootWorkspaceId: "ws_root",
+          revision: 0,
+          updatedAt: "t",
+        },
+      ],
+    },
+  });
+
+const viewResponse = (url: string) =>
+  url === "/views/responsibility-tree"
+    ? jsonResponse(200, {
+        ok: true,
+        status: 200,
+        body: {
+          value: {
+            nodes: [
+              {
+                workspaceId: "ws_root",
+                parentWorkspaceId: null,
+                name: "root",
+                status: "Open",
+                subtreeAttention: { attention: 0, actionRequired: 0 },
+              },
+            ],
+          },
+          watermark: 1,
+        },
+      })
+    : jsonResponse(200, {
+        ok: true,
+        status: 200,
+        body: { value: { rows: [] }, watermark: 1 },
+      });
+
 function stubFetch(impl: FetchImpl): FetchFn {
   const fetchMock = vi.fn(impl);
   vi.stubGlobal("fetch", fetchMock);
@@ -57,21 +108,15 @@ async function login(actor = "human:root", token = "tok_1"): Promise<void> {
     target: { value: actor },
   });
   fireEvent.click(screen.getByRole("button", { name: "连接" }));
-  await waitFor(() => expect(screen.getByText("项目")).toBeTruthy());
+  await waitFor(() => expect(screen.getByText("当前项目")).toBeTruthy());
 }
 
 /** W-02: pick a project via the rail ProjectSwitcher (URL is authority). */
 async function switchProject(projectId: string): Promise<void> {
-  fireEvent.click(screen.getByText("未选择"));
-  await waitFor(() =>
-    expect(screen.getByPlaceholderText("prj_…")).toBeTruthy(),
-  );
-  fireEvent.change(screen.getByPlaceholderText("prj_…"), {
-    target: { value: projectId },
-  });
-  fireEvent.submit(
-    screen.getByPlaceholderText("prj_…").closest("form") as HTMLFormElement,
-  );
+  fireEvent.click(screen.getByText("选择项目"));
+  await waitFor(() => expect(screen.getByText("Demo")).toBeTruthy());
+  fireEvent.click(screen.getByRole("button", { name: /Demo/ }));
+  expect(projectId).toBe("prj_demo");
 }
 
 afterEach(() => {
@@ -166,23 +211,85 @@ describe("P13-007 memory-only session (frozen contract 01 §4)", () => {
 
 describe("session unauthenticated gate (EC-4, Web v1 shell)", () => {
   it("a 401 unauthenticated view problem blocks content and offers re-login", async () => {
-    const fetchMock = stubFetch(() =>
-      Promise.resolve(
-        jsonResponse(401, {
-          ok: false,
-          status: 401,
-          problem: unauthenticatedProblem,
-        }),
-      ),
-    );
+    let resolveTreeResponse!: (response: Response) => void;
+    let treeResponseState: "pending" | "resolved" = "pending";
+    const pendingTreeResponse = new Promise<Response>((resolve) => {
+      resolveTreeResponse = resolve;
+    });
+    const fetchMock = stubFetch((url) => {
+      if (url === "/projects") return Promise.resolve(directoryResponse());
+      if (url === "/views/responsibility-tree") return pendingTreeResponse;
+      return Promise.resolve(viewResponse(url));
+    });
     render(<App />);
     await login();
     await switchProject("prj_demo");
     const treeButtons = screen.getAllByRole("button", { name: "树" });
     fireEvent.click(treeButtons[0] as HTMLElement);
-    await waitFor(() => expect(screen.getByText("未认证")).toBeTruthy());
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(
+          ([url]) => url === "/views/responsibility-tree",
+        ),
+      ).toBe(true),
+    );
+    expect(treeResponseState).toBe("pending");
+    await act(async () => {
+      treeResponseState = "resolved";
+      resolveTreeResponse(
+        jsonResponse(401, {
+          ok: false,
+          status: 401,
+          problem: unauthenticatedProblem,
+        }),
+      );
+    });
+    const fetchSnapshot = () =>
+      fetchMock.mock.calls.map(([url, init]) => ({
+        url,
+        method: init.method ?? "GET",
+        authorization:
+          (init.headers as Record<string, string> | undefined)
+            ?.Authorization === "Bearer tok_1"
+            ? "test-token-present"
+            : "missing-or-other",
+      }));
+    const domSnapshot = () => {
+      const snapshot = document.body.cloneNode(true) as HTMLElement;
+      for (const input of snapshot.querySelectorAll<HTMLInputElement>(
+        "input",
+      )) {
+        const identity = [
+          input.name,
+          input.id,
+          input.placeholder,
+          input.getAttribute("aria-label") ?? "",
+        ]
+          .join(" ")
+          .toLowerCase();
+        if (identity.includes("token")) {
+          input.value = "[redacted]";
+          input.setAttribute("value", "[redacted]");
+        }
+      }
+      return snapshot.innerHTML
+        .replace(/Bearer\s+[^\s"'<>]+/giu, "Bearer [redacted]")
+        .replace(/\btok_[A-Za-z0-9_-]+\b/gu, "[redacted-token]");
+    };
+    try {
+      await waitFor(() => expect(screen.getByText("未认证")).toBeTruthy());
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `${detail}\nDOM: ${domSnapshot()}\n` +
+          `fetch requests: ${JSON.stringify(fetchSnapshot())}\n` +
+          `tree response: ${treeResponseState}`,
+      );
+    }
     expect(screen.queryByRole("heading", { name: "工作台" })).toBeNull();
-    const call = fetchMock.mock.calls[0];
+    const call = fetchMock.mock.calls.find(
+      ([url]) => url === "/views/responsibility-tree",
+    );
     expect(call).toBeDefined();
     const [url, init] = call as unknown as [string, RequestInit];
     expect(url).toMatch(/^\/views\//);
@@ -197,14 +304,54 @@ describe("session unauthenticated gate (EC-4, Web v1 shell)", () => {
 });
 
 describe("Web v1 shell integration smoke (W-02)", () => {
-  it("login → project switch routes to /p/:projectId → rail nav → disconnect returns to login", async () => {
-    stubFetch(() =>
+  it("offers project creation directly from the project switcher", async () => {
+    stubFetch((url) =>
       Promise.resolve(
-        jsonResponse(200, {
-          ok: true,
-          status: 200,
-          body: { value: { rows: [] }, watermark: 1 },
-        }),
+        url === "/projects"
+          ? directoryResponse()
+          : jsonResponse(200, {
+              ok: true,
+              status: 200,
+              body: { value: { rows: [] }, watermark: 1 },
+            }),
+      ),
+    );
+    history.replaceState(null, "", "/");
+    render(<App />);
+    await waitFor(() => expect(screen.getByText("选择项目")).toBeTruthy());
+    fireEvent.click(screen.getByText("选择项目"));
+    fireEvent.click(screen.getByRole("button", { name: "新建项目" }));
+    const dialog = screen.getByRole("dialog", { name: "新建项目" });
+    expect(within(dialog).getByLabelText("项目名称")).toBeTruthy();
+    expect(
+      within(dialog).getByRole("button", { name: "创建项目" }),
+    ).toBeTruthy();
+  });
+
+  it("uses the same project center from the compact topbar", async () => {
+    stubFetch((url) =>
+      Promise.resolve(
+        url === "/projects"
+          ? directoryResponse()
+          : jsonResponse(200, {
+              ok: true,
+              status: 200,
+              body: { value: { rows: [] }, watermark: 1 },
+            }),
+      ),
+    );
+    history.replaceState(null, "", "/");
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "打开项目中心" }));
+    fireEvent.click(screen.getByRole("button", { name: "新建项目" }));
+    const dialog = screen.getByRole("dialog", { name: "新建项目" });
+    expect(within(dialog).getByLabelText("项目名称")).toBeTruthy();
+  });
+
+  it("login → project switch routes to /p/:projectId → rail nav → disconnect returns to login", async () => {
+    stubFetch((url) =>
+      Promise.resolve(
+        url === "/projects" ? directoryResponse() : viewResponse(url),
       ),
     );
     history.replaceState(null, "", "/");

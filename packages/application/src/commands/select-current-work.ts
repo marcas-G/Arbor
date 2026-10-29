@@ -1,10 +1,11 @@
 import {
-  type ActiveMainFocusFact,
+  type ActiveMainEpisodeFact,
   type CandidateWorkFact,
   type Revision,
   selectCurrentWork,
   type WorkId,
   type WorkspaceId,
+  workEpisode,
 } from "@arbor/domain";
 import type {
   ExecutionRepositoryService,
@@ -89,18 +90,15 @@ export const makeSelectCurrentWorkHandler = (
       const active = yield* dependencies.executions.findActiveMainByWorkspace(
         payload.workspaceId,
       );
-      const activeMainFocus: ActiveMainFocusFact | null = Option.isSome(active)
+      const activeWork = Option.isSome(active)
+        ? workEpisode(active.value)
+        : null;
+      const activeMainEpisode: ActiveMainEpisodeFact | null = Option.isSome(
+        active,
+      )
         ? {
-            kind:
-              active.value.binding._tag === "WorkspaceExecution" &&
-              active.value.binding.focus._tag === "Work"
-                ? "Work"
-                : "Coordination",
-            workId:
-              active.value.binding._tag === "WorkspaceExecution" &&
-              active.value.binding.focus._tag === "Work"
-                ? active.value.binding.focus.workId
-                : null,
+            kind: activeWork === null ? "NonWork" : "Work",
+            workId: activeWork?.workId ?? null,
           }
         : null;
 
@@ -108,7 +106,7 @@ export const makeSelectCurrentWorkHandler = (
         authorized: true,
         expectedRevision: payload.expectedWorkspaceRevision,
         candidate,
-        activeMainFocus,
+        activeMainEpisode,
       });
       if (!transitioned.ok) {
         return commandErr(transitioned.error);

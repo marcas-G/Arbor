@@ -1,13 +1,27 @@
 # P4 — 03 Authority / Permission / Approval
 
-**Authority:** DID v1.8 §7.6/§6A.7, G1/G2; SD v1.3 §8.1–§8.5.
-**Status:** DRAFT (first draft for contract review).
+**Authority:** DID v1.8 §7.6/§6A.7 and v1.39 EA-DG-01, G1/G2; SD v1.14 §8.1–§8.5.
+**Status:** FROZEN; accepted AH7-DG-03 amendment (2026-10-10). Post-landing
+consistency review pending.
+**Accepted amendment:** `planning/proposals/AH7-approval-settlement-fixed-decision-draft.md`,
+SHA-256 `E818CC208F6A3B233FEF213E54E02AA30A1E96D6147313870C75FDE38DC94CBE`.
+Accepted EA-DG-01 Executable route amendment: fixed proposal SHA-256
+`E4F1B2935E0397292049BB3FDB1AB5847B02443CCE1B55A9827F823C63F145EB`;
+decision `planning/results/EA-DG-01-governance-acceptance.md`.
 
 ## 1. Boundary
 
 P4 does **not** resolve PermissionGrant / Parent / User governance (G1). The
 Authority Resolver stays deferred. P4 receives trusted facts and performs
 deterministic exact-match plus capability-ceiling checks.
+
+For the externally routed `ResolveControlApproval` command, strict payload
+decoding follows the P4/P12 approval-decision contract (including the exact
+`ApprovalId` and Approve/Reject decision fields) before the resolver and
+Gateway. The codec cannot construct or accept any process-local
+`AssignWorkCommandEvidence` or `AssignWorkControlAuthorizationEvidence`; this
+section continues to own only the typed approval record and its atomic
+consumption contract (DID §4.1B).
 
 ## 2. Trusted `InvocationAuthority` fact
 
@@ -57,31 +71,239 @@ policy; it validates the fact against the resolved tool/resource scope.
 ```ts
 interface InvocationApproval {
   readonly approvalId: string;
+  readonly routeKind: "Executable";
+  readonly projectId: ProjectId;
+  readonly workspaceId: WorkspaceId;
+  readonly executionId: ExecutionId;
+  readonly principal: Principal;
+  readonly logicalStepNo: number;
+  readonly repairAttempt: number;
+  readonly actionIndex: number;
+  readonly logicalActionId: LogicalActionId;
+  readonly callRef: string;
+  readonly toolInvocationId: ToolInvocationId;
   readonly toolName: string;
   readonly toolVersion: string;
+  readonly sideEffectSemantics: SideEffectSemantics;
+  readonly argumentsJson: string;
   readonly actionDigest: string;          // normalized action + params digest
   readonly targetResourceSpaceIds: ReadonlyArray<string>;
   readonly controlBasisDigest: string;
   readonly expiresAt: string;
+  readonly state: "Pending" | "Approved" | "Rejected" | "Consumed" | "Expired" | "Cancelled";
+  readonly revision: number;
+  readonly requestedAt: string;
+  readonly decidedAt: string | null;
+  readonly decidedBy: Principal | null;
+  readonly decisionReason: string | null;
+  readonly cancelledAt: string | null;
+  readonly cancelledBy: Principal | null;
+  readonly cancellationReason: string | null;
+  readonly consumedAt: string | null;
   readonly consumedBy: ToolInvocationId | null;
 }
 ```
 
+The immutable binding and lookup key are distinct from the row's mutable
+lifecycle fields:
+
+```ts
+type ExecutableApprovalKey = Pick<InvocationApproval,
+  "projectId" | "executionId" | "logicalStepNo" | "repairAttempt" |
+  "actionIndex" | "logicalActionId" | "callRef" | "toolInvocationId">;
+
+type ExecutableApprovalBinding = Pick<InvocationApproval,
+  "routeKind" | "projectId" | "workspaceId" | "executionId" |
+  "principal" | "logicalStepNo" | "repairAttempt" | "actionIndex" |
+  "logicalActionId" | "callRef" | "toolInvocationId" | "toolName" |
+  "toolVersion" | "sideEffectSemantics" | "argumentsJson" | "actionDigest" |
+  "targetResourceSpaceIds" | "controlBasisDigest">;
+```
+
+`approvalId` is Runtime-generated from the exact action key. `expiresAt` is
+first-commit TTL metadata; state, revision, human-decision fields,
+cancellation provenance and consumption fields are lifecycle data and are not
+part of the immutable binding.
+
 - An approval is valid only if tool/version, `actionDigest`, target resources,
-  `controlBasisDigest` all match the actual invocation and it is unexpired.
-- It is consumed **atomically by exactly one matching invocation**
-  (`consumedBy` set in the same transaction as the invocation settlement).
-- A mismatch / changed control revision / expiry forces re-approval.
+  `controlBasisDigest`, route, project/workspace/execution, subject, Step,
+  LogicalActionId, callRef and `ToolInvocationId` all match the actual
+  invocation and it is unexpired. `expiresAt`, revision, state and decision
+  provenance are mutable lifecycle facts, not action-binding fields.
+- The P4 `ApprovalRequired` handoff is returned for a new call with no record
+  or the exact still-Pending request. It is nonterminal: P4 persists no
+  ToolInvocation intent/settlement and does not write a new
+  `Denied(ApprovalRequired)`. The Application composes P3 identity, P12
+  approval fact, ActionApproval storage, P6 Inbox admission and the durable
+  pause/wake facts.
+- A resumed call carries Runtime-sourced `approvalId` and the exact Approved
+  row revision. P4 accepts only `routeKind='Executable'`, `state='Approved'`,
+  and that revision before matching the full immutable binding.
+- Matching occurs before Resource Admission. After all pre-effect checks pass,
+  an approval-required call persists its exact `ToolInvocation` intent and sets
+  `consumedBy` to its `ToolInvocationId` in the **same fenced claim
+  transaction**. The Worker fence and `stop_requested_at IS NULL` predicate
+  are checked in that transaction. Intent and approval consumption either both
+  commit or neither does.
+- Approval consumption is not in the later terminal ToolInvocation settlement
+  transaction. No database transaction spans the external effect. Once
+  consumed, the approval is permanently bound to that invocation and is never
+  released, refunded or transferred, including after interruption, revocation
+  or an unknown effect result.
+- Re-entry requires the same exact Execution, ToolInvocation and immutable
+  intent. It re-resolves current authority, resources and ControlBasis before
+  any further effect. An approval is consent to an exact action, not a
+  PermissionGrant and never bypasses a changed or revoked authority basis.
+- A binding mismatch, changed ControlBasis/resource set or expiry cannot update
+  an existing request. The same invocation receives its typed no-effect
+  denial/expiry result; if policy allows another attempt, it requires a new
+  LogicalAction/ToolInvocation identity and a new approval request.
+- A different candidate `expiresAt` during a first-issuer unique-key race is
+  not a binding mismatch. The loser reads and uses the committed winner's
+  ApprovalId, expiry and revision. `expiresAt` is fixed at first commit and is
+  never extended on retry.
 - Producing an approval is the deferred resolver's job; P4 owns the record and
-  the atomic consumption semantics.
+  the atomic single-consumption semantics.
+
+### AH7-DG-02 RecoveryBinding and approval snapshot (DID v1.40)
+
+P39 RecoveryBinding records the approval ID when applicable, exact
+pre-consumption and consumed approval revisions, authenticated subject,
+action/argument digest, target/ControlBasis digest, expiry snapshot, and
+`consumedBy=ToolInvocationId`. These values are read from the trusted P4/P38
+approval ledger and authenticated Invocation context inside the same fenced
+claim/consume transaction that stores the P3 source binding and attempt 0; they
+are never accepted from model arguments or P3's caller-provided approval
+claim. Existing consumption is reusable only for the same invocation and
+identical binding; it is not consumed again, refunded, or transferred.
+
+Before a post-NotOccurred replay, the effect-admission transaction compares the
+stored approval binding with current trusted authority, exact approval
+consumer/revisions and resource/policy snapshot under the current full Worker
+fence. Revocation, expiry, or revision drift cannot be normalized to
+equivalence. It produces the accepted P4 `ReconciledNoEffect` disposition for
+`ApprovalNoLongerAuthorized`; it does not reset MayHaveStarted or issue a new
+approval for the old invocation.
+
+Denial and approval reuse:
+
+- Before consumption, authority/approval/resource denial is persisted as a
+  terminal no-effect `Denied` invocation record with
+  `effect_admission_state = NotAdmitted`; the approval remains unconsumed. For
+  EA-DG-01 proven Executable rows, the approval is already bound to the exact
+  LogicalAction/ToolInvocationId and cannot transfer to a different
+  invocation. Restored permission or a changed intent requires a new action,
+  invocation and approval. Unbound pre-0038 rows remain `binding_proven=0` and
+  fail closed. The same terminal denied invocation cannot later execute.
+- If a claim's approval compare-and-set loses to another invocation, the
+  transaction rolls back its intent insert. The losing invocation receives
+  terminal `Denied(ApprovalConsumedByOtherInvocation)` and cannot execute.
+- If the same invocation already consumed approval but current authority is
+  denied while its effect state is `NotAdmitted`, P4 writes terminal
+  `Denied(ApprovalNoLongerAuthorized)` under the current Worker fence. The
+  approval remains consumed. The ToolResult is `Denied`; AgentLoop marks that
+  action `TerminalRejected` and advances its cursor once without failing the
+  whole Execution. A repeated call replays this Denied result. Restored
+  permission requires a new action/invocation and new approval.
+- P4 `Denied` reason codes are the closed `NoEffectDenialCode` set in `01`;
+  stop/quiescence is instead `ExecutionStopping` or the existing `Interrupted`
+  settlement and never a Denied code.
+- `ApprovalRequired` is not in the new-write denial set. Historical persisted
+  `Denied(ApprovalRequired)` remains a terminal decoder/replay case only.
+
+**Accepted P38/P39 RecoveryBindingV1 projection:** `targetResourceSpaceIds`
+uses the exact trusted receipt array; order and duplicate occurrences remain
+significant. `approvalTargetDigest` is derived from that array without sorting
+or deduplication. This records the existing P38 matching behavior and does not
+change approval target equality.
+
+### Control ActionApproval consumption for AssignWork (DID v1.33)
+
+For the AssignWork Control route, the P4-owned `ControlApprovalStore` exposes
+`consumeApproved(approvalId, consumedBy: CommandId)` within
+the caller's existing `TransactionScope`. It succeeds only for the exact
+Approved ActionApproval revision already validated against project,
+workspace, execution, stable action, action digest, target, ControlBasis, and
+expiry by the Command Gateway. Its SQL changes state to `Consumed`, increments
+the approval revision exactly once, and sets `consumed_by` to that same
+generation's Committed CommandId in the transaction that commits the canonical
+AssignWork Work, event, receipt, and target binding.
+
+The Command Gateway owns this call for direct-child AssignWork. Do not consume
+after Gateway commit through a standalone ControlActionAuthorizer operation.
+A pre-handler FencingRejected or ExecutionStopping result does not consume the
+approval. Receipt replay verifies the immutable approval evidence and the
+original `consumed_by` CommandId/revision, without re-authorizing or consuming
+again. This is a route-specific atomicity contract; it does not widen
+PermissionGrant, ActionApproval, or ResourceBoundary authority. See DID §6A.16
+and System Design §4.11.
+
+FT-DG-03 validation follows DID §4.1B and the owning P1/P12 command contracts.
+The External codec cannot construct or accept the process-local
+`AssignWorkCommandEvidence` or `AssignWorkControlAuthorizationEvidence` used by
+the direct-child Control route. It does not alter the existing exact
+CommandId-bound approval consumption, replay evidence, or transaction boundary.
 
 ## 5. Rejection projection
 
-- All authority/permission/approval failures → `Denied` observation (`02` §3),
-  persisted as a settled invocation.
+- Actual authority/permission/approval rejection → `Denied` observation (`02`
+  §3), persisted as a terminal no-effect invocation settlement using the new
+  closed `NoEffectDenialCode` union (`01` §4–§5, `06` §1/§3). It is valid only
+  when `effect_admission_state = NotAdmitted`; `Denied` never asserts that an
+  external effect occurred.
+- A new approval-required Executable call with no Approved exact row returns
+  the nonterminal `ApprovalRequired` handoff (`02` §2); it creates neither a
+  terminal Denied row nor an Executable effect intent. Human Reject/TTL Expire
+  later produce `ApprovalRejected`/`ApprovalExpired` for the same
+  ToolInvocationId. Historical `Denied(ApprovalRequired)` is accepted only by
+  the persisted settlement decoder and exact terminal replay.
+- A pre-consumption denial leaves approval unconsumed. A post-consumption
+  revocation remains bound to the same invocation and replays its stored Denied
+  result; it does not release approval for another invocation.
+- `ExecutionStopping` and P4 `Interrupted` are separate stop/quiescence results,
+  not permission-denial projections.
+
+## Accepted pre-intent policy candidate approval source (2026-10-21)
+
+Under `ACCEPT_P10_P1_PREINTENT_CANDIDATE_READ_BOOTSTRAP_V1`, the read-only P4
+sandbox requirement may bind the exact P4 Executable approval created by the
+existing `ApprovalRequired` handoff. For this pre-intent branch the approval
+must be the exact `Pending` row bound to the current Pending P3 Executable
+Action, with its exact ApprovalId, revision, immutable `expiresAt` and
+unconsumed state. A pre-intent requirement is unavailable once the approval
+is Approved, Rejected, Expired, Cancelled, or consumed; the existing
+NotAdmitted-invocation requirement remains available after the ordinary P4
+claim path when appropriate.
+
+The pre-intent P4/P10 read does not create/renew/resolve approval and does not
+consume it. The human may commit P1's sandbox decision first, then Resolve
+the same approval via its current authenticated command. P4's existing claim
+transaction remains the only operation that atomically creates ToolInvocation
+intent and consumes the exact Approved revision. P1's current-source CAS
+re-reads approval identity/state/revision/expiry under the same
+`BEGIN IMMEDIATE` transaction, requires `expiresAt > trusted GatewayNow`, and
+returns the accepted P1/01 stale field mapping without decision/event when
+the source changed. Approval state/revision and expiry have no new wire field,
+approval state, persistence table or consumption path.
 
 ## 6. Must Not Decide
 
 - No PermissionGrant lookup / Parent-User resolution / RBAC-ABAC-ACL.
 - No policy/ceiling computation from governance facts.
 - No escalation routing decisions (a later governance phase).
+## Workspace capability distribution (governance 2026-10-01)
+
+- `list` / `read` (`fs:read`) are baseline capabilities inside an active
+  Workspace's current ResourceBoundary.
+- `patch`, `shell`, Project tools and external tools require elevated
+  capabilities explicitly distributed by the parent Workspace; a child
+  ceiling is always a subset of its parent's current ceiling.
+- Root elevated capabilities originate from Project creator/Project Policy.
+- ExecutionBound specialists can only receive an explicit subset of their
+  parent Execution ceiling.
+- Tool Runtime resolves exact regions before authority resolution. The
+  resulting InvocationAuthority binds principal, Workspace, Execution, tool
+  version, capabilities, resource spaces, ControlBasis digest, TTL and
+  delegation depth.
+- Authority denial is a normal Tool observation, never a defect or canonical
+  mutation.

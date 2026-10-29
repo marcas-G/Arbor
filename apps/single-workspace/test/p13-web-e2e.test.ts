@@ -2,14 +2,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Principal, parse } from "@arbor/domain";
-import { Effect } from "effect";
+import { Effect, Fiber } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import {
-  buildSliceLayer,
-  P16_MIGRATIONS,
-  runMigrations,
-} from "../src/composition.js";
+import { createCurrentSchemaTestDatabaseFactory } from "../../../tests/support/schema44-database.js";
+import { buildSingleWorkspaceLayer } from "../src/composition.js";
 import {
   ProductionDaemonService,
   TransportBoundary,
@@ -19,7 +16,7 @@ import {
   startWebTransport,
   type WebTransportHandle,
 } from "../src/transport/server.js";
-import { createProjectPayloadShape } from "./p13-e2e-fixtures.js";
+import { createProjectPayloadShape, p13Id } from "./p13-e2e-fixtures.js";
 
 /**
  * P13 `06` EC-11 — the story-§1 mechanical path against the REAL slice
@@ -31,16 +28,33 @@ import { createProjectPayloadShape } from "./p13-e2e-fixtures.js";
 
 const TOKEN = "tok_p13_e2e";
 const HUMAN = parse(Principal)("user:human");
+const READ_TOKEN = "tok_p13_local_read";
 
 let handle: WebTransportHandle;
 let dir: string;
 let dist: string;
 let runConsumers: (() => Promise<void>) | undefined;
 let startupError: unknown;
+let programFiber: ReturnType<typeof Effect.runFork> | undefined;
+let fixtureFactory:
+  | Awaited<ReturnType<typeof createCurrentSchemaTestDatabaseFactory>>
+  | undefined;
+let fixture:
+  | ReturnType<NonNullable<typeof fixtureFactory>["create"]>
+  | undefined;
 
-const shutdown: Array<() => void> = [];
+const shutdown: Array<() => Promise<void>> = [];
+
+const schema44DatabaseFile = () => {
+  if (fixture === undefined) throw new Error("Schema 42 fixture is missing");
+  return fixture.databaseFilename;
+};
 
 beforeAll(async () => {
+  fixtureFactory = await createCurrentSchemaTestDatabaseFactory({
+    prefix: ".p13-web-e2e-schema44-",
+  });
+  fixture = fixtureFactory.create();
   dir = mkdtempSync(join(tmpdir(), "arbor-p13-e2e-"));
   dist = join(dir, "dist");
   mkdirSync(join(dist, "assets"), { recursive: true });
@@ -53,7 +67,6 @@ beforeAll(async () => {
   const program = Effect.scoped(
     Effect.provide(
       Effect.gen(function* () {
-        yield* runMigrations(P16_MIGRATIONS);
         const boundary = yield* TransportBoundary;
         const sql = yield* SqlClient;
         const deployment = yield* ProductionDaemonService;
@@ -64,9 +77,12 @@ beforeAll(async () => {
               Effect.gen(function* () {
                 yield* deployment.daemon.pollConsumers;
               }),
-              buildSliceLayer({
-                databaseFile: join(dir, "slice.db"),
-                authenticator: makeStaticAuthenticator({ [TOKEN]: HUMAN }),
+              buildSingleWorkspaceLayer({
+                databaseFile: schema44DatabaseFile(),
+                authenticator: makeStaticAuthenticator({
+                  [TOKEN]: HUMAN,
+                  [READ_TOKEN]: parse(Principal)("user:local"),
+                }),
                 governance: {
                   authenticatedHumans: [HUMAN],
                   directParentOf: [],
@@ -78,27 +94,29 @@ beforeAll(async () => {
           startWebTransport({
             http: boundary.http,
             webSocket: boundary.webSocket,
+            authenticator: boundary.authenticator,
+            authenticatorConfigured: true,
             sql,
+            projectDirectory: { list: () => Effect.succeed([]) },
             staticRoot: dist,
             pollIntervalMs: 60_000,
           }),
         );
-        shutdown.push(() => {
-          void handle.close();
-        });
+        shutdown.push(() => handle.close());
         // hold the scope open for the whole suite (layers close at process end)
         yield* Effect.promise(() => new Promise<never>(() => undefined));
       }),
-      buildSliceLayer({
-        databaseFile: join(dir, "slice.db"),
-        authenticator: makeStaticAuthenticator({ [TOKEN]: HUMAN }),
+      buildSingleWorkspaceLayer({
+        databaseFile: schema44DatabaseFile(),
+        authenticator: makeStaticAuthenticator({
+          [TOKEN]: HUMAN,
+          [READ_TOKEN]: parse(Principal)("user:local"),
+        }),
         governance: { authenticatedHumans: [HUMAN], directParentOf: [] },
       }),
     ),
   );
-  void Effect.runPromise(program).catch((error) => {
-    startupError = error;
-  });
+  programFiber = Effect.runFork(program);
   for (
     let i = 0;
     i < 200 && handle === undefined && startupError === undefined;
@@ -113,14 +131,21 @@ beforeAll(async () => {
     `composition startup failed: ${String(startupError)}`,
   ).toBeUndefined();
   expect(handle).toBeDefined();
-}, 30_000);
+}, 120_000);
 
-afterAll(() => {
+afterAll(async () => {
   for (const stop of shutdown.reverse()) {
-    stop();
+    await stop();
   }
-  rmSync(dir, { recursive: true, force: true });
-});
+  if (programFiber !== undefined) {
+    await Effect.runPromise(Fiber.interrupt(programFiber));
+  }
+  fixture?.cleanup();
+  fixtureFactory?.cleanup();
+  fixture = undefined;
+  fixtureFactory = undefined;
+  rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+}, 120_000);
 
 const base = () => `http://127.0.0.1:${handle.port}`;
 const authHeaders = {
@@ -145,17 +170,17 @@ describe("P13 EC-11 e2e — real composition, story path", () => {
   });
 
   it("story §1: CreateProject via /commands (external human governance) lands Committed", async () => {
-    const payload = createProjectPayloadShape("story");
+    const project = createProjectPayloadShape("story");
     const response = await fetch(`${base()}/commands`, {
       method: "POST",
       headers: authHeaders,
       body: JSON.stringify({
         commandType: "CreateProject",
-        commandId: `cmd_${crypto.randomUUID()}`,
-        projectId: payload.projectId,
+        commandId: p13Id("cmd"),
+        projectId: project.projectId,
         actor: "user:human",
         issuedAt: new Date().toISOString(),
-        payload,
+        payload: project.payload,
       }),
     });
     expect(response.status).toBe(200);
@@ -165,15 +190,18 @@ describe("P13 EC-11 e2e — real composition, story path", () => {
     };
     expect(body.ok).toBe(true);
     expect(body.body.resolution).toBe("Committed");
-  });
+  }, 120_000);
 
   it("story §1: the responsibility-tree view renders the created root workspace", async () => {
     await runConsumers?.();
-    const payload = createProjectPayloadShape("story");
+    const project = createProjectPayloadShape("story");
     const response = await fetch(`${base()}/views/responsibility-tree`, {
       method: "POST",
-      headers: authHeaders,
-      body: JSON.stringify({ projectId: payload.projectId }),
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${READ_TOKEN}`,
+      },
+      body: JSON.stringify({ projectId: project.projectId }),
     });
     expect(response.status).toBe(200);
     const result = (await response.json()) as {
@@ -182,7 +210,7 @@ describe("P13 EC-11 e2e — real composition, story path", () => {
     };
     expect(result.ok).toBe(true);
     expect(result.body.value.nodes.length).toBeGreaterThan(0);
-  });
+  }, 120_000);
 
   it("rejects unauthenticated commands with the frozen Problem", async () => {
     const response = await fetch(`${base()}/commands`, {
@@ -204,6 +232,21 @@ describe("P13 EC-11 e2e — real composition, story path", () => {
 
   it("TR-W1: WS invalidation pushes after a commit advances the journal watermark", async () => {
     expect(handle).toBeDefined();
+    const existingProject = createProjectPayloadShape("ws-existing");
+    const seedResponse = await fetch(`${base()}/commands`, {
+      method: "POST",
+      headers: authHeaders,
+      body: JSON.stringify({
+        commandType: "CreateProject",
+        commandId: p13Id("cmd"),
+        projectId: existingProject.projectId,
+        actor: "user:human",
+        issuedAt: new Date().toISOString(),
+        payload: existingProject.payload,
+      }),
+    });
+    expect(seedResponse.status).toBe(200);
+
     const ws = new WebSocket(`ws://127.0.0.1:${handle.port}/ws`);
     await new Promise<void>((resolveOpen) => {
       ws.onopen = () => {
@@ -215,17 +258,40 @@ describe("P13 EC-11 e2e — real composition, story path", () => {
       frames.push(JSON.parse(String(event.data)));
     };
 
-    const payload = createProjectPayloadShape("ws");
+    const proof = new Promise<unknown>((resolveProof) => {
+      const receive = (event: MessageEvent): void => {
+        const parsed = JSON.parse(String(event.data)) as {
+          readonly ok?: boolean;
+          readonly status?: number;
+          readonly kind?: string;
+        };
+        if (parsed.kind === "invalidate") return;
+        ws.removeEventListener("message", receive);
+        resolveProof(parsed);
+      };
+      ws.addEventListener("message", receive);
+    });
+    ws.send(
+      JSON.stringify({
+        kind: "view",
+        token: READ_TOKEN,
+        view: "responsibility-tree",
+        request: { projectId: existingProject.projectId },
+      }),
+    );
+    expect(await proof).toMatchObject({ ok: true, status: 200 });
+
+    const project = createProjectPayloadShape("ws");
     const response = await fetch(`${base()}/commands`, {
       method: "POST",
       headers: authHeaders,
       body: JSON.stringify({
         commandType: "CreateProject",
-        commandId: `cmd_${crypto.randomUUID()}`,
-        projectId: payload.projectId,
+        commandId: p13Id("cmd"),
+        projectId: project.projectId,
         actor: "user:human",
         issuedAt: new Date().toISOString(),
-        payload,
+        payload: project.payload,
       }),
     });
     expect(response.status).toBe(200);
@@ -250,5 +316,5 @@ describe("P13 EC-11 e2e — real composition, story path", () => {
       expect((frame as { watermark: number }).watermark).toBeGreaterThan(0);
     }
     ws.close();
-  });
+  }, 120_000);
 });

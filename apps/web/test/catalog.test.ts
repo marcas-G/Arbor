@@ -1,6 +1,6 @@
 /**
  * P13 `02` §8 / `06` EC-6 (upgraded by P14 TR-B): the UI command catalog is
- * exactly the frozen eight-item Human-actionable set — mechanically verified,
+ * exactly the frozen Human-actionable set — mechanically verified,
  * order-independent; no System-internal / Agent-originated commandType may
  * appear. Also pins the `cmd_<uuid-v7>` generator shape (RFC 9562 §4: the
  * canonical 8-4-4-4-12 layout — the leading 48-bit unix-ms timestamp spans
@@ -14,15 +14,23 @@ import {
 } from "../src/commands/catalog.js";
 import { uuidv7 } from "../src/commands/uuid7.js";
 
-const EXPECTED_EIGHT = [
+const EXPECTED_SIXTEEN = [
   "CreateProject",
+  "RenameProject",
+  "CloseProject",
   "RecordDecision",
+  "ResolveControlApproval",
+  "ResolveExecutableApproval",
   "SteerWork",
   "AcceptWorkOutcome",
   "StopExecution",
   "GrantPermission",
+  "DecideSandboxPolicy",
   "RevokePermission",
   "SubmitHumanMessage",
+  "ResumeConversationResponse",
+  "CancelConversationResponse",
+  "RetryVerification",
 ];
 
 const NEVER_EXPOSED = [
@@ -38,11 +46,11 @@ const UUIDV7_SHAPE =
   /^(0|1)[0-9a-f]{7}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 describe("EC-6 human-actionable catalog", () => {
-  it("is exactly the frozen eight-item set (order-independent)", () => {
+  it("is exactly the human-actionable set (order-independent)", () => {
     expect([...HUMAN_ACTIONABLE_COMMANDS].sort()).toEqual(
-      [...EXPECTED_EIGHT].sort(),
+      [...EXPECTED_SIXTEEN].sort(),
     );
-    expect(HUMAN_ACTIONABLE_COMMANDS.length).toBe(8);
+    expect(HUMAN_ACTIONABLE_COMMANDS.length).toBe(16);
   });
 
   it("contains no system-internal / agent-originated commandType", () => {
@@ -50,7 +58,7 @@ describe("EC-6 human-actionable catalog", () => {
       expect(HUMAN_ACTIONABLE_COMMANDS).not.toContain(commandType);
       expect(isHumanActionableCommand(commandType)).toBe(false);
     }
-    for (const commandType of EXPECTED_EIGHT) {
+    for (const commandType of EXPECTED_SIXTEEN) {
       expect(isHumanActionableCommand(commandType)).toBe(true);
     }
   });

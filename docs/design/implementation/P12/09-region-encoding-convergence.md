@@ -189,6 +189,36 @@ CI-7  region encoding at every producer matches the frozen object encoding
       narrow invalidation path is reachable and tested end-to-end
 ```
 
+### RecoveryBindingV1 consumer adoption (2026-10-12)
+
+The accepted P38/P39 fixed package
+`planning/proposals/P38-P39-projection-fixed-landing-package-v3-draft.md`
+(SHA-256
+`7483A49AF7E6528D81895199CF8A15BB83FB2F7DFD4DE3797BAAB7D2A77D4600`)
+adopts the existing production `canonicalRegionString` behavior above as the
+element encoding for RecoveryBindingV1 `targetResourceIdentityDigest`. P4
+`06` owns the digest projection. It hashes the exact P4 invocation resolver
+output array in emitted order and multiplicity; P39 adds no sort or dedup
+pass. The resolver's existing canonicalization performs alias/duplicate
+collapse and lexical key ordering before emitting that array. This is a
+consumer adoption of the existing encoding; it does not change region
+encoding, resolver behavior, or this child document's DRAFT status, and does
+not reopen P12 phase closure.
+
+## Accepted V3 sandbox producer cross-reference only
+
+The accepted `ACCEPT_NATIVE_OS_SANDBOX_V21_PRODUCER_MAPPING_CLOSURE_V3`
+(`planning/proposals/native-os-sandbox-v21-producer-mapping-closure-v3.md`,
+SHA-256
+`3944B1E8BBA9A7A0EBB47988B4B67965718C94EB4EE05D9605E9711AC1FF8A8A`)
+consumes the existing `canonicalRegionString` and frozen FileTree/GitWorktree
+alias behavior for its complete ResourceBoundary digest and
+SandboxTargetRefV1 producer. It is a consumer/owner cross-reference only:
+this document's CanonicalResourceRegion fields, `resourceSpaceId` values,
+canonical string bytes, alias/dedup rules, overlap semantics and P12 closure
+remain unchanged. P11/04 owns complete-boundary resolution; P4/04 and P4/05
+own logical sandbox mount/admission mapping.
+
 ## 9. Must Not Decide
 
 - No change to the frozen encoding; no region revision algebra (P11 fence).
@@ -208,3 +238,15 @@ regionsOverlap(resolverRegion, boundaryRegion) reflects true overlap
 narrow invalidation test passes without re-wrapping
 production composition wires the real resolver (not the fake)
 ```
+
+
+## Accepted V21 SandboxTargetRef mapping cross-reference
+
+Native Sandbox uses the existing CanonicalResourceRegion and its exact
+canonicalRegionString output unchanged. P12/09 supplies only this mapping:
+FileTree/GitWorktree use resourceSpace=filesystem, DatabaseNamespace=database,
+ExternalResource=external, using the existing closed resourceSpaceId value.
+P4/P11 derives the separate path-free SandboxTargetRefV1 RegionDigest from
+SHA-256 of those exact existing UTF-8 bytes. No canonical region keys, order,
+equality, overlap, authorization, address resolution or persistence change;
+no target-ref codec is owned by P12/09, and no host path enters policy DTOs.

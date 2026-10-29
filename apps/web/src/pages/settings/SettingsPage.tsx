@@ -1,10 +1,13 @@
 /** Frozen Settings capabilities: project/session commands and local layout only. */
+import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import type { Route } from "../../api/router.js";
-import { CreateProjectForm } from "../../commands/forms/CreateProjectForm.js";
+import { fetchProjectDirectory } from "../../api/transport.js";
+import { FormFeedback } from "../../commands/forms/FormFeedback.js";
 import { GrantPermissionForm } from "../../commands/forms/GrantPermissionForm.js";
+import { useCommandSubmission } from "../../commands/useCommandSubmission.js";
 import { Button } from "../../components/Button.js";
 import { Card } from "../../components/Card.js";
-import { cx } from "../../components/cx.js";
 import { Empty } from "../../components/Empty.js";
 import { KeyValue, type KeyValuePair } from "../../components/KeyValue.js";
 import { MonoText } from "../../components/MonoText.js";
@@ -55,28 +58,105 @@ function ProjectSection({
   readonly token: string | null;
   readonly projectId: string;
 }) {
+  const session = useSession();
+  const directory = useQuery({
+    queryKey: ["project-directory"],
+    queryFn: () =>
+      fetchProjectDirectory({
+        token,
+        onUnauthenticated: session.reportUnauthenticated,
+      }),
+    enabled: token !== null,
+  });
+  const current =
+    directory.data?.ok === true
+      ? directory.data.dto.projects.find(
+          (project) => project.projectId === projectId,
+        )
+      : undefined;
+  const [name, setName] = useState("");
+  const rename = useCommandSubmission({
+    actor: actor ?? "",
+    token: token ?? undefined,
+    onSubmitted: () => {
+      void directory.refetch();
+    },
+  });
+  const close = useCommandSubmission({
+    actor: actor ?? "",
+    token: token ?? undefined,
+    onSubmitted: () => {
+      void directory.refetch();
+    },
+  });
+  const submitRename = () =>
+    void rename.submit("RenameProject", projectId, {
+      name: name.trim(),
+      expectedRevision: current?.revision ?? 0,
+    });
+  const submitClose = () =>
+    void close.submit("CloseProject", projectId, {
+      expectedRevision: current?.revision ?? 0,
+      confirmed: true,
+    });
   return (
     <section className={styles.section} aria-label="项目">
       <h2 className={styles.sectionTitle}>项目</h2>
-      <div
-        className={cx([
-          styles.projectBox,
-          projectId === null ? styles.projectHighlight : null,
-        ])}
-      >
-        {actor === null || token === null ? (
-          <Empty>未连接——连接后可创建项目</Empty>
-        ) : (
-          <CreateProjectForm
-            actor={actor}
-            token={token}
-            onSubmitted={() => undefined}
-          />
-        )}
-      </div>
       <p className={styles.note}>
-        当前项目：<MonoText>{projectId}</MonoText>。项目切换使用左侧栏的切换器。
+        当前项目：{current?.name ?? "正在获取项目名称"}
+        。切换与新建项目统一使用全局项目中心。
+        <span className={styles.technicalId} aria-hidden="true">
+          {projectId}
+        </span>
       </p>
+      {actor !== null &&
+      token !== null &&
+      current !== undefined &&
+      current.lifecycle === "Open" ? (
+        <Card title="项目管理">
+          <div className={styles.stack}>
+            <label className={styles.renameLabel}>
+              项目名称
+              <input
+                value={name}
+                placeholder={current.name}
+                onChange={(event) => setName(event.target.value)}
+              />
+            </label>
+            <Button
+              variant="quiet"
+              disabled={
+                name.trim().length === 0 || rename.state.phase === "submitting"
+              }
+              onClick={submitRename}
+            >
+              重命名项目
+            </Button>
+            {rename.state.phase === "submitting" ? (
+              <p className={styles.note} role="status">
+                正在提交项目更名…
+              </p>
+            ) : null}
+            <FormFeedback state={rename.state} onRetry={submitRename} />
+            <p className={styles.note}>
+              归档后不会删除历史，但不再接收新任务或新对话。
+            </p>
+            <Button
+              variant="danger"
+              disabled={close.state.phase === "submitting"}
+              onClick={submitClose}
+            >
+              归档项目
+            </Button>
+            {close.state.phase === "submitting" ? (
+              <p className={styles.note} role="status">
+                正在提交项目归档…
+              </p>
+            ) : null}
+            <FormFeedback state={close.state} onRetry={submitClose} />
+          </div>
+        </Card>
+      ) : null}
     </section>
   );
 }
@@ -196,16 +276,34 @@ export function SettingsPage({
   const { actor, token } = useSession();
   return (
     <div className={styles.page}>
-      <h1 className={styles.title}>设置</h1>
-      <PermissionsSection
-        actor={actor}
-        projectId={route.projectId}
-        token={token}
-      />
-      <ProjectSection actor={actor} token={token} projectId={route.projectId} />
-      <SessionSection />
-      <WorkbenchPreferences />
-      <CapabilityUnavailableSections />
+      <header className={styles.pageHeader}>
+        <div>
+          <p className={styles.eyebrow}>项目配置</p>
+          <h1 className={styles.title}>设置</h1>
+          <p className={styles.pageIntro}>
+            管理项目、权限、工作台偏好与当前会话。
+          </p>
+        </div>
+      </header>
+      <div className={styles.settingsGrid}>
+        <main className={styles.primaryColumn}>
+          <PermissionsSection
+            actor={actor}
+            projectId={route.projectId}
+            token={token}
+          />
+          <ProjectSection
+            actor={actor}
+            token={token}
+            projectId={route.projectId}
+          />
+          <WorkbenchPreferences />
+        </main>
+        <aside className={styles.secondaryColumn}>
+          <SessionSection />
+          <CapabilityUnavailableSections />
+        </aside>
+      </div>
     </div>
   );
 }

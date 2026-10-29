@@ -363,7 +363,11 @@ const StoryRegistryLive: Layer.Layer<
                 Effect.mapError(
                   (cause) =>
                     ({
-                      _tag: "DeliverableRepositoryFailure",
+                      _tag: "PersistenceUnavailable",
+                      repository: "DeliverableRepository",
+                      operation: "list-artifacts",
+                      retryDisposition: "non-retryable",
+                      sourceTag: "SqlError",
                       cause,
                     }) as never,
                 ),
@@ -683,7 +687,7 @@ const fingerprintOf = (commandType: string, payload: unknown) =>
     commandType,
     projectId: p7Project,
     actor: p7TestActor,
-    schemaVersion: "1",
+    schemaVersion: commandType === "ConcludeVerification" ? "2" : "1",
     payload,
   });
 
@@ -744,6 +748,9 @@ const recordPayload = (
     evidenceId,
     criterionId,
     kind: "ToolObservation",
+    toolInvocationId: "tin_00000000-0000-7000-8000-000000000001" as never,
+    observationRef: `observation:${criterionId}`,
+    callRef: `call:${criterionId}`,
     recordedAt: "t",
   },
 });
@@ -894,6 +901,8 @@ const makeConsumerADeps = Effect.gen(function* () {
         ),
       findById: (verificationId: VerificationId) =>
         tx.transact(verifications.findById(verificationId)),
+      listByWork: (workId: WorkId) =>
+        tx.transact(verifications.listByWork(workId)),
     },
     works: {
       findById: (workId: WorkId) => tx.transact(works.findById(workId)),
@@ -1066,8 +1075,15 @@ describe("p8-acceptance", () => {
           workId: WORK_A,
           targetWorkRevision: 0,
           verdict: "Pass",
-          conclusionReason: "",
+          conclusionReason: null,
           evidenceRefs: [EV_A1, EV_A2],
+          summaryRef: "summary:a",
+          missionSnapshot: MISSION_A,
+          criteriaResults: [
+            criterionResult(MISSION_A, "c1", "Pass", [EV_A1]),
+            criterionResult(MISSION_A, "c2", "Pass", [EV_A2]),
+          ],
+          snapshotStatus: "Available",
         });
 
         const accept = yield* submitAccept(cmd("89a0000000a6"), {
@@ -1609,6 +1625,9 @@ describe("p8-acceptance", () => {
           verdict: "Unknown",
           conclusionReason: "Orphaned",
           evidenceRefs: [],
+          missionSnapshot: MISSION_G,
+          criteriaResults: [],
+          snapshotStatus: "NotApplicableOrphaned",
         });
         const orphanedVerification = yield* requireVerification(
           ids.verificationId,

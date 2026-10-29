@@ -1,5 +1,6 @@
 import {
   ExecutionId,
+  LeaseGeneration,
   parse,
   ToolInvocationId,
   WorkspaceId,
@@ -15,7 +16,7 @@ import { describe, expect, it } from "vitest";
 import { ReconciliationSourceLive } from "../../../packages/tool-runtime/src/index.js";
 import {
   layer,
-  P4_MIGRATIONS,
+  P36_MIGRATIONS,
   runMigrations,
   ToolInvocationStoreLive,
   TransactionPortLive,
@@ -29,6 +30,13 @@ const sessionId = "ses_018f2b3c-4d5e-7abc-8def-0123456789a1";
 const executionId = parse(ExecutionId)(
   "exe_018f2b3c-4d5e-7abc-8def-0123456789a1",
 );
+const executionFence = {
+  executionId,
+  workerId: "worker:p4-reconciliation",
+  workerIncarnationId: "incarnation:p4-reconciliation",
+  fencingGeneration: parse(LeaseGeneration)(0),
+};
+const fenceNow = "2026-10-12T00:00:00.000Z";
 
 const makeApp = () => {
   const base = layer({ filename: ":memory:" });
@@ -89,14 +97,17 @@ const seed = Effect.gen(function* () {
         ],
       );
       yield* sql.unsafe(
-        "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, focus_kind, focus_work_id, parent_execution_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?,?,?,?,NULL,NULL,NULL,?,?,NULL,NULL,NULL,NULL)",
+        "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?, 'execution_bound', ?, 'm', ?, 't', NULL, NULL, NULL, NULL)",
+        [executionId, projectId, workspaceId, sessionId],
+      );
+      yield* sql.unsafe(
+        "INSERT INTO execution_leases (execution_id, worker_id, worker_incarnation_id, generation, expires_at, updated_at) VALUES (?,?,?,?,?,?)",
         [
           executionId,
-          projectId,
-          "workspace",
-          workspaceId,
-          "coordination",
-          sessionId,
+          executionFence.workerId,
+          executionFence.workerIncarnationId,
+          0,
+          "2999-01-01T00:00:00.000Z",
           "t",
         ],
       );
@@ -121,7 +132,7 @@ describe("P4 reconciliation source", () => {
   it("reports only reconcilable unsettled invocations", async () => {
     const app = makeApp();
     const program = Effect.gen(function* () {
-      yield* runMigrations(P4_MIGRATIONS);
+      yield* runMigrations(P36_MIGRATIONS);
       yield* seed;
       const tx = yield* TransactionPort;
       const store = yield* ToolInvocationStore;
@@ -129,16 +140,22 @@ describe("P4 reconciliation source", () => {
       yield* tx.transact(
         store.recordIntent(
           intent("tin_018f2b3c-4d5e-7abc-8def-0123456789a1", "Reconcilable"),
+          executionFence,
+          fenceNow,
         ),
       );
       yield* tx.transact(
         store.recordIntent(
           intent("tin_018f2b3c-4d5e-7abc-8def-0123456789a2", "ReadOnly"),
+          executionFence,
+          fenceNow,
         ),
       );
       yield* tx.transact(
         store.recordIntent(
           intent("tin_018f2b3c-4d5e-7abc-8def-0123456789a3", "NonIdempotent"),
+          executionFence,
+          fenceNow,
         ),
       );
       return yield* tx.transact(source.pending(executionId));

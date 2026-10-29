@@ -1,8 +1,19 @@
-import { Effect } from "effect";
+import { Cause, Effect, Exit } from "effect";
+import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
-import { parse, WorkId, WorkspaceId } from "../packages/domain/dist/index.js";
+import {
+  ProjectId,
+  parse,
+  WorkId,
+  WorkspaceId,
+} from "../packages/domain/dist/index.js";
+import {
+  type ProcessExecutionUnavailableProjectionRow,
+  processExecutionUnavailableAttentionFactIdV1,
+} from "../packages/ports/src/index.js";
 import type {
   AttentionFacts,
+  AttentionReadDeps,
   AttentionRow,
 } from "../packages/projection-runtime/src/index.js";
 import {
@@ -79,6 +90,8 @@ const sixSourceFacts: AttentionFacts = {
       verificationId: "ver_o1",
       ownerWorkspaceId: p10Leaf,
       executionIds: ["exe_v1"],
+      workId: W_CONS,
+      targetWorkRevision: 1,
     },
   ],
   executionSettlements: [
@@ -116,6 +129,72 @@ const rowsOf = (
   source: AttentionRow["source"],
   rows: ReadonlyArray<AttentionRow>,
 ): ReadonlyArray<AttentionRow> => rows.filter((row) => row.source === source);
+
+describe("P10 Native process-mode denial identity", () => {
+  it("uses the frozen ordered canonical preimage for its stable attentionFactId", () => {
+    const row = {
+      executionId: "exe_1",
+      workspaceId: "ws_1" as WorkspaceId,
+      invocationId: "tin_1",
+      providerTurnId: "ptn_1",
+      logicalStepNo: 2,
+      repairAttempt: 1,
+      logicalActionId: "lac_1",
+      actionIndex: 3,
+      callRef: "call_1",
+      reasonCode: "ProcessExecutionDisabled",
+    } satisfies Omit<
+      ProcessExecutionUnavailableProjectionRow,
+      "attentionFactId" | "occurredAt" | "projectId"
+    >;
+    expect(processExecutionUnavailableAttentionFactIdV1(row)).toBe(
+      "6c946a78a2803b402a3cdc3df973560356064e0a7671c7853642141290eb7e2d",
+    );
+    expect(
+      processExecutionUnavailableAttentionFactIdV1({
+        ...row,
+        reasonCode: "NativeOsTupleUnavailable",
+      }),
+    ).not.toBe(processExecutionUnavailableAttentionFactIdV1(row));
+  });
+});
+
+describe("AH14 LegacyAdoptionEvidenceInsufficient P10 source", () => {
+  it("uses only the exact Execution Workspace, fact dedup, fixed code and safe summary", () => {
+    const rows = deriveAttentionRows({
+      unfulfillableEvents: [],
+      deadlockEvents: [],
+      safetyStopSettlements: [],
+      reconciliationEscalatedEvents: [],
+      legacyAdoptionEvidenceFailureEvents: [
+        {
+          attentionFactId: "att_ah14",
+          executionId: "exe_ah14",
+          targetWorkspaceId: WS_X,
+          failureCode: "LegacyActionDispositionUnproven",
+          firstDetectedAt: "2026-10-17T00:00:01.000Z",
+        },
+      ],
+      openVerifications: [],
+      executionSettlements: [],
+      vacantProducerCandidates: [],
+      workspaceVacancies: [],
+      workOwners: [],
+    });
+    expect(rowsOf("LegacyAdoptionEvidenceInsufficient", rows)).toEqual([
+      {
+        source: "LegacyAdoptionEvidenceInsufficient",
+        severity: "ActionRequired",
+        targetWorkspaceId: WS_X,
+        dedupKey: "att_ah14",
+        summary:
+          "Legacy action outcome cannot be proven; operator review is required.",
+        occurredAt: "2026-10-17T00:00:01.000Z",
+        failureCode: "LegacyActionDispositionUnproven",
+      },
+    ]);
+  });
+});
 
 describe("P10-004 Attention read-model — six sources / severity / target / dedupKey (02 §1)", () => {
   it("Normal is the absence of facts — no rows, no Normal rows", () => {
@@ -216,6 +295,75 @@ describe("P10-004 Attention read-model — six sources / severity / target / ded
     expect(rows).toHaveLength(7);
   });
 
+  it("AssignWork binding failures map to Action Required at the Parent with fact-id dedup", () => {
+    const attentionFactId = `att_${"a".repeat(64)}`;
+    const rows = deriveAttentionRows({
+      ...sixSourceFacts,
+      assignWorkBindingFailureEvents: [
+        {
+          attentionFactId,
+          executionId: "exe_assign_work_binding",
+          targetWorkspaceId: WS_A,
+          logicalActionId: "lac_assign_work_binding",
+          committedCommandId: "cmd_assign_work_binding",
+          failureCode: "ReceiptMismatch",
+          occurredAt: "t6",
+        },
+        {
+          attentionFactId,
+          executionId: "exe_assign_work_binding",
+          targetWorkspaceId: WS_A,
+          logicalActionId: "lac_assign_work_binding",
+          committedCommandId: "cmd_assign_work_binding",
+          failureCode: "ReceiptMismatch",
+          occurredAt: "t6",
+        },
+      ],
+    });
+    expect(rowsOf("AssignWorkTargetBindingFailure", rows)).toEqual([
+      {
+        source: "AssignWorkTargetBindingFailure",
+        severity: "ActionRequired",
+        targetWorkspaceId: WS_A,
+        dedupKey: attentionFactId,
+        summary: expect.stringContaining("ReceiptMismatch"),
+        occurredAt: "t6",
+      },
+    ]);
+  });
+
+  it("Submitted DecisionEpisode binding failures map to safe Action Required with fact-id dedup", () => {
+    const attentionFactId = `att_${"b".repeat(64)}`;
+    const rows = deriveAttentionRows({
+      ...sixSourceFacts,
+      submittedDecisionBindingFailureEvents: [
+        {
+          attentionFactId,
+          executionId: "exe_submitted_decision_binding",
+          workspaceId: WS_A,
+          firstDetectedAt: "t7",
+        },
+        {
+          attentionFactId,
+          executionId: "exe_submitted_decision_binding",
+          workspaceId: WS_A,
+          firstDetectedAt: "t7",
+        },
+      ],
+    });
+    expect(rowsOf("SubmittedDecisionBindingFailure", rows)).toEqual([
+      {
+        source: "SubmittedDecisionBindingFailure",
+        severity: "ActionRequired",
+        targetWorkspaceId: WS_A,
+        dedupKey: attentionFactId,
+        summary:
+          "A Scheduler decision action could not be safely recovered; review is required.",
+        occurredAt: "t7",
+      },
+    ]);
+  });
+
   it("GAP-01 predicate edge: active producer WITH Open Work does not report", () => {
     const rows = deriveAttentionRows({
       ...sixSourceFacts,
@@ -253,6 +401,8 @@ describe("P10-004 Attention read-model — six sources / severity / target / ded
           verificationId: "ver_o2",
           ownerWorkspaceId: p10Leaf,
           executionIds: [],
+          workId: W_CONS,
+          targetWorkRevision: 1,
         },
       ],
     });
@@ -455,7 +605,7 @@ const seedAttention = seedCanonical(
     yield* insertExecutionRow(
       {
         executionId: "exe_s1",
-        workspaceId: p10Child,
+        workspaceId: p10Leaf,
         focusWorkId: W_LEAF_LIVE,
         settlement: {
           _tag: "Interrupted",
@@ -473,7 +623,7 @@ const seedAttention = seedCanonical(
     yield* insertExecutionRow(
       {
         executionId: "exe_r1",
-        workspaceId: p10Child,
+        workspaceId: p10Leaf,
         focusWorkId: W_LEAF_LIVE,
         settlement: {
           _tag: "OutcomeUnknown",
@@ -490,6 +640,7 @@ const seedAttention = seedCanonical(
       eventId: "evt_00000000-0000-7000-8000-00000000r01",
       projectId: p10Project,
       eventType: "ReconciliationEscalated",
+      aggregateRef: "exe_r1",
       payload: {
         executionId: "exe_r1",
         invocationRefsFingerprint: "fp1",
@@ -552,6 +703,96 @@ const seedAttention = seedCanonical(
 );
 
 describe("P10-004 Attention read-model over canonical rows (live join, zero mutation)", () => {
+  it("renders the V5 and V21 sandbox sources with fixed safe summaries and no persistence", async () => {
+    await runP10(
+      Effect.gen(function* () {
+        yield* migrate;
+        yield* seedAttention;
+        const deps = yield* makeP10Deps();
+        const before = yield* snapshotDatabase();
+        const rows = yield* deriveProjectAttention(p10Project, {
+          ...deps.attention,
+          listProjectedSandboxProviderUnavailableFailures: () =>
+            Effect.succeed([
+              {
+                projectId: p10Project,
+                attentionFactId: "att_sandbox_unavailable",
+                workspaceId: p10Leaf,
+                executionId: "exe_sandbox_unavailable",
+                policyRevision: 3,
+                firstDetectedAt: "2026-10-19T10:00:00.000Z",
+              },
+            ]),
+          listProjectedProcessExecutionUnavailable: () =>
+            Effect.succeed([
+              {
+                projectId: p10Project,
+                executionId: "exe_native_denied",
+                invocationId: "tin_native_denied",
+                workspaceId: p10Leaf,
+                providerTurnId: "ptn_native_denied",
+                logicalStepNo: 3,
+                repairAttempt: 0,
+                logicalActionId: "lac_native_denied",
+                actionIndex: 1,
+                callRef: "call_native_denied",
+                reasonCode: "ProcessExecutionDisabled" as const,
+                attentionFactId: "att_native_denied",
+                occurredAt: "2026-10-26T10:00:02.000Z",
+              },
+            ]),
+          listSandboxRecoveryBindingFailures: () =>
+            Effect.succeed([
+              {
+                projectId: p10Project,
+                executionId: "exe_sandbox_recovery",
+                invocationId: "tin_sandbox_recovery",
+                workspaceId: p10Child,
+                attentionFactId: "a".repeat(64),
+                intentAt: "2026-10-19T10:00:01.000Z",
+              },
+            ]),
+        });
+        expect(rowsOf("SandboxProviderUnavailable", rows)).toEqual([
+          {
+            source: "SandboxProviderUnavailable",
+            severity: "ActionRequired",
+            targetWorkspaceId: p10Leaf,
+            dedupKey: "att_sandbox_unavailable",
+            summary:
+              "Required sandbox capabilities are unavailable; execution did not start.",
+            occurredAt: "2026-10-19T10:00:00.000Z",
+          },
+        ]);
+        expect(rowsOf("SandboxRecoveryBindingFailure", rows)).toEqual([
+          {
+            source: "SandboxRecoveryBindingFailure",
+            severity: "ActionRequired",
+            targetWorkspaceId: p10Child,
+            dedupKey: "a".repeat(64),
+            summary:
+              "Sandbox recovery binding evidence is missing or invalid; execution is paused.",
+            occurredAt: "2026-10-19T10:00:01.000Z",
+          },
+        ]);
+        expect(rowsOf("ProcessExecutionUnavailable", rows)).toEqual([
+          {
+            source: "ProcessExecutionUnavailable",
+            severity: "ActionRequired",
+            targetWorkspaceId: p10Leaf,
+            dedupKey: "att_native_denied",
+            summary:
+              "Process execution is disabled for this daemon; the action was not started.",
+            occurredAt: "2026-10-26T10:00:02.000Z",
+            failureCode: "ProcessExecutionDisabled",
+          },
+        ]);
+        expect(yield* snapshotDatabase()).toEqual(before);
+      }),
+      makeP10App(),
+    );
+  });
+
   it("deriveProjectAttention renders all six sources with severity/target/dedupKey; GAP-01 retired negative; canonical snapshot unchanged", async () => {
     await runP10(
       Effect.gen(function* () {
@@ -584,7 +825,7 @@ describe("P10-004 Attention read-model over canonical rows (live join, zero muta
         expect(safety).toHaveLength(1);
         expect(safety[0]).toMatchObject({
           severity: "Attention",
-          targetWorkspaceId: p10Child,
+          targetWorkspaceId: p10Leaf,
           dedupKey: "safety-stop:exe_s1",
         });
 
@@ -592,7 +833,7 @@ describe("P10-004 Attention read-model over canonical rows (live join, zero muta
         expect(escalation).toHaveLength(1);
         expect(escalation[0]).toMatchObject({
           severity: "ActionRequired",
-          targetWorkspaceId: p10Child,
+          targetWorkspaceId: p10Leaf,
           dedupKey: "reconciliation-escalated:exe_r1:fp1",
         });
 
@@ -621,5 +862,558 @@ describe("P10-004 Attention read-model over canonical rows (live join, zero muta
       }),
       makeP10App(),
     );
+  });
+
+  it("renders bounded terminal provider integrity facts without source content", async () => {
+    await runP10(
+      Effect.gen(function* () {
+        yield* migrate;
+        yield* seedAttention;
+        const deps = yield* makeP10Deps();
+        const integrityFact = {
+          kind: "TerminalProviderFailureIntegrity" as const,
+          projectId: p10Project,
+          workspaceId: p10Root,
+          workId: W_A,
+          workRevision: 4,
+          executionId: "exe_terminal_integrity",
+          logicalStepNo: 3,
+          repairAttempt: 1,
+          occurredAt: "2026-10-26T02:03:04.000Z",
+          failureCode: "SourceManifestMismatch",
+          rawProviderBody: "sensitive-provider-body",
+        };
+        const integrityDeps: AttentionReadDeps = {
+          ...deps.attention,
+          listTerminalProviderFailures: () =>
+            Effect.succeed([integrityFact] as never),
+        };
+
+        const rows = yield* deriveProjectAttention(p10Project, integrityDeps);
+        const row = rows.find(
+          (candidate) =>
+            candidate.source === "TerminalProviderFailureIntegrity",
+        );
+
+        expect(row).toMatchObject({
+          severity: "ActionRequired",
+          targetWorkspaceId: p10Root,
+          dedupKey:
+            "terminal-provider-failure-integrity:exe_terminal_integrity:3:1:SourceManifestMismatch",
+          summary:
+            "Arbor cannot safely verify a terminal provider-failure recovery record. Execution remains blocked; inspect the bounded integrity code before retrying.",
+          occurredAt: "2026-10-26T02:03:04.000Z",
+          workId: W_A,
+          targetWorkRevision: 4,
+          terminalProviderFailure: {
+            kind: "TerminalProviderFailureIntegrity",
+            workId: W_A,
+            workRevision: 4,
+            occurredAt: "2026-10-26T02:03:04.000Z",
+            failureCode: "SourceManifestMismatch",
+          },
+        });
+        expect(JSON.stringify(row)).not.toContain("sensitive-provider-body");
+      }),
+      makeP10App(),
+    );
+  });
+
+  it("keeps one deterministic earliest witness across reads of a large equivalent history", async () => {
+    await runP10(
+      Effect.gen(function* () {
+        yield* migrate;
+        yield* seedAttention;
+        const deps = yield* makeP10Deps();
+        const history = Array.from({ length: 320 }, (_, index) => {
+          const admittedAt = new Date(
+            Date.UTC(2026, 0, 1, 0, 0, index),
+          ).toISOString();
+          return {
+            admittedAt,
+            executionId: `exe_terminal_${String(index).padStart(4, "0")}`,
+            logicalStepNo: 2,
+            repairAttempt: 1,
+            providerTurnId: `pt_terminal_${String(index).padStart(4, "0")}`,
+            attemptNo: 0,
+            failureKind: "RequestRejected" as const,
+            failureFingerprint: "a".repeat(64),
+            occurredAt: admittedAt,
+          };
+        });
+        const earliest = [...history].sort(
+          (left, right) =>
+            left.admittedAt.localeCompare(right.admittedAt) ||
+            left.executionId.localeCompare(right.executionId) ||
+            left.logicalStepNo - right.logicalStepNo ||
+            left.repairAttempt - right.repairAttempt ||
+            left.providerTurnId.localeCompare(right.providerTurnId) ||
+            left.attemptNo - right.attemptNo,
+        )[0];
+        expect(earliest).toBeDefined();
+        if (earliest === undefined) return;
+
+        // The P10 fixture uses a NoHold gate and cannot exercise the SQLite
+        // history election. Model its frozen one-witness port result here;
+        // the P10 assertion covers projection stability across re-reads.
+        const gateWitness = {
+          projectId: p10Project,
+          workspaceId: p10Root,
+          workId: W_A,
+          workRevision: 4,
+          source: {
+            sourceKind: "TerminalProviderFailureSettlement",
+            executionId: earliest.executionId,
+            logicalStepNo: earliest.logicalStepNo,
+            repairAttempt: earliest.repairAttempt,
+            providerTurnId: earliest.providerTurnId,
+            attemptNo: earliest.attemptNo,
+            failureKind: earliest.failureKind,
+            failureFingerprint: earliest.failureFingerprint,
+          },
+          occurredAt: earliest.occurredAt,
+        } as never;
+        const readDeps: AttentionReadDeps = {
+          ...deps.attention,
+          listTerminalProviderFailures: () => Effect.succeed([gateWitness]),
+        };
+        const before = yield* snapshotDatabase();
+        const beforeRebuild = yield* deriveProjectAttention(
+          p10Project,
+          readDeps,
+        );
+        const afterRebuildAndRestart = yield* deriveProjectAttention(
+          p10Project,
+          { ...readDeps },
+        );
+        const firstRows = rowsOf("TerminalProviderFailure", beforeRebuild);
+        const secondRows = rowsOf(
+          "TerminalProviderFailure",
+          afterRebuildAndRestart,
+        );
+        expect(firstRows).toHaveLength(1);
+        expect(secondRows).toHaveLength(1);
+        expect(firstRows[0]?.occurredAt).toBe(earliest.occurredAt);
+        expect(secondRows).toEqual(firstRows);
+        expect(yield* snapshotDatabase()).toBe(before);
+      }),
+      makeP10App(),
+    );
+  });
+
+  it("fails closed with bounded integrity for invalid-time and unprovable terminal evidence", async () => {
+    await runP10(
+      Effect.gen(function* () {
+        yield* migrate;
+        yield* seedAttention;
+        const deps = yield* makeP10Deps();
+        const boundedFailures = [
+          "FailureOccurrenceTimeInvalid",
+          "EpisodeMalformed",
+        ].map((reasonCode) => ({
+          _tag: "ProjectionIntegrityFailure" as const,
+          code: "projection/unavailable" as const,
+          category: "unavailable" as const,
+          correlationId: null,
+          retryDisposition: "non-retryable" as const,
+          safeDetails: {
+            sourceTag: "TerminalProviderFailureIntegrity",
+            executionId: "exe_terminal_integrity",
+            reasonCode,
+          },
+        }));
+        for (const boundedFailure of boundedFailures) {
+          const failingDeps: AttentionReadDeps = {
+            ...deps.attention,
+            listTerminalProviderFailures: () => Effect.fail(boundedFailure),
+          };
+          const failure = yield* Effect.flip(
+            deriveProjectAttention(p10Project, failingDeps),
+          );
+          expect(failure).toEqual(boundedFailure);
+          expect(JSON.stringify(failure)).not.toContain("settled_at");
+        }
+      }),
+      makeP10App(),
+    );
+  });
+
+  it("omits old Work Episode Attention immediately across lag/re-read and fails closed on a cross-Workspace binding", async () => {
+    const result = await runP10(
+      Effect.gen(function* () {
+        yield* migrate;
+        yield* seedAttention;
+        const sql = yield* SqlClient;
+        const deps = yield* makeP10Deps();
+        const duplicateBindingDeps: AttentionReadDeps = {
+          ...deps.attention,
+          listAttentionSourceExecutionBindings: (projectId, executionIds) =>
+            deps.attention
+              .listAttentionSourceExecutionBindings(projectId, executionIds)
+              .pipe(
+                Effect.map((bindings) => [
+                  ...bindings,
+                  ...bindings.filter(
+                    (binding) => binding.executionId === "exe_s1",
+                  ),
+                ]),
+              ),
+        };
+        const duplicateBinding = yield* Effect.exit(
+          deriveProjectAttention(p10Project, duplicateBindingDeps),
+        );
+        const beforeSteer = yield* deriveProjectAttention(
+          p10Project,
+          deps.attention,
+        );
+        const rootSummary = (rows: ReadonlyArray<AttentionRow>) =>
+          subtreeAttentionAggregate(rows, (workspaceId) =>
+            workspaceId === p10Leaf
+              ? p10Child
+              : workspaceId === p10Child
+                ? p10Root
+                : null,
+          ).get(p10Root);
+        const beforeSummary = rootSummary(beforeSteer);
+        const staleAttentionBefore = beforeSteer.filter(
+          (row) => row.source === "RuntimeSafetyEnvelope",
+        ).length;
+        const staleActionRequiredBefore = beforeSteer.filter(
+          (row) => row.source === "ReconciliationEscalated",
+        ).length;
+
+        // A committed Steer advances the canonical Work while P10 has not
+        // consumed the WorkSteered wakeup. Its old source facts remain.
+        yield* sql.unsafe("UPDATE works SET revision = 1 WHERE work_id = ?", [
+          W_LEAF_LIVE,
+        ]);
+        yield* insertEventRow({
+          eventId: "evt_00000000-0000-7000-8000-00000000st1",
+          projectId: p10Project,
+          eventType: "WorkSteered",
+          payload: { workId: W_LEAF_LIVE, revision: 1 },
+          occurredAt: "t9",
+        });
+        const first = yield* deriveProjectAttention(p10Project, deps.attention);
+        const second = yield* deriveProjectAttention(
+          p10Project,
+          deps.attention,
+        );
+        yield* sql.unsafe(
+          "DELETE FROM agent_execution_state WHERE execution_id = 'exe_s1'",
+        );
+        const missingEpisodeState = yield* Effect.exit(
+          deriveProjectAttention(p10Project, deps.attention),
+        );
+        yield* sql.unsafe(
+          `INSERT INTO agent_execution_state (
+             execution_id, focus_json, episode_json, wake_reason,
+             current_mode, active_skill_refs_json, turn_no,
+             recent_directive_refs_json, recent_action_fingerprints_json,
+             updated_at
+           ) VALUES ('exe_s1', ?, ?, 'Seed', NULL, '[]', 0, '[]', '[]', 't0')`,
+          [
+            JSON.stringify({ _tag: "Work", workId: W_LEAF_LIVE }),
+            JSON.stringify({
+              _tag: "WorkEpisode",
+              workId: W_LEAF_LIVE,
+              targetWorkRevision: 0,
+            }),
+          ],
+        );
+        yield* sql.unsafe(
+          "UPDATE agent_execution_state SET episode_json = '{malformed' WHERE execution_id = 'exe_s1'",
+        );
+        const malformedEpisode = yield* Effect.exit(
+          deriveProjectAttention(p10Project, deps.attention),
+        );
+        yield* sql.unsafe(
+          "UPDATE agent_execution_state SET episode_json = ? WHERE execution_id = 'exe_s1'",
+          [
+            JSON.stringify({
+              _tag: "WorkEpisode",
+              workId: W_LEAF_LIVE,
+              targetWorkRevision: 2,
+            }),
+          ],
+        );
+        const futureEpisode = yield* Effect.exit(
+          deriveProjectAttention(p10Project, deps.attention),
+        );
+        yield* sql.unsafe(
+          "UPDATE agent_execution_state SET episode_json = ? WHERE execution_id = 'exe_s1'",
+          [
+            JSON.stringify({
+              _tag: "WorkEpisode",
+              workId: W_LEAF_LIVE,
+              targetWorkRevision: 0,
+            }),
+          ],
+        );
+        const sourceAudit = yield* sql.unsafe<{ readonly count: number }>(
+          `SELECT COUNT(*) AS count FROM domain_events
+            WHERE project_id = ? AND event_type = 'ReconciliationEscalated'`,
+          [p10Project],
+        );
+        const oldSafetySettlement = yield* sql.unsafe<{
+          readonly count: number;
+        }>(
+          "SELECT COUNT(*) AS count FROM executions WHERE execution_id = 'exe_s1' AND settlement_kind = 'Interrupted'",
+        );
+
+        // The source execution is in the child Workspace, while its episode
+        // is corrupted to point at a Work owned by a different child.
+        yield* sql.unsafe(
+          "UPDATE agent_execution_state SET episode_json = ? WHERE execution_id = 'exe_s1'",
+          [
+            JSON.stringify({
+              _tag: "WorkEpisode",
+              workId: W_CONS_LIVE,
+              targetWorkRevision: 0,
+            }),
+          ],
+        );
+        const corrupted = yield* Effect.exit(
+          deriveProjectAttention(p10Project, deps.attention),
+        );
+        yield* sql.unsafe(
+          "UPDATE agent_execution_state SET episode_json = ? WHERE execution_id = 'exe_s1'",
+          [JSON.stringify({ _tag: "WorkEpisodeV9", workId: W_LEAF_LIVE })],
+        );
+        const unknownVersion = yield* Effect.exit(
+          deriveProjectAttention(p10Project, deps.attention),
+        );
+        yield* sql.unsafe(
+          "UPDATE executions SET settlement_json = 'not-json' WHERE execution_id = 'exe_s1'",
+        );
+        const malformedSettlement = yield* Effect.exit(
+          deriveProjectAttention(p10Project, deps.attention),
+        );
+        yield* sql.unsafe(
+          "UPDATE executions SET settlement_json = ? WHERE execution_id = 'exe_s1'",
+          [
+            JSON.stringify({
+              _tag: "Interrupted",
+              result: {
+                _tag: "ControlledInterruption",
+                reason: "RuntimeSafetyStop",
+              },
+            }),
+          ],
+        );
+        yield* sql.unsafe(
+          "UPDATE agent_execution_state SET episode_json = ? WHERE execution_id = 'exe_s1'",
+          [
+            JSON.stringify({
+              _tag: "WorkEpisode",
+              workId: W_LEAF_LIVE,
+              targetWorkRevision: 0,
+            }),
+          ],
+        );
+        yield* sql.unsafe(
+          "UPDATE domain_events SET aggregate_ref = 'exe_wrong' WHERE event_id = 'evt_00000000-0000-7000-8000-00000000r01'",
+        );
+        const eventMismatch = yield* Effect.exit(
+          deriveProjectAttention(p10Project, deps.attention),
+        );
+        yield* sql.unsafe(
+          "UPDATE domain_events SET aggregate_ref = 'exe_r1' WHERE event_id = 'evt_00000000-0000-7000-8000-00000000r01'",
+        );
+        yield* insertEventRow({
+          eventId: "evt_00000000-0000-7000-8000-00000000r02",
+          projectId: p10Project,
+          eventType: "ReconciliationEscalated",
+          aggregateRef: "exe_missing",
+          payload: {
+            executionId: "exe_missing",
+            invocationRefsFingerprint: "fp-missing",
+            refs: ["ref-missing"],
+          },
+          occurredAt: "t10",
+        });
+        const missingExecution = yield* Effect.exit(
+          deriveProjectAttention(p10Project, deps.attention),
+        );
+        yield* sql.unsafe(
+          "DELETE FROM domain_events WHERE event_id = 'evt_00000000-0000-7000-8000-00000000r02'",
+        );
+        const foreignProject = parse(ProjectId)(
+          "prj_00000000-0000-7000-8000-000000000099",
+        );
+        const foreignWorkspace = parse(WorkspaceId)(
+          "ws_00000000-0000-7000-8000-000000000099",
+        );
+        const foreignWork = parse(WorkId)(
+          "wrk_00000000-0000-7000-8000-000000000099",
+        );
+        yield* seedCanonical(
+          Effect.gen(function* () {
+            yield* insertProjectRootRow(foreignWorkspace, foreignProject);
+            yield* insertWorkspaceRow(
+              {
+                workspaceId: foreignWorkspace,
+                parentWorkspaceId: null,
+                name: "foreign",
+              },
+              foreignProject,
+            );
+            yield* insertWorkRow(
+              {
+                workId: foreignWork,
+                workspaceId: foreignWorkspace,
+                objective: "foreign source",
+              },
+              foreignProject,
+            );
+            yield* insertExecutionRow(
+              {
+                executionId: "exe_foreign",
+                workspaceId: foreignWorkspace,
+                focusWorkId: foreignWork,
+              },
+              foreignProject,
+            );
+          }),
+        );
+        yield* insertEventRow({
+          eventId: "evt_00000000-0000-7000-8000-00000000r03",
+          projectId: p10Project,
+          eventType: "ReconciliationEscalated",
+          aggregateRef: "exe_foreign",
+          payload: {
+            executionId: "exe_foreign",
+            invocationRefsFingerprint: "fp-foreign",
+            refs: ["ref-foreign"],
+          },
+          occurredAt: "t11",
+        });
+        const foreignExecution = yield* Effect.exit(
+          deriveProjectAttention(p10Project, deps.attention),
+        );
+        return {
+          beforeSummary,
+          duplicateBinding,
+          staleAttentionBefore,
+          staleActionRequiredBefore,
+          first,
+          second,
+          missingEpisodeState,
+          malformedEpisode,
+          futureEpisode,
+          eventCount: Number(sourceAudit[0]?.count ?? 0),
+          settlementCount: Number(oldSafetySettlement[0]?.count ?? 0),
+          corrupted,
+          unknownVersion,
+          malformedSettlement,
+          eventMismatch,
+          missingExecution,
+          foreignExecution,
+        };
+      }),
+      makeP10App(),
+    );
+    expect(result.staleAttentionBefore).toBe(1);
+    expect(result.staleActionRequiredBefore).toBe(1);
+    for (const rows of [result.first, result.second]) {
+      expect(rows.some((row) => row.source === "RuntimeSafetyEnvelope")).toBe(
+        false,
+      );
+      expect(rows.some((row) => row.source === "ReconciliationEscalated")).toBe(
+        false,
+      );
+      // A child-only stale source cannot bubble into the parent summary.
+      const summary = subtreeAttentionAggregate(rows, (workspaceId) =>
+        workspaceId === p10Leaf
+          ? p10Child
+          : workspaceId === p10Child
+            ? p10Root
+            : null,
+      ).get(p10Root);
+      expect(summary?.attention).toBe(
+        (result.beforeSummary?.attention ?? 0) - result.staleAttentionBefore,
+      );
+      expect(summary?.actionRequired).toBe(
+        (result.beforeSummary?.actionRequired ?? 0) -
+          result.staleActionRequiredBefore,
+      );
+    }
+    expect(result.eventCount).toBe(1);
+    expect(result.settlementCount).toBe(1);
+    expect(Exit.isFailure(result.duplicateBinding)).toBe(true);
+    if (Exit.isFailure(result.duplicateBinding)) {
+      expect(Cause.squash(result.duplicateBinding.cause)).toMatchObject({
+        _tag: "ProjectionIntegrityFailure",
+        reasonCode: "SourceExecutionNonUnique",
+        executionId: "exe_s1",
+      });
+    }
+    for (const [exit, reasonCode] of [
+      [result.missingEpisodeState, "SourceEpisodeStateMissing"],
+      [result.malformedEpisode, "EpisodeMalformed"],
+      [result.futureEpisode, "FutureWorkRevision"],
+    ] as const) {
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.squash(exit.cause)).toMatchObject({
+          _tag: "ProjectionIntegrityFailure",
+          reasonCode,
+          executionId: "exe_s1",
+        });
+      }
+    }
+    expect(Exit.isFailure(result.corrupted)).toBe(true);
+    if (Exit.isFailure(result.corrupted)) {
+      expect(Cause.squash(result.corrupted.cause)).toMatchObject({
+        _tag: "ProjectionIntegrityFailure",
+        reasonCode: "WorkScopeMismatch",
+        executionId: "exe_s1",
+        workId: W_CONS_LIVE,
+      });
+      expect(
+        JSON.stringify(Cause.squash(result.corrupted.cause)),
+      ).not.toContain("SQLite");
+    }
+    expect(Exit.isFailure(result.unknownVersion)).toBe(true);
+    if (Exit.isFailure(result.unknownVersion)) {
+      expect(Cause.squash(result.unknownVersion.cause)).toMatchObject({
+        _tag: "ProjectionIntegrityFailure",
+        reasonCode: "EpisodeVersionUnsupported",
+        executionId: "exe_s1",
+      });
+    }
+    expect(Exit.isFailure(result.malformedSettlement)).toBe(true);
+    if (Exit.isFailure(result.malformedSettlement)) {
+      expect(Cause.squash(result.malformedSettlement.cause)).toMatchObject({
+        _tag: "ProjectionIntegrityFailure",
+        reasonCode: "SettlementMalformed",
+        executionId: "exe_s1",
+      });
+    }
+    expect(Exit.isFailure(result.eventMismatch)).toBe(true);
+    if (Exit.isFailure(result.eventMismatch)) {
+      expect(Cause.squash(result.eventMismatch.cause)).toMatchObject({
+        _tag: "ProjectionIntegrityFailure",
+        reasonCode: "SourceEventExecutionMismatch",
+        executionId: "exe_r1",
+      });
+    }
+    expect(Exit.isFailure(result.missingExecution)).toBe(true);
+    if (Exit.isFailure(result.missingExecution)) {
+      expect(Cause.squash(result.missingExecution.cause)).toMatchObject({
+        _tag: "ProjectionIntegrityFailure",
+        reasonCode: "SourceExecutionMissing",
+        executionId: "exe_missing",
+      });
+    }
+    expect(Exit.isFailure(result.foreignExecution)).toBe(true);
+    if (Exit.isFailure(result.foreignExecution)) {
+      expect(Cause.squash(result.foreignExecution.cause)).toMatchObject({
+        _tag: "ProjectionIntegrityFailure",
+        reasonCode: "SourceProjectMismatch",
+        executionId: "exe_foreign",
+        workspaceId: "ws_00000000-0000-7000-8000-000000000099",
+      });
+    }
   });
 });

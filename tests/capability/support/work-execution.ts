@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { realpathSync } from "node:fs";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import {
@@ -10,6 +10,7 @@ import {
   Principal,
   parse,
   ResourceBoundaryRevision,
+  type VerificationMission,
   WorkId,
 } from "../../../packages/domain/src/index.js";
 import { runExecution } from "../../../packages/execution-runtime/src/index.js";
@@ -17,8 +18,13 @@ import {
   ResourceOwnershipRepository,
   TransactionPort,
 } from "../../../packages/ports/src/index.js";
-import type { PublicAppHandle, PublicProject } from "./public-chat.js";
-import { newCapabilityId } from "./public-chat.js";
+import {
+  hostProfileDirectoryForFixture,
+  newCapabilityId,
+  type PublicAppHandle,
+  type PublicProject,
+  publicProjectPayloadFromCatalog,
+} from "./public-chat.js";
 
 const capabilityPrincipal = parse(Principal)("user:capability-test");
 
@@ -37,6 +43,8 @@ export const submitWork = async (
   options: {
     readonly workspaceId?: string;
     readonly expectedWorkspaceRevision?: number;
+    readonly completionExpectation?: string;
+    readonly verificationMission?: VerificationMission;
     /** Skip the CreateProject step when the caller already created it
      * (e.g. a child workspace had to be created in between). */
     readonly createProject?: boolean;
@@ -50,7 +58,7 @@ export const submitWork = async (
       projectId: project.projectId,
       actor: "user:capability-test",
       issuedAt: new Date().toISOString(),
-      payload: project,
+      payload: await publicProjectPayloadFromCatalog(handle, project),
     });
     if (
       created.status !== 200 ||
@@ -76,8 +84,13 @@ export const submitWork = async (
       objective,
       why: "capability L3 sentinel",
       constraints: [],
-      completionExpectation: "report the observation",
-      verificationMission: { goal: "g", criteria: [], riskRequirements: [] },
+      completionExpectation:
+        options.completionExpectation ?? "report the observation",
+      verificationMission: options.verificationMission ?? {
+        goal: "g",
+        criteria: [],
+        riskRequirements: [],
+      },
       provenance: { predecessorWorkId: null, reason: "initial" },
       revision: 0,
     },
@@ -107,6 +120,13 @@ export const seedFilesystemOwnership = (
 ): Promise<void> =>
   handle.run(
     Effect.gen(function* () {
+      const hostProfileDirectory = hostProfileDirectoryForFixture(project);
+      if (hostProfileDirectory === undefined) {
+        throw new Error(
+          "filesystem ownership fixture requires a host-registered Profile",
+        );
+      }
+      const canonicalPath = realpathSync(hostProfileDirectory);
       const ownership = yield* ResourceOwnershipRepository;
       const tx = yield* TransactionPort;
       yield* tx.transact(
@@ -115,9 +135,9 @@ export const seedFilesystemOwnership = (
           workspaceId: project.rootWorkspaceId as never,
           region: {
             resourceSpaceId: "filesystem",
-            normalizedRegion: { kind: "FileTree", path: resolve(".") },
+            normalizedRegion: { kind: "FileTree", path: canonicalPath },
           },
-          sourceAddressSnapshot: { _tag: "FileTree", path: "." },
+          sourceAddressSnapshot: { _tag: "FileTree", path: canonicalPath },
           resourceBoundaryRevision: parse(ResourceBoundaryRevision)(0),
           resolvedAtEnvironmentRevision: "local",
           createdAt: "t",

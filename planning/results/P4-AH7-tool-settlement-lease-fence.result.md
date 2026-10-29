@@ -1,0 +1,160 @@
+# P4 / AH7 ToolInvocation settlement lease fence — result
+
+## Scope
+
+Implement the already-frozen P2 `03` §3 / P9 `02` W3/R4 requirement that an
+old Worker generation cannot commit ToolInvocation settlement after takeover.
+No `docs/design/**` was modified. RecoveryController remains on its existing
+Execution/Attention path and does not write `tool_invocations`.
+
+Worktree: `C:\Users\ThinkPad\.codex\worktrees\f23-internal-validation\Arbor`
+
+## RED evidence: real production dispatch and cross-generation takeover
+
+The new real-daemon test is
+`tests/functional/process/p4-ah7-tool-settlement-lease-fencing.functional.test.ts`.
+It uses the production `runExecution`/lease acquire path and production P4
+ToolRuntime:
+
+1. A public Root goal is approved; a Profile-backed Work waits for public
+   Steer, then invokes a NonIdempotent shell effect.
+2. Generation G0 is held after the shell effect and before P4 settlement. Its
+   lease-renewal probe is paused and the test expires only the isolated fixture
+   DB's lease row.
+3. A second real daemon acquires generation G1 and is held by the
+   `AH10AfterLeaseAcquired` probe before `driver.drive`.
+4. Releasing G0 proves the old production Worker reaches the actual P4
+   `settle` boundary after G1 owns the lease. Before the fix it emitted
+   `AH7AfterToolSettlementCommit` and the row was durably `Success`—not an
+   earlier renewal cancellation or pre-dispatch rejection.
+5. The external shell marker occurred exactly once. The later
+   AgentLoopStep/Session fence prevented any successful ToolResult Observation
+   from being committed, but that is too late to satisfy P9 R4: the P4 row had
+   already been mutated by the stale worker.
+
+Baseline RED command:
+
+```text
+pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/p4-ah7-tool-settlement-lease-fencing.functional.test.ts
+```
+
+The baseline failed at the expected boundary: observed
+`AH7AfterToolSettlementCommit`, expected `AH7ToolSettlementFenceRejected`; the
+P4 row changed from unsettled to `Success` while G1's driver remained paused.
+
+## Implementation
+
+- Production `ExecutableToolHandler` now forwards the trusted ExecutionOrigin
+  holder triple (`workerId`, `workerIncarnationId`, `fencingGeneration`) in
+  `ToolExecutionContext`. The legacy executable route forwards it as well when
+  it receives an ExecutionOrigin.
+- P4 `ToolInvocationStore.settle` accepts that optional internal fence and
+  returns whether its conditional settlement CAS updated a row.
+- SQLite settlement checks the exact invocation→Execution binding, unsettled
+  Execution, worker id, process incarnation, generation, and unexpired lease in
+  the same `TransactionScope` transaction as the settlement update. The fence
+  comparison uses a fresh `Clock.now()` after the transaction has begun; the
+  earlier `settledAt` remains only the durable record timestamp. A stale holder
+  receives typed `LeaseFencingRejected` and performs no row mutation.
+- `ToolRuntime` preserves lease-fence rejection, emits the test boundary, and
+  never emits the settlement-committed probe after a rejected or zero-row CAS.
+  On a zero-row CAS it rereads the canonical ToolInvocation in the same
+  transaction: canonical `OutcomeUnknown` remains unknown; missing/incompatible
+  canonical state is an operational failure, never a fabricated `Success`.
+- The lease rejection propagates through Executable Invocation / AgentLoop to
+  `ExecutionDriverOwnershipLost`, then `runExecution` maps it back to
+  `LeaseFencingRejected`. Production dispatch consumes it as lost ownership;
+  the stale worker does not persist a successful Observation.
+- The current-generation replay does not re-execute the NonIdempotent effect.
+  Under the frozen P4/P9 ambiguous-effect contract, it keeps the P4 invocation
+  `MayHaveStarted` and unsettled while Execution settles `OutcomeUnknown` with
+  the exact invocation ref; it does not invoke RecoveryController to write
+  `tool_invocations`.
+
+## Verification
+
+- `pnpm build`: PASS.
+- `pnpm typecheck`: PASS.
+- Final focused Vitest batch covering the expiry queue, SQLite settlement/CAS,
+  direct P4 diagnostic, ToolRuntime, active ExecutionOrigin, and executable
+  outcome paths: 6 files / 31 passed, 1 skipped (the retained direct-unleased
+  pending diagnostic).
+- P2/P4/ToolRuntime unit batch: 6 files / 20 tests PASS. This includes P2 live
+  lease acquire/takeover, SQLite P4 settle applied-vs-zero-row CAS, and
+  ToolRuntime canonical `OutcomeUnknown` on a zero-row settlement CAS.
+- Expiry-only semaphore queue case: deterministic RED with stale
+  `settledAt` as fence time; GREEN after sampling `Clock.now()` inside the
+  settlement transaction. The row keeps generation 0 throughout; only its
+  lease expiry passes while settlement is queued. The corrected test verifies
+  `LeaseFencingRejected`, one external effect, an unsettled invocation row, and
+  no settlement-committed probe.
+- `ExecutionOrigin` missing its worker/incarnation/generation triple fails
+  closed before calling ToolRuntime (focused local regression test).
+- Real production cross-generation process test above: 1/1 PASS after fix.
+  G0 was fenced while G1 owned the lease; the invocation stayed unsettled
+  until G1 resumed, G1 did not repeat the shell effect, final P4/Execution
+  outcomes were `OutcomeUnknown`, and no successful ToolResult Observation was
+  recorded.
+- Existing direct P4 concurrency adapter file: 3 passed / 1 skipped.
+- Biome on all changed source/test files and `git diff --check`: PASS.
+- No full `pnpm check` or full `pnpm test:functional` was run.
+
+## Direct unleased P4 diagnostic disposition
+
+The original deterministic direct-P4 RED is retained, with its assertions
+unchanged, as a skipped pending diagnostic in
+`adapters/persistence-sqlite/test/p4-ah7-cross-connection-concurrency.test.ts`.
+It constructs two unleased ToolRuntime callers and does not prove production
+same-generation dual-worker reachability; P2 lease acquisition blocks that
+state. Its exact result projection remains unruled and must not be used to
+invent a permanent intent-inserter ownership rule. The production stale-
+generation requirement is independently proven by the real daemon test above.
+
+## Remaining open item
+
+Only the lower-layer direct/unleased P4 re-entry projection remains pending the
+P4 owner decision. The P2/P9 old-generation fencing requirement is implemented
+under its existing frozen clauses. No `docs/design/**` changes, no full gates,
+no push, and no merge were performed.
+
+The legacy directive handler conditionally forwards a fence when one is
+present but is not wired into the active production Composition; this was not
+used to establish the production qualification and is non-blocking here.
+
+## P38 Executable approval and generation-qualified follow-up
+
+The public-process test now obtains the shell EAP from the sole exact root
+Inbox `eap:<id>:<revision>` entry, validates its WorkEpisode/action/call,
+`NonIdempotent` shell-v2 arguments, resource target, subject, and ControlBasis,
+then resolves it through the public `ResolveExecutableApproval` command. The
+P4 invocation's `approval_id`, consumed EAP, P39 canonical RecoveryBinding,
+ControlBasis/subject digest pair, and resource-region binding are checked
+through the real SQLite rows.
+
+P38's nonterminal approval pause releases the initial generation before the
+human decision. Therefore the old effect owner after approval is identified as
+the exact durable `G_old` (the exercised runs acquire G=1), not hardcoded to
+generation 0. The test pauses that owner's renewal, conditionally expires only
+the matching lease generation, and requires the new daemon's generation to be
+exactly `G_old + 1`. The old P4 rejection witness is strictly either
+`AH7ToolSettlementFenceRejected` or a same-execution/invocation/call/action
+`P4ExecutableToolRuntimeOutcome` whose `errorTag` is exactly
+`LeaseFencingRejected`. No other stage/error is accepted. This accounts for
+P4's current failure point after public approval re-entry, before the settlement
+write, without weakening the no-stale-success assertion.
+
+On current-owner recovery the effect marker remains exactly once. Because the
+NonIdempotent result is ambiguous with no reconciliation fact, the invocation
+remains unsettled at `MayHaveStarted`, Execution settles
+`OutcomeUnknown(ReconciliationRequired([invocationId]))`, Action is
+`ReconciliationPending`, and one typed P3 `OutcomeUnknown` ToolResult is
+projected without executor/canonical/Artifact result refs. The test observes
+no successful Observation or duplicate ToolResult, exactly one P4 invocation
+for the logical action, one successful external effect marker, and one target
+Provider call. It does not claim a direct count of Executor attempts.
+
+Follow-up verification: the complete
+`p4-ah7-tool-settlement-lease-fencing.functional.test.ts` passed twice
+consecutively (1/1 each). The P4 AH7 effect-admission takeover file passed
+3/3 in one run, and the P38 public Approve representative passed 1/1. Typecheck,
+targeted Biome, and `git diff --check` passed. No full functional suite ran.

@@ -2,60 +2,172 @@ import type {
   AgentAction,
   AgentActionError,
   AgentActionHandler,
+  AgentLoopQualificationProbe,
 } from "@arbor/agent-runtime";
+import { reviseLocalPlan } from "@arbor/agent-runtime";
 import {
+  type AcceptWorkOutcomePayload,
+  type AcceptWorkOutcomeResult,
+  type AssignWorkPayload,
+  type AssignWorkResult,
   CommandGateway,
   type CommandGatewayService,
+  CommandHandlerRegistry,
+  type CommandHandlerRegistryService,
+  type ConcludeVerificationPayload,
+  type ConcludeVerificationResult,
   type DeclareDependencyPayload,
   type DeclareDependencyResult,
+  decodeRegisteredCommandReceipt,
+  deliverMessagePlan,
+  deriveFormationIds,
+  FINGERPRINT_ALGORITHM_VERSION,
+  type GatewayEnvelope,
   isChildWorkspaceProposal,
+  makeSendMessageHandler,
   newFormationProposalId,
   newUuid7,
+  type ProduceDeliverablePayload,
+  type ProduceDeliverableResult,
+  type RecordVerificationEvidencePayload,
+  type RecordVerificationEvidenceResult,
+  type RegisteredCommandType,
   semanticRequestFingerprint,
   sendMessagePlan,
+  submitDeliver,
+  type VerifiedCommandAuthority,
 } from "@arbor/application";
 import {
+  AcceptanceId,
   type ArtifactRole,
   admitFormationProposal,
   type ChildWorkspaceProposal,
   CommandId,
   type CommandId as CommandIdType,
+  type CommandReceipt,
+  type CommandSubmissionContext,
+  DeliverableId,
   type DeliverableKind,
   DependencyId,
   DependencyRevision,
-  ExecutionId,
+  EvidenceId,
+  executionEpisode,
+  type LeaseGeneration,
   type MessageId,
   MessageId as MessageIdSchema,
+  messageEntryKey,
   type OutboundMessage,
+  type ProjectId,
   parse,
-  SessionId,
+  Revision,
+  ToolInvocationId,
+  VerificationId,
+  WorkId,
+  WorkRevision,
+  workEpisode,
 } from "@arbor/domain";
 import {
+  AcceptanceRepository,
+  type AcceptanceRepositoryService,
+  AgentLoopStepStore,
+  type AgentLoopStepStoreService,
+  type AssignWorkApprovalCommandEvidence,
+  type AssignWorkBindingFailureCode,
+  type AssignWorkCommandEvidence,
+  type AssignWorkTargetBinding,
+  AssignWorkTargetBindingRepository,
+  type AssignWorkTargetBindingRepositoryService,
   BlobStorePort,
   type BlobStorePortService,
   Clock,
   type ClockService,
+  CommandStore,
+  type CommandStoreError,
+  type CommandStoreService,
+  ControlApprovalStore,
+  type ControlApprovalStoreService,
+  DecisionRequestStore,
+  type DecisionRequestStoreService,
+  DeliverableRepository,
+  type DeliverableRepositoryService,
+  type DeliverReplayFailureCode,
+  DependencyRepository,
+  type DependencyRepositoryService,
+  DomainEventJournal,
+  type DomainEventJournalService,
+  FormationFulfillmentStore,
+  type FormationFulfillmentStoreService,
   FormationProposalStore,
   type FormationProposalStoreService,
+  IdGenerator,
+  type IdGeneratorService,
+  InboxProjectionStore,
+  type InboxProjectionStoreService,
+  LocalPlanStore,
+  type LocalPlanStoreService,
   type MessageRecord,
   MessageStore,
   type MessageStoreService,
+  PermissionGrantRepository,
+  type PermissionGrantRepositoryService,
+  ProjectRepository,
+  ProviderTurnStore,
+  type ProviderTurnStoreService,
+  RecoveryAttentionFactStore,
+  type RecoveryAttentionFactStoreService,
+  SessionRepository,
+  type SessionRepositoryService,
+  sha256Hex,
+  ToolInvocationStore,
+  type ToolInvocationStoreService,
   TransactionPort,
   type TransactionPortService,
+  VerificationRepository,
+  type VerificationRepositoryService,
   WorkRepository,
   type WorkRepositoryService,
+  WorkspacePlacementPort,
+  type WorkspacePlacementPortService,
   WorkspaceRepository,
   type WorkspaceRepositoryService,
+  WorkWaitStore,
+  type WorkWaitStoreService,
 } from "@arbor/ports";
 import { Context, Effect, Layer, Option } from "effect";
+import { SqlClient } from "effect/unstable/sql/SqlClient";
+import {
+  type AnyProducerEvidenceRequest,
+  hasAnyProducerEvidence,
+} from "./any-producer-evidence.js";
+import { commitDurableControlActionEffect } from "./durable-control-action-effect.js";
+import {
+  type ResolveWorkBlockerActionDependencies,
+  resolveWorkBlockerHandler,
+} from "./resolve-work-blocker-action.js";
 
-export class SliceControlActionHandlers extends Context.Service<
-  SliceControlActionHandlers,
+export interface AssignWorkBindingAttentionQualificationEvent {
+  readonly boundary: "AH10AfterAssignWorkBindingAttentionCommit";
+  readonly executionId: string;
+  readonly logicalActionId: string;
+  readonly committedCommandId: string;
+}
+
+export type AssignWorkBindingAttentionQualificationProbe = (
+  event: AssignWorkBindingAttentionQualificationEvent,
+) => Promise<void>;
+
+export class SingleWorkspaceControlActionHandlers extends Context.Service<
+  SingleWorkspaceControlActionHandlers,
   ReadonlyArray<AgentActionHandler>
->()("arbor/SliceControlActionHandlers") {}
+>()("arbor/SingleWorkspaceControlActionHandlers") {}
 
 export interface SendMessageDependencies {
   readonly gateway: CommandGatewayService;
+  readonly commandHandlerRegistry?: CommandHandlerRegistryService;
+  readonly commandReceipts?: Pick<
+    CommandStoreService,
+    "findResolution" | "hasRetryableAttempt"
+  >;
   readonly blobs: BlobStorePortService;
   readonly clock: ClockService;
   readonly messages: MessageStoreService;
@@ -66,29 +178,1663 @@ export interface SendMessageDependencies {
 export interface ClaimCompletionDependencies {
   readonly works: WorkRepositoryService;
   readonly tx: TransactionPortService;
+  readonly waits?: Pick<
+    WorkWaitStoreService,
+    "upsert" | "findByWork" | "clear"
+  >;
+  readonly clock: ClockService;
+}
+
+interface VerificationWaitEligibilityDependencies {
+  readonly works: Pick<WorkRepositoryService, "findById">;
+  readonly workspaces: Pick<WorkspaceRepositoryService, "findById">;
+  readonly verifications: Pick<VerificationRepositoryService, "listByWork">;
+  readonly tx: TransactionPortService;
+  readonly blockedWaitEnabled: boolean;
+}
+
+export interface AssignWorkDependencies {
+  readonly gateway: CommandGatewayService;
+  readonly commandHandlerRegistry?: CommandHandlerRegistryService;
+  readonly commandReceipts?: Pick<CommandStoreService, "findResolution">;
+  readonly workspaces: WorkspaceRepositoryService;
+  readonly clock: ClockService;
+  readonly tx: TransactionPortService;
+  readonly placement?: WorkspacePlacementPortService;
+  readonly bindings?: Pick<
+    AssignWorkTargetBindingRepositoryService,
+    "findByCommandId" | "findByExecutionAndAction"
+  >;
+  readonly bindingAttention?: Pick<
+    RecoveryAttentionFactStoreService,
+    "recordAssignWorkBindingFailure"
+  >;
+  readonly works?: WorkRepositoryService;
+  readonly grants?: Pick<PermissionGrantRepositoryService, "findById">;
+  readonly approvals?: Pick<ControlApprovalStoreService, "findById">;
+  readonly journal?: DomainEventJournalService;
+  readonly bindingAttentionQualificationProbe?: AssignWorkBindingAttentionQualificationProbe;
+  readonly assignWorkAuthorizedBeforeCommandProbe?: AgentLoopQualificationProbe;
+}
+
+export interface WorkspacePlacementDependencies {
+  readonly placement: WorkspacePlacementPortService;
+}
+
+export interface AcceptResultDependencies {
+  readonly gateway: CommandGatewayService;
+  readonly commandHandlerRegistry?: CommandHandlerRegistryService;
+  readonly commandReceipts?: Pick<CommandStoreService, "findResolution">;
+  readonly acceptances?: Pick<
+    AcceptanceRepositoryService,
+    "findByWorkRevision"
+  >;
+  readonly works: WorkRepositoryService;
+  readonly tx: TransactionPortService;
+  readonly placement: WorkspacePlacementPortService;
+  readonly clock: ClockService;
+}
+
+export interface UpdatePlanDependencies {
+  readonly works: WorkRepositoryService;
+  readonly plans: LocalPlanStoreService;
+  readonly tx: TransactionPortService;
+  readonly clock: ClockService;
+  readonly loopSteps?: AgentLoopStepStoreService;
+  readonly providerTurns?: Pick<
+    ProviderTurnStoreService,
+    "findManifestByTurn" | "findSettledResult"
+  >;
+  readonly sessions?: Pick<SessionRepositoryService, "appendItemIdempotent">;
+}
+
+export interface SelectCurrentWorkDependencies {
+  readonly gateway: CommandGatewayService;
+  readonly commandHandlerRegistry?: CommandHandlerRegistryService;
+  readonly commandReceipts?: Pick<CommandStoreService, "findResolution">;
+  readonly decisions: DecisionRequestStoreService;
+  readonly workspaces: WorkspaceRepositoryService;
+  readonly tx: TransactionPortService;
+  readonly clock: ClockService;
 }
 
 export interface ProposeChildDependencies {
   readonly proposals: FormationProposalStoreService;
+  readonly fulfillments?: Pick<FormationFulfillmentStoreService, "put">;
+  readonly inbox: Pick<InboxProjectionStoreService, "admitUpsert"> &
+    Partial<Pick<InboxProjectionStoreService, "findByKey">>;
+  readonly clock: ClockService;
   readonly workspaces: WorkspaceRepositoryService;
   readonly tx: TransactionPortService;
-}
-
-export interface SpawnSpecialistDependencies {
-  readonly gateway: CommandGatewayService;
-  readonly clock: ClockService;
+  readonly loopSteps?: AgentLoopStepStoreService;
+  readonly providerTurns?: Pick<
+    ProviderTurnStoreService,
+    "findManifestByTurn" | "findSettledResult"
+  >;
+  readonly sessions?: Pick<SessionRepositoryService, "appendItemIdempotent">;
 }
 
 export interface DeclareDependencyDependencies {
   readonly gateway: CommandGatewayService;
+  readonly commandHandlerRegistry?: CommandHandlerRegistryService;
+  readonly commandReceipts?: Pick<CommandStoreService, "findResolution">;
+  readonly dependencyRecords?: Pick<DependencyRepositoryService, "findById">;
   readonly works: WorkRepositoryService;
   readonly clock: ClockService;
   readonly tx: TransactionPortService;
+  readonly anyProducerEvidence?: (
+    request: AnyProducerEvidenceRequest,
+  ) => Effect.Effect<boolean, unknown>;
 }
 
-const actionError = (cause: unknown): AgentActionError => ({
-  _tag: "AgentActionError",
-  cause,
+export interface ProduceDeliverableDependencies {
+  readonly gateway: CommandGatewayService;
+  readonly commandHandlerRegistry?: CommandHandlerRegistryService;
+  readonly commandReceipts: Pick<CommandStoreService, "findResolution">;
+  readonly tx: TransactionPortService;
+  readonly clock: ClockService;
+}
+
+export interface DeliverActionDependencies {
+  readonly gateway: CommandGatewayService;
+  readonly commandHandlerRegistry?: CommandHandlerRegistryService;
+  readonly commandReceipts?: Pick<
+    CommandStoreService,
+    "findResolution" | "hasRetryableAttempt"
+  >;
+  readonly deliverables: DeliverableRepositoryService;
+  readonly works: WorkRepositoryService;
+  readonly workspaces: WorkspaceRepositoryService;
+  readonly messages: MessageStoreService;
+  readonly inbox: Pick<InboxProjectionStoreService, "admitUpsert"> &
+    Partial<Pick<InboxProjectionStoreService, "findByKey">>;
+  readonly journal: DomainEventJournalService;
+  readonly replayAttention?: Pick<
+    RecoveryAttentionFactStoreService,
+    "recordDeliverReplayFailure" | "findDeliverReplayFailure"
+  >;
+  /** Test-only process-crash seam. Production composition must omit it. */
+  readonly deliverReplayQualificationProbe?: DeliverReplayQualificationProbe;
+  readonly clock: ClockService;
+  readonly tx: TransactionPortService;
+  readonly ids: IdGeneratorService;
+}
+
+export interface DeliverReplayQualificationEvent {
+  readonly boundary:
+    | "BeforeDeliverReplayAttentionCommit"
+    | "AfterDeliverReplayAttentionCommit";
+  readonly executionId: string;
+  readonly logicalActionId: string;
+  readonly messageId: string;
+  readonly failureCode: DeliverReplayFailureCode;
+}
+
+export type DeliverReplayQualificationProbe = (
+  event: DeliverReplayQualificationEvent,
+) => Promise<void>;
+
+export interface VerificationActionDependencies {
+  readonly gateway: CommandGatewayService;
+  readonly blobs: BlobStorePortService;
+  readonly clock: ClockService;
+  readonly tx: TransactionPortService;
+  readonly verifications: Pick<
+    VerificationRepositoryService,
+    "findByExecutionId"
+  >;
+  readonly sessions: Pick<SessionRepositoryService, "listEntries">;
+  readonly toolInvocations: Pick<ToolInvocationStoreService, "findById">;
+  readonly commandHandlerRegistry?: CommandHandlerRegistryService;
+  readonly commandReceipts?: Pick<CommandStoreService, "findResolution">;
+  readonly loopSteps?: Pick<
+    AgentLoopStepStoreService,
+    "findCurrent" | "listActions"
+  >;
+}
+
+const actionError = (
+  safeMessage: string,
+  code: Extract<
+    AgentActionError,
+    { readonly _tag: "AgentActionRejected" }
+  >["code"] = "action/precondition",
+  correction: Extract<
+    AgentActionError,
+    { readonly _tag: "AgentActionRejected" }
+  >["correction"] = "ChooseAlternative",
+): AgentActionError => ({
+  _tag: "AgentActionRejected",
+  code,
+  safeMessage,
+  correction,
+});
+
+const actionOperationalFailure =
+  (operation: string) =>
+  (cause: unknown): AgentActionError =>
+    typeof cause === "object" &&
+    cause !== null &&
+    "_tag" in cause &&
+    (cause._tag === "AgentActionRejected" ||
+      cause._tag === "AgentActionOperationalFailure" ||
+      cause._tag === "AgentActionRecoveryBlocked")
+      ? (cause as AgentActionError)
+      : {
+          _tag: "AgentActionOperationalFailure",
+          operation,
+          cause,
+        };
+
+const generationScopedCommandId = (
+  namespace: string,
+  occurrence: string,
+  context: CommandSubmissionContext,
+): CommandIdType => {
+  const seed =
+    context._tag === "ExecutionOrigin" && context.fencingGeneration !== 0
+      ? `${occurrence}:generation:${context.fencingGeneration}`
+      : occurrence;
+  return parse(CommandId)(`cmd_${newUuid7(namespace, seed)}`);
+};
+
+const legacySelectCurrentWorkCommandId = (decisionId: string): CommandIdType =>
+  parse(CommandId)(`cmd_${decisionId.slice("dec_".length)}`);
+
+const selectCurrentWorkCommandId = (
+  decisionId: string,
+  occurrence: string,
+  context: CommandSubmissionContext,
+): CommandIdType =>
+  context._tag === "ExecutionOrigin" && context.fencingGeneration > 0
+    ? generationScopedCommandId(
+        "select-current-work-command",
+        occurrence,
+        context,
+      )
+    : legacySelectCurrentWorkCommandId(decisionId);
+
+const isFencingRejectedReceipt = (resolution: unknown): boolean =>
+  typeof resolution === "object" &&
+  resolution !== null &&
+  "_tag" in resolution &&
+  resolution._tag === "TerminalRejected" &&
+  "error" in resolution &&
+  typeof resolution.error === "object" &&
+  resolution.error !== null &&
+  "_tag" in resolution.error &&
+  resolution.error._tag === "FencingRejected";
+
+type PriorCommittedCommandReceipt = Omit<
+  CommandReceipt<unknown, unknown>,
+  "resolution"
+> & {
+  readonly resolution: Extract<
+    CommandReceipt<unknown, unknown>["resolution"],
+    { readonly _tag: "Committed" }
+  >;
+};
+
+type PriorRejectedCommandReceipt = Omit<
+  CommandReceipt<unknown, unknown>,
+  "resolution"
+> & {
+  readonly resolution: Extract<
+    CommandReceipt<unknown, unknown>["resolution"],
+    { readonly _tag: "TerminalRejected" }
+  >;
+};
+
+type PriorCommandReceipt =
+  | { readonly _tag: "None" }
+  | {
+      readonly _tag: "Committed";
+      readonly receipt: PriorCommittedCommandReceipt;
+    }
+  | {
+      readonly _tag: "TerminalRejected";
+      readonly receipt: PriorRejectedCommandReceipt;
+    };
+
+/** Shared receipt-first boundary. The caller retains command identity and all
+ * canonical-result/error-algebra decisions; this function only reads older
+ * generation receipts, validates their envelope identity, and skips fences. */
+const findPriorCommandReceipt = (input: {
+  readonly context: Extract<
+    CommandSubmissionContext,
+    { readonly _tag: "ExecutionOrigin" }
+  >;
+  readonly namespace: string;
+  readonly occurrence: string;
+  readonly legacyCommandId?: CommandIdType;
+  readonly commandReceipts:
+    | Pick<CommandStoreService, "findResolution">
+    | undefined;
+  readonly tx: TransactionPortService;
+  readonly projectId: ProjectId;
+  readonly commandType: RegisteredCommandType;
+  readonly commandHandlerRegistry: CommandHandlerRegistryService | undefined;
+  readonly onCommittedDecodeFailure?: (
+    commandId: CommandIdType,
+  ) => Effect.Effect<never, AgentActionError>;
+  readonly operation: string;
+  readonly errorOperation: string;
+  readonly lookupOperation?: string;
+  readonly identityErrorMessage?: string;
+}): Effect.Effect<PriorCommandReceipt, AgentActionError> =>
+  Effect.gen(function* () {
+    if (input.commandReceipts === undefined) {
+      return yield* Effect.fail(
+        actionOperationalFailure(input.lookupOperation ?? input.operation)(
+          "receipt lookup is required for generation takeover",
+        ),
+      );
+    }
+    for (
+      let priorGeneration = 0;
+      priorGeneration < input.context.fencingGeneration;
+      priorGeneration += 1
+    ) {
+      const priorCommandId =
+        priorGeneration === 0 && input.legacyCommandId !== undefined
+          ? input.legacyCommandId
+          : generationScopedCommandId(input.namespace, input.occurrence, {
+              ...input.context,
+              fencingGeneration: priorGeneration as LeaseGeneration,
+            });
+      const prior = yield* input.tx.transact(
+        input.commandReceipts.findResolution(priorCommandId),
+      );
+      if (Option.isNone(prior)) continue;
+      if (
+        prior.value.commandId !== priorCommandId ||
+        prior.value.projectId !== input.projectId
+      ) {
+        return yield* Effect.fail(
+          actionOperationalFailure(input.operation)(
+            input.identityErrorMessage ??
+              "prior Command receipt has a mismatched identity",
+          ),
+        );
+      }
+      if (input.commandHandlerRegistry === undefined) {
+        return yield* Effect.fail(
+          actionOperationalFailure(input.operation)(
+            "trusted command handler registry is required to decode a prior receipt",
+          ),
+        );
+      }
+      const handler = input.commandHandlerRegistry.lookup(input.commandType);
+      if (
+        Option.isNone(handler) ||
+        handler.value.commandType !== input.commandType
+      ) {
+        return yield* Effect.fail(
+          actionOperationalFailure(input.operation)(
+            "trusted prior receipt command handler is not registered",
+          ),
+        );
+      }
+      const storedSchemaVersion = prior.value.schemaVersion;
+      if (
+        storedSchemaVersion !== handler.value.schemaVersion &&
+        !(handler.value.priorReceiptSchemaVersions ?? []).includes(
+          storedSchemaVersion,
+        )
+      ) {
+        if (
+          prior.value.resolution === "Committed" &&
+          input.onCommittedDecodeFailure !== undefined
+        ) {
+          return yield* input.onCommittedDecodeFailure(priorCommandId);
+        }
+        return yield* Effect.fail(
+          actionOperationalFailure(input.operation)(
+            "prior Command receipt schema is not registered for strict replay",
+          ),
+        );
+      }
+      const decodedPrior = yield* decodeRegisteredCommandReceipt<unknown>(
+        prior.value,
+        input.commandType,
+        storedSchemaVersion,
+      ).pipe(
+        Effect.catch(
+          (
+            failure: CommandStoreError,
+          ): Effect.Effect<never, AgentActionError | CommandStoreError> =>
+            failure._tag === "PersistenceCorruption" &&
+            prior.value.resolution === "Committed" &&
+            input.onCommittedDecodeFailure !== undefined
+              ? input.onCommittedDecodeFailure(priorCommandId)
+              : Effect.fail(failure),
+        ),
+      );
+      if (decodedPrior.resolution._tag === "Committed") {
+        return {
+          _tag: "Committed" as const,
+          receipt: decodedPrior as PriorCommittedCommandReceipt,
+        };
+      }
+      if (isFencingRejectedReceipt(decodedPrior.resolution)) continue;
+      return {
+        _tag: "TerminalRejected" as const,
+        receipt: decodedPrior as PriorRejectedCommandReceipt,
+      };
+    }
+    return { _tag: "None" as const };
+  }).pipe(Effect.mapError(actionOperationalFailure(input.errorOperation)));
+
+const validatePriorCommittedReplay = <Payload>(input: {
+  readonly receipt: PriorCommittedCommandReceipt;
+  readonly commandType: RegisteredCommandType;
+  readonly payload: Payload;
+  readonly context: Extract<
+    CommandSubmissionContext,
+    { readonly _tag: "ExecutionOrigin" }
+  >;
+  readonly actor: import("@arbor/domain").Actor;
+  readonly registry: CommandHandlerRegistryService | undefined;
+  readonly tx: TransactionPortService;
+}): Effect.Effect<void, AgentActionError> =>
+  Effect.gen(function* () {
+    if (input.registry === undefined) {
+      return yield* Effect.fail(
+        actionOperationalFailure(`${input.commandType}.priorReceipt`)(
+          "trusted command handler registry is required to validate committed replay",
+        ),
+      );
+    }
+    const found = input.registry.lookup(input.commandType);
+    if (Option.isNone(found) || found.value.commandType !== input.commandType) {
+      return yield* Effect.fail(
+        actionOperationalFailure(`${input.commandType}.priorReceipt`)(
+          "trusted command handler is not registered for committed replay",
+        ),
+      );
+    }
+    const handler = found.value;
+    if (
+      input.receipt.schemaVersion !== handler.schemaVersion &&
+      !(handler.priorReceiptSchemaVersions ?? []).includes(
+        input.receipt.schemaVersion,
+      )
+    ) {
+      return yield* Effect.fail(
+        actionOperationalFailure(`${input.commandType}.priorReceipt`)(
+          "committed receipt schema is not registered for replay",
+        ),
+      );
+    }
+    const expectedFingerprint = semanticRequestFingerprint({
+      commandType: input.commandType,
+      projectId: input.receipt.projectId,
+      actor: input.actor,
+      schemaVersion: input.receipt.schemaVersion,
+      payload: input.payload,
+    });
+    if (
+      input.receipt.fingerprintAlgorithmVersion !==
+        FINGERPRINT_ALGORITHM_VERSION ||
+      input.receipt.semanticRequestFingerprint !== expectedFingerprint
+    ) {
+      return yield* Effect.fail(
+        actionOperationalFailure(`${input.commandType}.priorReceipt`)(
+          "committed receipt does not bind the exact replay payload and actor",
+        ),
+      );
+    }
+    if (handler.validateReceiptReplay === undefined) {
+      return yield* Effect.fail(
+        actionOperationalFailure(`${input.commandType}.priorReceipt`)(
+          "committed receipt has no canonical replay validator",
+        ),
+      );
+    }
+    const envelope: GatewayEnvelope<Payload> = {
+      commandType: input.commandType,
+      commandId: input.receipt.commandId,
+      projectId: input.receipt.projectId,
+      actor: input.actor,
+      issuedAt: input.receipt.createdAt,
+      payload: input.payload,
+    };
+    yield* input.tx.transact(
+      handler.validateReceiptReplay(
+        input.receipt as never,
+        input.payload,
+        envelope,
+        input.context,
+      ),
+    );
+  }).pipe(
+    Effect.mapError(
+      actionOperationalFailure(`${input.commandType}.priorReceipt`),
+    ),
+  );
+
+const validateAssignWorkReceiptBinding = (input: {
+  readonly binding: AssignWorkTargetBinding;
+  readonly prior: PriorCommittedCommandReceipt;
+  readonly action: Extract<AgentAction, { readonly _tag: "AssignWork" }>;
+  readonly execution: import("@arbor/domain").Execution;
+  readonly invocation: import("@arbor/model-context").ToolInvocation;
+  readonly logicalActionId: string;
+  readonly workspaces: WorkspaceRepositoryService;
+  readonly works: WorkRepositoryService;
+  readonly tx: TransactionPortService;
+  readonly journal: DomainEventJournalService;
+  readonly grants: Pick<PermissionGrantRepositoryService, "findById">;
+  readonly approvals: Pick<ControlApprovalStoreService, "findById">;
+}): Effect.Effect<AssignWorkBindingFailureCode | null, AgentActionError> =>
+  Effect.gen(function* () {
+    const { binding, prior, action, execution, invocation } = input;
+    const receipt = prior;
+    if (
+      binding.schemaVersion !== 1 ||
+      binding.targetRefEncodingVersion !== 1 ||
+      binding.targetLifecycleAtCommit !== "Active"
+    ) {
+      return "MalformedBinding";
+    }
+    if (
+      binding.commandId !== receipt.commandId ||
+      binding.projectId !== execution.projectId ||
+      receipt.projectId !== execution.projectId ||
+      binding.executionId !== execution.executionId
+    ) {
+      return "ReceiptMismatch";
+    }
+    if (
+      binding.parentWorkspaceId !== execution.workspaceId ||
+      binding.targetWorkspaceRef !== action.targetWorkspaceRef ||
+      binding.targetWorkspaceRef === undefined ||
+      binding.targetWorkspaceRef === "current"
+    ) {
+      return "RefMismatch";
+    }
+    if (
+      binding.providerTurnId !== invocation.providerTurnId ||
+      binding.logicalActionId !== input.logicalActionId ||
+      binding.callRef !== invocation.callRef
+    ) {
+      return "SourceActionMismatch";
+    }
+    const actionDigest = sha256Hex(
+      JSON.stringify({
+        stableActionId: "core.control.assign-work",
+        action,
+      }),
+    );
+    if (
+      binding.authority.actionDigest !== actionDigest ||
+      binding.authority.targetRef !== binding.targetWorkspaceRef
+    ) {
+      return "AuthorityMismatch";
+    }
+    const receiptResult = receipt.resolution.result;
+    if (
+      typeof receiptResult !== "object" ||
+      receiptResult === null ||
+      !("workId" in receiptResult) ||
+      receiptResult.workId !== binding.workId ||
+      !("workspaceId" in receiptResult) ||
+      receiptResult.workspaceId !== binding.targetWorkspaceId ||
+      !("lifecycle" in receiptResult) ||
+      receiptResult.lifecycle !== "Open" ||
+      !("revision" in receiptResult) ||
+      receiptResult.revision !== 0
+    ) {
+      return "ReceiptMismatch";
+    }
+    const parent = yield* input.tx.transact(
+      input.workspaces.findById(binding.parentWorkspaceId),
+    );
+    const target = yield* input.tx.transact(
+      input.workspaces.findById(binding.targetWorkspaceId),
+    );
+    const parentWork = yield* input.tx.transact(
+      input.works.findById(binding.parentWorkId),
+    );
+    const work = yield* input.tx.transact(input.works.findById(binding.workId));
+    if (
+      Option.isNone(parent) ||
+      Option.isNone(target) ||
+      parent.value.projectId !== binding.projectId ||
+      target.value.projectId !== binding.projectId ||
+      target.value.parentWorkspaceId !== binding.parentWorkspaceId
+    ) {
+      return "ForeignTarget";
+    }
+    if (
+      Option.isNone(parentWork) ||
+      parentWork.value.projectId !== binding.projectId ||
+      parentWork.value.workspaceId !== binding.parentWorkspaceId ||
+      binding.parentWorkId !== workEpisode(execution)?.workId
+    ) {
+      return "PlacementMismatch";
+    }
+    const expectedProvenance = {
+      predecessorWorkId: binding.parentWorkId,
+      reason: action.reason,
+    };
+    if (
+      binding.predecessorWorkId !== binding.parentWorkId ||
+      binding.workProvenanceJson !== JSON.stringify(expectedProvenance)
+    ) {
+      return "ProvenanceMismatch";
+    }
+    if (
+      Option.isNone(work) ||
+      work.value.projectId !== binding.projectId ||
+      work.value.workspaceId !== binding.targetWorkspaceId ||
+      work.value.objective !== action.objective ||
+      work.value.why !== action.why ||
+      JSON.stringify(work.value.constraints) !==
+        JSON.stringify(action.constraints) ||
+      work.value.completionExpectation !== action.completionExpectation ||
+      JSON.stringify(work.value.verificationMission) !==
+        JSON.stringify(action.verificationMission) ||
+      JSON.stringify(work.value.provenance) !== binding.workProvenanceJson
+    ) {
+      return "WorkMismatch";
+    }
+    if (binding.authority._tag === "PermissionGrant") {
+      const grant = yield* input.tx.transact(
+        input.grants.findById(binding.authority.permissionGrantId),
+      );
+      if (
+        Option.isNone(grant) ||
+        grant.value.revision !== binding.authority.permissionGrantRevision ||
+        grant.value.capability !== binding.authority.capability ||
+        grant.value.target !== binding.authority.targetRef ||
+        grant.value.validFrom !== binding.authority.validFrom ||
+        (grant.value.expiresAt ?? null) !== binding.authority.expiresAt ||
+        (binding.authority.subjectKind === "WorkspaceAgent" &&
+          (grant.value.subject?._tag !== "WorkspaceAgent" ||
+            grant.value.subject.workspaceId !==
+              binding.authority.subjectRef)) ||
+        (binding.authority.subjectKind === "Execution" &&
+          (grant.value.subject?._tag !== "Execution" ||
+            grant.value.subject.executionId !== binding.authority.subjectRef))
+      ) {
+        return "AuthorityMismatch";
+      }
+    } else {
+      const approval = yield* input.tx.transact(
+        input.approvals.findById(binding.authority.approvalId),
+      );
+      if (
+        Option.isNone(approval) ||
+        approval.value.bindingProven !== true ||
+        approval.value.state !== "Consumed" ||
+        approval.value.revision !== binding.authority.approvalRevision + 1 ||
+        approval.value.consumedBy !== binding.commandId ||
+        approval.value.projectId !== binding.authority.projectId ||
+        approval.value.workspaceId !== binding.authority.workspaceId ||
+        approval.value.executionId !== binding.authority.executionId ||
+        approval.value.stableActionId !== binding.authority.stableActionId ||
+        approval.value.actionDigest !== binding.authority.actionDigest ||
+        approval.value.targetRef !== binding.authority.targetRef ||
+        approval.value.controlBasisDigest !==
+          binding.authority.controlBasisDigest ||
+        approval.value.expiresAt !== binding.authority.expiresAt
+      ) {
+        return "AuthorityMismatch";
+      }
+    }
+    const events = yield* input.tx.transact(
+      Effect.gen(function* () {
+        const last = yield* input.journal.lastSequence(binding.projectId);
+        return last === 0
+          ? []
+          : yield* input.journal.readAfter(binding.projectId, 0, last);
+      }),
+    );
+    const workAssigned = events.filter((event) => {
+      if (
+        event.eventType !== "WorkAssigned" ||
+        event.causedByCommandId !== binding.commandId ||
+        event.aggregateRef !== binding.targetWorkspaceId
+      ) {
+        return false;
+      }
+      const payload =
+        typeof event.payload === "object" && event.payload !== null
+          ? (event.payload as Record<string, unknown>)
+          : {};
+      return (
+        payload.workId === binding.workId &&
+        payload.workspaceId === binding.targetWorkspaceId &&
+        payload.projectId === binding.projectId &&
+        payload.objective === action.objective
+      );
+    });
+    if (workAssigned.length !== 1) return "EventMismatch";
+    return null;
+  }).pipe(
+    Effect.mapError(actionOperationalFailure("AssignWork.bindingValidation")),
+  );
+
+/** DID v1.26 VDC-5: model authors bounded Work semantics and the readable
+ * provenance reason. Runtime binds target, identities, revisions,
+ * predecessor and authority. */
+export const assignWorkHandler = (
+  dependencies: AssignWorkDependencies,
+): AgentActionHandler => ({
+  action: "AssignWork",
+  handle: ({
+    action,
+    invocation,
+    execution,
+    context,
+    logicalActionId,
+    assignWorkEvidence,
+    assignWorkReplay,
+    assignWorkCommandReplay,
+  }) =>
+    Effect.gen(function* () {
+      if (action._tag !== "AssignWork") {
+        return yield* Effect.fail(
+          actionOperationalFailure("AssignWork.dispatch")(
+            "AssignWork handler received a different AgentAction",
+          ),
+        );
+      }
+      const episode = executionEpisode(execution);
+      if (
+        episode?._tag === "ConversationResponseEpisode" &&
+        action.targetWorkspaceId !== undefined &&
+        action.targetWorkspaceId !== execution.workspaceId
+      ) {
+        return yield* Effect.fail(
+          actionError(
+            "Root conversation can assign Work only to its current Workspace",
+            "action/target-unavailable",
+            "RetryWithChangedInput",
+          ),
+        );
+      }
+      const occurrence = `${invocation.providerTurnId}:${invocation.outputPosition}`;
+      if (assignWorkReplay === true) {
+        if (
+          context._tag !== "ExecutionOrigin" ||
+          logicalActionId === undefined
+        ) {
+          return yield* Effect.fail(
+            actionOperationalFailure("AssignWork.receiptFirst")(
+              "receipt-first recovery omitted its pinned execution action",
+            ),
+          );
+        }
+        const block = (
+          committedCommandId: CommandIdType,
+          failureCode: AssignWorkBindingFailureCode,
+        ) =>
+          Effect.gen(function* () {
+            if (dependencies.bindingAttention === undefined) {
+              return yield* Effect.fail<AgentActionError>(
+                actionOperationalFailure("AssignWork.bindingAttentionStore")(
+                  "P9 AssignWork binding failure store is unavailable",
+                ),
+              );
+            }
+            yield* dependencies.tx.transact(
+              dependencies.bindingAttention.recordAssignWorkBindingFailure({
+                projectId: execution.projectId,
+                executionId: execution.executionId,
+                targetWorkspaceId: execution.workspaceId,
+                logicalActionId,
+                committedCommandId,
+                failureCode,
+                firstDetectedAt: yield* dependencies.clock.now(),
+              }),
+            );
+            if (dependencies.bindingAttentionQualificationProbe !== undefined) {
+              yield* Effect.promise(
+                () =>
+                  dependencies.bindingAttentionQualificationProbe?.({
+                    boundary: "AH10AfterAssignWorkBindingAttentionCommit",
+                    executionId: execution.executionId,
+                    logicalActionId,
+                    committedCommandId,
+                  }) ?? Promise.resolve(),
+              );
+            }
+            return yield* Effect.fail<AgentActionError>({
+              _tag: "AgentActionRecoveryBlocked",
+              executionId: execution.executionId,
+              logicalActionId,
+            });
+          }).pipe(
+            Effect.mapError(
+              actionOperationalFailure("AssignWork.bindingAttention"),
+            ),
+          );
+        const prior = yield* findPriorCommandReceipt({
+          context,
+          namespace: "assign-work-command",
+          occurrence,
+          commandReceipts: dependencies.commandReceipts,
+          tx: dependencies.tx,
+          projectId: execution.projectId,
+          commandType: "AssignWork",
+          commandHandlerRegistry: dependencies.commandHandlerRegistry,
+          onCommittedDecodeFailure: (commandId) =>
+            block(commandId, "ReceiptMismatch"),
+          operation: "AssignWork.priorReceipt",
+          errorOperation: "AssignWork",
+          lookupOperation: "AssignWork.receiptLookup",
+          identityErrorMessage:
+            "prior Command receipt belongs to another Project",
+        });
+        if (prior._tag !== "Committed") {
+          return yield* Effect.fail(
+            actionOperationalFailure("AssignWork.receiptFirst")(
+              "authorizer observed a prior Committed receipt which receipt-first lookup could not reproduce",
+            ),
+          );
+        }
+        if (
+          dependencies.bindings === undefined ||
+          dependencies.works === undefined ||
+          dependencies.grants === undefined ||
+          dependencies.approvals === undefined ||
+          dependencies.journal === undefined
+        ) {
+          return yield* Effect.fail(
+            actionOperationalFailure("AssignWork.bindingRecovery")(
+              "proof-complete AssignWork binding recovery dependencies are unavailable",
+            ),
+          );
+        }
+        const rows = yield* dependencies.tx
+          .transact(
+            dependencies.bindings.findByExecutionAndAction(
+              execution.executionId,
+              logicalActionId,
+            ),
+          )
+          .pipe(
+            Effect.catchTag("PersistenceCorruption", () =>
+              Effect.succeed(
+                null as unknown as ReadonlyArray<AssignWorkTargetBinding>,
+              ),
+            ),
+          );
+        if (rows === null)
+          return yield* block(prior.receipt.commandId, "MalformedBinding");
+        if (rows.length > 1)
+          return yield* block(prior.receipt.commandId, "DuplicateBinding");
+        const binding = rows[0];
+        if (binding === undefined)
+          return yield* block(prior.receipt.commandId, "LegacyUnbound");
+        if (binding.commandId !== prior.receipt.commandId) {
+          return yield* block(prior.receipt.commandId, "SourceActionMismatch");
+        }
+        const exact = yield* dependencies.tx
+          .transact(
+            dependencies.bindings.findByCommandId(prior.receipt.commandId),
+          )
+          .pipe(
+            Effect.catchTag("PersistenceCorruption", () =>
+              Effect.succeed(Option.none<AssignWorkTargetBinding>()),
+            ),
+          );
+        if (Option.isNone(exact))
+          return yield* block(prior.receipt.commandId, "MalformedBinding");
+        const validation = yield* validateAssignWorkReceiptBinding({
+          binding,
+          prior: prior.receipt,
+          action,
+          execution,
+          invocation,
+          logicalActionId,
+          workspaces: dependencies.workspaces,
+          works: dependencies.works,
+          tx: dependencies.tx,
+          journal: dependencies.journal,
+          grants: dependencies.grants,
+          approvals: dependencies.approvals,
+        });
+        if (validation !== null)
+          return yield* block(prior.receipt.commandId, validation);
+        return {
+          _tag: "Observation" as const,
+          source: "Runtime" as const,
+          observation: {
+            text: `WorkAssigned(${binding.workId}, ${binding.targetWorkspaceId})`,
+            truncated: false,
+          },
+        };
+      }
+      if (
+        action.targetWorkspaceId !== undefined &&
+        action.targetWorkspaceId !== execution.workspaceId
+      ) {
+        return yield* Effect.fail(
+          actionError(
+            "AssignWork direct-child targets must use a resolved opaque targetWorkspaceRef",
+            "action/target-unavailable",
+            "RetryWithChangedInput",
+          ),
+        );
+      }
+      let resolvedChild:
+        | import("@arbor/ports").ResolvedChildPlacementRef
+        | undefined;
+      let targetWorkspaceId = action.targetWorkspaceId ?? execution.workspaceId;
+      if (action.targetWorkspaceRef !== undefined) {
+        if (action.targetWorkspaceRef === "current") {
+          targetWorkspaceId = execution.workspaceId;
+        } else {
+          if (dependencies.placement === undefined) {
+            return yield* Effect.fail(
+              actionError(
+                "Workspace placement resolver is unavailable",
+                "action/tool-unavailable",
+                "WaitForStateChange",
+              ),
+            );
+          }
+          const resolved = yield* dependencies.placement.resolveChildRef(
+            execution.workspaceId,
+            action.targetWorkspaceRef,
+          );
+          if (Option.isNone(resolved)) {
+            return yield* Effect.fail(
+              actionError(
+                "targetWorkspaceRef is stale, foreign, retired, or not a direct child",
+                "action/target-unavailable",
+                "RetryWithChangedInput",
+              ),
+            );
+          }
+          resolvedChild = resolved.value;
+          targetWorkspaceId = resolved.value.targetWorkspaceId;
+        }
+      }
+      const target = yield* dependencies.tx.transact(
+        dependencies.workspaces.findById(targetWorkspaceId),
+      );
+      if (Option.isNone(target)) {
+        return yield* Effect.fail(
+          actionError("AssignWork target Workspace is missing"),
+        );
+      }
+      const structurallyAuthorized =
+        targetWorkspaceId === execution.workspaceId ||
+        target.value.parentWorkspaceId === execution.workspaceId;
+      if (
+        !structurallyAuthorized ||
+        target.value.projectId !== execution.projectId ||
+        target.value.lifecycle !== "Active"
+      ) {
+        return yield* Effect.fail(
+          actionError(
+            "AssignWork target must be the current Workspace or its active direct child",
+            "action/target-unavailable",
+          ),
+        );
+      }
+      const payload: AssignWorkPayload = {
+        workId: parse(WorkId)(`wrk_${newUuid7("assign-work", occurrence)}`),
+        workspaceId: targetWorkspaceId,
+        expectedWorkspaceRevision: target.value.revision,
+        objective: action.objective,
+        why: action.why,
+        constraints: action.constraints,
+        completionExpectation: action.completionExpectation,
+        verificationMission: action.verificationMission,
+        provenance: {
+          predecessorWorkId: workEpisode(execution)?.workId ?? null,
+          reason: action.reason,
+        },
+        revision: parse(WorkRevision)(0),
+      };
+      if (assignWorkCommandReplay !== undefined) {
+        const journal = dependencies.journal;
+        const blockReplay = () =>
+          Effect.fail<AgentActionError>({
+            _tag: "AgentActionRecoveryBlocked",
+            executionId: execution.executionId,
+            logicalActionId:
+              logicalActionId ?? assignWorkCommandReplay.commandId,
+          });
+        if (
+          context._tag !== "ExecutionOrigin" ||
+          logicalActionId === undefined ||
+          assignWorkEvidence?._tag !== "ActionApproval" ||
+          assignWorkCommandReplay.approvalId !==
+            assignWorkEvidence.approvalId ||
+          assignWorkCommandReplay.approvalRevision !==
+            assignWorkEvidence.approvalRevision ||
+          assignWorkCommandReplay.consumedRevision !==
+            assignWorkCommandReplay.approvalRevision + 1 ||
+          targetWorkspaceId !== execution.workspaceId ||
+          dependencies.commandReceipts === undefined ||
+          dependencies.commandHandlerRegistry === undefined ||
+          dependencies.works === undefined ||
+          dependencies.approvals === undefined ||
+          journal === undefined
+        ) {
+          return yield* blockReplay();
+        }
+        const prior = yield* findPriorCommandReceipt({
+          context,
+          namespace: "assign-work-command",
+          occurrence,
+          commandReceipts: dependencies.commandReceipts,
+          tx: dependencies.tx,
+          projectId: execution.projectId,
+          commandType: "AssignWork",
+          commandHandlerRegistry: dependencies.commandHandlerRegistry,
+          operation: "AssignWork.currentWorkspaceReceiptReplay",
+          errorOperation: "AssignWork",
+          lookupOperation: "AssignWork.receiptLookup",
+          identityErrorMessage:
+            "prior current-Workspace AssignWork receipt belongs to another Project",
+        });
+        if (
+          prior._tag !== "Committed" ||
+          prior.receipt.commandId !== assignWorkCommandReplay.commandId ||
+          prior.receipt.semanticRequestFingerprint !==
+            semanticRequestFingerprint({
+              commandType: "AssignWork",
+              projectId: execution.projectId,
+              actor: context.principal as never,
+              schemaVersion: "1",
+              payload,
+            })
+        ) {
+          return yield* blockReplay();
+        }
+        const result = prior.receipt.resolution.result;
+        if (
+          typeof result !== "object" ||
+          result === null ||
+          !("workId" in result) ||
+          result.workId !== payload.workId ||
+          !("workspaceId" in result) ||
+          result.workspaceId !== execution.workspaceId
+        ) {
+          return yield* blockReplay();
+        }
+        const approval = yield* dependencies.tx.transact(
+          dependencies.approvals.findById(assignWorkCommandReplay.approvalId),
+        );
+        const authority = assignWorkEvidence;
+        if (
+          Option.isNone(approval) ||
+          approval.value.state !== "Consumed" ||
+          approval.value.bindingProven !== true ||
+          approval.value.revision !==
+            assignWorkCommandReplay.consumedRevision ||
+          approval.value.consumedBy !== assignWorkCommandReplay.commandId ||
+          approval.value.projectId !== execution.projectId ||
+          approval.value.workspaceId !== execution.workspaceId ||
+          approval.value.executionId !== execution.executionId ||
+          approval.value.stableActionId !== authority.stableActionId ||
+          approval.value.actionDigest !== authority.actionDigest ||
+          approval.value.targetRef !== execution.workspaceId ||
+          approval.value.controlBasisDigest !== authority.controlBasisDigest ||
+          approval.value.expiresAt !== authority.expiresAt ||
+          authority.actionDigest !==
+            sha256Hex(
+              JSON.stringify({
+                stableActionId: "core.control.assign-work",
+                action,
+              }),
+            )
+        ) {
+          return yield* blockReplay();
+        }
+        const work = yield* dependencies.tx.transact(
+          dependencies.works.findById(result.workId as WorkId),
+        );
+        if (
+          Option.isNone(work) ||
+          work.value.projectId !== execution.projectId ||
+          work.value.workspaceId !== execution.workspaceId ||
+          work.value.objective !== action.objective ||
+          work.value.why !== action.why ||
+          JSON.stringify(work.value.constraints) !==
+            JSON.stringify(action.constraints) ||
+          work.value.completionExpectation !== action.completionExpectation ||
+          JSON.stringify(work.value.verificationMission) !==
+            JSON.stringify(action.verificationMission) ||
+          work.value.provenance.reason !== action.reason ||
+          work.value.provenance.predecessorWorkId !==
+            (workEpisode(execution)?.workId ?? null)
+        ) {
+          return yield* blockReplay();
+        }
+        const assignedEvents = yield* dependencies.tx.transact(
+          Effect.gen(function* () {
+            const matches = [];
+            let cursor = 0;
+            for (;;) {
+              const batch = yield* journal.readAfter(
+                execution.projectId,
+                cursor,
+                512,
+              );
+              for (const event of batch) {
+                if (
+                  event.eventType === "WorkAssigned" &&
+                  event.causedByCommandId === assignWorkCommandReplay.commandId
+                ) {
+                  matches.push(event);
+                }
+              }
+              if (batch.length < 512) break;
+              const last = batch[batch.length - 1];
+              if (last === undefined || Number(last.sequence) <= cursor) {
+                return yield* Effect.fail(
+                  actionOperationalFailure(
+                    "AssignWork.currentWorkspaceReceiptReplay",
+                  )("WorkAssigned journal scan did not advance"),
+                );
+              }
+              cursor = Number(last.sequence);
+            }
+            return matches;
+          }),
+        );
+        if (
+          assignedEvents.length !== 1 ||
+          assignedEvents[0]?.aggregateRef !== execution.workspaceId ||
+          typeof assignedEvents[0]?.payload !== "object" ||
+          assignedEvents[0].payload === null ||
+          !("workId" in assignedEvents[0].payload) ||
+          assignedEvents[0].payload.workId !== result.workId ||
+          !("workspaceId" in assignedEvents[0].payload) ||
+          assignedEvents[0].payload.workspaceId !== execution.workspaceId ||
+          !("projectId" in assignedEvents[0].payload) ||
+          assignedEvents[0].payload.projectId !== execution.projectId ||
+          !("objective" in assignedEvents[0].payload) ||
+          assignedEvents[0].payload.objective !== action.objective
+        ) {
+          return yield* blockReplay();
+        }
+        return {
+          _tag: "Observation" as const,
+          source: "Runtime" as const,
+          observation: {
+            text: `WorkAssigned(${result.workId}, ${execution.workspaceId})`,
+            truncated: false,
+          },
+          approvalConsumption: {
+            approvalId: approval.value.approvalId,
+            commandId: assignWorkCommandReplay.commandId,
+            consumedRevision: approval.value.revision,
+          },
+        };
+      }
+      if (context._tag === "ExecutionOrigin" && context.fencingGeneration > 0) {
+        const prior = yield* findPriorCommandReceipt({
+          context,
+          namespace: "assign-work-command",
+          occurrence,
+          commandReceipts: dependencies.commandReceipts,
+          commandType: "AssignWork",
+          commandHandlerRegistry: dependencies.commandHandlerRegistry,
+          tx: dependencies.tx,
+          projectId: execution.projectId,
+          operation: "AssignWork.priorReceipt",
+          errorOperation: "AssignWork",
+          lookupOperation: "AssignWork.receiptLookup",
+          identityErrorMessage:
+            "prior Command receipt belongs to another Project",
+        });
+        if (prior._tag === "Committed") {
+          const result = prior.receipt.resolution.result;
+          if (
+            typeof result !== "object" ||
+            result === null ||
+            !("workId" in result) ||
+            result.workId !== payload.workId ||
+            !("workspaceId" in result) ||
+            result.workspaceId !== targetWorkspaceId
+          ) {
+            return yield* Effect.fail(
+              actionOperationalFailure("AssignWork.priorReceipt")(
+                "prior Committed result does not match the pinned action",
+              ),
+            );
+          }
+          return {
+            _tag: "Observation" as const,
+            source: "Runtime" as const,
+            observation: {
+              text: `WorkAssigned(${payload.workId}, ${targetWorkspaceId})`,
+              truncated: false,
+            },
+          };
+        }
+        if (prior._tag === "TerminalRejected") {
+          return yield* Effect.fail(
+            actionError(
+              "earlier command was terminally rejected",
+              "action/canonical-rejected",
+              "WaitForStateChange",
+            ),
+          );
+        }
+      }
+      const commandId = generationScopedCommandId(
+        "assign-work-command",
+        occurrence,
+        context,
+      );
+      let commandEvidence: AssignWorkCommandEvidence | undefined;
+      let approvalCommandEvidence:
+        | AssignWorkApprovalCommandEvidence
+        | undefined;
+      if (resolvedChild !== undefined) {
+        if (
+          action.targetWorkspaceRef === undefined ||
+          assignWorkEvidence === undefined ||
+          logicalActionId === undefined ||
+          payload.provenance.predecessorWorkId === null
+        ) {
+          return yield* Effect.fail(
+            actionError(
+              "Direct-child AssignWork is missing trusted target, source-action, or authorization evidence",
+              "action/canonical-rejected",
+              "WaitForStateChange",
+            ),
+          );
+        }
+        commandEvidence = {
+          commandId,
+          projectId: execution.projectId,
+          executionId: execution.executionId,
+          providerTurnId: invocation.providerTurnId,
+          logicalActionId,
+          callRef: invocation.callRef,
+          parentWorkspaceId: execution.workspaceId,
+          parentWorkId: payload.provenance.predecessorWorkId,
+          targetWorkspaceRef: action.targetWorkspaceRef,
+          target: resolvedChild,
+          authority: assignWorkEvidence,
+          action: {
+            _tag: "AssignWork",
+            targetWorkspaceRef: action.targetWorkspaceRef,
+            objective: action.objective,
+            why: action.why,
+            constraints: action.constraints,
+            completionExpectation: action.completionExpectation,
+            verificationMission: action.verificationMission,
+            reason: action.reason,
+          },
+        };
+      } else if (
+        assignWorkEvidence?._tag === "ActionApproval" &&
+        context._tag === "ExecutionOrigin" &&
+        logicalActionId !== undefined
+      ) {
+        approvalCommandEvidence = {
+          commandId,
+          projectId: execution.projectId,
+          executionId: execution.executionId,
+          providerTurnId: invocation.providerTurnId,
+          logicalActionId,
+          callRef: invocation.callRef,
+          workspaceId: execution.workspaceId,
+          authority: assignWorkEvidence,
+          action,
+        };
+      }
+      if (
+        assignWorkEvidence?._tag === "ActionApproval" &&
+        (context._tag !== "ExecutionOrigin" || logicalActionId === undefined)
+      ) {
+        return yield* Effect.fail(
+          actionOperationalFailure("AssignWork.approvalEvidence")(
+            "approved AssignWork requires the pinned Runtime action identity",
+          ),
+        );
+      }
+      if (
+        commandEvidence !== undefined &&
+        dependencies.assignWorkAuthorizedBeforeCommandProbe !== undefined
+      ) {
+        yield* Effect.promise(
+          () =>
+            dependencies.assignWorkAuthorizedBeforeCommandProbe?.({
+              boundary: "AH10AfterAssignWorkAuthorizedBeforeCommandSubmission",
+              providerTurnId: String(invocation.providerTurnId),
+              executionId: String(execution.executionId),
+              logicalActionId: commandEvidence?.logicalActionId,
+              callRef: commandEvidence?.callRef,
+              actionIndex: invocation.outputPosition,
+            }) ?? Promise.resolve(),
+        );
+      }
+      const receipt = yield* dependencies.gateway.execute<
+        AssignWorkPayload,
+        AssignWorkResult
+      >(
+        {
+          commandType: "AssignWork",
+          commandId,
+          projectId: execution.projectId,
+          actor: context.principal as never,
+          issuedAt: yield* dependencies.clock.now(),
+          payload,
+          ...(commandEvidence === undefined
+            ? {}
+            : { assignWorkEvidence: commandEvidence }),
+          ...(approvalCommandEvidence === undefined
+            ? {}
+            : { assignWorkApprovalEvidence: approvalCommandEvidence }),
+        },
+        context,
+        {
+          _tag: "AssignWorkAuthority",
+          principal: context.principal,
+          commandId,
+          semanticRequestFingerprint: semanticRequestFingerprint({
+            commandType: "AssignWork",
+            projectId: execution.projectId,
+            actor: context.principal as never,
+            schemaVersion: "1",
+            payload,
+          }),
+          projectId: execution.projectId,
+          targetWorkspaceId,
+        },
+      );
+      if (
+        receipt.commandId !== commandId ||
+        receipt.resolution._tag !== "Committed"
+      ) {
+        return yield* Effect.fail(
+          actionError(
+            receipt.resolution._tag === "TerminalRejected"
+              ? JSON.stringify(receipt.resolution.error)
+              : "AssignWork failed operationally",
+            "action/canonical-rejected",
+            "RetryWithChangedInput",
+          ),
+        );
+      }
+      return {
+        _tag: "Observation" as const,
+        source: "Runtime" as const,
+        observation: {
+          text: `WorkAssigned(${receipt.resolution.result.workId}, ${targetWorkspaceId})`,
+          truncated: false,
+        },
+        ...(commandEvidence?.authority._tag === "ActionApproval"
+          ? {
+              approvalConsumption: {
+                approvalId: commandEvidence.authority.approvalId,
+                commandId,
+                consumedRevision:
+                  commandEvidence.authority.approvalRevision + 1,
+              },
+            }
+          : approvalCommandEvidence === undefined
+            ? {}
+            : {
+                approvalConsumption: {
+                  approvalId: approvalCommandEvidence.authority.approvalId,
+                  commandId,
+                  consumedRevision:
+                    approvalCommandEvidence.authority.approvalRevision + 1,
+                },
+              }),
+      };
+    }).pipe(Effect.mapError(actionOperationalFailure("AssignWork"))),
+});
+
+const listWorkspacesHandler = (
+  dependencies: WorkspacePlacementDependencies,
+): AgentActionHandler => ({
+  action: "ListWorkspaces",
+  handle: ({ action, execution }) =>
+    Effect.gen(function* () {
+      if (action._tag !== "ListWorkspaces") {
+        return yield* Effect.fail(
+          actionOperationalFailure("ListWorkspaces.dispatch")(
+            "ListWorkspaces handler received a different AgentAction",
+          ),
+        );
+      }
+      const snapshot = yield* dependencies.placement.list({
+        rootWorkspaceId: execution.workspaceId,
+        ...(action.cursor === undefined ? {} : { cursor: action.cursor }),
+        ...(action.query === undefined ? {} : { query: action.query }),
+      });
+      return {
+        _tag: "Observation" as const,
+        source: "Runtime" as const,
+        observation: {
+          text: JSON.stringify(snapshot),
+          truncated: false,
+        },
+      };
+    }).pipe(Effect.mapError(actionOperationalFailure("ListWorkspaces"))),
+});
+
+const readWorkspaceHandler = (
+  dependencies: WorkspacePlacementDependencies,
+): AgentActionHandler => ({
+  action: "ReadWorkspace",
+  handle: ({ action, execution }) =>
+    Effect.gen(function* () {
+      if (action._tag !== "ReadWorkspace") {
+        return yield* Effect.fail(
+          actionOperationalFailure("ReadWorkspace.dispatch")(
+            "ReadWorkspace handler received a different AgentAction",
+          ),
+        );
+      }
+      const candidate = yield* dependencies.placement.read(
+        execution.workspaceId,
+        action.workspaceRef,
+      );
+      if (Option.isNone(candidate)) {
+        return yield* Effect.fail(
+          actionError(
+            "workspaceRef is stale, foreign, retired, or outside direct-child scope",
+            "action/target-unavailable",
+            "RetryWithChangedInput",
+          ),
+        );
+      }
+      return {
+        _tag: "Observation" as const,
+        source: "Runtime" as const,
+        observation: {
+          text: JSON.stringify(candidate.value),
+          truncated: false,
+        },
+      };
+    }).pipe(Effect.mapError(actionOperationalFailure("ReadWorkspace"))),
+});
+
+export const acceptResultHandler = (
+  dependencies: AcceptResultDependencies,
+): AgentActionHandler => ({
+  action: "AcceptResult",
+  handle: ({ action, invocation, execution, context }) =>
+    Effect.gen(function* () {
+      if (action._tag !== "AcceptResult") {
+        return yield* Effect.fail(
+          actionOperationalFailure("AcceptResult.dispatch")(
+            "AcceptResult handler received a different AgentAction",
+          ),
+        );
+      }
+      const occurrence = `${invocation.providerTurnId}:${invocation.outputPosition}`;
+      const acceptanceId = parse(AcceptanceId)(
+        `acc_${newUuid7("accept-child-result", occurrence)}`,
+      );
+      if (context._tag === "ExecutionOrigin" && context.fencingGeneration > 0) {
+        const prior = yield* findPriorCommandReceipt({
+          context,
+          namespace: "accept-child-result-command",
+          occurrence,
+          commandReceipts: dependencies.commandReceipts,
+          commandType: "AcceptWorkOutcome",
+          commandHandlerRegistry: dependencies.commandHandlerRegistry,
+          tx: dependencies.tx,
+          projectId: execution.projectId,
+          operation: "AcceptResult.priorReceipt",
+          errorOperation: "AcceptResult",
+          lookupOperation: "AcceptResult.receiptLookup",
+        });
+        if (prior._tag === "Committed") {
+          const result = prior.receipt.resolution.result;
+          if (
+            typeof result !== "object" ||
+            result === null ||
+            !("acceptanceId" in result) ||
+            result.acceptanceId !== acceptanceId ||
+            !("workId" in result) ||
+            typeof result.workId !== "string" ||
+            !("targetWorkRevision" in result) ||
+            typeof result.targetWorkRevision !== "number" ||
+            !Number.isInteger(result.targetWorkRevision) ||
+            result.targetWorkRevision < 0 ||
+            !("verificationId" in result) ||
+            typeof result.verificationId !== "string"
+          ) {
+            return yield* Effect.fail(
+              actionOperationalFailure("AcceptResult.priorReceipt")(
+                "prior Committed result does not match the pinned action",
+              ),
+            );
+          }
+          let receiptWorkId: WorkId;
+          let receiptVerificationId: VerificationId;
+          let targetWorkRevision: WorkRevision;
+          try {
+            receiptWorkId = parse(WorkId)(result.workId);
+            receiptVerificationId = parse(VerificationId)(
+              result.verificationId,
+            );
+            targetWorkRevision = parse(WorkRevision)(result.targetWorkRevision);
+          } catch {
+            return yield* Effect.fail(
+              actionOperationalFailure("AcceptResult.priorReceipt")(
+                "prior Committed result contains malformed identity",
+              ),
+            );
+          }
+          const work = yield* dependencies.tx.transact(
+            dependencies.works.findById(receiptWorkId),
+          );
+          if (
+            Option.isNone(work) ||
+            work.value.projectId !== execution.projectId
+          ) {
+            return yield* Effect.fail(
+              actionOperationalFailure("AcceptResult.priorReceipt")(
+                "prior accepted Work is missing or belongs to another Project",
+              ),
+            );
+          }
+          const expectedResultRef = `rref_${sha256Hex(
+            JSON.stringify({
+              parentWorkspaceId: execution.workspaceId,
+              childWorkspaceId: work.value.workspaceId,
+              workId: receiptWorkId,
+              workRevision: Number(targetWorkRevision),
+              verificationId: receiptVerificationId,
+            }),
+          )}`;
+          if (action.resultRef !== expectedResultRef) {
+            return yield* Effect.fail(
+              actionOperationalFailure("AcceptResult.priorReceipt")(
+                "prior Committed result does not match the pinned resultRef",
+              ),
+            );
+          }
+          const acceptances = dependencies.acceptances;
+          if (acceptances === undefined) {
+            return yield* Effect.fail(
+              actionOperationalFailure("AcceptResult.priorReceipt")(
+                "Acceptance repository lookup is required to converge a Committed receipt",
+              ),
+            );
+          }
+          const accepted = yield* dependencies.tx.transact(
+            acceptances.findByWorkRevision(
+              receiptWorkId,
+              Number(targetWorkRevision),
+            ),
+          );
+          if (
+            Option.isNone(accepted) ||
+            accepted.value.acceptanceId !== acceptanceId ||
+            accepted.value.workId !== receiptWorkId ||
+            accepted.value.targetWorkRevision !== targetWorkRevision ||
+            accepted.value.verificationId !== receiptVerificationId
+          ) {
+            return yield* Effect.fail(
+              actionOperationalFailure("AcceptResult.priorReceipt")(
+                "Committed receipt has no exact matching canonical Acceptance row",
+              ),
+            );
+          }
+          return {
+            _tag: "Observation" as const,
+            source: "Runtime" as const,
+            observation: {
+              text: `WorkOutcomeAccepted(${receiptWorkId}, ${receiptVerificationId})`,
+              truncated: false,
+            },
+          };
+        }
+        if (prior._tag === "TerminalRejected") {
+          return yield* Effect.fail(
+            actionError(
+              "earlier command was terminally rejected",
+              "action/canonical-rejected",
+              "WaitForStateChange",
+            ),
+          );
+        }
+      }
+      const resolved = yield* dependencies.placement.resolveResultRef(
+        execution.workspaceId,
+        action.resultRef,
+      );
+      if (Option.isNone(resolved)) {
+        return yield* Effect.fail(
+          actionError(
+            "resultRef is stale, already accepted, non-PASS, foreign, or not from an active direct child",
+            "action/target-unavailable",
+            "RetryWithChangedInput",
+          ),
+        );
+      }
+      const payload: AcceptWorkOutcomePayload = {
+        acceptanceId,
+        workId: resolved.value.workId,
+        targetWorkRevision: resolved.value.workRevision,
+        verificationId: resolved.value.verificationId,
+      };
+      const commandId = generationScopedCommandId(
+        "accept-child-result-command",
+        occurrence,
+        context,
+      );
+      const actor = context.principal as never;
+      const receipt = yield* dependencies.gateway.execute<
+        AcceptWorkOutcomePayload,
+        AcceptWorkOutcomeResult
+      >(
+        {
+          commandType: "AcceptWorkOutcome",
+          commandId,
+          projectId: execution.projectId,
+          actor,
+          issuedAt: yield* dependencies.clock.now(),
+          payload,
+        },
+        context,
+        {
+          _tag: "AcceptanceAuthority",
+          principal: context.principal,
+          commandId,
+          semanticRequestFingerprint: semanticRequestFingerprint({
+            commandType: "AcceptWorkOutcome",
+            projectId: execution.projectId,
+            actor,
+            schemaVersion: "1",
+            payload,
+          }),
+          projectId: execution.projectId,
+          targetWorkspaceId: execution.workspaceId,
+          workId: resolved.value.workId,
+          verificationId: resolved.value.verificationId,
+        },
+      );
+      if (receipt.resolution._tag !== "Committed") {
+        return yield* Effect.fail(
+          actionError(
+            receipt.resolution._tag === "TerminalRejected"
+              ? JSON.stringify(receipt.resolution.error)
+              : "AcceptWorkOutcome failed operationally",
+            "action/canonical-rejected",
+            "WaitForStateChange",
+          ),
+        );
+      }
+      return {
+        _tag: "Observation" as const,
+        source: "Runtime" as const,
+        observation: {
+          text: `WorkOutcomeAccepted(${resolved.value.workId}, ${resolved.value.verificationId})`,
+          truncated: false,
+        },
+      };
+    }).pipe(Effect.mapError(actionOperationalFailure("AcceptResult"))),
 });
 
 const isPendingQuery = (record: MessageRecord) =>
@@ -173,6 +1919,8 @@ const resolveTarget = (
           return yield* Effect.fail(
             actionError(
               `${action.kind} from a root Workspace has no parent target`,
+              "action/not-applicable",
+              "ChooseAlternative",
             ),
           );
         }
@@ -181,19 +1929,14 @@ const resolveTarget = (
     }
   });
 
-const deterministicIds = (
+const deterministicMessageId = (
   providerTurnId: string,
   outputPosition: number,
-): { readonly messageId: MessageId; readonly commandId: CommandIdType } => {
+): MessageId => {
   const occurrence = `${providerTurnId}:${outputPosition}`;
-  return {
-    messageId: parse(MessageIdSchema)(
-      `msg_${newUuid7("send-message-message", occurrence)}`,
-    ),
-    commandId: parse(CommandId)(
-      `cmd_${newUuid7("send-message-command", occurrence)}`,
-    ),
-  };
+  return parse(MessageIdSchema)(
+    `msg_${newUuid7("send-message-message", occurrence)}`,
+  );
 };
 
 const sendMessageHandler = (
@@ -204,37 +1947,195 @@ const sendMessageHandler = (
     Effect.gen(function* () {
       if (action._tag !== "SendMessage") {
         return yield* Effect.fail(
-          actionError("SendMessage handler received a different AgentAction"),
-        );
-      }
-      const target = yield* resolveTarget(dependencies, action, execution);
-      const bytes = new TextEncoder().encode(action.body);
-      const bodyRef = yield* dependencies.blobs.put(bytes);
-      const resolvedBytes = yield* dependencies.blobs.get(bodyRef);
-      if (
-        resolvedBytes.length !== bytes.length ||
-        resolvedBytes.some((byte, index) => byte !== bytes[index])
-      ) {
-        return yield* Effect.fail(
-          actionError(
-            "persisted message body did not resolve to submitted bytes",
+          actionOperationalFailure("SendMessage.dispatch")(
+            "SendMessage handler received a different AgentAction",
           ),
         );
       }
-
-      const occurrenceIds = deterministicIds(
+      const bytes = new TextEncoder().encode(action.body);
+      const persistBody = () =>
+        Effect.gen(function* () {
+          const bodyRef = yield* dependencies.blobs.put(bytes);
+          const resolvedBytes = yield* dependencies.blobs.get(bodyRef);
+          if (
+            resolvedBytes.length !== bytes.length ||
+            resolvedBytes.some((byte, index) => byte !== bytes[index])
+          ) {
+            return yield* Effect.fail(
+              actionOperationalFailure("SendMessage.blobRoundTrip")(
+                "persisted message body did not resolve to submitted bytes",
+              ),
+            );
+          }
+          return bodyRef;
+        });
+      const occurrence = `${invocation.providerTurnId}:${invocation.outputPosition}`;
+      const messageId = deterministicMessageId(
         invocation.providerTurnId,
         invocation.outputPosition,
       );
-      const correlationId =
+      const queryCorrelationId =
         action.kind === "Query"
-          ? `cor_${newUuid7(
-              "send-message-correlation",
-              `${invocation.providerTurnId}:${invocation.outputPosition}`,
-            )}`
-          : "correlationId" in target
-            ? target.correlationId
-            : undefined;
+          ? `cor_${newUuid7("send-message-correlation", occurrence)}`
+          : undefined;
+      if (context._tag === "ExecutionOrigin" && context.fencingGeneration > 0) {
+        const prior = yield* findPriorCommandReceipt({
+          context,
+          namespace: "send-message-command",
+          occurrence,
+          commandReceipts: dependencies.commandReceipts,
+          commandType: "SendMessage",
+          commandHandlerRegistry: dependencies.commandHandlerRegistry,
+          tx: dependencies.tx,
+          projectId: execution.projectId,
+          operation: "SendMessage.priorReceipt",
+          errorOperation: "SendMessage",
+          lookupOperation: "SendMessage.receiptLookup",
+        });
+        if (prior._tag === "Committed") {
+          const result = prior.receipt.resolution.result;
+          if (
+            typeof result !== "object" ||
+            result === null ||
+            !("messageId" in result) ||
+            result.messageId !== messageId ||
+            !("admitted" in result) ||
+            result.admitted !== true
+          ) {
+            return yield* Effect.fail(
+              actionOperationalFailure("SendMessage.priorReceipt")(
+                "prior Committed result does not match the pinned message",
+              ),
+            );
+          }
+          const bodyRef = yield* persistBody();
+          const record = yield* dependencies.tx.transact(
+            dependencies.messages.findById(messageId),
+          );
+          if (
+            Option.isNone(record) ||
+            record.value.messageId !== messageId ||
+            record.value.senderWorkspaceId !== execution.workspaceId ||
+            record.value.message.kind !== action.kind ||
+            record.value.message.bodyRef !== bodyRef ||
+            record.value.message.urgency !== "Normal" ||
+            record.value.message.causationId !== undefined
+          ) {
+            return yield* Effect.fail(
+              actionOperationalFailure("SendMessage.priorReceipt")(
+                "Committed receipt has no exact matching canonical Message row",
+              ),
+            );
+          }
+          const sender = yield* dependencies.tx.transact(
+            dependencies.workspaces.findById(execution.workspaceId),
+          );
+          const recipient = yield* dependencies.tx.transact(
+            dependencies.workspaces.findById(
+              record.value.message.recipientWorkspaceId,
+            ),
+          );
+          if (
+            Option.isNone(sender) ||
+            sender.value.projectId !== execution.projectId ||
+            Option.isNone(recipient) ||
+            recipient.value.projectId !== execution.projectId
+          ) {
+            return yield* Effect.fail(
+              actionOperationalFailure("SendMessage.priorReceipt")(
+                "canonical Message sender or recipient is missing or belongs to another Project",
+              ),
+            );
+          }
+          if (action.kind === "Query") {
+            if (
+              record.value.message.recipientWorkspaceId !==
+                action.recipientWorkspaceId ||
+              record.value.message.correlationId !== queryCorrelationId
+            ) {
+              return yield* Effect.fail(
+                actionOperationalFailure("SendMessage.priorReceipt")(
+                  "Committed Query does not match its pinned recipient or correlationId",
+                ),
+              );
+            }
+          } else if (
+            action.kind === "Report" ||
+            action.kind === "DecisionRequest"
+          ) {
+            if (
+              sender.value.parentWorkspaceId === null ||
+              record.value.message.recipientWorkspaceId !==
+                sender.value.parentWorkspaceId ||
+              record.value.message.correlationId !== undefined
+            ) {
+              return yield* Effect.fail(
+                actionOperationalFailure("SendMessage.priorReceipt")(
+                  "Committed upward Message does not match its pinned Workspace route",
+                ),
+              );
+            }
+          } else {
+            const correlationId = record.value.message.correlationId;
+            if (correlationId === undefined) {
+              return yield* Effect.fail(
+                actionOperationalFailure("SendMessage.priorReceipt")(
+                  "Committed Reply has no correlationId",
+                ),
+              );
+            }
+            const incoming = yield* dependencies.tx.transact(
+              dependencies.messages.listByRecipient(execution.workspaceId),
+            );
+            const matchingQueries = incoming.filter(
+              (candidate) =>
+                candidate.message.kind === "Query" &&
+                candidate.message.correlationId === correlationId &&
+                candidate.message.recipientWorkspaceId ===
+                  execution.workspaceId &&
+                candidate.senderWorkspaceId ===
+                  record.value.message.recipientWorkspaceId,
+            );
+            if (
+              matchingQueries.length !== 1 ||
+              (action.queryMessageId !== undefined &&
+                matchingQueries[0]?.messageId !== action.queryMessageId) ||
+              !(yield* dependencies.tx.transact(
+                dependencies.messages.isCorrelationClosed(correlationId),
+              ))
+            ) {
+              return yield* Effect.fail(
+                actionOperationalFailure("SendMessage.priorReceipt")(
+                  "Committed Reply has no exact matching closed Query correlation",
+                ),
+              );
+            }
+          }
+          return {
+            _tag: "Observation" as const,
+            source: "Runtime" as const,
+            observation: {
+              text: `MessageDelivered(${messageId})`,
+              truncated: false,
+            },
+          };
+        }
+        if (prior._tag === "TerminalRejected") {
+          return {
+            _tag: "Observation" as const,
+            source: "Runtime" as const,
+            observation: {
+              text: `SendMessage rejected: ${JSON.stringify(prior.receipt.resolution.error)}`,
+              truncated: false,
+            },
+          };
+        }
+      }
+      const target = yield* resolveTarget(dependencies, action, execution);
+      const bodyRef = yield* persistBody();
+      const correlationId =
+        queryCorrelationId ??
+        ("correlationId" in target ? target.correlationId : undefined);
       const message: OutboundMessage = {
         kind: action.kind,
         recipientWorkspaceId: target.recipientWorkspaceId,
@@ -242,8 +2143,15 @@ const sendMessageHandler = (
         urgency: "Normal",
         ...(correlationId !== undefined ? { correlationId } : {}),
       };
+
+      const commandId = generationScopedCommandId(
+        "send-message-command",
+        occurrence,
+        context,
+      );
       const plan = sendMessagePlan({
-        ...occurrenceIds,
+        messageId,
+        commandId,
         projectId: execution.projectId,
         senderWorkspaceId: execution.workspaceId,
         principal: context.principal,
@@ -256,7 +2164,7 @@ const sendMessageHandler = (
       >(
         {
           commandType: "SendMessage",
-          commandId: occurrenceIds.commandId,
+          commandId,
           projectId: execution.projectId,
           actor: context.principal as never,
           issuedAt: yield* dependencies.clock.now(),
@@ -287,7 +2195,347 @@ const sendMessageHandler = (
           truncated: false,
         },
       };
-    }).pipe(Effect.mapError(actionError)),
+    }).pipe(Effect.mapError(actionOperationalFailure("SendMessage"))),
+});
+
+export const updatePlanHandler = (
+  dependencies: UpdatePlanDependencies,
+): AgentActionHandler => ({
+  action: "UpdatePlan",
+  handle: (input) =>
+    Effect.gen(function* () {
+      const { action, execution } = input;
+      if (action._tag !== "UpdatePlan") {
+        return yield* Effect.fail(
+          actionError("UpdatePlan received a different AgentAction"),
+        );
+      }
+      const boundWork = workEpisode(execution);
+      if (boundWork === null) {
+        return yield* Effect.fail(
+          actionError(
+            "update_plan is available only inside an exact Work episode",
+            "action/not-applicable",
+          ),
+        );
+      }
+      const revise = () =>
+        Effect.gen(function* () {
+          const updatedAt = yield* dependencies.clock.now();
+          const work = yield* dependencies.works.findById(boundWork.workId);
+          if (Option.isNone(work) || work.value.lifecycle !== "Open") {
+            return yield* Effect.fail(
+              actionError("planned Work is missing or no longer Open"),
+            );
+          }
+          if (work.value.revision !== boundWork.targetWorkRevision) {
+            return yield* Effect.fail(
+              actionError(
+                "Work revision changed; refresh context before updating its plan",
+                "action/precondition",
+                "WaitForStateChange",
+              ),
+            );
+          }
+          const current = yield* dependencies.plans.findByWork(
+            boundWork.workId,
+          );
+          const expectedPlanRevision = Option.isSome(current)
+            ? current.value.revision
+            : 0;
+          const revised = reviseLocalPlan({
+            current: Option.getOrNull(current),
+            workId: boundWork.workId,
+            targetWorkRevision: boundWork.targetWorkRevision,
+            expectedRevision: expectedPlanRevision,
+            items: action.items,
+            updatedAt,
+          });
+          if (!revised.ok) {
+            return yield* Effect.fail(
+              actionError(
+                revised.error._tag === "LocalPlanInvalid"
+                  ? revised.error.reason
+                  : "plan revision changed",
+                "action/precondition",
+                "RetryWithChangedInput",
+              ),
+            );
+          }
+          yield* dependencies.plans.save(revised.value, expectedPlanRevision);
+          return revised.value;
+        });
+      if (
+        dependencies.loopSteps !== undefined &&
+        dependencies.sessions !== undefined &&
+        dependencies.providerTurns !== undefined
+      ) {
+        const committed = yield* commitDurableControlActionEffect({
+          handlerInput: input,
+          expectedToolName: "update_plan",
+          tx: dependencies.tx,
+          loopSteps: dependencies.loopSteps,
+          providerTurns: dependencies.providerTurns,
+          sessions: dependencies.sessions,
+          clock: dependencies.clock,
+          effect: () =>
+            revise().pipe(
+              Effect.map((plan) => ({
+                value: plan,
+                result: {
+                  observation: {
+                    text: JSON.stringify({
+                      planRevision: plan.revision,
+                      items: plan.items,
+                      authority: "progress-only",
+                    }),
+                    truncated: false as const,
+                  },
+                },
+              })),
+            ),
+        });
+        return committed.outcome;
+      }
+      if (
+        dependencies.loopSteps !== undefined ||
+        dependencies.sessions !== undefined
+      ) {
+        return yield* Effect.fail(
+          actionOperationalFailure("UpdatePlan.commit")(
+            "P9 Control commit requires the exact ProviderTurn manifest store",
+          ),
+        );
+      }
+      const plan = yield* dependencies.tx.transact(revise());
+      return {
+        _tag: "Observation" as const,
+        source: "Runtime" as const,
+        observation: {
+          text: JSON.stringify({
+            planRevision: plan.revision,
+            items: plan.items,
+            authority: "progress-only",
+          }),
+          truncated: false,
+        },
+      };
+    }).pipe(Effect.mapError(actionOperationalFailure("UpdatePlan"))),
+});
+
+export const selectCurrentWorkHandler = (
+  dependencies: SelectCurrentWorkDependencies,
+): AgentActionHandler => ({
+  action: "SelectCurrentWork",
+  handle: ({ action, invocation, execution, context }) =>
+    Effect.gen(function* () {
+      if (action._tag !== "SelectCurrentWork") {
+        return yield* Effect.fail(
+          actionError("SelectCurrentWork received a different AgentAction"),
+        );
+      }
+      const episode = executionEpisode(execution);
+      if (episode?._tag !== "DecisionEpisode") {
+        return yield* Effect.fail(
+          actionError(
+            "select_current_work requires an exact DecisionEpisode",
+            "action/not-applicable",
+          ),
+        );
+      }
+      const occurrence = `${invocation.providerTurnId}:${invocation.outputPosition}`;
+      if (context._tag === "ExecutionOrigin" && context.fencingGeneration > 0) {
+        const prior = yield* findPriorCommandReceipt({
+          context,
+          namespace: "select-current-work-command",
+          occurrence,
+          legacyCommandId: legacySelectCurrentWorkCommandId(episode.decisionId),
+          commandReceipts: dependencies.commandReceipts,
+          commandType: "SelectCurrentWork",
+          commandHandlerRegistry: dependencies.commandHandlerRegistry,
+          tx: dependencies.tx,
+          projectId: execution.projectId,
+          operation: "SelectCurrentWork.priorReceipt",
+          lookupOperation: "SelectCurrentWork.receiptLookup",
+          errorOperation: "SelectCurrentWork",
+        });
+        if (prior._tag === "Committed") {
+          const result = prior.receipt.resolution.result;
+          if (
+            typeof result !== "object" ||
+            result === null ||
+            !("workspaceId" in result) ||
+            result.workspaceId !== execution.workspaceId ||
+            !("workId" in result) ||
+            result.workId !== action.workId ||
+            !("revision" in result) ||
+            typeof result.revision !== "number" ||
+            !Number.isInteger(result.revision)
+          ) {
+            return yield* Effect.fail(
+              actionOperationalFailure("SelectCurrentWork.priorReceipt")(
+                "prior Committed result does not match the pinned DecisionRequest selection",
+              ),
+            );
+          }
+          const request = yield* dependencies.tx.transact(
+            dependencies.decisions.findById(episode.decisionId),
+          );
+          if (
+            Option.isNone(request) ||
+            request.value.workspaceId !== execution.workspaceId ||
+            !request.value.candidateWorkIds.includes(action.workId) ||
+            request.value.workspaceRevision + 1 !== result.revision
+          ) {
+            return yield* Effect.fail(
+              actionOperationalFailure("SelectCurrentWork.priorReceipt")(
+                "Committed receipt has no matching durable DecisionRequest",
+              ),
+            );
+          }
+          if (request.value.state._tag === "Pending") {
+            if (request.value.revision !== episode.requestRevision) {
+              return yield* Effect.fail(
+                actionOperationalFailure("SelectCurrentWork.priorReceipt")(
+                  "Pending DecisionRequest revision conflicts with the pinned episode",
+                ),
+              );
+            }
+            const workspace = yield* dependencies.tx.transact(
+              dependencies.workspaces.findById(execution.workspaceId),
+            );
+            if (
+              Option.isNone(workspace) ||
+              workspace.value.projectId !== execution.projectId ||
+              workspace.value.currentWorkId !== action.workId ||
+              Number(workspace.value.revision) !== result.revision
+            ) {
+              return yield* Effect.fail(
+                actionOperationalFailure("SelectCurrentWork.priorReceipt")(
+                  "Committed selection conflicts with the current Workspace row while DecisionRequest is Pending",
+                ),
+              );
+            }
+            yield* dependencies.tx.transact(
+              dependencies.decisions.submit({
+                decisionId: episode.decisionId,
+                expectedRevision: request.value.revision,
+                selectedWorkId: action.workId,
+                updatedAt: yield* dependencies.clock.now(),
+              }),
+            );
+          } else if (
+            request.value.state.selectedWorkId !== action.workId ||
+            request.value.revision !== episode.requestRevision + 1
+          ) {
+            return yield* Effect.fail(
+              actionOperationalFailure("SelectCurrentWork.priorReceipt")(
+                "Submitted DecisionRequest conflicts with the Committed selection",
+              ),
+            );
+          }
+          return {
+            _tag: "Settle" as const,
+            settlement: {
+              _tag: "Completed" as const,
+              result: {
+                _tag: "DecisionSubmitted" as const,
+                decisionId: episode.decisionId,
+              },
+            },
+          };
+        }
+        if (prior._tag === "TerminalRejected") {
+          return yield* Effect.fail(
+            actionError(
+              "canonical Work selection was rejected",
+              "action/canonical-rejected",
+              "WaitForStateChange",
+            ),
+          );
+        }
+      }
+      const request = yield* dependencies.tx.transact(
+        dependencies.decisions.findById(episode.decisionId),
+      );
+      if (
+        Option.isNone(request) ||
+        request.value.state._tag !== "Pending" ||
+        request.value.revision !== episode.requestRevision ||
+        !request.value.candidateWorkIds.includes(action.workId)
+      ) {
+        return yield* Effect.fail(
+          actionError(
+            "selected Work is not an eligible candidate for this DecisionRequest",
+            "action/precondition",
+            "RetryWithChangedInput",
+          ),
+        );
+      }
+      const commandId = selectCurrentWorkCommandId(
+        episode.decisionId,
+        occurrence,
+        context,
+      );
+      const payload = {
+        workspaceId: execution.workspaceId,
+        workId: action.workId,
+        expectedWorkspaceRevision: request.value.workspaceRevision,
+      };
+      const authority: VerifiedCommandAuthority = {
+        _tag: "SelectCurrentWorkAuthority",
+        principal: context.principal,
+        commandId,
+        semanticRequestFingerprint: semanticRequestFingerprint({
+          commandType: "SelectCurrentWork",
+          projectId: execution.projectId,
+          actor: context.principal as never,
+          schemaVersion: "1",
+          payload,
+        }),
+        projectId: execution.projectId,
+        targetWorkspaceId: execution.workspaceId,
+      };
+      const receipt = yield* dependencies.gateway.execute(
+        {
+          commandType: "SelectCurrentWork",
+          commandId,
+          projectId: execution.projectId,
+          actor: context.principal as never,
+          issuedAt: yield* dependencies.clock.now(),
+          payload,
+        },
+        context,
+        authority,
+      );
+      if (receipt.resolution._tag !== "Committed") {
+        return yield* Effect.fail(
+          actionError(
+            "canonical Work selection was rejected",
+            "action/canonical-rejected",
+            "WaitForStateChange",
+          ),
+        );
+      }
+      yield* dependencies.tx.transact(
+        dependencies.decisions.submit({
+          decisionId: episode.decisionId,
+          expectedRevision: episode.requestRevision,
+          selectedWorkId: action.workId,
+          updatedAt: yield* dependencies.clock.now(),
+        }),
+      );
+      return {
+        _tag: "Settle" as const,
+        settlement: {
+          _tag: "Completed" as const,
+          result: {
+            _tag: "DecisionSubmitted" as const,
+            decisionId: episode.decisionId,
+          },
+        },
+      };
+    }).pipe(Effect.mapError(actionOperationalFailure("SelectCurrentWork"))),
 });
 
 /** ACR-8 (DID v1.19): the producer claims its Work complete. The
@@ -300,26 +2548,25 @@ const claimCompletionHandler = (
   dependencies: ClaimCompletionDependencies,
 ): AgentActionHandler => ({
   action: "ClaimCompletion",
-  handle: ({ action, invocation, execution }) =>
+  handle: (input) =>
     Effect.gen(function* () {
+      const { action, invocation, execution } = input;
       if (action._tag !== "ClaimCompletion") {
         return yield* Effect.fail(
-          actionError(
+          actionOperationalFailure("ClaimCompletion.dispatch")(
             "ClaimCompletion handler received a different AgentAction",
           ),
         );
       }
-      if (
-        execution.binding._tag !== "WorkspaceExecution" ||
-        execution.binding.focus._tag !== "Work"
-      ) {
+      const boundWork = workEpisode(execution);
+      if (boundWork === null) {
         return yield* Effect.fail(
           actionError(
             "ClaimCompletion requires an active Work binding to claim against",
           ),
         );
       }
-      const workId = execution.binding.focus.workId;
+      const workId = boundWork.workId;
       const work = yield* dependencies.tx.transact(
         dependencies.works.findById(workId),
       );
@@ -334,6 +2581,38 @@ const claimCompletionHandler = (
         );
       }
       const occurrence = `${invocation.providerTurnId}:${invocation.outputPosition}`;
+      let durableSettlementEffect:
+        | Effect.Effect<void, unknown, import("@arbor/ports").TransactionScope>
+        | undefined;
+      if (dependencies.waits !== undefined) {
+        const now = yield* dependencies.clock.now();
+        const wait = {
+          workId,
+          waitSpec: {
+            mode: "Any" as const,
+            conditions: [
+              {
+                _tag: "VerificationChanged" as const,
+                workId,
+                targetWorkRevision: parse(Revision)(
+                  Number(work.value.revision),
+                ),
+              },
+            ],
+          },
+          registeredAt: now,
+          updatedAt: now,
+        };
+        if (
+          input.actionContext !== undefined &&
+          input.loopStepFence !== undefined &&
+          input.logicalActionId !== undefined
+        ) {
+          durableSettlementEffect = dependencies.waits.upsert(wait);
+        } else {
+          yield* dependencies.tx.transact(dependencies.waits.upsert(wait));
+        }
+      }
       return {
         _tag: "Settle" as const,
         settlement: {
@@ -344,8 +2623,168 @@ const claimCompletionHandler = (
             claimRef: `clm_${newUuid7("completion-claim", occurrence)}`,
           },
         },
+        ...(durableSettlementEffect === undefined
+          ? {}
+          : { durableSettlementEffect }),
       };
-    }).pipe(Effect.mapError(actionError)),
+    }).pipe(Effect.mapError(actionOperationalFailure("ClaimCompletion"))),
+});
+
+/** P8 owns the source that can make a Work's VerificationChanged condition
+ * true. A Work-bound Wait on one or more VerificationChanged conditions for
+ * that same Work must have an exact Open Verification unless its Any set also
+ * contains another independently producible condition. ClaimCompletion has
+ * its own producer path: it atomically persists the exact VerificationChanged
+ * Wait with CompletionClaimed and is not routed through this model-facing
+ * Wait action. */
+const verificationWaitEligibilityHandler = (
+  dependencies: VerificationWaitEligibilityDependencies,
+): AgentActionHandler => ({
+  action: "Wait",
+  handle: (input) =>
+    Effect.gen(function* () {
+      const { action, execution } = input;
+      if (action._tag !== "Wait") {
+        return yield* Effect.fail(
+          actionOperationalFailure("Wait.dispatch")(
+            "Wait handler received a different AgentAction",
+          ),
+        );
+      }
+      const episode = workEpisode(execution);
+      if (episode === null) {
+        return yield* Effect.fail(
+          actionError(
+            "Wait requires an active Work binding for durable WorkWait registration",
+            "action/not-applicable",
+          ),
+        );
+      }
+      if (action.disposition === "Blocked") {
+        if (!dependencies.blockedWaitEnabled) {
+          return yield* Effect.fail(
+            actionError(
+              "Blocked recovery is unavailable on this runtime because the durable WorkBlocker ledger is not active",
+              "action/not-applicable",
+            ),
+          );
+        }
+        return {
+          _tag: "BlockedWorkEpisodeRequest" as const,
+          request: action.request,
+        };
+      }
+
+      const sameWorkVerificationConditions = action.waitSpec.conditions.flatMap(
+        (condition) =>
+          condition._tag === "VerificationChanged" &&
+          condition.workId === episode.workId
+            ? [condition]
+            : [],
+      );
+      const hasIndependentAlternative = action.waitSpec.conditions.some(
+        (condition) =>
+          condition._tag !== "VerificationChanged" ||
+          condition.workId !== episode.workId,
+      );
+
+      if (sameWorkVerificationConditions.length > 0) {
+        const eligibility = yield* dependencies.tx
+          .transact(
+            Effect.gen(function* () {
+              const [storedWork, storedWorkspace] = yield* Effect.all([
+                dependencies.works.findById(episode.workId),
+                dependencies.workspaces.findById(execution.workspaceId),
+              ]);
+              if (
+                Option.isNone(storedWork) ||
+                Option.isNone(storedWorkspace) ||
+                storedWork.value.workspaceId !== execution.workspaceId ||
+                storedWorkspace.value.currentWorkId !== episode.workId ||
+                storedWork.value.lifecycle !== "Open" ||
+                Number(storedWork.value.revision) !==
+                  Number(episode.targetWorkRevision)
+              ) {
+                return "not-current" as const;
+              }
+
+              const history = yield* dependencies.verifications.listByWork(
+                episode.workId,
+              );
+              const targetRevisions = new Set(
+                sameWorkVerificationConditions.map((condition) =>
+                  Number(condition.targetWorkRevision),
+                ),
+              );
+              const openRevisions = new Set(
+                history
+                  .filter((verification) =>
+                    targetRevisions.has(
+                      Number(verification.targetWorkRevision),
+                    ),
+                  )
+                  .filter(
+                    (verification) => verification.state.status === "Open",
+                  )
+                  .map((verification) =>
+                    Number(verification.targetWorkRevision),
+                  ),
+              );
+              if (openRevisions.size > 0) return "open-verification" as const;
+              const hasConcludedSource = history.some(
+                (verification) =>
+                  targetRevisions.has(
+                    Number(verification.targetWorkRevision),
+                  ) && verification.state.status === "Concluded",
+              );
+              return hasConcludedSource
+                ? ("verification-concluded" as const)
+                : ("missing-source" as const);
+            }),
+          )
+          .pipe(Effect.mapError(actionOperationalFailure("WaitEligibility")));
+
+        if (eligibility === "not-current") {
+          return yield* Effect.fail(
+            actionError(
+              "This Work execution is no longer bound to the current open Work revision. Refresh the Work context before waiting.",
+              "action/precondition",
+              "ChooseAlternative",
+            ),
+          );
+        }
+        if (eligibility === "verification-concluded") {
+          return yield* Effect.fail(
+            actionError(
+              "Verification for this Work revision already has a conclusion. Read that result and continue instead of waiting again.",
+              "action/precondition",
+              "ChooseAlternative",
+            ),
+          );
+        }
+        if (eligibility === "missing-source" && !hasIndependentAlternative) {
+          return yield* Effect.fail(
+            actionError(
+              "This Work has no pending independent verification for its current revision. Continue advancing the Work or wait on a real external condition.",
+              "action/precondition",
+              "ChooseAlternative",
+            ),
+          );
+        }
+      }
+
+      return {
+        _tag: "Settle" as const,
+        settlement: {
+          _tag: "Completed" as const,
+          result: {
+            _tag: "Yielded" as const,
+            reason: action.reason,
+            waitSpec: action.waitSpec,
+          },
+        },
+      };
+    }).pipe(Effect.mapError(actionOperationalFailure("Wait"))),
 });
 
 /** ACR-8 (DID v1.19): P6 formation semantics are closed. The handler
@@ -357,46 +2796,126 @@ const proposeChildWorkspaceHandler = (
   dependencies: ProposeChildDependencies,
 ): AgentActionHandler => ({
   action: "ProposeChildWorkspace",
-  handle: ({ action, execution }) =>
+  handle: (input) =>
     Effect.gen(function* () {
+      const { action, execution } = input;
       if (action._tag !== "ProposeChildWorkspace") {
         return yield* Effect.fail(
-          actionError(
+          actionOperationalFailure("ProposeChildWorkspace.dispatch")(
             "ProposeChildWorkspace handler received a different AgentAction",
           ),
         );
       }
-      const sender = yield* dependencies.tx.transact(
-        dependencies.workspaces.findById(execution.workspaceId),
-      );
-      if (Option.isNone(sender)) {
+      const persistProposal = () =>
+        Effect.gen(function* () {
+          const sender = yield* dependencies.workspaces.findById(
+            execution.workspaceId,
+          );
+          if (Option.isNone(sender)) {
+            return yield* Effect.fail(
+              actionError("proposing Workspace is missing"),
+            );
+          }
+          const proposal: ChildWorkspaceProposal = {
+            name: action.proposal.name,
+            rationale: action.proposal.rationale,
+            responsibilityDraft: action.proposal.responsibilityDraft,
+            resourceBoundaryDraft: {
+              basisResponsibilityRevision: sender.value.responsibilityRevision,
+              addresses: action.proposal.resourceBoundaryDraft.addresses,
+            },
+            ...(action.proposal.resourceOwnershipDelegation === undefined
+              ? {}
+              : {
+                  resourceOwnershipDelegation:
+                    action.proposal.resourceOwnershipDelegation,
+                }),
+            ...(action.proposal.initialWork === undefined
+              ? {}
+              : { initialWork: action.proposal.initialWork }),
+          };
+          if (!isChildWorkspaceProposal(proposal)) {
+            return yield* Effect.fail(
+              actionOperationalFailure("ProposeChildWorkspace.domainGuard")(
+                "decoded proposal failed the domain proposal guard",
+              ),
+            );
+          }
+          const record = admitFormationProposal({
+            proposalId: newFormationProposalId(),
+            parentWorkspaceId: execution.workspaceId,
+            proposal,
+          });
+          const admittedAt = yield* dependencies.clock.now();
+          const formationIds = deriveFormationIds(
+            record.proposalId,
+            record.revision,
+          );
+          yield* dependencies.proposals.insert(record);
+          if (dependencies.fulfillments !== undefined) {
+            yield* dependencies.fulfillments.put({
+              proposalId: record.proposalId,
+              proposalRevision: record.revision,
+              expectedChildWorkspaceId: formationIds.workspaceId,
+              expectedInitialWorkId:
+                record.proposal.initialWork === undefined
+                  ? null
+                  : formationIds.workId,
+              state: "AwaitingDecision",
+              typedBlock: null,
+              lastAttemptAt: null,
+              revision: 0,
+            });
+          }
+          yield* dependencies.inbox.admitUpsert({
+            recipientWorkspaceId: record.parentWorkspaceId,
+            entryKey: `gov:${record.proposalId}:${record.revision}`,
+            kind: "Governance",
+            summary: `formation proposal "${record.proposal.name}" revision ${record.revision} awaiting human decision`,
+            admittedAt,
+          });
+          return record;
+        });
+      if (
+        dependencies.loopSteps !== undefined &&
+        dependencies.sessions !== undefined &&
+        dependencies.providerTurns !== undefined
+      ) {
+        const committed = yield* commitDurableControlActionEffect({
+          handlerInput: input,
+          expectedToolName: "propose_workspace",
+          tx: dependencies.tx,
+          loopSteps: dependencies.loopSteps,
+          providerTurns: dependencies.providerTurns,
+          sessions: dependencies.sessions,
+          clock: dependencies.clock,
+          effect: () =>
+            persistProposal().pipe(
+              Effect.map((record) => ({
+                value: record,
+                result: {
+                  observation: {
+                    text: `ProposalRecorded(${record.proposalId}); awaiting a human RecordDecision (Approve/Reject/Modify)`,
+                    truncated: false as const,
+                  },
+                  canonicalRefs: [record.proposalId],
+                },
+              })),
+            ),
+        });
+        return committed.outcome;
+      }
+      if (
+        dependencies.loopSteps !== undefined ||
+        dependencies.sessions !== undefined
+      ) {
         return yield* Effect.fail(
-          actionError("proposing Workspace is missing"),
+          actionOperationalFailure("ProposeWorkspace.commit")(
+            "P9 Control commit requires the exact ProviderTurn manifest store",
+          ),
         );
       }
-      const proposal: ChildWorkspaceProposal = {
-        name: action.proposal.name,
-        rationale: action.proposal.rationale,
-        responsibilityDraft: action.proposal.responsibilityDraft,
-        resourceBoundaryDraft: {
-          basisResponsibilityRevision: sender.value.responsibilityRevision,
-          addresses: action.proposal.resourceBoundaryDraft.addresses,
-        },
-        ...(action.proposal.initialWork === undefined
-          ? {}
-          : { initialWork: action.proposal.initialWork }),
-      };
-      if (!isChildWorkspaceProposal(proposal)) {
-        return yield* Effect.fail(
-          actionError("decoded proposal failed the domain proposal guard"),
-        );
-      }
-      const record = admitFormationProposal({
-        proposalId: newFormationProposalId(),
-        parentWorkspaceId: execution.workspaceId,
-        proposal,
-      });
-      yield* dependencies.tx.transact(dependencies.proposals.insert(record));
+      const record = yield* dependencies.tx.transact(persistProposal());
       return {
         _tag: "Observation" as const,
         source: "Runtime" as const,
@@ -405,99 +2924,7 @@ const proposeChildWorkspaceHandler = (
           truncated: false,
         },
       };
-    }).pipe(Effect.mapError(actionError)),
-});
-
-/** ACR-8 (DID v1.19): P2 ExecutionBound admission is frozen. The handler
- * submits AdmitExecution(ExecutionBound) through the gateway with the
- * ExecutionOrigin submission context of the spawning execution; the
- * executionId/sessionId/commandId are deterministic per provider-turn
- * occurrence so replays converge on the same specialist execution. No
- * durable Workspace, responsibility, or permission is created. */
-const spawnSpecialistHandler = (
-  dependencies: SpawnSpecialistDependencies,
-): AgentActionHandler => ({
-  action: "SpawnSpecialist",
-  handle: ({ action, invocation, execution, context }) =>
-    Effect.gen(function* () {
-      if (action._tag !== "SpawnSpecialist") {
-        return yield* Effect.fail(
-          actionError(
-            "SpawnSpecialist handler received a different AgentAction",
-          ),
-        );
-      }
-      const occurrence = `${invocation.providerTurnId}:${invocation.outputPosition}`;
-      const payload = {
-        _tag: "ExecutionBound" as const,
-        executionId: parse(ExecutionId)(
-          `exe_${newUuid7("specialist-execution", occurrence)}`,
-        ),
-        workspaceId: execution.workspaceId,
-        parentExecutionId: execution.executionId,
-        mission:
-          action.constraints.length > 0
-            ? `${action.mission} (constraints: ${action.constraints.join("; ")})`
-            : action.mission,
-        sessionId: parse(SessionId)(
-          `ses_${newUuid7("specialist-session", occurrence)}`,
-        ),
-      };
-      const commandId = parse(CommandId)(
-        `cmd_${newUuid7("specialist-command", occurrence)}`,
-      );
-      const receipt = yield* dependencies.gateway.execute(
-        {
-          commandType: "AdmitExecution",
-          commandId,
-          projectId: execution.projectId,
-          actor: context.principal as never,
-          issuedAt: yield* dependencies.clock.now(),
-          payload,
-        },
-        context,
-        {
-          _tag: "AdmitExecutionAuthority",
-          submissionOrigin:
-            context._tag === "RecoveryController" ? "System" : context._tag,
-          principal: context.principal,
-          commandId,
-          semanticRequestFingerprint: semanticRequestFingerprint({
-            commandType: "AdmitExecution",
-            projectId: execution.projectId,
-            actor: context.principal as never,
-            schemaVersion: "1",
-            payload: payload as unknown,
-          }),
-          projectId: execution.projectId,
-          commandKind: "AdmitExecution",
-          workspaceId: execution.workspaceId,
-          bindingKind: "ExecutionBound",
-        },
-      );
-      if (receipt.resolution._tag !== "Committed") {
-        const reason =
-          receipt.resolution._tag === "TerminalRejected"
-            ? JSON.stringify(receipt.resolution.error)
-            : "operational AdmitExecution failure";
-        return {
-          _tag: "Observation" as const,
-          source: "Runtime" as const,
-          observation: {
-            text: `SpawnSpecialist rejected: ${reason}`,
-            truncated: false,
-          },
-        };
-      }
-      return {
-        _tag: "Observation" as const,
-        source: "Runtime" as const,
-        observation: {
-          text: `SpecialistAdmitted(${payload.executionId})`,
-          truncated: false,
-        },
-      };
-    }).pipe(Effect.mapError(actionError)),
+    }).pipe(Effect.mapError(actionOperationalFailure("ProposeChildWorkspace"))),
 });
 
 /** ACR-8 (DID v1.19): P7 dependency lifecycle is frozen. The handler
@@ -515,33 +2942,133 @@ const declareDependencyHandler = (
     Effect.gen(function* () {
       if (action._tag !== "DeclareDependency") {
         return yield* Effect.fail(
-          actionError(
+          actionOperationalFailure("DeclareDependency.dispatch")(
             "DeclareDependency handler received a different AgentAction",
           ),
         );
       }
-      if (
-        execution.binding._tag !== "WorkspaceExecution" ||
-        execution.binding.focus._tag !== "Work"
-      ) {
+      const boundWork = workEpisode(execution);
+      if (boundWork === null) {
         return yield* Effect.fail(
           actionError(
             "DeclareDependency requires an active Work binding as the consumer",
           ),
         );
       }
-      const workId = execution.binding.focus.workId;
+      const workId = boundWork.workId;
+      const occurrence = `${invocation.providerTurnId}:${invocation.outputPosition}`;
+      const dependencyId = parse(DependencyId)(
+        `dep_${newUuid7("declare-dependency", occurrence)}`,
+      );
+      if (context._tag === "ExecutionOrigin" && context.fencingGeneration > 0) {
+        const dependencyRecords = dependencies.dependencyRecords;
+        if (dependencyRecords === undefined) {
+          return yield* Effect.fail(
+            actionOperationalFailure("DeclareDependency.receiptLookup")(
+              "receipt and canonical Dependency lookup are required for generation takeover",
+            ),
+          );
+        }
+        const prior = yield* findPriorCommandReceipt({
+          context,
+          namespace: "declare-dependency-command",
+          occurrence,
+          commandReceipts: dependencies.commandReceipts,
+          commandType: "DeclareDependency",
+          commandHandlerRegistry: dependencies.commandHandlerRegistry,
+          tx: dependencies.tx,
+          projectId: execution.projectId,
+          operation: "DeclareDependency.priorReceipt",
+          errorOperation: "DeclareDependency",
+          lookupOperation: "DeclareDependency.receiptLookup",
+        });
+        if (prior._tag === "Committed") {
+          const result = prior.receipt.resolution.result;
+          if (
+            typeof result !== "object" ||
+            result === null ||
+            !("dependencyId" in result) ||
+            result.dependencyId !== dependencyId ||
+            !("consumerWorkId" in result) ||
+            result.consumerWorkId !== workId ||
+            !("state" in result) ||
+            result.state !== "Unsatisfied" ||
+            !("revision" in result) ||
+            result.revision !== 0
+          ) {
+            return yield* Effect.fail(
+              actionOperationalFailure("DeclareDependency.priorReceipt")(
+                "prior Committed result does not match the pinned action",
+              ),
+            );
+          }
+          const dependency = yield* dependencies.tx.transact(
+            dependencyRecords.findById(dependencyId),
+          );
+          const consumerWork = yield* dependencies.tx.transact(
+            dependencies.works.findById(workId),
+          );
+          const expectedRoles = [
+            ...action.expectedDeliverable.requiredArtifactRoles,
+          ].sort();
+          if (
+            Option.isNone(dependency) ||
+            Option.isNone(consumerWork) ||
+            consumerWork.value.projectId !== execution.projectId ||
+            dependency.value.dependencyId !== dependencyId ||
+            dependency.value.consumerWorkId !== workId ||
+            dependency.value.producerBinding._tag !==
+              action.producerBinding._tag ||
+            (action.producerBinding._tag === "WorkspaceBound" &&
+              dependency.value.producerBinding._tag === "WorkspaceBound" &&
+              dependency.value.producerBinding.workspaceId !==
+                action.producerBinding.workspaceId) ||
+            (action.producerBinding._tag === "WorkBound" &&
+              dependency.value.producerBinding._tag === "WorkBound" &&
+              dependency.value.producerBinding.workId !==
+                action.producerBinding.workId) ||
+            dependency.value.expectedDeliverable.kind !==
+              action.expectedDeliverable.kind ||
+            JSON.stringify(
+              [
+                ...dependency.value.expectedDeliverable.requiredArtifactRoles,
+              ].sort(),
+            ) !== JSON.stringify(expectedRoles)
+          ) {
+            return yield* Effect.fail(
+              actionOperationalFailure("DeclareDependency.priorReceipt")(
+                "Committed receipt has no exact matching canonical Dependency row",
+              ),
+            );
+          }
+          return {
+            _tag: "Observation" as const,
+            source: "Runtime" as const,
+            observation: {
+              text: `DependencyDeclared(${dependencyId}, Unsatisfied)`,
+              truncated: false,
+            },
+          };
+        }
+        if (prior._tag === "TerminalRejected") {
+          return {
+            _tag: "Observation" as const,
+            source: "Runtime" as const,
+            observation: {
+              text: `DeclareDependency rejected: ${JSON.stringify(prior.receipt.resolution.error)}`,
+              truncated: false,
+            },
+          };
+        }
+      }
       const work = yield* dependencies.tx.transact(
         dependencies.works.findById(workId),
       );
       if (Option.isNone(work)) {
         return yield* Effect.fail(actionError("consuming Work is missing"));
       }
-      const occurrence = `${invocation.providerTurnId}:${invocation.outputPosition}`;
       const payload = {
-        dependencyId: parse(DependencyId)(
-          `dep_${newUuid7("declare-dependency", occurrence)}`,
-        ),
+        dependencyId,
         consumerWorkId: workId,
         producerBinding: action.producerBinding,
         expectedDeliverable: {
@@ -552,9 +3079,168 @@ const declareDependencyHandler = (
         expectedConsumerWorkRevision: work.value.revision,
         revision: parse(DependencyRevision)(0),
       };
-      const commandId = parse(CommandId)(
-        `cmd_${newUuid7("declare-dependency-command", occurrence)}`,
+      const commandId = generationScopedCommandId(
+        "declare-dependency-command",
+        occurrence,
+        context,
       );
+      if (action.producerBinding._tag === "AnyProducer") {
+        if (context._tag === "ExecutionOrigin") {
+          if (
+            dependencies.commandReceipts === undefined ||
+            dependencies.commandHandlerRegistry === undefined
+          ) {
+            return yield* Effect.fail(
+              actionOperationalFailure("DeclareDependency.currentReceipt")(
+                "receipt lookup and registered decoder are required for AnyProducer admission",
+              ),
+            );
+          }
+          const exact = yield* dependencies.tx.transact(
+            dependencies.commandReceipts.findResolution(commandId),
+          );
+          if (Option.isSome(exact)) {
+            const registered =
+              dependencies.commandHandlerRegistry.lookup("DeclareDependency");
+            if (
+              Option.isNone(registered) ||
+              registered.value.commandType !== "DeclareDependency" ||
+              (exact.value.schemaVersion !== registered.value.schemaVersion &&
+                !(registered.value.priorReceiptSchemaVersions ?? []).includes(
+                  exact.value.schemaVersion,
+                ))
+            ) {
+              return yield* Effect.fail(
+                actionOperationalFailure("DeclareDependency.currentReceipt")(
+                  "current Command receipt schema is not registered",
+                ),
+              );
+            }
+            const expectedFingerprint = semanticRequestFingerprint({
+              commandType: "DeclareDependency",
+              projectId: execution.projectId,
+              actor: context.principal as never,
+              schemaVersion: exact.value.schemaVersion,
+              payload,
+            });
+            const decoded = yield* decodeRegisteredCommandReceipt<unknown>(
+              exact.value,
+              "DeclareDependency",
+              exact.value.schemaVersion,
+            );
+            if (
+              exact.value.commandId !== commandId ||
+              exact.value.projectId !== execution.projectId ||
+              exact.value.fingerprintAlgorithmVersion !==
+                FINGERPRINT_ALGORITHM_VERSION ||
+              exact.value.semanticRequestFingerprint !== expectedFingerprint
+            ) {
+              return yield* Effect.fail(
+                actionOperationalFailure("DeclareDependency.currentReceipt")(
+                  "current Command receipt does not bind the exact action",
+                ),
+              );
+            }
+            if (decoded.resolution._tag === "TerminalRejected") {
+              return {
+                _tag: "Observation" as const,
+                source: "Runtime" as const,
+                observation: {
+                  text: `DeclareDependency rejected: ${JSON.stringify(decoded.resolution.error)}`,
+                  truncated: false,
+                },
+              };
+            }
+            const result = decoded.resolution.result as {
+              readonly dependencyId?: unknown;
+              readonly consumerWorkId?: unknown;
+              readonly state?: unknown;
+              readonly revision?: unknown;
+            };
+            if (
+              result.dependencyId !== dependencyId ||
+              result.consumerWorkId !== workId ||
+              result.state !== "Unsatisfied" ||
+              result.revision !== 0
+            ) {
+              return yield* Effect.fail(
+                actionOperationalFailure("DeclareDependency.currentReceipt")(
+                  "current Committed result does not match the pinned action",
+                ),
+              );
+            }
+            if (dependencies.dependencyRecords === undefined) {
+              return yield* Effect.fail(
+                actionOperationalFailure("DeclareDependency.currentReceipt")(
+                  "canonical Dependency lookup is required to replay a Committed receipt",
+                ),
+              );
+            }
+            const [canonicalDependency, canonicalConsumer] = yield* Effect.all(
+              [
+                dependencies.tx.transact(
+                  dependencies.dependencyRecords.findById(dependencyId),
+                ),
+                dependencies.tx.transact(dependencies.works.findById(workId)),
+              ],
+              { concurrency: 1 },
+            );
+            const expectedRoles = [
+              ...action.expectedDeliverable.requiredArtifactRoles,
+            ].sort();
+            if (
+              Option.isNone(canonicalDependency) ||
+              Option.isNone(canonicalConsumer) ||
+              canonicalConsumer.value.projectId !== execution.projectId ||
+              canonicalDependency.value.dependencyId !== dependencyId ||
+              canonicalDependency.value.consumerWorkId !== workId ||
+              canonicalDependency.value.producerBinding._tag !==
+                action.producerBinding._tag ||
+              canonicalDependency.value.expectedDeliverable.kind !==
+                action.expectedDeliverable.kind ||
+              JSON.stringify(
+                [
+                  ...canonicalDependency.value.expectedDeliverable
+                    .requiredArtifactRoles,
+                ].sort(),
+              ) !== JSON.stringify(expectedRoles)
+            ) {
+              return yield* Effect.fail(
+                actionOperationalFailure("DeclareDependency.currentReceipt")(
+                  "Committed receipt has no exact matching canonical Dependency",
+                ),
+              );
+            }
+            return {
+              _tag: "Observation" as const,
+              source: "Runtime" as const,
+              observation: {
+                text: `DependencyDeclared(${dependencyId}, Unsatisfied)`,
+                truncated: false,
+              },
+            };
+          }
+        }
+        if (dependencies.anyProducerEvidence === undefined) {
+          return yield* Effect.fail(
+            actionOperationalFailure("DeclareDependency.evidence")(
+              "AnyProducer evidence reader is unavailable",
+            ),
+          );
+        }
+        const hasEvidence = yield* dependencies.anyProducerEvidence({
+          projectId: execution.projectId,
+          consumerWorkId: workId,
+          expectedDeliverable: action.expectedDeliverable,
+        });
+        if (!hasEvidence) {
+          return yield* Effect.fail(
+            actionError(
+              "No eligible producer evidence exists for this AnyProducer dependency yet.",
+            ),
+          );
+        }
+      }
       const receipt = yield* dependencies.gateway.execute<
         DeclareDependencyPayload,
         DeclareDependencyResult
@@ -606,56 +3292,1658 @@ const declareDependencyHandler = (
           truncated: false,
         },
       };
-    }).pipe(Effect.mapError(actionError)),
+    }).pipe(Effect.mapError(actionOperationalFailure("DeclareDependency"))),
 });
 
-export const makeSliceControlActionHandlers = (
+export const produceDeliverableHandler = (
+  dependencies: ProduceDeliverableDependencies,
+): AgentActionHandler => ({
+  action: "ProduceDeliverable",
+  handle: ({ action, invocation, execution, context }) =>
+    Effect.gen(function* () {
+      if (action._tag !== "ProduceDeliverable") {
+        return yield* Effect.fail(
+          actionOperationalFailure("ProduceDeliverable.dispatch")(
+            "ProduceDeliverable handler received a different AgentAction",
+          ),
+        );
+      }
+      const boundWork = workEpisode(execution);
+      if (boundWork === null) {
+        return yield* Effect.fail(
+          actionError(
+            "produce_deliverable requires an exact WorkEpisode",
+            "action/not-applicable",
+          ),
+        );
+      }
+      const occurrence = `${invocation.providerTurnId}:${invocation.outputPosition}`;
+      const payload: ProduceDeliverablePayload = {
+        deliverableId: parse(DeliverableId)(
+          `del_${newUuid7("produce-deliverable", occurrence)}`,
+        ),
+        sourceWorkId: boundWork.workId,
+        observedSourceWorkRevision: boundWork.targetWorkRevision,
+        kind: action.kind as DeliverableKind,
+        artifacts: action.artifacts.map((artifact) => ({
+          role: artifact.role as ArtifactRole,
+          artifactId: artifact.artifactId,
+        })),
+      };
+      if (context._tag === "ExecutionOrigin" && context.fencingGeneration > 0) {
+        const prior = yield* findPriorCommandReceipt({
+          context,
+          namespace: "produce-deliverable-command",
+          occurrence,
+          commandReceipts: dependencies.commandReceipts,
+          commandType: "ProduceDeliverable",
+          commandHandlerRegistry: dependencies.commandHandlerRegistry,
+          tx: dependencies.tx,
+          projectId: execution.projectId,
+          operation: "ProduceDeliverable.priorReceipt",
+          errorOperation: "ProduceDeliverable",
+          identityErrorMessage:
+            "prior Command receipt belongs to another Project",
+        });
+        if (prior._tag === "Committed") {
+          const result = prior.receipt.resolution.result;
+          if (
+            typeof result !== "object" ||
+            result === null ||
+            !("deliverableId" in result) ||
+            result.deliverableId !== payload.deliverableId ||
+            !("sourceWorkId" in result) ||
+            result.sourceWorkId !== payload.sourceWorkId ||
+            !("sourceWorkRevision" in result) ||
+            result.sourceWorkRevision !== payload.observedSourceWorkRevision ||
+            !("kind" in result) ||
+            result.kind !== payload.kind ||
+            !("artifactRoles" in result) ||
+            !Array.isArray(result.artifactRoles) ||
+            JSON.stringify([...result.artifactRoles].sort()) !==
+              JSON.stringify(payload.artifacts.map((item) => item.role).sort())
+          ) {
+            return yield* Effect.fail(
+              actionOperationalFailure("ProduceDeliverable.priorReceipt")(
+                "prior Committed result does not match the pinned action",
+              ),
+            );
+          }
+          return {
+            _tag: "Observation" as const,
+            source: "Runtime" as const,
+            observation: {
+              text: `DeliverableProduced(${payload.deliverableId}, ${action.kind})`,
+              truncated: false,
+            },
+          };
+        }
+        if (prior._tag === "TerminalRejected") {
+          return yield* Effect.fail(
+            actionError(
+              "earlier command was terminally rejected",
+              "action/canonical-rejected",
+              "WaitForStateChange",
+            ),
+          );
+        }
+      }
+      const commandId = generationScopedCommandId(
+        "produce-deliverable-command",
+        occurrence,
+        context,
+      );
+      const actor = context.principal as never;
+      const receipt = yield* dependencies.gateway.execute<
+        ProduceDeliverablePayload,
+        ProduceDeliverableResult
+      >(
+        {
+          commandType: "ProduceDeliverable",
+          commandId,
+          projectId: execution.projectId,
+          actor,
+          issuedAt: yield* dependencies.clock.now(),
+          payload,
+        },
+        context,
+        {
+          _tag: "ProduceDeliverableAuthority",
+          principal: context.principal,
+          commandId,
+          semanticRequestFingerprint: semanticRequestFingerprint({
+            commandType: "ProduceDeliverable",
+            projectId: execution.projectId,
+            actor,
+            schemaVersion: "1",
+            payload,
+          }),
+          projectId: execution.projectId,
+          sourceWorkspaceId: execution.workspaceId,
+          sourceWorkId: boundWork.workId,
+        },
+      );
+      if (receipt.resolution._tag !== "Committed") {
+        return yield* Effect.fail(
+          actionError(
+            receipt.resolution._tag === "TerminalRejected"
+              ? JSON.stringify(receipt.resolution.error)
+              : "ProduceDeliverable failed operationally",
+            "action/canonical-rejected",
+            "RetryWithChangedInput",
+          ),
+        );
+      }
+      return {
+        _tag: "Observation" as const,
+        source: "Runtime" as const,
+        observation: {
+          text: `DeliverableProduced(${payload.deliverableId}, ${action.kind})`,
+          truncated: false,
+        },
+      };
+    }).pipe(Effect.mapError(actionOperationalFailure("ProduceDeliverable"))),
+});
+
+const isRecord = (
+  value: unknown,
+  key?: string,
+  expected?: unknown,
+): value is Record<string, unknown> => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    key === undefined ||
+    (Object.hasOwn(record, key) && record[key] === expected)
+  );
+};
+
+const exactObject = (
+  actual: unknown,
+  expected: Readonly<Record<string, unknown>>,
+): boolean => {
+  if (!isRecord(actual)) return false;
+  const actualKeys = Object.keys(actual).sort();
+  const expectedKeys = Object.keys(expected).sort();
+  return (
+    actualKeys.length === expectedKeys.length &&
+    actualKeys.every(
+      (key, index) =>
+        key === expectedKeys[index] && actual[key] === expected[key],
+    )
+  );
+};
+
+const exactDeliverMessage = (
+  actual: import("@arbor/domain").OutboundMessage,
+  expected: {
+    readonly recipientWorkspaceId: import("@arbor/domain").WorkspaceId;
+    readonly bodyRef: string;
+  },
+): boolean =>
+  actual.kind === "Deliver" &&
+  actual.recipientWorkspaceId === expected.recipientWorkspaceId &&
+  actual.bodyRef === expected.bodyRef &&
+  actual.correlationId === undefined &&
+  actual.causationId === undefined &&
+  actual.urgency === "Normal";
+
+export const deliverMessageGatewayHandler = (
+  dependencies: DeliverActionDependencies,
+): AgentActionHandler => ({
+  action: "Deliver",
+  handle: ({ action, invocation, execution, context, logicalActionId }) =>
+    Effect.gen(function* () {
+      if (action._tag !== "Deliver") {
+        return yield* Effect.fail(
+          actionOperationalFailure("Deliver.dispatch")(
+            "Deliver handler received a different AgentAction",
+          ),
+        );
+      }
+      const occurrence = `${invocation.providerTurnId}:${invocation.outputPosition}`;
+      const commandId = generationScopedCommandId(
+        "deliver-command",
+        occurrence,
+        context,
+      );
+      const messageId = parse(MessageIdSchema)(
+        `msg_${newUuid7("deliver-message", occurrence)}`,
+      );
+      const pinnedLogicalActionId = logicalActionId;
+      const replayAttention = dependencies.replayAttention;
+      if (
+        pinnedLogicalActionId === undefined ||
+        replayAttention === undefined
+      ) {
+        return yield* Effect.fail(
+          actionOperationalFailure("Deliver.recovery")(
+            "Deliver replay failure identity and store are required",
+          ),
+        );
+      }
+      const expectedAttentionFactId = `att_${sha256Hex(
+        JSON.stringify({
+          version: 1,
+          executionId: execution.executionId,
+          logicalActionId: pinnedLogicalActionId,
+          messageId,
+        }),
+      )}`;
+      const priorReplayFailure = yield* dependencies.tx.transact(
+        replayAttention.findDeliverReplayFailure(expectedAttentionFactId),
+      );
+      if (Option.isSome(priorReplayFailure)) {
+        const fact = priorReplayFailure.value;
+        if (
+          fact.attentionFactId !== expectedAttentionFactId ||
+          fact.projectId !== execution.projectId ||
+          fact.executionId !== execution.executionId ||
+          fact.targetWorkspaceId !== execution.workspaceId ||
+          fact.logicalActionId !== pinnedLogicalActionId ||
+          fact.messageId !== messageId
+        ) {
+          return yield* Effect.fail(
+            actionOperationalFailure("Deliver.recovery")(
+              "stored Deliver replay failure has conflicting identity",
+            ),
+          );
+        }
+        return yield* Effect.fail<AgentActionError>({
+          _tag: "AgentActionRecoveryBlocked",
+          executionId: execution.executionId,
+          logicalActionId: pinnedLogicalActionId,
+        });
+      }
+      const sender = yield* dependencies.tx.transact(
+        dependencies.workspaces.findById(execution.workspaceId),
+      );
+      const deliverable = yield* dependencies.tx.transact(
+        dependencies.deliverables.findById(action.deliverableId),
+      );
+      let deliverableSourceIsExact = false;
+      if (Option.isSome(deliverable)) {
+        const sourceWork = yield* dependencies.tx.transact(
+          dependencies.works.findById(deliverable.value.sourceWorkId),
+        );
+        deliverableSourceIsExact =
+          Option.isSome(sourceWork) &&
+          sourceWork.value.projectId === execution.projectId &&
+          sourceWork.value.workspaceId === execution.workspaceId;
+      }
+      let expectedRecipientWorkspaceId:
+        | import("@arbor/domain").WorkspaceId
+        | null = null;
+      if (
+        Option.isSome(sender) &&
+        sender.value.projectId === execution.projectId &&
+        sender.value.parentWorkspaceId !== null
+      ) {
+        expectedRecipientWorkspaceId = sender.value.parentWorkspaceId;
+      }
+      const planFor = (candidateCommandId: CommandIdType) =>
+        deliverMessagePlan({
+          messageId,
+          commandId: candidateCommandId,
+          projectId: execution.projectId,
+          senderWorkspaceId: execution.workspaceId,
+          deliverableId: action.deliverableId,
+          bodyRef: action.summary,
+          principal: context.principal,
+          actor: context.principal as never,
+        });
+      const failure = (safeMessage: string): AgentActionError =>
+        actionOperationalFailure("Deliver.recovery")(safeMessage);
+      const block = (
+        failureCode: DeliverReplayFailureCode,
+        causedByCommandId?: CommandIdType,
+      ) =>
+        Effect.gen(function* () {
+          const factInput = {
+            projectId: execution.projectId,
+            executionId: execution.executionId,
+            targetWorkspaceId: execution.workspaceId,
+            logicalActionId: pinnedLogicalActionId,
+            messageId,
+            failureCode,
+            firstDetectedAt: yield* dependencies.clock.now(),
+            ...(causedByCommandId === undefined ? {} : { causedByCommandId }),
+          };
+          yield* dependencies.tx.transact(
+            Effect.gen(function* () {
+              yield* replayAttention.recordDeliverReplayFailure(factInput);
+              yield* Effect.promise(
+                () =>
+                  dependencies.deliverReplayQualificationProbe?.({
+                    boundary: "BeforeDeliverReplayAttentionCommit",
+                    executionId: execution.executionId,
+                    logicalActionId: pinnedLogicalActionId,
+                    messageId,
+                    failureCode,
+                  }) ?? Promise.resolve(),
+              );
+            }),
+          );
+          yield* Effect.promise(
+            () =>
+              dependencies.deliverReplayQualificationProbe?.({
+                boundary: "AfterDeliverReplayAttentionCommit",
+                executionId: execution.executionId,
+                logicalActionId: pinnedLogicalActionId,
+                messageId,
+                failureCode,
+              }) ?? Promise.resolve(),
+          );
+          return yield* Effect.fail<AgentActionError>({
+            _tag: "AgentActionRecoveryBlocked",
+            executionId: execution.executionId,
+            logicalActionId: pinnedLogicalActionId,
+          });
+        }).pipe(Effect.mapError(actionOperationalFailure("Deliver.attention")));
+
+      const findInboxByKey = dependencies.inbox.findByKey;
+      if (findInboxByKey === undefined) {
+        return yield* Effect.fail(
+          failure("Deliver Inbox evidence lookup is unavailable"),
+        );
+      }
+
+      const readEffects = () =>
+        Effect.gen(function* () {
+          const message = yield* dependencies.messages.findById(messageId);
+          const inbox = yield* findInboxByKey(
+            expectedRecipientWorkspaceId ?? execution.workspaceId,
+            messageEntryKey(messageId),
+          );
+          const matchingEvents: Array<
+            import("@arbor/domain").DomainEvent<unknown>
+          > = [];
+          let cursor = 0;
+          for (;;) {
+            const batch = yield* dependencies.journal.readAfter(
+              execution.projectId,
+              cursor,
+              512,
+            );
+            for (const event of batch) {
+              if (
+                event.eventType !== "MessageSent" ||
+                (event.aggregateRef !== messageId &&
+                  !isRecord(event.payload, "messageId", messageId))
+              ) {
+                continue;
+              }
+              matchingEvents.push(event);
+            }
+            if (batch.length < 512) break;
+            const last = batch[batch.length - 1];
+            if (last === undefined || Number(last.sequence) <= cursor) {
+              return yield* Effect.fail(
+                failure("MessageSent journal scan did not advance"),
+              );
+            }
+            cursor = Number(last.sequence);
+          }
+          return { message, inbox, events: matchingEvents };
+        });
+
+      const effects = yield* dependencies.tx.transact(readEffects());
+      const hasEffect =
+        Option.isSome(effects.message) ||
+        Option.isSome(effects.inbox) ||
+        effects.events.length > 0;
+      const eventPayload = {
+        messageId,
+        kind: "Deliver",
+        sender: execution.workspaceId,
+        recipient: expectedRecipientWorkspaceId,
+        deliverableId: action.deliverableId,
+        correlationId: null,
+        causationId: null,
+      };
+      const exactRecord =
+        Option.isSome(effects.message) &&
+        expectedRecipientWorkspaceId !== null &&
+        effects.message.value.messageId === messageId &&
+        effects.message.value.senderWorkspaceId === execution.workspaceId &&
+        effects.message.value.sentAt !== "" &&
+        exactDeliverMessage(effects.message.value.message, {
+          recipientWorkspaceId: expectedRecipientWorkspaceId,
+          bodyRef: action.summary,
+        });
+      const messageRecord = Option.isSome(effects.message)
+        ? effects.message.value
+        : undefined;
+      const inboxMatchesIfPresent = (admittedAt: string) =>
+        Option.isNone(effects.inbox) ||
+        (effects.inbox.value.recipientWorkspaceId ===
+          expectedRecipientWorkspaceId &&
+          effects.inbox.value.entryKey === messageEntryKey(messageId) &&
+          effects.inbox.value.kind === "Message" &&
+          effects.inbox.value.summary ===
+            `Deliver ${action.deliverableId} from ${execution.workspaceId}` &&
+          effects.inbox.value.correlationId === undefined &&
+          effects.inbox.value.admittedAt === admittedAt);
+      const eventMatches = (cause: CommandIdType) => {
+        if (effects.events.length !== 1 || !exactRecord) return false;
+        const event = effects.events[0];
+        return (
+          event !== undefined &&
+          event.projectId === execution.projectId &&
+          event.aggregateRef === messageId &&
+          event.eventType === "MessageSent" &&
+          event.eventVersion === 1 &&
+          event.causedByCommandId === cause &&
+          messageRecord !== undefined &&
+          event.occurredAt === messageRecord.sentAt &&
+          exactObject(event.payload, eventPayload)
+        );
+      };
+      const recoverableContext =
+        context._tag === "ExecutionOrigin" ? context : undefined;
+      let chosenCommandId = commandId;
+      let committedReceipt:
+        | (Omit<
+            import("@arbor/domain").CommandReceipt<
+              import("@arbor/application").DeliverMessageResult,
+              unknown
+            >,
+            "resolution"
+          > & {
+            readonly resolution: Extract<
+              import("@arbor/domain").CommandReceipt<
+                import("@arbor/application").DeliverMessageResult,
+                unknown
+              >["resolution"],
+              { readonly _tag: "Committed" }
+            >;
+          })
+        | undefined;
+      let rejectedReceipt:
+        | import("@arbor/domain").CommandReceipt<unknown, unknown>
+        | undefined;
+      let fencingRejectedCommandId: CommandIdType | undefined;
+      let retryableCommandId: CommandIdType | undefined;
+      if (recoverableContext !== undefined) {
+        if (
+          dependencies.commandReceipts === undefined ||
+          dependencies.commandHandlerRegistry === undefined
+        ) {
+          return yield* Effect.fail(
+            failure("Deliver receipt recovery dependencies are unavailable"),
+          );
+        }
+        const handler =
+          dependencies.commandHandlerRegistry.lookup("DeliverMessage");
+        if (
+          Option.isNone(handler) ||
+          handler.value.commandType !== "DeliverMessage"
+        ) {
+          return yield* Effect.fail(
+            failure("DeliverMessage receipt decoder is not registered"),
+          );
+        }
+        for (
+          let priorGeneration = 0;
+          priorGeneration <= recoverableContext.fencingGeneration;
+          priorGeneration += 1
+        ) {
+          const candidateCommandId = generationScopedCommandId(
+            "deliver-command",
+            occurrence,
+            {
+              ...recoverableContext,
+              fencingGeneration: priorGeneration as LeaseGeneration,
+            },
+          );
+          const raw = yield* dependencies.tx.transact(
+            dependencies.commandReceipts.findResolution(candidateCommandId),
+          );
+          if (Option.isNone(raw)) {
+            if (
+              priorGeneration < recoverableContext.fencingGeneration &&
+              dependencies.commandReceipts.hasRetryableAttempt === undefined
+            ) {
+              return yield* Effect.fail(
+                failure(
+                  "Deliver retry-attempt lookup is required for cross-generation recovery",
+                ),
+              );
+            }
+            if (
+              dependencies.commandReceipts.hasRetryableAttempt !== undefined &&
+              (yield* dependencies.tx.transact(
+                dependencies.commandReceipts.hasRetryableAttempt(
+                  candidateCommandId,
+                ),
+              )) &&
+              retryableCommandId === undefined
+            ) {
+              retryableCommandId = candidateCommandId;
+            }
+            continue;
+          }
+          if (
+            raw.value.commandId !== candidateCommandId ||
+            raw.value.projectId !== execution.projectId ||
+            raw.value.fingerprintAlgorithmVersion !== 1
+          ) {
+            return yield* block(
+              "PriorReceiptResultMismatch",
+              candidateCommandId,
+            );
+          }
+          if (raw.value.schemaVersion !== handler.value.schemaVersion) {
+            return yield* block(
+              "PriorReceiptDecodeMismatch",
+              candidateCommandId,
+            );
+          }
+          const decoded = yield* decodeRegisteredCommandReceipt<
+            import("@arbor/application").DeliverMessageResult
+          >(raw.value, "DeliverMessage", handler.value.schemaVersion).pipe(
+            Effect.catch(() => Effect.succeed(null)),
+          );
+          if (decoded === null) {
+            return yield* block(
+              "PriorReceiptDecodeMismatch",
+              candidateCommandId,
+            );
+          }
+          // A Committed receipt from the current generation is the immutable
+          // request for this same CommandId, so its fingerprint must still
+          // match. A prior-generation receipt is a receipt-first handoff: its
+          // fingerprint binds the old request and is not compared to the
+          // current generation's candidate request. Its CommandId, trusted
+          // schema, result, and canonical effects remain verified below.
+          if (
+            priorGeneration === recoverableContext.fencingGeneration &&
+            decoded.semanticRequestFingerprint !==
+              planFor(candidateCommandId).authority.semanticRequestFingerprint
+          ) {
+            return yield* block(
+              "PriorReceiptResultMismatch",
+              candidateCommandId,
+            );
+          }
+          if (decoded.resolution._tag === "Committed") {
+            committedReceipt = decoded as typeof committedReceipt;
+            chosenCommandId = candidateCommandId;
+            break;
+          }
+          if (isFencingRejectedReceipt(decoded.resolution)) {
+            fencingRejectedCommandId = candidateCommandId;
+            continue;
+          }
+          rejectedReceipt = decoded;
+          chosenCommandId = candidateCommandId;
+          break;
+        }
+      }
+
+      if (committedReceipt !== undefined) {
+        const result = committedReceipt.resolution.result;
+        if (
+          expectedRecipientWorkspaceId === null ||
+          result.messageId !== messageId ||
+          result.deliverableId !== action.deliverableId ||
+          result.senderWorkspaceId !== execution.workspaceId ||
+          result.recipientWorkspaceId !== expectedRecipientWorkspaceId ||
+          result.admitted !== true ||
+          !exactRecord ||
+          !deliverableSourceIsExact ||
+          !eventMatches(chosenCommandId) ||
+          !inboxMatchesIfPresent(effects.events[0]?.occurredAt ?? "")
+        ) {
+          return yield* block("PriorReceiptResultMismatch", chosenCommandId);
+        }
+        return {
+          _tag: "Observation" as const,
+          source: "Runtime" as const,
+          observation: {
+            text: `DeliverableDelivered(${action.deliverableId}, ${expectedRecipientWorkspaceId})`,
+            truncated: false,
+          },
+        };
+      }
+
+      if (rejectedReceipt !== undefined) {
+        if (hasEffect) {
+          return yield* block("PriorReceiptEffectConflict", chosenCommandId);
+        }
+        return {
+          _tag: "Observation" as const,
+          source: "Runtime" as const,
+          observation: {
+            text: `DeliverMessage rejected: ${JSON.stringify(rejectedReceipt.resolution)}`,
+            truncated: false,
+          },
+        };
+      }
+
+      if (fencingRejectedCommandId !== undefined && hasEffect) {
+        return yield* block(
+          "RejectedReceiptEffectConflict",
+          fencingRejectedCommandId,
+        );
+      }
+      if (retryableCommandId !== undefined && hasEffect) {
+        return yield* block("PriorReceiptEffectConflict", retryableCommandId);
+      }
+
+      if (
+        hasEffect &&
+        recoverableContext !== undefined &&
+        recoverableContext.fencingGeneration > 0
+      ) {
+        return yield* block("PriorReceiptEffectConflict");
+      }
+
+      if (committedReceipt === undefined && rejectedReceipt === undefined) {
+        const legacyCommandId = parse(CommandId)(
+          `cmd_${newUuid7("deliver-command", occurrence)}`,
+        );
+        if (hasEffect) {
+          const legacyProof =
+            exactRecord &&
+            deliverableSourceIsExact &&
+            eventMatches(legacyCommandId);
+          if (
+            Option.isSome(effects.inbox) &&
+            (!legacyProof ||
+              !inboxMatchesIfPresent(effects.events[0]?.occurredAt ?? ""))
+          ) {
+            return yield* block("LegacyInboxConflict");
+          }
+          if (effects.events.length === 0 && Option.isSome(effects.message)) {
+            return yield* block("LegacyMessageMissingEvent");
+          }
+          if (Option.isNone(effects.message) && effects.events.length > 0) {
+            return yield* block("LegacyEventMissingMessage");
+          }
+          if (!legacyProof) {
+            return yield* block("LegacyMessageBindingMismatch");
+          }
+          return {
+            _tag: "Observation" as const,
+            source: "Runtime" as const,
+            observation: {
+              text: `DeliverableDelivered(${action.deliverableId}, ${expectedRecipientWorkspaceId})`,
+              truncated: false,
+            },
+          };
+        }
+        if (retryableCommandId !== undefined)
+          chosenCommandId = retryableCommandId;
+      }
+      const plan = deliverMessagePlan({
+        messageId,
+        commandId: chosenCommandId,
+        projectId: execution.projectId,
+        senderWorkspaceId: execution.workspaceId,
+        deliverableId: action.deliverableId,
+        bodyRef: action.summary,
+        principal: context.principal,
+        actor: context.principal as never,
+      });
+      const receipt = yield* dependencies.gateway.execute<
+        import("@arbor/application").DeliverMessagePayload,
+        import("@arbor/application").DeliverMessageResult
+      >(
+        {
+          commandType: "DeliverMessage",
+          commandId: chosenCommandId,
+          projectId: execution.projectId,
+          actor: context.principal as never,
+          issuedAt: yield* dependencies.clock.now(),
+          payload: plan.payload,
+        },
+        context,
+        plan.authority,
+      );
+      if (receipt.resolution._tag !== "Committed") {
+        const reason =
+          receipt.resolution._tag === "TerminalRejected"
+            ? JSON.stringify(receipt.resolution.error)
+            : "operational DeliverMessage failure";
+        return {
+          _tag: "Observation" as const,
+          source: "Runtime" as const,
+          observation: {
+            text: `DeliverMessage rejected: ${reason}`,
+            truncated: false,
+          },
+        };
+      }
+      return {
+        _tag: "Observation" as const,
+        source: "Runtime" as const,
+        observation: {
+          text: `DeliverableDelivered(${action.deliverableId}, ${receipt.resolution.result.recipientWorkspaceId})`,
+          truncated: false,
+        },
+      };
+    }).pipe(Effect.mapError(actionOperationalFailure("Deliver"))),
+});
+
+/** Historical direct-write handler retained only so the pending AH10
+ * regression fixture can continue to reproduce the pre-Gateway bypass. The
+ * production action registry below uses deliverMessageGatewayHandler. */
+export const deliverHandler = (
+  dependencies: Omit<DeliverActionDependencies, "gateway">,
+): AgentActionHandler => ({
+  action: "Deliver",
+  handle: ({ action, invocation, execution, context }) =>
+    Effect.gen(function* () {
+      if (action._tag !== "Deliver") {
+        return yield* Effect.fail(
+          actionOperationalFailure("Deliver.dispatch")(
+            "Deliver handler received a different AgentAction",
+          ),
+        );
+      }
+      const occurrence = `${invocation.providerTurnId}:${invocation.outputPosition}`;
+      const commandId = parse(CommandId)(
+        `cmd_${newUuid7("deliver-command", occurrence)}`,
+      );
+      const messageId = parse(MessageIdSchema)(
+        `msg_${newUuid7("deliver-message", occurrence)}`,
+      );
+      const sendMessage = makeSendMessageHandler({
+        workspaces: dependencies.workspaces,
+        messages: dependencies.messages,
+        inbox: dependencies.inbox,
+      });
+      const submission = yield* dependencies.tx.transact(
+        submitDeliver(
+          {
+            senderWorkspaceId: execution.workspaceId,
+            deliverableId: action.deliverableId,
+            bodyRef: action.summary,
+            commandId,
+            messageId,
+            projectId: execution.projectId,
+            actor: context.principal as never,
+            principal: context.principal,
+          },
+          {
+            deliverables: dependencies.deliverables,
+            works: dependencies.works,
+            workspaces: dependencies.workspaces,
+            sendMessage,
+            inbox: dependencies.inbox,
+            journal: dependencies.journal,
+            clock: dependencies.clock,
+          },
+        ).pipe(Effect.provideService(IdGenerator, dependencies.ids)),
+      );
+      if (submission._tag === "Rejected") {
+        return yield* Effect.fail(
+          actionError(
+            JSON.stringify(submission.rejection),
+            "action/canonical-rejected",
+            "RetryWithChangedInput",
+          ),
+        );
+      }
+      return {
+        _tag: "Observation" as const,
+        source: "Runtime" as const,
+        observation: {
+          text: `DeliverableDelivered(${action.deliverableId}, ${submission.outcome.recipientWorkspaceId})`,
+          truncated: false,
+        },
+      };
+    }).pipe(Effect.mapError(actionOperationalFailure("Deliver"))),
+});
+
+const verifierBinding = (
+  dependencies: VerificationActionDependencies,
+  executionId: import("@arbor/domain").ExecutionId,
+) =>
+  dependencies.tx.transact(
+    dependencies.verifications.findByExecutionId(executionId),
+  );
+
+const toolResultMatchesSettlement = (
+  status: string,
+  settlement: import("@arbor/ports").ToolInvocationSettlement | null,
+): boolean => {
+  if (settlement === null) return false;
+  switch (status) {
+    case "Succeeded":
+      return settlement._tag === "Success";
+    case "Failed":
+      return (
+        settlement._tag === "ExpectedFailure" ||
+        settlement._tag === "RuntimeFailure" ||
+        settlement._tag === "ReconciledNoEffect"
+      );
+    case "Interrupted":
+      return settlement._tag === "Interrupted";
+    case "OutcomeUnknown":
+      return settlement._tag === "OutcomeUnknown";
+    default:
+      return false;
+  }
+};
+
+const recordVerificationEvidenceHandler = (
+  dependencies: VerificationActionDependencies & {
+    readonly loopSteps: NonNullable<
+      VerificationActionDependencies["loopSteps"]
+    >;
+  },
+): AgentActionHandler => ({
+  action: "RecordVerificationEvidence",
+  handle: ({ action, invocation, execution, context }) =>
+    Effect.gen(function* () {
+      if (action._tag !== "RecordVerificationEvidence") {
+        return yield* Effect.fail(
+          actionOperationalFailure("RecordVerificationEvidence.dispatch")(
+            "verification evidence handler received another action",
+          ),
+        );
+      }
+      const verification = yield* verifierBinding(
+        dependencies,
+        execution.executionId,
+      );
+      if (Option.isNone(verification)) {
+        return yield* Effect.fail(
+          actionError("execution is not bound to a Verification"),
+        );
+      }
+      const entries = yield* dependencies.tx.transact(
+        dependencies.sessions.listEntries(execution.sessionId, -1, 10_000),
+      );
+      const visibleResults = [...entries].reverse().filter((entry) => {
+        const payload = entry.payload as {
+          readonly _tag?: unknown;
+          readonly status?: unknown;
+        };
+        return (
+          payload._tag === "ToolResult" &&
+          (payload.status === "Succeeded" ||
+            payload.status === "Failed" ||
+            payload.status === "Interrupted" ||
+            payload.status === "OutcomeUnknown")
+        );
+      });
+      const exact = visibleResults.find(
+        (entry) =>
+          (entry.payload as { readonly callRef?: unknown }).callRef ===
+          action.sourceCallRef,
+      );
+      const ordinal = /^\d+$/u.test(action.sourceCallRef)
+        ? Number(action.sourceCallRef)
+        : 0;
+      const resultEntry =
+        exact ?? (ordinal > 0 ? visibleResults[ordinal - 1] : undefined);
+      if (resultEntry === undefined) {
+        return yield* Effect.fail(
+          actionError(
+            "sourceCallRef has no visible terminal ToolResult (exact callRef or newest-first ordinal)",
+          ),
+        );
+      }
+      const result = resultEntry.payload as {
+        readonly _tag: "ToolResult";
+        readonly callRef: string;
+        readonly invocationId?: string;
+        readonly observationRef: string;
+        readonly status: string;
+      };
+      if (
+        typeof result.invocationId !== "string" ||
+        typeof result.observationRef !== "string"
+      ) {
+        return yield* Effect.fail(
+          actionError(
+            "ToolObservation source must carry canonical invocation identity",
+          ),
+        );
+      }
+      let toolInvocationId: import("@arbor/domain").ToolInvocationId;
+      try {
+        toolInvocationId = parse(ToolInvocationId)(result.invocationId);
+      } catch {
+        return yield* Effect.fail(
+          actionError(
+            "ToolObservation invocation identity is invalid",
+            "action/precondition",
+            "RetryWithChangedInput",
+          ),
+        );
+      }
+      const storedInvocation = yield* dependencies.tx.transact(
+        dependencies.toolInvocations.findById(toolInvocationId),
+      );
+      if (
+        Option.isNone(storedInvocation) ||
+        storedInvocation.value.executionId !== execution.executionId ||
+        storedInvocation.value.settledAt === null ||
+        !toolResultMatchesSettlement(
+          result.status,
+          storedInvocation.value.settlement,
+        )
+      ) {
+        return yield* Effect.fail(
+          actionError(
+            "ToolObservation source is missing, unsettled, inconsistent, or belongs to another execution",
+          ),
+        );
+      }
+      const occurrence = `${invocation.providerTurnId}:${invocation.outputPosition}`;
+      const currentStep = yield* dependencies.tx.transact(
+        dependencies.loopSteps.findCurrent(execution.executionId),
+      );
+      if (
+        Option.isNone(currentStep) ||
+        currentStep.value.providerTurnId !== invocation.providerTurnId ||
+        currentStep.value.state !== "ActionsInProgress"
+      ) {
+        return yield* Effect.fail(
+          actionError(
+            "persisted AgentLoopStep does not bind this ProviderTurn",
+          ),
+        );
+      }
+      const actionIntents = yield* dependencies.tx.transact(
+        dependencies.loopSteps.listActions(currentStep.value.identity),
+      );
+      const actionIntent = actionIntents.find(
+        (candidate) => candidate.actionIndex === invocation.outputPosition,
+      );
+      if (
+        actionIntent === undefined ||
+        actionIntent.state !== "Pending" ||
+        actionIntent.routeKind !== "Control" ||
+        actionIntent.callRef !== invocation.callRef ||
+        actionIntent.actionKind !== invocation.toolName ||
+        actionIntent.inputHash !== sha256Hex(invocation.argumentsJson) ||
+        !Number.isFinite(Date.parse(actionIntent.updatedAt)) ||
+        new Date(actionIntent.updatedAt).toISOString() !==
+          actionIntent.updatedAt
+      ) {
+        return yield* Effect.fail(
+          actionError("durable P9 ActionIntent timestamp cannot be proven"),
+        );
+      }
+      const evidenceId = parse(EvidenceId)(
+        `evd_${newUuid7("verification-evidence", occurrence)}`,
+      );
+      const payload: RecordVerificationEvidencePayload = {
+        verificationId: verification.value.verificationId,
+        evidence: {
+          evidenceId,
+          criterionId: action.criterionId,
+          kind: "ToolObservation",
+          toolInvocationId,
+          observationRef: result.observationRef,
+          callRef: result.callRef,
+          recordedAt: actionIntent.updatedAt,
+        },
+      };
+      if (context._tag !== "ExecutionOrigin") {
+        return yield* Effect.fail(
+          actionError("verification evidence requires an Execution origin"),
+        );
+      }
+      const commandId = generationScopedCommandId(
+        "record-verification-evidence",
+        occurrence,
+        context,
+      );
+      const actor = context.principal as never;
+      if (context.fencingGeneration > 0) {
+        const prior = yield* findPriorCommandReceipt({
+          context,
+          namespace: "record-verification-evidence",
+          occurrence,
+          commandReceipts: dependencies.commandReceipts,
+          commandType: "RecordVerificationEvidence",
+          commandHandlerRegistry: dependencies.commandHandlerRegistry,
+          tx: dependencies.tx,
+          projectId: execution.projectId,
+          operation: "RecordVerificationEvidence.priorReceipt",
+          errorOperation: "RecordVerificationEvidence",
+          lookupOperation: "RecordVerificationEvidence.receiptLookup",
+        });
+        if (prior._tag === "Committed") {
+          yield* validatePriorCommittedReplay({
+            receipt: prior.receipt,
+            commandType: "RecordVerificationEvidence",
+            payload,
+            context,
+            actor,
+            registry: dependencies.commandHandlerRegistry,
+            tx: dependencies.tx,
+          });
+          const result = prior.receipt.resolution.result;
+          if (
+            typeof result !== "object" ||
+            result === null ||
+            !("verificationId" in result) ||
+            result.verificationId !== payload.verificationId ||
+            !("evidenceId" in result) ||
+            result.evidenceId !== evidenceId ||
+            !("state" in result) ||
+            result.state !== "Recorded"
+          ) {
+            return yield* Effect.fail(
+              actionOperationalFailure(
+                "RecordVerificationEvidence.priorReceipt",
+              )(
+                "committed evidence receipt result does not match the exact Evidence identity",
+              ),
+            );
+          }
+          return {
+            _tag: "Observation" as const,
+            source: "Runtime" as const,
+            observation: {
+              text: `VerificationEvidenceRecorded(${evidenceId}, ${action.criterionId})`,
+              truncated: false,
+            },
+          };
+        }
+        if (prior._tag === "TerminalRejected") {
+          return yield* Effect.fail(
+            actionError(JSON.stringify(prior.receipt.resolution.error)),
+          );
+        }
+      }
+      const receipt = yield* dependencies.gateway.execute<
+        RecordVerificationEvidencePayload,
+        RecordVerificationEvidenceResult
+      >(
+        {
+          commandType: "RecordVerificationEvidence",
+          commandId,
+          projectId: execution.projectId,
+          actor,
+          issuedAt: yield* dependencies.clock.now(),
+          payload,
+        },
+        context,
+        {
+          _tag: "VerifierExecutionAuthority",
+          principal: context.principal,
+          commandId,
+          semanticRequestFingerprint: semanticRequestFingerprint({
+            commandType: "RecordVerificationEvidence",
+            projectId: execution.projectId,
+            actor,
+            schemaVersion: "1",
+            payload,
+          }),
+          projectId: execution.projectId,
+          verificationId: verification.value.verificationId,
+          executionId: execution.executionId,
+        },
+      );
+      if (receipt.resolution._tag !== "Committed") {
+        return yield* Effect.fail(
+          actionError(
+            receipt.resolution._tag === "TerminalRejected"
+              ? JSON.stringify(receipt.resolution.error)
+              : "evidence command failed operationally",
+          ),
+        );
+      }
+      return {
+        _tag: "Observation" as const,
+        source: "Runtime" as const,
+        observation: {
+          text: `VerificationEvidenceRecorded(${evidenceId}, ${action.criterionId})`,
+          truncated: false,
+        },
+      };
+    }).pipe(
+      Effect.mapError(actionOperationalFailure("RecordVerificationEvidence")),
+    ),
+});
+
+const concludeVerificationHandler = (
+  dependencies: Omit<VerificationActionDependencies, "loopSteps">,
+): AgentActionHandler => ({
+  action: "ConcludeVerification",
+  handle: ({ action, invocation, execution, context }) =>
+    Effect.gen(function* () {
+      if (action._tag !== "ConcludeVerification") {
+        return yield* Effect.fail(
+          actionOperationalFailure("ConcludeVerification.dispatch")(
+            "verification conclusion handler received another action",
+          ),
+        );
+      }
+      const verification = yield* verifierBinding(
+        dependencies,
+        execution.executionId,
+      );
+      if (Option.isNone(verification)) {
+        return yield* Effect.fail(
+          actionError("execution is not bound to a Verification"),
+        );
+      }
+      const summaryBytes = new TextEncoder().encode(action.summary);
+      const summaryRef = yield* dependencies.blobs.put(summaryBytes);
+      const resolved = yield* dependencies.blobs.get(summaryRef);
+      if (
+        resolved.length !== summaryBytes.length ||
+        resolved.some((byte, index) => byte !== summaryBytes[index])
+      ) {
+        return yield* Effect.fail(
+          actionOperationalFailure("ConcludeVerification.blobRoundTrip")(
+            "persisted verification summary failed byte validation",
+          ),
+        );
+      }
+      const payload: ConcludeVerificationPayload = {
+        verificationId: verification.value.verificationId,
+        verdict: action.verdict,
+        criteriaResults: action.criteriaResults,
+        summaryRef,
+      };
+      const occurrence = `${invocation.providerTurnId}:${invocation.outputPosition}`;
+      if (context._tag !== "ExecutionOrigin") {
+        return yield* Effect.fail(
+          actionError("verification conclusion requires an Execution origin"),
+        );
+      }
+      const commandId = generationScopedCommandId(
+        "conclude-verification",
+        occurrence,
+        context,
+      );
+      const actor = context.principal as never;
+      if (context.fencingGeneration > 0) {
+        const prior = yield* findPriorCommandReceipt({
+          context,
+          namespace: "conclude-verification",
+          occurrence,
+          commandReceipts: dependencies.commandReceipts,
+          commandType: "ConcludeVerification",
+          commandHandlerRegistry: dependencies.commandHandlerRegistry,
+          tx: dependencies.tx,
+          projectId: execution.projectId,
+          operation: "ConcludeVerification.priorReceipt",
+          errorOperation: "ConcludeVerification",
+          lookupOperation: "ConcludeVerification.receiptLookup",
+        });
+        if (prior._tag === "Committed") {
+          yield* validatePriorCommittedReplay({
+            receipt: prior.receipt,
+            commandType: "ConcludeVerification",
+            payload,
+            context,
+            actor,
+            registry: dependencies.commandHandlerRegistry,
+            tx: dependencies.tx,
+          });
+          const result = prior.receipt.resolution.result;
+          if (
+            typeof result !== "object" ||
+            result === null ||
+            !("verificationId" in result) ||
+            result.verificationId !== payload.verificationId ||
+            !("state" in result) ||
+            result.state !== "Concluded" ||
+            !("verdict" in result) ||
+            result.verdict !== payload.verdict ||
+            !("summaryRef" in result) ||
+            result.summaryRef !== payload.summaryRef
+          ) {
+            return yield* Effect.fail(
+              actionOperationalFailure("ConcludeVerification.priorReceipt")(
+                "committed conclusion receipt result does not match canonical Verification identity",
+              ),
+            );
+          }
+          return {
+            _tag: "Settle" as const,
+            settlement: {
+              _tag: "Completed" as const,
+              result: {
+                _tag: "VerificationConcluded" as const,
+                verificationId: verification.value.verificationId,
+                verdict: action.verdict,
+              },
+            },
+          };
+        }
+        if (prior._tag === "TerminalRejected") {
+          return yield* Effect.fail(
+            actionError(JSON.stringify(prior.receipt.resolution.error)),
+          );
+        }
+      }
+      const receipt = yield* dependencies.gateway.execute<
+        ConcludeVerificationPayload,
+        ConcludeVerificationResult
+      >(
+        {
+          commandType: "ConcludeVerification",
+          commandId,
+          projectId: execution.projectId,
+          actor,
+          issuedAt: yield* dependencies.clock.now(),
+          payload,
+        },
+        context,
+        {
+          _tag: "VerifierExecutionAuthority",
+          principal: context.principal,
+          commandId,
+          semanticRequestFingerprint: semanticRequestFingerprint({
+            commandType: "ConcludeVerification",
+            projectId: execution.projectId,
+            actor,
+            schemaVersion: "2",
+            payload,
+          }),
+          projectId: execution.projectId,
+          verificationId: verification.value.verificationId,
+          executionId: execution.executionId,
+        },
+      );
+      if (receipt.resolution._tag !== "Committed") {
+        return yield* Effect.fail(
+          actionError(
+            receipt.resolution._tag === "TerminalRejected"
+              ? JSON.stringify(receipt.resolution.error)
+              : "verification conclusion failed operationally",
+          ),
+        );
+      }
+      return {
+        _tag: "Settle" as const,
+        settlement: {
+          _tag: "Completed" as const,
+          result: {
+            _tag: "VerificationConcluded" as const,
+            verificationId: verification.value.verificationId,
+            verdict: action.verdict,
+          },
+        },
+      };
+    }).pipe(Effect.mapError(actionOperationalFailure("ConcludeVerification"))),
+});
+
+export const makeSingleWorkspaceControlActionHandlers = (
   dependencies: SendMessageDependencies &
+    AssignWorkDependencies &
     ClaimCompletionDependencies &
     ProposeChildDependencies &
-    SpawnSpecialistDependencies &
-    DeclareDependencyDependencies,
-): ReadonlyArray<AgentActionHandler> => [
-  sendMessageHandler(dependencies),
-  claimCompletionHandler(dependencies),
-  proposeChildWorkspaceHandler(dependencies),
-  spawnSpecialistHandler(dependencies),
-  declareDependencyHandler(dependencies),
-];
+    DeclareDependencyDependencies &
+    ProduceDeliverableDependencies &
+    Partial<Pick<UpdatePlanDependencies, "plans">> &
+    Partial<Pick<SelectCurrentWorkDependencies, "decisions">> &
+    Partial<WorkspacePlacementDependencies> &
+    Partial<Pick<AcceptResultDependencies, "acceptances">> &
+    Partial<
+      Pick<
+        DeliverActionDependencies,
+        | "deliverables"
+        | "journal"
+        | "ids"
+        | "replayAttention"
+        | "deliverReplayQualificationProbe"
+      >
+    > &
+    Partial<
+      Pick<
+        VerificationActionDependencies,
+        "verifications" | "sessions" | "toolInvocations"
+      >
+    > &
+    Partial<{
+      waitVerifications: VerificationWaitEligibilityDependencies["verifications"];
+    }> &
+    Partial<
+      Pick<
+        ResolveWorkBlockerActionDependencies,
+        "blockers" | "loopSteps" | "providerTurns" | "ids" | "sessionWrites"
+      >
+    >,
+): ReadonlyArray<AgentActionHandler> => {
+  const handlers: AgentActionHandler[] = [
+    sendMessageHandler(dependencies),
+    assignWorkHandler(dependencies),
+    claimCompletionHandler(dependencies),
+    proposeChildWorkspaceHandler(dependencies),
+    declareDependencyHandler(dependencies),
+    produceDeliverableHandler(dependencies),
+  ];
+  if (
+    dependencies.blockers !== undefined &&
+    dependencies.loopSteps !== undefined &&
+    dependencies.providerTurns !== undefined &&
+    dependencies.sessions !== undefined &&
+    dependencies.journal !== undefined &&
+    dependencies.ids !== undefined &&
+    dependencies.sessionWrites !== undefined
+  ) {
+    handlers.push(
+      resolveWorkBlockerHandler({
+        tx: dependencies.tx,
+        blockers: dependencies.blockers,
+        works: dependencies.works,
+        loopSteps: dependencies.loopSteps,
+        providerTurns: dependencies.providerTurns,
+        sessionWrites: dependencies.sessionWrites,
+        journal: dependencies.journal,
+        clock: dependencies.clock,
+        ids: dependencies.ids,
+      }),
+    );
+  }
+  if (dependencies.waitVerifications !== undefined) {
+    handlers.push(
+      verificationWaitEligibilityHandler({
+        works: dependencies.works,
+        workspaces: dependencies.workspaces,
+        verifications: dependencies.waitVerifications,
+        tx: dependencies.tx,
+        blockedWaitEnabled: handlers.some(
+          (handler) => handler.action === "ResolveWorkBlocker",
+        ),
+      }),
+    );
+  }
+  const {
+    plans,
+    decisions,
+    placement,
+    deliverables,
+    journal,
+    ids,
+    verifications,
+    sessions,
+    toolInvocations,
+    loopSteps,
+  } = dependencies;
+  if (placement !== undefined) {
+    handlers.push(
+      listWorkspacesHandler({ placement }),
+      readWorkspaceHandler({ placement }),
+      acceptResultHandler({
+        placement,
+        gateway: dependencies.gateway,
+        ...(dependencies.commandHandlerRegistry === undefined
+          ? {}
+          : { commandHandlerRegistry: dependencies.commandHandlerRegistry }),
+        ...(dependencies.commandReceipts === undefined
+          ? {}
+          : { commandReceipts: dependencies.commandReceipts }),
+        ...(dependencies.acceptances === undefined
+          ? {}
+          : { acceptances: dependencies.acceptances }),
+        works: dependencies.works,
+        tx: dependencies.tx,
+        clock: dependencies.clock,
+      }),
+    );
+  }
+  if (
+    deliverables !== undefined &&
+    journal !== undefined &&
+    ids !== undefined
+  ) {
+    handlers.push(
+      deliverMessageGatewayHandler({
+        gateway: dependencies.gateway,
+        ...(dependencies.commandHandlerRegistry === undefined
+          ? {}
+          : { commandHandlerRegistry: dependencies.commandHandlerRegistry }),
+        ...(dependencies.commandReceipts === undefined
+          ? {}
+          : { commandReceipts: dependencies.commandReceipts }),
+        deliverables,
+        journal,
+        ids,
+        works: dependencies.works,
+        workspaces: dependencies.workspaces,
+        messages: dependencies.messages,
+        inbox: dependencies.inbox,
+        ...(dependencies.replayAttention === undefined
+          ? {}
+          : { replayAttention: dependencies.replayAttention }),
+        ...(dependencies.deliverReplayQualificationProbe === undefined
+          ? {}
+          : {
+              deliverReplayQualificationProbe:
+                dependencies.deliverReplayQualificationProbe,
+            }),
+        clock: dependencies.clock,
+        tx: dependencies.tx,
+      }),
+    );
+  }
+  if (plans !== undefined) {
+    handlers.push(updatePlanHandler({ ...dependencies, plans }));
+  }
+  if (decisions !== undefined) {
+    handlers.push(selectCurrentWorkHandler({ ...dependencies, decisions }));
+  }
+  if (
+    verifications !== undefined &&
+    sessions !== undefined &&
+    toolInvocations !== undefined
+  ) {
+    const verificationDependencies: VerificationActionDependencies = {
+      ...dependencies,
+      verifications,
+      sessions,
+      toolInvocations,
+      ...(loopSteps === undefined ? {} : { loopSteps }),
+    };
+    if (loopSteps !== undefined)
+      handlers.push(
+        recordVerificationEvidenceHandler(
+          verificationDependencies as VerificationActionDependencies & {
+            readonly loopSteps: NonNullable<
+              VerificationActionDependencies["loopSteps"]
+            >;
+          },
+        ),
+      );
+    handlers.push(concludeVerificationHandler(verificationDependencies));
+  }
+  return handlers;
+};
 
-export const SliceControlActionHandlersLive: Layer.Layer<
-  SliceControlActionHandlers,
+export interface SingleWorkspaceControlActionQualificationProbes {
+  readonly bindingAttention?: AssignWorkBindingAttentionQualificationProbe;
+  readonly assignWorkAuthorizedBeforeCommand?: AgentLoopQualificationProbe;
+  readonly deliverReplay?: DeliverReplayQualificationProbe;
+}
+
+const makeSingleWorkspaceControlActionHandlersLayer = (
+  qualificationProbes: SingleWorkspaceControlActionQualificationProbes = {},
+): Layer.Layer<
+  SingleWorkspaceControlActionHandlers,
   never,
   | CommandGateway
+  | CommandHandlerRegistry
+  | CommandStore
+  | DependencyRepository
+  | AcceptanceRepository
   | BlobStorePort
   | Clock
   | FormationProposalStore
+  | InboxProjectionStore
   | MessageStore
+  | AgentLoopStepStore
   | TransactionPort
   | WorkRepository
+  | LocalPlanStore
+  | DecisionRequestStore
+  | DeliverableRepository
+  | DomainEventJournal
+  | IdGenerator
+  | WorkWaitStore
   | WorkspaceRepository
-> = Layer.effect(
-  SliceControlActionHandlers,
-  Effect.gen(function* () {
-    const gateway = yield* CommandGateway;
-    const blobs = yield* BlobStorePort;
-    const clock = yield* Clock;
-    const messages = yield* MessageStore;
-    const tx = yield* TransactionPort;
-    const works = yield* WorkRepository;
-    const workspaces = yield* WorkspaceRepository;
-    const proposals = yield* FormationProposalStore;
-    return SliceControlActionHandlers.of(
-      makeSliceControlActionHandlers({
-        gateway,
-        blobs,
-        clock,
-        messages,
-        tx,
-        works,
-        workspaces,
-        proposals,
-      }),
-    );
-  }),
-);
+  | SessionRepository
+  | ToolInvocationStore
+  | VerificationRepository
+> =>
+  Layer.effect(
+    SingleWorkspaceControlActionHandlers,
+    Effect.gen(function* () {
+      const gateway = yield* CommandGateway;
+      const commandHandlerRegistry = yield* CommandHandlerRegistry;
+      const commandReceipts = yield* CommandStore;
+      const dependencyRecords = yield* DependencyRepository;
+      const acceptances = yield* AcceptanceRepository;
+      const blobs = yield* BlobStorePort;
+      const clock = yield* Clock;
+      const messages = yield* MessageStore;
+      const tx = yield* TransactionPort;
+      const works = yield* WorkRepository;
+      const plans = yield* LocalPlanStore;
+      const decisions = yield* DecisionRequestStore;
+      const deliverables = yield* DeliverableRepository;
+      const journal = yield* DomainEventJournal;
+      const ids = yield* IdGenerator;
+      const waits = yield* WorkWaitStore;
+      const workspaces = yield* WorkspaceRepository;
+      const proposals = yield* FormationProposalStore;
+      const projects = yield* Effect.serviceOption(ProjectRepository);
+      const sql = yield* Effect.serviceOption(SqlClient);
+      const fulfillments = yield* Effect.serviceOption(
+        FormationFulfillmentStore,
+      );
+      const placement = yield* Effect.serviceOption(WorkspacePlacementPort);
+      const inbox = yield* InboxProjectionStore;
+      const verifications = yield* VerificationRepository;
+      const toolInvocations = yield* ToolInvocationStore;
+      const loopSteps = yield* AgentLoopStepStore;
+      const providerTurns = yield* Effect.serviceOption(ProviderTurnStore);
+      const assignWorkBindings = yield* Effect.serviceOption(
+        AssignWorkTargetBindingRepository,
+      );
+      const bindingAttention = yield* Effect.serviceOption(
+        RecoveryAttentionFactStore,
+      );
+      const permissionGrants = yield* Effect.serviceOption(
+        PermissionGrantRepository,
+      );
+      const controlApprovals =
+        yield* Effect.serviceOption(ControlApprovalStore);
+      return SingleWorkspaceControlActionHandlers.of(
+        makeSingleWorkspaceControlActionHandlers({
+          gateway,
+          commandHandlerRegistry,
+          commandReceipts,
+          dependencyRecords,
+          acceptances,
+          blobs,
+          clock,
+          messages,
+          tx,
+          works,
+          plans,
+          decisions,
+          deliverables,
+          journal,
+          ids,
+          waits,
+          workspaces,
+          proposals,
+          ...(Option.isSome(fulfillments)
+            ? { fulfillments: fulfillments.value }
+            : {}),
+          ...(Option.isSome(projects) &&
+          Option.isSome(fulfillments) &&
+          Option.isSome(sql)
+            ? {
+                anyProducerEvidence: (request: AnyProducerEvidenceRequest) =>
+                  hasAnyProducerEvidence(
+                    {
+                      projects: projects.value,
+                      workspaces,
+                      listWorkspaceIdsByProject: (projectId) =>
+                        Effect.map(
+                          sql.value.unsafe<{ workspace_id: string }>(
+                            "SELECT workspace_id FROM workspaces WHERE project_id = ? ORDER BY workspace_id",
+                            [projectId],
+                          ),
+                          (rows) =>
+                            rows.map((row) => row.workspace_id as never),
+                        ),
+                      works,
+                      proposals,
+                      fulfillments: fulfillments.value,
+                      deliverables,
+                      tx,
+                    },
+                    request,
+                  ),
+              }
+            : {}),
+          ...(Option.isSome(placement) ? { placement: placement.value } : {}),
+          inbox,
+          verifications,
+          waitVerifications: verifications,
+          sessions: yield* SessionRepository,
+          toolInvocations,
+          loopSteps,
+          ...(Option.isSome(providerTurns)
+            ? { providerTurns: providerTurns.value }
+            : {}),
+          ...(Option.isSome(assignWorkBindings)
+            ? { bindings: assignWorkBindings.value }
+            : {}),
+          ...(Option.isSome(bindingAttention)
+            ? { bindingAttention: bindingAttention.value }
+            : {}),
+          ...(Option.isSome(bindingAttention)
+            ? { replayAttention: bindingAttention.value }
+            : {}),
+          ...(Option.isSome(permissionGrants)
+            ? { grants: permissionGrants.value }
+            : {}),
+          ...(Option.isSome(controlApprovals)
+            ? { approvals: controlApprovals.value }
+            : {}),
+          ...(qualificationProbes.bindingAttention === undefined
+            ? {}
+            : {
+                bindingAttentionQualificationProbe:
+                  qualificationProbes.bindingAttention,
+              }),
+          ...(qualificationProbes.assignWorkAuthorizedBeforeCommand ===
+          undefined
+            ? {}
+            : {
+                assignWorkAuthorizedBeforeCommandProbe:
+                  qualificationProbes.assignWorkAuthorizedBeforeCommand,
+              }),
+          ...(qualificationProbes.deliverReplay === undefined
+            ? {}
+            : {
+                deliverReplayQualificationProbe:
+                  qualificationProbes.deliverReplay,
+              }),
+        }),
+      );
+    }),
+  );
+
+export const SingleWorkspaceControlActionHandlersLive =
+  makeSingleWorkspaceControlActionHandlersLayer();
+
+export const SingleWorkspaceControlActionHandlersWithBindingAttentionProbe = (
+  probe: AssignWorkBindingAttentionQualificationProbe,
+) =>
+  makeSingleWorkspaceControlActionHandlersLayer({
+    bindingAttention: probe,
+  });
+
+export const SingleWorkspaceControlActionHandlersWithQualificationProbes = (
+  probes: SingleWorkspaceControlActionQualificationProbes,
+) => makeSingleWorkspaceControlActionHandlersLayer(probes);

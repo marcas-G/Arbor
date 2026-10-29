@@ -38,6 +38,17 @@ export const minimalProposal = (): ChildWorkspaceProposal => ({
     why: "downstream integration",
     constraints: [],
     completionExpectation: "all suites green",
+    verificationMission: {
+      goal: "verify the integration slice",
+      criteria: [
+        {
+          criterionId: "suites-green",
+          requirement: "all suites are green",
+          required: true,
+        },
+      ],
+      riskRequirements: [],
+    },
   },
   formationDepthHint: "Single",
 });

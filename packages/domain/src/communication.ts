@@ -38,6 +38,7 @@ export interface InboxEntry {
   readonly entryKey: string;
   readonly kind:
     | "Message"
+    | "WorkBlocked"
     | "SpecialistSettled"
     | "HumanInput"
     | "Governance"
@@ -45,6 +46,8 @@ export interface InboxEntry {
   readonly summary: string;
   readonly correlationId?: string | undefined;
   readonly admittedAt: string;
+  readonly revision?: number | undefined;
+  readonly updatedAt?: string | undefined;
 }
 
 export const messageEntryKey = (messageId: MessageId): string =>
@@ -61,6 +64,7 @@ export interface InboxArrival {
   readonly recipientWorkspaceId: WorkspaceId;
   readonly kind:
     | MessageKind
+    | "WorkBlocked"
     | "HumanInput"
     | "SpecialistSettled"
     | "HumanConversation";
@@ -80,6 +84,7 @@ export const promoteInboxArrival = (arrival: InboxArrival): PromotionEffect => {
       return { closesCorrelation: null, triggersReevaluation: true };
     case "Query":
     case "Report":
+    case "WorkBlocked":
     case "HumanInput":
     case "SpecialistSettled":
     case "HumanConversation": // P14 `01` §5: chat turn promotion is empty — the conversation trigger is the P14 consumer, not inbox promotion

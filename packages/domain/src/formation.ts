@@ -2,11 +2,13 @@ import type { DomainError } from "./errors.js";
 import type { ExecutionSettlement } from "./execution.js";
 import type { ExecutionId, FormationProposalId, WorkspaceId } from "./ids.js";
 import type {
+  ResourceAddress,
   ResourceBoundary,
   ResponsibilityDefinition,
 } from "./resources.js";
 import type { DomainResult } from "./result.js";
 import { err, ok } from "./result.js";
+import type { VerificationMission } from "./verification.js";
 
 /** P6 `01` §2. Model-visible formation proposal payload (fills the P3 `03`
  * name-only slot). */
@@ -14,6 +16,12 @@ export interface ChildWorkspaceProposal {
   readonly name: string;
   readonly responsibilityDraft: ResponsibilityDefinition;
   readonly resourceBoundaryDraft: ResourceBoundary;
+  /** A human-governed subset of the Child boundary that may receive a
+   * canonical ownership claim from the Parent. This is intent only; it does
+   * not itself create or widen ownership. */
+  readonly resourceOwnershipDelegation?:
+    | ResourceOwnershipDelegation
+    | undefined;
   readonly rationale: string;
   readonly initialWork?:
     | {
@@ -21,9 +29,16 @@ export interface ChildWorkspaceProposal {
         readonly why: string;
         readonly constraints: ReadonlyArray<string>;
         readonly completionExpectation: string;
+        readonly verificationMission: VerificationMission;
       }
     | undefined;
   readonly formationDepthHint?: "Single" | "Recursive";
+}
+
+/** Bounded explicit ownership delegation carried by a formation proposal.
+ * The addresses must be an exact subset of resourceBoundaryDraft.addresses. */
+export interface ResourceOwnershipDelegation {
+  readonly addresses: ReadonlyArray<ResourceAddress>;
 }
 
 /** P6 `01` §3. Specialist spawn payload; becomes

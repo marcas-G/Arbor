@@ -33,15 +33,23 @@ import {
   ProjectId,
   parse,
   SessionId,
+  WorkId,
   WorkspaceId,
 } from "../packages/domain/dist/index.js";
 import {
   type AdmitExecutionPayload,
+  executionSettledEventPayload,
   FenceStopCheckLive,
   P2CommandHandlerRegistryLive,
   type SettleExecutionPayload,
 } from "../packages/execution-runtime/src/index.js";
 import { LeaseService, TransactionPort } from "../packages/ports/src/index.js";
+import { NoHoldWorkReadmissionGateStoreLive } from "../packages/testkit/src/index.js";
+import {
+  seedCurrentOpenWork,
+  workEpisode,
+  yieldedSettlement,
+} from "./support/execution-episode-fixtures.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const workspaceId = parse(WorkspaceId)(
@@ -53,6 +61,7 @@ const principal = parse(Principal)("runtime:system");
 const executionId = parse(ExecutionId)(
   "exe_018f2b3c-4d5e-7abc-8def-0123456789a1",
 ) as ExecutionId;
+const workId = parse(WorkId)("wrk_018f2b3c-4d5e-7abc-8def-0123456789a1");
 
 const makeApp = () => {
   const base = layer({ filename: ":memory:" });
@@ -61,6 +70,7 @@ const makeApp = () => {
   const fence = Layer.provide(FenceStopCheckLive, Layer.merge(infra, repo));
   const repos = Layer.mergeAll(
     Layer.provide(TransactionPortLive, infra),
+    NoHoldWorkReadmissionGateStoreLive,
     Layer.provide(CommandStoreLive, infra),
     Layer.provide(DomainEventJournalLive, infra),
     Layer.provide(ProjectRepositoryLive, infra),
@@ -123,6 +133,7 @@ const seed = Effect.gen(function* () {
           "t",
         ],
       );
+      yield* seedCurrentOpenWork(projectId, workspaceId, workId);
     }),
   );
 });
@@ -131,7 +142,7 @@ const admitPayload: AdmitExecutionPayload = {
   _tag: "WorkspaceMain",
   executionId,
   workspaceId,
-  focus: { _tag: "Coordination" },
+  episode: workEpisode(workId),
 };
 const admitEnvelope = (
   id: CommandId,
@@ -226,12 +237,79 @@ const bootstrap = (admitId: CommandId) =>
     yield* tx.transact(leases.acquire(executionId, "worker:a", "inc-a"));
   });
 
-const completed: SettleExecutionPayload["settlement"] = {
-  _tag: "Completed",
-  result: { _tag: "CoordinationCompleted" },
-};
+const completed: SettleExecutionPayload["settlement"] = yieldedSettlement;
 
 describe("P2-011 SettleExecution", () => {
+  it("emits the exact top-level CompletionClaim trigger only for Work-bound claims", () => {
+    const claim = {
+      _tag: "Completed" as const,
+      result: {
+        _tag: "CompletionClaimed" as const,
+        workRevision: 3 as never,
+        claimRef: "clm_test",
+      },
+    };
+    const workPayload = executionSettledEventPayload(
+      {
+        executionId,
+        binding: {
+          _tag: "WorkspaceExecution",
+          workspaceId,
+          focus: { _tag: "Work", workId },
+        },
+      },
+      claim,
+    );
+    const coordinationPayload = executionSettledEventPayload(
+      {
+        executionId,
+        binding: {
+          _tag: "WorkspaceExecution",
+          workspaceId,
+          focus: { _tag: "Coordination" },
+        },
+      },
+      completed,
+    );
+    const verifierPayload = executionSettledEventPayload(
+      {
+        executionId,
+        binding: {
+          _tag: "ExecutionBoundAgentBinding",
+          parentExecutionId: null,
+          mission: "verify",
+        },
+      },
+      {
+        _tag: "Completed",
+        result: {
+          _tag: "VerificationConcluded",
+          verificationId: "ver_00000000-0000-7000-8000-000000000001" as never,
+          verdict: "Pass",
+        },
+      },
+    );
+
+    expect(workPayload).toMatchObject({
+      executionId,
+      workId,
+      workRevision: 3,
+      claimRef: "clm_test",
+      settlement: claim,
+    });
+    expect(coordinationPayload).not.toHaveProperty("workId");
+    expect(coordinationPayload).not.toHaveProperty("claimRef");
+    expect(verifierPayload).toMatchObject({
+      executionId,
+      settlement: {
+        _tag: "Completed",
+        result: { _tag: "VerificationConcluded", verdict: "Pass" },
+      },
+    });
+    expect(verifierPayload).not.toHaveProperty("workId");
+    expect(verifierPayload).not.toHaveProperty("claimRef");
+  });
+
   it("settles on the ExecutionOrigin path and emits ExecutionSettled", async () => {
     const app = makeApp();
     const admitId = parse(CommandId)(

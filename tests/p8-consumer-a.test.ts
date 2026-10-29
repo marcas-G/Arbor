@@ -7,6 +7,7 @@ import {
   DeliverableRepositoryLive,
   DomainEventJournalLive,
   EnvironmentRevisionStoreLive,
+  ExecutionRepositoryLive,
   IdGeneratorLive,
   layer,
   P8_MIGRATIONS,
@@ -38,6 +39,7 @@ import {
 import {
   CommandId,
   type CommandSubmissionContext,
+  ExecutionId,
   parse,
   startVerification,
   VerificationId,
@@ -49,6 +51,7 @@ import {
   DeliverableRepository,
   type DeliverableRepositoryError,
   EnvironmentRevisionStore,
+  ExecutionRepository,
   ProjectRepository,
   SessionRepository,
   TransactionPort,
@@ -58,6 +61,7 @@ import {
 } from "../packages/ports/src/index.js";
 import {
   p7Project,
+  p7RootSession,
   p7RootWorkspace,
   p7SeedProject,
   p7SeedWork,
@@ -66,6 +70,9 @@ import {
 } from "./support/p7-app.js";
 
 const WORK_1 = parse(WorkId)("wrk_00000000-0000-7000-8000-000000000001");
+const LEGACY_EXECUTION = parse(ExecutionId)(
+  "exe_00000000-0000-7000-8000-000000000099",
+);
 const ASSIGN_CMD = parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const VER = (suffix: string) =>
   parse(VerificationId)(`ver_00000000-0000-7000-8000-00000000${suffix}`);
@@ -108,6 +115,22 @@ const settledEvent = (n: number) => ({
     claimRef: `claim-${n}`,
   },
 });
+
+const legacyNestedClaimEvent = {
+  eventType: "ExecutionSettled",
+  eventId: "evt-legacy-nested-claim",
+  payload: {
+    executionId: LEGACY_EXECUTION,
+    settlement: {
+      _tag: "Completed",
+      result: {
+        _tag: "CompletionClaimed",
+        workRevision: 0,
+        claimRef: "legacy-claim",
+      },
+    },
+  },
+} as const;
 
 const countVerifications = Effect.gen(function* () {
   const sql = yield* SqlClient;
@@ -196,6 +219,7 @@ const makeConsumerDeps = (
     const verifications = yield* VerificationRepository;
     const works = yield* WorkRepository;
     const workspaces = yield* WorkspaceRepository;
+    const executions = yield* ExecutionRepository;
     return {
       gateway: wrapGateway === undefined ? gateway : wrapGateway(gateway),
       verifications: {
@@ -205,6 +229,8 @@ const makeConsumerDeps = (
           ),
         findById: (verificationId: VerificationId) =>
           tx.transact(verifications.findById(verificationId)),
+        listByWork: (workId: WorkId) =>
+          tx.transact(verifications.listByWork(workId)),
       },
       works: {
         findById: (workId: WorkId) => tx.transact(works.findById(workId)),
@@ -212,6 +238,10 @@ const makeConsumerDeps = (
       workspaces: {
         findById: (workspaceId: WorkspaceId) =>
           tx.transact(workspaces.findById(workspaceId)),
+      },
+      executions: {
+        findById: (executionId: ExecutionId) =>
+          tx.transact(executions.findById(executionId)),
       },
     };
   });
@@ -226,6 +256,7 @@ type MiniAppServices =
   | TransactionPort
   | WorkspaceRepository
   | WorkRepository
+  | ExecutionRepository
   | VerificationRepository;
 
 const makeMiniApp = (): Layer.Layer<MiniAppServices> => {
@@ -236,6 +267,7 @@ const makeMiniApp = (): Layer.Layer<MiniAppServices> => {
     Layer.provide(WorkspaceRepositoryLive, infra),
     Layer.provide(SessionRepositoryLive, infra),
     Layer.provide(WorkRepositoryLive, infra),
+    Layer.provide(ExecutionRepositoryLive, infra),
     Layer.provide(DeliverableRepositoryLive, infra),
     Layer.provide(VerificationRepositoryLive, infra),
     Layer.provide(EnvironmentRevisionStoreLive, infra),
@@ -281,7 +313,11 @@ const makeMiniApp = (): Layer.Layer<MiniAppServices> => {
                     Effect.mapError(
                       (cause) =>
                         ({
-                          _tag: "DeliverableRepositoryFailure",
+                          _tag: "PersistenceUnavailable",
+                          repository: "DeliverableRepository",
+                          operation: "list-artifacts",
+                          retryDisposition: "non-retryable",
+                          sourceTag: "SqlError",
                           cause,
                         }) as DeliverableRepositoryError,
                     ),
@@ -371,6 +407,36 @@ describe("p8-consumer-a", () => {
     );
   });
 
+  it("reconciles a legacy nested CompletionClaim from the durable Work-bound Execution", async () => {
+    await runMini(
+      Effect.gen(function* () {
+        yield* seed;
+        const sql = yield* SqlClient;
+        yield* sql.unsafe(
+          "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, focus_kind, focus_work_id, parent_execution_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?,?,?,?, ?,NULL,NULL,?, 't',NULL,'Completed',?, 't')",
+          [
+            LEGACY_EXECUTION,
+            p7Project,
+            "workspace",
+            p7RootWorkspace,
+            "work",
+            WORK_1,
+            p7RootSession,
+            JSON.stringify(legacyNestedClaimEvent.payload.settlement),
+          ],
+        );
+        const records = yield* consume([legacyNestedClaimEvent]);
+        expect(records).toEqual(["StartVerification"]);
+        const ids = verificationSpawnIds(WORK_1, 0, "legacy-claim");
+        const open = yield* openVerification;
+        expect(Option.isSome(open)).toBe(true);
+        if (Option.isSome(open)) {
+          expect(open.value.verificationId).toBe(ids.verificationId);
+        }
+      }),
+    );
+  });
+
   it("replaying the same event is idempotent: AlreadyOpen skip record, no second verification row, no second event", async () => {
     await runMini(
       Effect.gen(function* () {
@@ -380,6 +446,35 @@ describe("p8-consumer-a", () => {
         expect(first).toEqual(["StartVerification"]);
         const replay = yield* consume([event]);
         expect(replay).toEqual([`skipped:VerificationAlreadyOpen:${WORK_1}`]);
+        expect(yield* countVerifications).toBe(1);
+        expect(yield* countDomainEvents("VerificationStarted")).toBe(1);
+      }),
+    );
+  });
+
+  it("does not auto-start re-verification from a duplicate claim after the revision already concluded", async () => {
+    await runMini(
+      Effect.gen(function* () {
+        yield* seed;
+        expect(yield* consume([settledEvent(2)])).toEqual([
+          "StartVerification",
+        ]);
+        const ids = verificationSpawnIds(WORK_1, 0, "claim-2");
+        const tx = yield* TransactionPort;
+        const verifications = yield* VerificationRepository;
+        const concluded = yield* tx.transact(
+          verifications.concludeIfOpen(
+            ids.verificationId,
+            "Pass",
+            "summary:test",
+            undefined,
+          ),
+        );
+        expect(Option.isSome(concluded)).toBe(true);
+
+        expect(yield* consume([settledEvent(4)])).toEqual([
+          `skipped:VerificationAlreadyConcluded:${WORK_1}:0`,
+        ]);
         expect(yield* countVerifications).toBe(1);
         expect(yield* countDomainEvents("VerificationStarted")).toBe(1);
       }),
@@ -445,10 +540,31 @@ describe("p8-consumer-a", () => {
           eventId: "evt-unrelated",
           payload: { deliverableId: "del_x" },
         };
-        const records = yield* consume([unrelated, legacy, noClaim]);
+        const verifierCompleted = {
+          eventType: "ExecutionSettled",
+          eventId: "evt-verifier-completed",
+          payload: {
+            executionId: "exe_00000000-0000-7000-8000-00000000009c",
+            settlement: {
+              _tag: "Completed",
+              result: {
+                _tag: "VerificationConcluded",
+                verificationId: "ver_00000000-0000-7000-8000-000000000001",
+                verdict: "Pass",
+              },
+            },
+          },
+        };
+        const records = yield* consume([
+          unrelated,
+          legacy,
+          noClaim,
+          verifierCompleted,
+        ]);
         expect(records).toEqual([
           `skipped:LegacyExecutionSettled:evt-legacy`,
           `skipped:NotCompletionClaimed:evt-noclaim`,
+          `skipped:NotCompletionClaimed:evt-verifier-completed`,
         ]);
         expect(yield* countVerifications).toBe(0);
       }),

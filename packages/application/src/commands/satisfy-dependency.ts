@@ -155,10 +155,10 @@ export const makeSatisfyDependencyHandler = (
 
       // Rejection table (§4, frozen order): not found → terminal →
       // revision. The store channels not carried by the gateway error
-      // union are defects-only here (semantic-boundary convention).
-      const existing = yield* dependencies.dependencies
-        .findById(payload.dependencyId)
-        .pipe(Effect.orDie);
+      // Repository failures remain typed through the gateway.
+      const existing = yield* dependencies.dependencies.findById(
+        payload.dependencyId,
+      );
       if (Option.isNone(existing)) {
         return commandErr({
           _tag: "DependencyNotFound",
@@ -181,9 +181,9 @@ export const makeSatisfyDependencyHandler = (
         });
       }
 
-      const storedOption = yield* dependencies.deliverables
-        .findById(payload.deliverableId)
-        .pipe(Effect.orDie);
+      const storedOption = yield* dependencies.deliverables.findById(
+        payload.deliverableId,
+      );
       if (Option.isNone(storedOption)) {
         return commandErr({
           _tag: "DeliverableNotFound",
@@ -205,9 +205,9 @@ export const makeSatisfyDependencyHandler = (
           ),
         );
       }
-      const roles = yield* dependencies.deliverables
-        .listArtifactRoles(payload.deliverableId)
-        .pipe(Effect.orDie);
+      const roles = yield* dependencies.deliverables.listArtifactRoles(
+        payload.deliverableId,
+      );
       const view: DeliverableMatchView = {
         deliverableId: deliverable.deliverableId,
         sourceWorkId: deliverable.sourceWorkId,
@@ -225,20 +225,19 @@ export const makeSatisfyDependencyHandler = (
       }
 
       // State + revision CAS: first committer wins (§4 Concurrency, §10).
-      const applied = yield* dependencies.dependencies
-        .transitionIfUnsatisfiedRevision(
+      const applied =
+        yield* dependencies.dependencies.transitionIfUnsatisfiedRevision(
           payload.dependencyId,
           payload.targetDependencyRevision,
           next.value,
-        )
-        .pipe(Effect.orDie);
+        );
       if (Option.isNone(applied)) {
         // Lost race: classify the loser's typed rejection by what it now
         // observes — terminal, matcher-false under the revised contract,
         // or a stale revision binding.
-        const reread = yield* dependencies.dependencies
-          .findById(payload.dependencyId)
-          .pipe(Effect.orDie);
+        const reread = yield* dependencies.dependencies.findById(
+          payload.dependencyId,
+        );
         const current = Option.isNone(reread) ? dependency : reread.value;
         if (current.state !== "Unsatisfied") {
           return commandErr({

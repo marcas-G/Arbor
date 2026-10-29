@@ -8,10 +8,11 @@ Arbor is a multi-agent work system organized around long-lived Responsibilities,
 |---|---|---|
 | `docs/design/00-problem-goals.md` | WHY/WHAT: P1–P8, G1–G8, mission, success criteria | FROZEN |
 | `docs/design/01-scenarios.md` | Observable end-to-end behavior S1–S4 | FROZEN |
-| `docs/design/02-system-design.md` | Domain semantics, Runtime boundaries, 60 system invariants | FROZEN |
+| `docs/design/02-system-design.md` | Domain semantics, Runtime boundaries, 76 system invariants | FROZEN |
 | `docs/design/03-detailed-implementation-design.md` | Executable contracts: ADT/Command/Event/Ports/SQL/Package DAG/phases | TOP-LEVEL FROZEN |
 
-These four files are the latest frozen baselines (Problem & Goals v1.2, Scenarios v1.2, System Design v1.3, DID v1.19).
+These four files are the latest frozen baselines (Problem & Goals v1.3,
+Scenarios v1.3, System Design v1.9, DID v1.31).
 
 ## Design governance (docs/design/**)
 
@@ -22,6 +23,13 @@ docs/design/** = manually governed source of truth
 ```
 
 Only manual governance changes design documents, and only in the document that owns the semantics. Never silently rewrite upstream semantics from implementation code or planning artifacts.
+
+Manual-governance delegation exception (authorized 2026-10-01): after the
+user/manual governor explicitly accepts a fixed governance proposal, Codex may
+apply that exact accepted landing package to `docs/design/**` on the governor's
+behalf. The proposal hash, decision record, owning-document revisions and
+post-landing consistency review must remain auditable. This exception does not
+permit Codex to invent unaccepted semantics or silently resolve a new gap.
 
 If a code implementation discovers a design gap: **stop implementation and raise a Design Gap** (with failure evidence: failing test, concurrency counterexample, or recovery failure) for manual governance — do not edit the design directly.
 
@@ -37,9 +45,392 @@ DID v1.19 governance authorization (`AGENT_CONTROL_IMPLEMENTATION_AUTHORIZED`,
 ACR-6…ACR-8): agent control implementation, S01 qualification (redefined as
 Control/Executable Route Qualification, carried by the L3 capability suites),
 and Wave 2 (scope = `planning/tool-surface-review/51` module map sequenced by
-`52` DAG) are AUTHORIZED. The four field-source gaps (AssignWork.Provenance,
-G-V2-2/3/4) remain OPEN and gate only the actions that consume them; B10 stays
-`BLOCKED_BY_DESIGN_GAP` until they close.
+`52` DAG) are AUTHORIZED. The four historical field-source gaps were
+subsequently CLOSED by the manually accepted DID v1.26 VDC-1…VDC-8 contract:
+AssignWork provenance is Runtime-bound from the current parent Work (or null)
+plus model-authored bounded reason; ToolObservation identity is the exact
+ToolInvocationId/observationRef/executionId/callRef binding; summaryRef is
+Runtime-created content-addressed Blob storage durably retained by the
+Verification/event; child initialWork carries the Parent-approved complete
+VerificationMission. B10 is authorized and has a repeatable real-provider L3
+sentinel.
+
+DID v1.28 governance adoption
+(`ACCEPT_EXECUTION_EPISODE_GOAL_PLAN_CONVERGENCE`, EGP-1…EGP-10):
+`ExecutionFocus=Work|Coordination` is superseded for all new writes by exact
+ExecutionEpisodeBinding (Work / ConversationResponse / Inbox / Decision).
+Work is the durable Goal contract; Plan is optional tool-maintained progress
+state without completion authority; every Episode uses the same Agent Loop.
+Migration 0024 and implementation Waves A–E are AUTHORIZED. Historical
+Coordination rows remain read-only migration evidence; ambiguous active rows
+fail closed and MUST NOT be reconstructed from Session text.
+
+EGP implementation state (2026-10-03): Waves A–E are COMPLETE and evidenced by
+`planning/results/EGP-execution-episode-goal-plan-wave-a-d.result.md` and
+`planning/results/EGP-wave-e-legacy-removal.result.md`. Migration 0025 rebuilt
+`executions` without focus columns; migration 0026 rebuilt
+`agent_execution_state` around `episode_json`; CRAC recovery migrations
+0027/0028 backfill actionable Governance Inbox entries for Pending formation
+proposals and consume stale entries for settled proposals.
+Agent Runtime and Model Context
+no longer produce Coordination/QueryCompleted branches. Historical names exist
+only in migration/decoder compatibility and MUST NOT regain new-write semantic
+authority.
+
+DID v1.29 governance adoption
+(`ACCEPT_ROOT_CONVERSATION_ACTION_CAPABILITY`, CRAC-1…CRAC-5):
+`RootConversation` supersedes the zero-tool response-only profile. It exposes
+no executable/Work tools and exactly one v1 conversation-safe control,
+`propose_workspace`; that control creates only a Pending FormationProposal and
+its human Governance Inbox entry atomically, and cannot bypass human
+RecordDecision. Governance Inbox entries are never promoted into an Agent
+Session; RecordDecision consumes the exact pending Queue entry.
+Same-execution tool results re-enter the
+conversation loop; unrelated Workspace Session history remains excluded.
+Accepted proposal SHA-256:
+`DEBD13AAB34B7556B221F12B647360E945F95F5D89BD0B03287963DB22B917A8`.
+
+DID v1.30 governance adoption
+(`ACCEPT_CONTROL_ACTION_PERMISSION_APPROVAL_ARCHITECTURE`, CAPA-1…CAPA-7):
+Control visibility, authorization and execution approval are separate.
+PermissionGrant v2 is subject/capability/target/time-bound; unbound legacy
+grants are revoked. Sensitive controls resolve to Authorized, Denied or a
+durable ApprovalRequired interruption. Approve/Reject resumes the same active
+Execution/AgentLoopStep; approval never widens Sandbox/ResourceBoundary.
+Migrations 0029/0030 carry grants and control approvals. Accepted proposal
+SHA-256:
+`74C0A20BCED0C7800B2EB21933967810AAB73423132D9FE06E86A7E56EA26FB9`.
+
+Agent Control implementation state (2026-10-03): the DID v1.26 VDC-5
+`AssignWork` action is implemented and evidenced by
+`planning/results/agent-action-assign-work.result.md`. The model authors Work
+semantics and provenance reason; Runtime binds target, ids, revisions,
+predecessor and authority. After CAPA adoption it is visible in WorkspaceWork
+only and defaults to human approval; RootConversation exposure remains gated
+by `RGI-DG-01`.
+
+Minimal Architecture Convergence governance (2026-10-03):
+`ACCEPT_MINIMAL_ARCHITECTURE_CONVERGENCE` accepted proposal SHA-256
+`44B549EA81E21B3D4BE5D545EA446B544D50CCA0061C83E6FC40CDC2ADCCA932`.
+Owning contracts landed as Problem & Goals v1.3 / Scenarios v1.3 / System
+Design v1.9 / DID v1.31 plus `docs/design/implementation/MAC/**`. The active
+vocabulary is reduced; Plan is Workspace-local cognition; Specialist is
+superseded as a first-class concept; model output uses one ActionCall facade;
+async decisions require separate fulfillment truth. MAC-P1 implementation is
+AUTHORIZED after landing review. MAC-P2…P4 remain sequentially gated by their
+accepted phase contracts. RGI-DG-01 and SDO-DG-01 are resolved at design level
+through MAC and MUST NOT be implemented as independent proposals.
+
+MAC implementation state (2026-10-04): governance landing consistency PASS
+(`planning/results/MAC-design-landing-review.result.md`). MAC-P1 Wave A is
+complete (`planning/results/MAC1-001-003-wave-a.result.md`): RootConversation
+advertises only current-Workspace `assign_work`; later-phase formation,
+cross-Work messaging/dependency and legacy Specialist new-write surfaces are
+hidden; Runtime enforces current target and constraint preservation. Full
+`pnpm check` passes. MAC-P1 remains OPEN: Root approval black-box, LocalPlan
+relocation, WorkspaceKnowledgeView and Verification/Acceptance closure remain.
+
+MAC-P1 subsequent closure (2026-10-04): **COMPLETE / FORMALLY CLOSED**
+(`planning/results/MAC-P1.result.md`). Root natural-language goal → exact
+approval → Work → AgentLoop → independent Verification → root Acceptance →
+CompleteWork is public-process black-box and hard-restart proven. LocalPlan is
+Runtime/Cognition-owned; WorkspaceKnowledgeView promotes accepted PASS outcomes
+only; verification/completion consumer errors are typed. Real DeepSeek B01,
+B03 (including Root assign) and B11 pass. MAC-P2 implementation is AUTHORIZED.
+
+MAC-P2 closure (2026-10-04): **COMPLETE / FORMALLY CLOSED**
+(`planning/results/MAC-P2.result.md`). PlacementContext, opaque refs,
+list/read workspace controls, existing-child AssignWork, migration 0031
+FormationFulfillment, deterministic child+initial Work application and Parent
+Agent `accept_result` are implemented and restart/replay tested. Real DeepSeek
+B07 Root formation passes. `pnpm check` passes. MAC-P3 is AUTHORIZED.
+
+MAC-P3 closure (2026-10-04): **COMPLETE / FORMALLY CLOSED**
+(`planning/results/MAC-P3.result.md`). Production now wires model-facing
+declare/produce/deliver, producer Inbox admission, deterministic
+SatisfyDependency coordinator and exact wake. Real DeepSeek B09 passes both
+declaration and produce→deliver with model-free satisfaction. `pnpm check`
+passes.
+
+MAC-P4 and final MAC closure (2026-10-04): **COMPLETE / FORMALLY CLOSED**
+(`planning/results/MAC-P4.result.md`,
+`planning/results/MAC-final-convergence.result.md`). The accepted optionality
+stop condition is applied: v1 does not register or advertise a subagent action;
+historical Specialist codecs/fixtures are replay/audit-only and single-Agent
+correctness is unchanged. Migration 0032 converges control/executable exact
+approvals into one physical `action_approvals` ledger, fails unprovable legacy
+bindings closed, removes the two old tables and preserves atomic
+single-consumption. Real DeepSeek B08 disabled-mode qualification passes L1/L2/L3;
+full local gates pass (architecture 152, core 1669 + 3 skipped, Web 216).
+
+Release functional-test foundation (2026-10-04): **FOUNDATION COMPLETE;
+RELEASE VALIDATION OPEN**
+(`planning/results/functional-test-foundation.result.md`). The production
+process journey no longer reads SQLite/internal stores: approval is observed
+through Inbox and Work through Current Work. `pnpm test:functional` builds the
+real daemon/Web client, starts a fresh isolated DB + HTTP provider boundary,
+and runs 4 public-process plus 1 Playwright browser/restart journey with zero
+retry. `pnpm check` remains green (architecture 154, core 1671 + 3 skipped,
+Web 216). This is not yet a release-readiness claim; F10–F20 remain in the
+functional journey catalog.
+
+Functional Wave 2 (2026-10-04): **F10–F20 COMPLETE; F21 BLOCKED BY OPEN
+DESIGN GAP** (`planning/results/functional-test-wave2.result.md`). Release
+functional coverage now includes rejection, transient provider recovery,
+Fail/Unknown verification, browser approval/acceptance, crash restart,
+three-page history, child-result Parent acceptance, true
+Artifact→Deliverable→Delivery→Dependency satisfaction, and a frozen-install
+clean-clone smoke. The tests found and closed missing parent PASS routing,
+InboxEpisode production admission/settlement, Artifact creation/composition,
+and provider loss of artifact/canonical refs. The remaining gap is
+`FT-DG-01`: browser CreateProject has no trusted resource-admission flow and
+therefore creates an empty executable boundary.
+
+Functional-oracle audit (2026-10-04): F07 now proves that a public SteerWork
+advances the Work revision and reaches a later Agent turn. F05 now explicitly
+proves PASS keeps Work Open before Acceptance and that Acceptance clears the
+current selection. It cannot prove that the terminal Work is user-inspectable:
+F22 shows the old Work link renders “未找到该工作” after completion. The
+`FT-DG-02` governance proposal was accepted on 2026-10-08, including the
+supplemental shared NotFound/404 decision for absent and foreign Work targets;
+the accepted Work Detail contract is landed as SD v1.10 / DID v1.32 with an
+independent post-landing review at Blocking = 0. See
+`planning/results/FT-DG-02-governance-acceptance-and-landing.review.md`.
+The Work Detail implementation and formal default-suite F22 qualification are
+complete (`planning/results/FT-DG-02-work-detail-implementation.result.md`).
+FT-DG-02 is closed; its former pending red reproduction is retained as a
+skipped historical case and is not counted as an open journey.
+F19 now also proves the reverse order (Dependency wait before child Delivery),
+which exposed and fixed numeric `wait` revision decoding; full `pnpm check`
+and `pnpm test:functional` pass. F21 and F23 remain open governance gaps;
+FT-DG-02 design and implementation are closed, with F22 in the default browser
+qualification suite.
+Later F22 test strengthening exposed a Web AcceptanceId prefix mismatch
+(`acp_` versus frozen `acc_`), fixed with a Web regression test. A separate
+public-process F23 test proves malformed typed `MessageId` can still be
+Committed through `/commands`; `FT-DG-03` governs the cross-command runtime
+codec and receipt boundary. F23 remains isolated pending governance.
+
+DID v1.20 governance adoption (`AHT-1`…`AHT-8`) freezes the durable Provider
+result handoff: persisted `AgentLoopStep`, replayable complete Provider success,
+idempotent sourced Session/action progression, generation-scoped Application
+Command identity, unresolved-side-effect gate, deterministic successors,
+evidence-gated legacy adoption, and P14 final convergence. Design landing is
+complete; at the v1.20 checkpoint **implementation was NOT AUTHORIZED**. Migration
+`0017_agent_loop_step_handoff`, recovery implementation, and replay/mutation of the
+preserved DOGFOOD database require separate implementation authorization plus
+AH1–AH14 and equivalent-fixture evidence. `DOGFOOD-DG-01`'s design question is
+RESOLVED by v1.20; that resolution is not implementation evidence.
+
+DID v1.21 (`ALS-N1`, `ALS-I1`) renames the current durable record from the
+reviewed proposal's historical `AgentTurn` to `AgentLoopStep` and AUTHORIZES
+implementation. `AgentLoop` = overall runtime algorithm; `AgentLoopStep` = one
+durable recoverable iteration; `ProviderTurn` = one logical model decision.
+Authorized scope is migration 0017, stores/ports, runtime/recovery integration
+and AH1–AH14. The preserved dogfood database remains read-only until the
+equivalent fixture and migration verification pass.
+AH1–AH2's atomic Provider Success commit and AH3 ProviderTurn-settled →
+AgentLoopStep ProviderResultAvailable now have real-process two-sided crash
+qualification; see `planning/results/AH1-AH2-atomic-provider-success-crash.result.md`
+and `planning/results/AH3-process-crash-qualification.result.md`.
+AH4 terminal Provider failure and repair exhaustion now also have two-sided
+process crash evidence; see `planning/results/AH4-terminal-failure-repair-crash.result.md`.
+AH5–AH6 sourced Session output / OutputAccepted now have two-sided process
+crash evidence; see `planning/results/AH5-AH6-sourced-output-atomic-crash.result.md`.
+AH7, AH10 and AH14 remain open and MUST NOT be inferred from AH1–AH6/F16.
+AH7 has PARTIAL process-crash evidence (ReadOnly action/P4 intent/settlement/
+Observation four sides and Reconcilable intent/effect-before-settlement
+fail-closed), not phase closure;
+see `planning/results/AH7-partial-crash-qualification.result.md`. Ordinary
+successful A→B multi-action restart and same-ToolInvocationId SQLite two-
+connection/two-OS-process synchronized competition now have focused PASS
+evidence (`planning/results/AH7-two-action-interleaving.result.md`,
+`planning/results/AH7-cross-connection-concurrency.result.md`). They do not
+prove crash/restart concurrency or close active reconciliation, approval
+atomicity, or non-Success observation replay.
+The non-Success replay gap is `AH7-DG-01` with an isolated failing test and
+draft governance proposal. At `26f80f2`, `pnpm test:functional` passes
+(public process 29, browser 2); this does not include the pending gap test.
+AH8 A Applied / B SkippedStale after public SteerWork and process restart
+has a real-process qualification in
+`planning/results/AH8-action-b-stale-process-crash.result.md`; AH7 remains
+partial. AH9 terminal-action transaction before/after process-crash
+qualification is in `planning/results/AH9-terminal-action-process-crash.result.md`:
+A Applied, B SkippedEarlySettlement, proposal durable, no second Work or
+Provider request. At `3e339ae`, `pnpm check` passes (architecture 155, core
+1680 + 3 skipped, Web 216) and `pnpm test:functional` passes (public process
+33, browser 2). AH10 is PARTIAL: AssignWork receipt-first takeover has two
+deterministic regression tests, but other controls and real-process takeover
+remain open (`planning/results/AH10-generation-command-takeover-gap.result.md`).
+AH11 Observation → StepEffectsCommitted has two-sided real-process crash
+evidence in `planning/results/AH11-observation-step-effects-process-crash.result.md`;
+AH12 SettlementProposed → SettleExecution now also has two-sided real-process
+crash evidence in `planning/results/AH12-settlement-command-process-crash.result.md`;
+AH13 Execution settled → P17 ResponseJob/Attempt convergence has two-sided
+real-process crash evidence and one public reply in
+`planning/results/AH13-conversation-response-convergence-process-crash.result.md`;
+AH14 positive equivalent legacy adoption has two-sided real-process crash
+evidence, but remains PARTIAL: ambiguous legacy action evidence lacks durable
+public Attention (`AH14-DG-01`, pending red test); see
+`planning/results/AH14-legacy-adoption-partial.result.md`. AH7/AH10/AH14
+are not closed.
+2026-10-07 增量：AH7 新增 approval 前效应重入与模拟唯一约束并发单测，
+不构成真实进程资格；AH10 新增 `ProduceDeliverable` receipt-first 路径和
+真实双 daemon 30s lease takeover，仍缺其他控制动作及提交两侧 kill/restart。
+证据分别见 `planning/results/AH7-approval-pre-effect-reentry.result.md`、
+`planning/results/AH7-concurrent-invocation.result.md`、
+`planning/results/AH10-generation-command-takeover-gap.result.md`。
+`4720f65` 上 `pnpm check` PASS（架构 155、核心 1687 + 3 skipped、Web
+216），`pnpm test:functional` PASS（公开进程 42、浏览器 2，含 F20）。
+后续 `a22a4a5`/`d7e5782` 将 AH10 handler 级覆盖扩至 DeclareDependency、
+AcceptResult、SendMessage；`32ae550` 统一五类 Gateway handler 的旧
+receipt 查询。AH7 单连接真实 SQLite 并发 1/1 PASS，但审批消费与 P4
+settlement 同事务的冲突是拟议 AH7-DG-03，隔离红测见
+`tests/functional/pending/ah7-approval-settlement-atomicity.functional.test.ts`。
+`32ae550` 上 `pnpm check` PASS（架构 155、核心 1701 + 3 skipped、Web
+216），AH10 双 daemon 与 F20 干净检出定向各 1/1 PASS；未重跑完整
+`pnpm test:functional`。AH7/AH10/AH14 和 F21–F23 仍未关闭。
+`02e42ac` 增补 AH10 `SelectCurrentWork` handler 级跨代资格，保留 gen0
+DecisionId CommandId；`pnpm check` PASS（架构 155、核心 1705 + 3 skipped、
+Web 216），F20 干净检出 1/1 PASS。`Deliver` 过期代仍可写 Message/Event/Inbox，
+拟议 AH10-DG-01 的隔离红测与治理稿已提交；AH10 仍 PARTIAL，不能把以上
+定向/单测当作两侧完整进程崩溃资格。
+`02e42ac` 上完整 `pnpm test:functional` 亦 PASS（公开进程 42、浏览器 2）。
+验证控制动作新增两条隔离红测：RecordVerificationEvidence 同 ID 重试的
+`recordedAt` 指纹漂移，以及 ConcludeVerification 缺 P8 已冻结的
+`criteriaResults` 持久快照；拟议 VCS-DG-01 见
+`planning/results/verification-evidence-replay-and-snapshot-governance.review.md`。
+时间来源和历史结论行处置未获人工治理，不能凭绿色功能批次宣布验证
+命令重放或 AH10 闭合。
+P9 `07` §4 的密集 SSE/TTL/3 实际续租资格新增
+`tests/functional/process/p9-dense-sse-lease-renewal.functional.test.ts`：
+真实 SQLite 同 generation `expires_at` 在活跃 SSE（已消费 >512 帧）期间
+前移，ProviderAttempt/Turn 最终成功且请求只一次；见
+`planning/results/P9-dense-sse-lease-renewal.result.md`。它不是 AH7/AH10
+进程崩溃矩阵的替代证据。
+`c39004f` 上 `pnpm check` PASS（架构 155、核心 1705 + 3 skipped、
+Web 216）；F20 + P9 密集 SSE 定向 2/2 PASS。此提交未重跑完整
+`pnpm test:functional`，不能把定向验证扩大成全功能批次。
+AH10 后续真实进程补测：旧 gen0 FencingRejected receipt 落盘后杀旧
+daemon，新代唯一提交；以及旧 canonical Command/Deliverable 已提交而
+Action Pending、Observation 未写时杀进程，新代从旧 Committed receipt
+收敛。两案定向 2/2 PASS，见
+`planning/results/AH10-generation-command-takeover-gap.result.md`；
+旧拒绝 receipt 事务提交前与其他动作的两侧矩阵仍未通过，AH10 PARTIAL。
+AH10 后续在仅测试子进程显式装配的 Gateway 事务内探针处，补了旧
+`FencingRejected` 回执**提交前**杀进程；提交前/后及已提交新命令但
+Action Pending 三案合跑 3/3 PASS。提交前独立 DB 读不到旧回执，
+杀进程回滚后新代唯一提交。见同一 AH10 结果文件；其他动作及
+Deliver/验证控制的开放缺口仍使 AH10 保持 PARTIAL。
+`f6ae77f` 上完整 `pnpm check` PASS（架构 155、核心 1705 + 3 skipped、
+Web 216）；未在该提交重跑完整 `pnpm test:functional`。
+AH10 `DeclareDependency` 新增真双 daemon 旧 `FencingRejected` receipt
+提交前/后杀进程接管 2/2 PASS：前态独立 SQLite 读不到未提交旧回执，
+杀进程后回滚；后态 gen1 查询已提交旧回执。同一 LogicalAction、新代
+CommandId、唯一
+Unsatisfied Dependency 与 Observation、Provider 一次。见
+`planning/results/AH10-generation-command-takeover-gap.result.md`；其他动作
+仍开放，AH10 PARTIAL。`29b9ce2` 上完整 `pnpm check` PASS（架构 155、
+核心 1705 + 3 skipped、Web 216）；参数化增量未重跑完整 `pnpm check`。
+`afe8a20` 上完整 `pnpm test:functional` PASS（真实进程/公开 API 21 文件、
+48/48；Playwright 2/2），含 AH10 五场景和 F20 干净检出。此结果不关闭
+AH10 其他动作及治理缺口。
+AH10 `AcceptResult` 真双 daemon takeover 现覆盖旧 FencingRejected receipt
+提交前与提交后两个 kill/restart 边界：提交前独立 SQLite 看不到回执且旧进程
+退出回滚，新代通过 Parent `list_workspaces` 取得真实 resultRef 后唯一
+Acceptance、Child Work Completed；两支保留同一 LogicalAction/ProviderTurn。
+`SendMessage` Query 另覆盖旧拒绝 receipt 提交后 takeover，唯一 Message、Inbox/
+correlation、Observation 与 Provider 调用。当前本地复跑 AH10 主文件与 SendMessage
+文件共 8/8 PASS，完整 `pnpm check` PASS（Biome 943 files、architecture 155、
+core 1708 + 3 skipped、Web 216）。结果分别见
+`planning/results/AH10-generation-command-takeover-gap.result.md` 和
+`planning/results/AH10-send-message-process-takeover.result.md`。AH10 仍 PARTIAL：
+其余控制动作、SendMessage 其他边界，以及 Deliver/验证控制治理缺口仍开放。
+`d5dca49` 推送后 F20 干净检出 1/1 PASS（44.37s），完整
+`pnpm test:functional` PASS（Vitest 22 files/51 tests、Playwright 2/2）；
+这些广义绿色结果不消除 AH10 的剩余控制动作和治理缺口。
+后续 `SendMessage` 真双 daemon 覆盖 Query 的旧 FencingRejected receipt
+提交前/后接管（2/2），以及 Query Inbox 已消费且 correlation 已关闭后，Reply
+Committed/Action Pending/无 Observation 的 kill/restart receipt-first 收敛
+（1/1）；最新 SendMessage 文件定向 3/3 PASS。`SelectCurrentWork` 的真实
+Scheduler DecisionEpisode 双 daemon 提交前/后 receipt takeover 2/2 PASS，修复
+了 `main.ts` 仅恢复 WorkEpisode 的实现缺口；按 P2-06 §4A/P9/EGP 现有合同处置，
+无新设计语义或 `docs/design/**` 改动。原 pending RED、实现依据与结果见
+`planning/results/AH10-select-current-work-takeover.result.md` 和
+`planning/proposals/AH10-decision-episode-takeover-dispatch-gap-draft.md`（现为
+implementation disposition）。本次 `pnpm check` PASS（Biome 944 files、
+architecture 155、core 1708 + 3 skipped、Web 216）；AH10 仍 PARTIAL，其他控制
+动作/状态组合及 Deliver/验证控制治理缺口仍开放。
+P9 集成复核：`47e9249` 上完整 `pnpm test:functional` 首次为 Vitest 21/22
+files、52/53 tests；唯一失败是 P9 首次 lease-renewal snapshot 的
+`framesConsumed=481` 未达既有 `>512` 阈值，Playwright 因 Vitest 失败未运行。
+定向诊断确认两次孤立 P9 在该提交均通过，问题是高负载下只采首次续租且网络
+enqueue 前计数不代表持久观察。`101e009`/`3ffb17a` 的 P9 专属测试修复在同一
+真实续租采样核对同代 lease row expiry 增长、活跃 SSE、网络写/读帧及 SQLite
+canonical TextDelta 持久数均 `>512`，并在首轮不足时等待下一次有界真实续租；
+未改生产代码或降低阈值。最终 `3ffb17a` 上 F20 1/1 PASS（66.36s），完整
+`pnpm test:functional` PASS（Vitest 22/22 files、53/53 tests；Playwright 2/2）。
+此前 `pnpm check` 在 `47e9249` 上 PASS（Biome 944、architecture 155、core
+1708 + 3 skipped、Web 216）；P9 后续测试专属变更的 test typecheck/Biome PASS，
+但未在 `3ffb17a` 重跑完整 `pnpm check`。AH10/AH7 仍未闭合。
+AH10 DecisionEpisode 续发实现修复位于本地提交 `5e389e8`：daemon 恢复同一
+active Workspace Execution 时不再仅筛 WorkEpisode，既有 pre-dispatch、Pending
+approval 与 fencing/runExecution 路径保持不变；拟议 AH10-DG-02 按现有 P2-06/P9/
+EGP 合同归类为已修复实现缺陷，不涉及 `docs/design/**`。SelectCurrentWork 提交前/
+后 receipt 双 daemon 2/2，AH10 主文件+SendMessage 10/10，完整 `pnpm check` PASS
+（Biome 944、architecture 155、core 1708 + 3 skipped、Web 216），F20 1/1；本地
+`5e389e8` 完整功能 PASS（Vitest 23 files/55 tests、Playwright 2/2）。AH10 其他
+控制动作/状态组合及 Deliver/验证治理缺口仍开放。本次 cherry-pick 推送尝试遭
+GitHub Remote Internal Server Error，远端同步状态须另行确认。
+2026-10-08 增量：AH10 current-Workspace `AssignWork` 新增双 daemon receipt
+提交前/后和 Committed-but-Pending 三案，独立定向 3/3 PASS；使用 exact
+Workspace CAPA GrantPermission，不覆盖 direct-child placement。AH7 新增 A 已
+Applied 后 B Idempotent patch effect 已发生、settlement 前杀 daemon，重启按同一
+ToolInvocation/Action identity 收敛，定向 1/1 PASS；不宣称 executor 单次调用。
+见 `planning/results/AH10-assign-work-process-takeover.result.md` 与
+`planning/results/AH7-B-idempotent-effect-before-settlement.result.md`。该增量
+完整 `pnpm check` PASS（Biome 946 files、architecture 155、core 1708 + 3 skipped、
+Web 216）；AH7/AH10 仍 PARTIAL。
+`7f71058` 首次完整功能批次出现 24/25 Vitest files、58/59 tests：AH7 B effect
+case只因 snapshot 合法停留在 `StepEffectsCommitted/cursor2`，而测试过度要求后续
+`NextStepReady`。按 P9 冻结状态机修正状态断言为同一 Step/cursor2 且仅接受这两个
+合法阶段，唯一 ToolInvocation/Result/Artifact/Observation、文件 effect、Provider
+一次断言均保留。后续全功能复跑仍在 `durableSnapshot()` 多SELECT无事务中读到
+cursor1与后续B事实的混合快照；`84fec08` 改为test-local BEGIN只读事务，要求同一
+快照内同Execution/Step cursor2、B Applied及P4/Observation唯一事实。
+修后定向2/2 PASS，typecheck/Biome PASS；`84fec08` 上F20 1/1、完整
+`pnpm test:functional` Vitest25/25 files/61/61 tests、Playwright2/2均PASS。
+该增量仍不关闭AH7/AH10。
+后续 `SendMessage` 增 DecisionRequest 旧 FencingRejected receipt 提交前/后双 daemon
+两案：同一ProviderTurn持久ToolCall顺序为send_message→wait；ActionResult gate前
+workflow-signals offset落后是预期暂停，释放后child WorkEpisode settle、offset推进且
+唯一Parent InboxEpisode入账。当前 SendMessage文件5/5（Query2、Reply1、DecisionRequest2），
+`pnpm check` PASS（Biome946、architecture155、core1708+3 skipped、Web216）；AH10仍PARTIAL。
+`905c566` 首次完整功能批次Vitest为24/25 files、60/61 tests，唯一失败为AH7 B的
+非事务snapshot混合cursor/Action事实；该提交SendMessage五案全部通过，但Vitest失败
+后Playwright未运行。`84fec08`一致性快照修正后F20 clean checkout 1/1、完整
+`pnpm test:functional` Vitest25/25 files/61/61 tests、Playwright2/2；P9 dense SSE
+同批PASS。gate前offset不前进是预期暂停，release后workflow-signals与Parent InboxEpisode
+收敛，不是consumer缺陷。详见`planning/results/AH10-send-message-process-takeover.result.md`。
+AH7 新增普通 A/B 双动作真实进程测试：同一 ProviderTurn 两个成功
+Idempotent patch，重启后 cursor 0→1→2、A/B 各一条 ToolInvocation/
+ToolResult/Artifact，原 Provider 决策只一次；见
+`planning/results/AH7-two-action-interleaving.result.md`。它不关闭
+AH7-DG-01/02/03 或其他多动作失败/并发分支。
+AH7 同一 NonIdempotent ToolInvocationId 的真实 SQLite 双独立连接竞争
+扩至两个独立 OS 进程同步竞争，定向 3/3 PASS：唯一主键 intent、唯一
+Success settlement、外部 effect 仅一次；见
+`planning/results/AH7-cross-connection-concurrency.result.md`。
+完整 `pnpm check` PASS（架构 155、核心 1707 + 3 skipped、Web 216）。
+该次门禁仅包含前两项双连接测试；第三项加入后完整 `pnpm check` 再次
+PASS（架构 155、核心 1708 + 3 skipped、Web 216）。并发证据不替代
+多进程 crash/restart 资格，AH7 仍 PARTIAL。
+At `b4c0fd6`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,
+Web 216) and `pnpm test:functional` passes (public process 24, browser 2).
+At `6dd3dda`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,
+Web 216) and `pnpm test:functional` passes (public process 23, browser 2).
+At `1812991`, `pnpm check` passes (architecture 155, core 1677 + 3 skipped,
+Web 216) and `pnpm test:functional` passes (public process 19, browser 2).
 
 ## Planning
 
@@ -58,6 +449,36 @@ Product UI Final Convergence COMPLETE — **Web Product UI FORMALLY CLOSED** at
 `planning/results/D10-web-product-ui-final-convergence.result.md`.
 Next activity: **Dogfooding / Release Validation** — use Arbor for real tasks;
 Web v1 implementation is closed.
+Provider-result handoff governance: **DESIGN CLOSED at DID v1.20;
+IMPLEMENTATION AUTHORIZED at DID v1.21**. `DOGFOOD-DG-01` is RESOLVED at the
+design layer; implementation still requires TDD/AH1–AH14 evidence before any
+preserved-database recovery.
+Session / Context Runtime convergence: **SCRC-1…SCRC-12 ACCEPTED; owning
+contracts landed as System Design v1.4 / DID v1.22 at `75589c5`;
+post-landing review Blocking = 0; `SCRC-DG-01` RESOLVED**. Migration 0019 and
+SCRC code implementation are AUTHORIZED by the manual token
+`AUTHORIZE_SESSION_CONTEXT_RUNTIME_IMPLEMENTATION` (2026-10-01). SCRC planning is COMPLETE
+(`planning/phases/SCRC.md`; 8 task contracts; T01–T30 acceptance matrix;
+planning review Blocking = 0). Execute SCRC-001…SCRC-008 strictly by the phase
+DAG; only SCRC-008 may claim full completion. Current implementation state:
+**SCRC-001…008 COMPLETE; FORMALLY CLOSED; SCRC-DG-01/02 RESOLVED**
+(`planning/results/SCRC-001.result.md`, `planning/results/SCRC-002.result.md`,
+`planning/results/SCRC-003.result.md`).
+See also `planning/results/SCRC-004.result.md`.
+See also `planning/results/SCRC-005.result.md`.
+See also `planning/results/SCRC-006.result.md`.
+P17 (Conversation Delivery Runtime convergence): **COMPLETE / FORMALLY CLOSED**.
+Governance proposal accepted
+2026-10-01 by `ACCEPT_CONVERSATION_DELIVERY_RUNTIME_CONVERGENCE`; owning
+contracts landed as System Design v1.5 / DID v1.24 plus
+`docs/design/implementation/P17-conversation-delivery-runtime/**`.
+Implementation and migration 0021 landed in order: Context Gate →
+ResponseJob/Attempt → Recovery/Scheduler/Breaker → TurnProfileResolver →
+Commands/UI → migration/restart/live qualification. C1–C20 and `pnpm check`
+passed; legacy booleans/fallback and the old P14 trigger/sweep/rollback runtime
+were removed; `DOGFOOD-DG-02` is CLOSED. Evidence:
+`planning/results/P17.result.md`. Do not restore P14's unbounded
+`Failed -> Pending -> retry-until-response` path.
 P16 (Provider Extension Architecture — DID-side implementation design under
 `docs/design/implementation/P16-provider-extension/`, governance-authorized
 2026-09-29): **Gate A design contracts FROZEN**; **Gate B Design Closure =
@@ -185,3 +606,153 @@ Execution  = recoverable execution episode (one active main per Workspace)
 Agent      = runtime execution role, not a long-term entity (no AgentId)
 Verification PASS != Parent Acceptance != Work Completed
 ```
+
+2026-10-08 AH10 committed-receipt recovery increment: `DeclareDependency` and
+`AcceptResult` now each have a real two-daemon Committed-receipt/Action-Pending
+kill/restart case in addition to their earlier FencingRejected cases. The
+`SelectCurrentWork` DecisionEpisode recovery now resumes only the exact pinned
+successful ProviderTurn for its matching submitted DecisionRequest; it
+converges the original Execution to `Completed(DecisionSubmitted)`, the
+AgentLoopStep to `SettlementProposed`, and the original Action/Observation
+without another model request. Negative replay-binding guards are covered.
+Evidence: `planning/results/AH10-generation-command-takeover-gap.result.md`,
+`planning/results/AH10-select-current-work-takeover.result.md`. Current focused
+runs: AH10 main process 9/9, SelectCurrentWork process 3/3, guard/core 57/57;
+`pnpm check` passes (Biome 947 files, architecture 155, core 1711 + 3 skipped,
+Web 216). AH10 remains PARTIAL; Deliver and verification-control governance
+gaps and other action/state combinations remain open. Follow-up: an isolated
+pending corruption fixture now exercises the mismatched replay guard on a real
+gen1 daemon lease using valid foreign Workspace and Manifest rows. Both cases
+remain intentionally RED: the Execution settles Failed while the original
+Step remains ActionsInProgress and its Action Pending, without a target
+Observation or new Provider/effect. The exact terminal/Attention disposition
+remains awaiting manual governance in
+`planning/proposals/agent-loop-submitted-binding-rejection-terminalization-draft.md`;
+the pending test is excluded from default gates and is not a PASS. On committed
+`4558ec65280ee25eb5817ce15fdf1f8df84209e0`, F20 passed 1/1 and full
+`pnpm test:functional` passed (Vitest 25/25 files, 64/64 tests; Playwright
+2/2). AH10 remains PARTIAL despite the green broad batch.
+
+AH7 adds real-process Idempotent action-B P4 intent-before-effect evidence:
+after A is Applied and cursor is 1, B's committed ToolInvocation intent is
+observed before effect, the daemon is killed, and a normal restart resolves the
+same invocation with one effect/ToolResult/Artifact/Observation. Independent
+targeted rerun passed 1/1 (64.61s). See
+`planning/results/AH7-B-intent-before-effect.result.md`; AH7 remains PARTIAL.
+
+Independent integration validation on the pending additions: AH7 target 1/1
+PASS (64.61s); AH10 submitted-binding corruption target 2/2 expected RED
+(92.73s; excluded from default functional tests); test TypeScript and Biome
+PASS; full `pnpm check` PASS (Biome 949 files, architecture 155, root 1711
+passed + 3 skipped, Web 216). The P12 restore-drill JSON drift caused by the
+check was restored to its committed timestamp/hash. This validation does not
+turn the pending corruption test into release coverage or close AH7/AH10.
+
+Final AH7 Provider-call-oracle correction is on committed/pushed
+`9791914`: the test now proves the original Step's single sourced
+ModelOutput/hash and exactly two A/B ToolCalls, then explicitly settles a
+different successor ProviderTurn with `wait(Manual)` instead of counting a
+legal successor call as replay. Focused target passed twice (65.00s, 64.98s).
+On `9791914`, F20 passed 1/1 (43.77s) and full `pnpm test:functional` exited 0:
+Vitest 26/26 files, 65/65 tests (2062.17s); Playwright 2/2 (24.5s). The pending
+AH10 binding-corruption RED remains excluded from this green batch. The full
+`pnpm check` had passed on `69ce796` before this final test-only amendment;
+after the amendment, test TypeScript/Biome and the full functional batch passed.
+
+2026-10-08 integration qualification on `021b6bf` plus the pending AH15/AH17/
+Direct-child AH10 batch: after `pnpm build`, the three dedicated real-process
+files pass on the integrated dist: AH15 Inbox promotion 2/2 (69.64s), AH17
+checkpoint/epoch 2/2 (74.99s), and Direct-child AssignWork old FencingRejected
+receipt before/after commit 2/2 (latest 75.01s). The Direct-child model target is the
+exact `wref` returned by public `list_workspaces`; its permission is the exact
+Parent/root WorkspaceAgent CAPA grant. AH15 probes are opt-in process-local
+seams and production composition leaves them absent. AH17 process qualification
+is for Summary compaction only. Unit tests verify Summary and ProviderNative
+compaction receive only the separate opaque `SecretRef`; request/manifest
+builders do not include it or SecretMaterial. Native match/mismatch and Native
+checkpoint recovery remain unqualified under AH19.
+
+AH17 recovery now requires the highest persisted terminal ProviderAttempt with
+recognized failure kind and exact `phase1-v2` taxonomy. Missing/unsupported
+classification follows the existing `SettledEvidenceInvalid` /
+`SettledProviderEvidenceInvalid` ProviderReplay fail-closed path. A P20
+empty-ordinal-0-chain deterministic recovery test verifies the durable terminal
+ContextLimit inference identity is retained while its original Inference and
+OverflowCompaction links are recreated transactionally and the same compaction
+then replacement path continues. P3 driver suite passes 37/37, including
+P17 ordinary Prepared, P19 ordinary failure, latest-terminal-attempt selection,
+missing/legacy classification rejection, P19 ContextLimit/missing-P20-table
+fail-closed, and P20 empty-chain reconstruction. This is not AH18 process-crash
+closure. The 2026-10-08 AH18 linked-overflow batch below now process-qualifies
+the durable OverflowCompaction-link / Summary ProviderTurn NotFound and
+Unsettled recovery path, the original Inference failTurn pre-commit boundary,
+and second ContextLimit terminalization. AH18 remains open because this is not
+the full P9/AH18 crash matrix; AH19 remains open and AH10 remains PARTIAL.
+
+Integration regression history is retained: the first full Vitest run before
+that gate fix had 25 failures among 27 `tests/p3-driver.test.ts` cases because
+ordinary Prepared steps queried the absent P20 chain table; a named P17
+regression captured the RED, and the final suite is 37/37. The initial AH17
+process attempt also failed before either boundary with
+`AuthenticationFailed, invalid_api_key` because SecretRef was omitted from the
+compaction ProviderRunInput; Summary and Native coordinator tests then failed
+red before the separate-reference propagation fix. Direct-child AssignWork's
+original author run used old `dist`; the recorded 75.86s integrated rerun used
+post-build production code.
+
+Integrated `pnpm check` passes: Biome 953 files, typecheck, architecture 155,
+core 316 files / 1723 passed / 3 skipped, Web typecheck/build and 31 files /
+216 tests. The P12 restore-drill JSON's generated timestamp/hash drift was
+restored to the committed values. This batch does not close AH10, AH18, AH19 or
+SCRC-008.
+
+Committed release validation for `cacbf94` is in
+`planning/results/AH15-AH17-direct-child-release-validation.result.md`: F20
+clean committed checkout 1/1 PASS (50.65s), then `pnpm test:functional`
+Vitest 29 files / 71 tests PASS and Playwright 2/2 PASS. The full suite includes
+AH15 2/2, AH17 Summary 2/2, and Direct-child AH10 2/2; AH10 remains PARTIAL,
+and AH18/AH19 remain open.
+
+2026-10-08 linked overflow integration: `planning/results/AH18-overflow-linked-
+compaction-resume.result.md` records 10/10 process tests PASS after `pnpm build`
+and 37/37 P3 driver tests PASS. The full `pnpm check` first completed with two
+failures in the existing `tests/provider-runtime-phase1.integration.test.ts`
+deadline harness under the 316-worker core run: the whole-turn case reached
+Vitest's 30s test timeout while awaiting `connected`, and the retry-backoff
+case expected `calls=1` but observed 0 after the `TurnDeadline` expectation
+passed. A focused diagnostic run then passed both cases 2/2 in 4.29s, and a
+second full `pnpm check` passed (Biome 955 files, architecture 155, core 316
+files / 1723 passed / 3 skipped, Web 31 files / 216 tests). Preserve both full
+run outcomes; this evidence does not establish a product deadline defect or
+erase the first-run test-harness failure. The deterministic deadline test
+oracle repair is tracked separately. This batch does not close AH7, AH10,
+AH18, AH19, F21, F23, or SCRC-008; FT-DG-02 implementation and F22 browser
+qualification are tracked separately and now complete.
+
+## Current release and recovery status — 2026-10-24
+
+At candidate `772ba5d713032fbccd7623264f5b664bee22f4a9`, `pnpm check`, the
+complete-coverage scripted release functional profile, and `pnpm test:package`
+pass; see `planning/results/release-candidate-convergence-772ba5d7.result.md`.
+The current recovery audit
+(`planning/results/current-recovery-closure-audit-772ba5d7.result.md`)
+supersedes older blanket OPEN labels for supported-v1 AH7 DG-01/02/03 paths,
+registered AH10 (including Deliver/P8/P41) paths, and AH14 ambiguous-legacy
+Attention on that candidate. It does not claim whole product/recovery closure:
+four exact pending verification/P8/F23 cases await default promotion; P6
+public read and Submitted DecisionEpisode corruption semantics remain open;
+Native OS support, real-provider journeys, and existing database upgrade are
+not qualified. Copied same-holder ToolRuntime concurrency is explicitly
+unsupported; shell@3 remains NonIdempotent and legacy shell@2 fails closed
+without trusted proof. This addendum does not change `docs/design/**` or
+authorize preserved-database access.
+
+2026-10-25 governance increment: `RAI-DG-02` terminal Provider failure
+same-Work-revision readmission hold was manually accepted under
+`ACCEPT_RAI_DG_02_TERMINAL_PROVIDER_FAILURE_HOLD_V2`, fixed proposal raw
+SHA-256 `FA1AFC6675E040698F69E5EE29C67DE92EA10D54228D476A6DA27E2A98B8FA93`.
+Owner contracts landed as System Design v1.23 / DID v1.61 plus
+P2/P3/P6/P7/P9/P10/P12/P13 addenda. Three independent review rounds ended at
+Blocking=0/Nonblocking=0; the design layer is closed. A separate implementation
+authorization remains required. Do not implement, migrate a preserved
+database, or claim real S2/release closure from the acceptance alone.

@@ -7,17 +7,16 @@ import type {
   WorkspaceId,
 } from "@arbor/domain";
 import {
-  ControlToolCatalogPort,
   type ModelCapabilityError,
   ModelCapabilityPort,
   type ModelContextError,
-  type ModelFacingToolDefinition,
+  type PortableInputItem,
+  type PortableLegacyMessage,
   type SkillRef,
   SkillRegistry,
   type SkillRegistryError,
-  ToolCatalogPort,
 } from "@arbor/ports";
-import { Context, Effect, Layer, Option } from "effect";
+import { Context, Effect, Layer, type Option } from "effect";
 import {
   type ControlBasis,
   compileTurn,
@@ -31,7 +30,9 @@ import {
   planContext,
 } from "./context.js";
 import type { InstructionFragment, PromptProgram } from "./prompt.js";
+import { estimateFixedRequestTokens } from "./request-budget.js";
 import { type GovernanceIssue, resolveInstructions } from "./resolver.js";
+import type { ResolvedTurnProfile } from "./turn-profile.js";
 
 /** DID v1.7 §6A.10/§8.2; P3 `02` §1. */
 export type TurnPreparation =
@@ -53,26 +54,50 @@ export interface PrepareTurnInput {
   readonly program: PromptProgram;
   readonly fragments: ReadonlyArray<InstructionFragment>;
   readonly contextFragments: ReadonlyArray<ContextFragment>;
+  /** Portable input items whose cost is represented exactly once by C3
+   * Compressible ContextFragments. The items remain in a compaction request;
+   * this only assigns their budget ownership to context planning. */
+  readonly compressibleInputItemIndexes?: ReadonlyArray<number>;
   readonly budget: ContextBudget;
   readonly controlBasis: ControlBasis;
   readonly maxOutputTokens: number;
   readonly bodySkillIds: ReadonlyArray<string>;
-  /** Independent bounded output protocol; control tools use the generic
-   * invocation protocol and do not select a universal AgentDirective union. */
-  readonly outputContractRef?: string;
+  readonly turnProfile: ResolvedTurnProfile;
   /** P14 conversation context: the current claimed human message (user) plus
    * recent answered turns (user/assistant). Absent on Work executions. */
   readonly conversationMessages?: ReadonlyArray<{
     readonly role: "user" | "assistant";
     readonly text: string;
   }>;
+  /** Provider-neutral messages assembled by the runtime. Supports tool
+   * observations without treating their text as instructions. */
+  readonly messages?: ReadonlyArray<PortableLegacyMessage>;
+  readonly inputItems?: ReadonlyArray<PortableInputItem>;
   /** Manifest refs for the conversation context (human-input:<messageId>). */
   readonly conversationContextRefs?: ReadonlyArray<string>;
+  readonly messageContextRefs?: ReadonlyArray<string>;
   /** Adapter identity recorded on the manifest (composition-provided). */
   readonly providerRef?: string;
-  /** P14 conversation: suppress catalogued executable tools (WAVE1 S05 —
-   * the Human Input request exposes only the directive tool). */
-  readonly includeTools?: boolean;
+  /** Exact protocol family and Model Context attachment decisions for P16
+   * reasoning round-trip. */
+  readonly protocolFamily?: string;
+  readonly reasoningAttachmentRefs?: ReadonlyArray<{
+    readonly messageId: string;
+    readonly modelRef: string;
+    readonly protocolFamily: string;
+    readonly bindingFingerprint: string;
+    readonly decision: "Preserve" | "Inject" | "DiscardForCompaction";
+  }>;
+  readonly stepContext?: {
+    readonly logicalStepNo: number;
+    readonly repairAttempt: number;
+    readonly inputFrontier: {
+      readonly firstSequence: number | null;
+      readonly lastSequence: number | null;
+    };
+    readonly fingerprint: string;
+    readonly bindingFingerprint: string;
+  };
   /** Content table (contentRef -> instruction body). When present,
    * compiled instructions carry the resolved text instead of the bare
    * reference (P3 `05` compile semantics). */
@@ -98,16 +123,12 @@ const toModelContextError = (cause: unknown): ModelContextError => ({
 export const ModelContextLive: Layer.Layer<
   ModelContext,
   never,
-  ModelCapabilityPort | SkillRegistry | ToolCatalogPort
+  ModelCapabilityPort | SkillRegistry
 > = Layer.effect(
   ModelContext,
   Effect.gen(function* () {
     const capabilityPort = yield* ModelCapabilityPort;
     const skills = yield* SkillRegistry;
-    const toolCatalog = yield* ToolCatalogPort;
-    const controlToolCatalog = yield* Effect.serviceOption(
-      ControlToolCatalogPort,
-    );
 
     const prepareTurn = (input: PrepareTurnInput) =>
       Effect.gen(function* () {
@@ -122,7 +143,42 @@ export const ModelContextLive: Layer.Layer<
           } as TurnPreparation;
         }
 
-        const planned = planContext(input.contextFragments, input.budget);
+        const capability = yield* capabilityPort.resolve({
+          binding: input.binding,
+          cognitiveMode: input.cognitiveMode,
+          requiredCapabilities: [],
+        });
+        const tools = input.turnProfile.executableTools;
+        const controlTools = input.turnProfile.controlTools;
+        const skillRefs: SkillRef[] = [];
+        for (const skillId of input.bodySkillIds) {
+          const loaded = yield* skills.load(skillId, "Body");
+          skillRefs.push(loaded.skillRef);
+        }
+        const messages = input.messages ?? input.conversationMessages ?? [];
+        const inputItems = input.inputItems ?? [];
+        const availableTokens = contextBudget(input.budget);
+        const fixedTokens = estimateFixedRequestTokens({
+          instructions: resolved.effective,
+          ...(input.instructionContents === undefined
+            ? {}
+            : { instructionContents: input.instructionContents }),
+          messages,
+          inputItems,
+          ...(input.compressibleInputItemIndexes === undefined
+            ? {}
+            : {
+                excludedInputItemIndexes: input.compressibleInputItemIndexes,
+              }),
+          tools,
+          controlTools,
+        });
+        const planned = planContext(input.contextFragments, {
+          modelWindow: availableTokens - fixedTokens,
+          outputReserve: 0,
+          protocolReserve: 0,
+          toolReserve: 0,
+        });
         if (planned.unsatisfiable) {
           const hard = input.contextFragments.filter(
             (fragment) =>
@@ -131,8 +187,10 @@ export const ModelContextLive: Layer.Layer<
           );
           return yield* Effect.fail<ContextUnsatisfiable>({
             _tag: "ContextUnsatisfiable",
-            requiredTokens: hard.reduce((sum, f) => sum + f.tokens, 0),
-            availableTokens: contextBudget(input.budget),
+            requiredTokens:
+              fixedTokens +
+              hard.reduce((sum, fragment) => sum + fragment.tokens, 0),
+            availableTokens,
           });
         }
         if (planned.evicted.length > 0) {
@@ -142,33 +200,6 @@ export const ModelContextLive: Layer.Layer<
           } as TurnPreparation;
         }
 
-        const capability = yield* capabilityPort.resolve({
-          binding: input.binding,
-          cognitiveMode: input.cognitiveMode,
-          requiredCapabilities: [],
-        });
-        const tools: ModelFacingToolDefinition[] = [];
-        if (input.includeTools !== false) {
-          const toolRefs = yield* toolCatalog.visibleRefs();
-          for (const ref of toolRefs) {
-            tools.push(yield* toolCatalog.resolveForModel(ref));
-          }
-        }
-        // P14 `02` S05: the conversation face suppresses catalogued
-        // EXECUTABLE tools only — the control (directive) channel stays
-        // model-facing. The registry's shallow definitions are the explicit
-        // controlTools, which also stops compileTurn from injecting the
-        // legacy monolithic `arbor_directive` (the representation whose
-        // routes never matched the registry — RouteRegistryMismatch).
-        const controlTools = Option.isSome(controlToolCatalog)
-          ? yield* controlToolCatalog.value.visibleDefinitions()
-          : [];
-        const skillRefs: SkillRef[] = [];
-        for (const skillId of input.bodySkillIds) {
-          const loaded = yield* skills.load(skillId, "Body");
-          skillRefs.push(loaded.skillRef);
-        }
-
         const compiled = compileTurn({
           plan: {
             instructions: resolved,
@@ -176,22 +207,44 @@ export const ModelContextLive: Layer.Layer<
             tools,
             controlTools,
             skills: skillRefs,
-            outputContract:
-              input.outputContractRef ??
-              input.program.outputContractRefs[0] ??
-              "tool-invocation-v1",
+            outputContract: input.turnProfile.outputContractRef,
+            turnProfile: {
+              purpose: input.turnProfile.purpose,
+              version: input.turnProfile.profileVersion,
+              fingerprint: input.turnProfile.fingerprint,
+              contextPolicyRef: input.turnProfile.contextPolicyRef,
+            },
             continuation: "recent-frontier",
             controlBasis: input.controlBasis,
             ...(input.conversationMessages !== undefined &&
             input.conversationMessages.length > 0
               ? { conversationMessages: input.conversationMessages }
               : {}),
+            ...(input.messages !== undefined && input.messages.length > 0
+              ? { messages: input.messages }
+              : {}),
+            ...(input.inputItems !== undefined && input.inputItems.length > 0
+              ? { inputItems: input.inputItems }
+              : {}),
             ...(input.conversationContextRefs !== undefined &&
             input.conversationContextRefs.length > 0
               ? { conversationContextRefs: input.conversationContextRefs }
               : {}),
+            ...(input.messageContextRefs !== undefined &&
+            input.messageContextRefs.length > 0
+              ? { messageContextRefs: input.messageContextRefs }
+              : {}),
             ...(input.providerRef !== undefined
               ? { providerRef: input.providerRef }
+              : {}),
+            ...(input.protocolFamily !== undefined
+              ? { protocolFamily: input.protocolFamily }
+              : {}),
+            ...(input.reasoningAttachmentRefs !== undefined &&
+            input.reasoningAttachmentRefs.length > 0
+              ? {
+                  reasoningAttachmentRefs: input.reasoningAttachmentRefs,
+                }
               : {}),
             ...(input.instructionContents !== undefined &&
             input.instructionContents.size > 0
@@ -204,23 +257,25 @@ export const ModelContextLive: Layer.Layer<
           sessionId: input.sessionId,
           contextEpoch: input.contextEpoch,
           maxOutputTokens: input.maxOutputTokens,
+          ...(input.stepContext === undefined
+            ? {}
+            : { stepContext: input.stepContext }),
+          estimatedInputTokens: fixedTokens,
         });
         return { _tag: "Ready", turn: compiled } as TurnPreparation;
       }).pipe(
-        Effect.catchIf(
-          (cause): cause is ContextUnsatisfiable =>
-            typeof cause === "object" &&
-            cause !== null &&
-            "_tag" in cause &&
-            cause._tag === "ContextUnsatisfiable",
-          (cause) => Effect.fail(cause),
+        Effect.mapError((cause): ContextUnsatisfiable | ModelContextError =>
+          typeof cause === "object" &&
+          cause !== null &&
+          "_tag" in cause &&
+          cause._tag === "ContextUnsatisfiable"
+            ? (cause as ContextUnsatisfiable)
+            : toModelContextError(cause),
         ),
-        Effect.mapError(toModelContextError),
       );
 
     return ModelContext.of({ prepareTurn });
   }),
 );
 
-export type { ModelCapabilityError, SkillRegistryError };
-export { Option };
+export type { ModelCapabilityError, Option, SkillRegistryError };

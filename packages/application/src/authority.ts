@@ -2,14 +2,17 @@ import type {
   CommandId,
   DeliverableId,
   DependencyId,
+  ExecutionEpisodeBinding,
   ExecutionId,
   FormationProposalId,
   LeaseGeneration,
+  PermissionGrant,
   PermissionGrantId,
   PluginId,
   PluginVersion,
   Principal,
   ProjectId,
+  SandboxPolicyGrantIssuerProvenanceV1,
   SemanticRequestFingerprint,
   VerificationId,
   WorkId,
@@ -26,6 +29,15 @@ export type VerifiedCommandAuthority =
       readonly projectId: ProjectId;
     }
   | {
+      /** P15: exact project-scoped governance authority for rename/archive. */
+      readonly _tag: "ProjectGovernanceAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly commandType: "RenameProject" | "CloseProject";
+    }
+  | {
       readonly _tag: "CreateChildWorkspaceAuthority";
       readonly principal: Principal;
       readonly commandId: CommandId;
@@ -35,6 +47,15 @@ export type VerifiedCommandAuthority =
     }
   | {
       readonly _tag: "AssignWorkAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly targetWorkspaceId: WorkspaceId;
+    }
+  | {
+      /** Trusted local-admin maintenance face for shrink-to-empty only. */
+      readonly _tag: "UpdateResourceBoundaryAuthority";
       readonly principal: Principal;
       readonly commandId: CommandId;
       readonly semanticRequestFingerprint: SemanticRequestFingerprint;
@@ -73,6 +94,25 @@ export type VerifiedCommandAuthority =
       readonly senderWorkspaceId: WorkspaceId;
     }
   | {
+      readonly _tag: "ControlApprovalDecisionAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly approvalId: string;
+    }
+  | {
+      readonly _tag: "ExecutableApprovalDecisionAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly approvalId: string;
+      readonly workspaceId: WorkspaceId;
+      readonly executionId: ExecutionId;
+      readonly expectedRevision: number;
+    }
+  | {
       /** P14 `01` §1: human chat-turn submission — root-only exact binding
        * (target must be the project root workspace; enforced at the resolver). */
       readonly _tag: "SubmitHumanMessageAuthority";
@@ -81,6 +121,17 @@ export type VerifiedCommandAuthority =
       readonly semanticRequestFingerprint: SemanticRequestFingerprint;
       readonly projectId: ProjectId;
       readonly targetWorkspaceId: WorkspaceId;
+      readonly messageId: string;
+    }
+  | {
+      readonly _tag: "ConversationResponseAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly commandKind:
+        | "ResumeConversationResponse"
+        | "CancelConversationResponse";
       readonly messageId: string;
     }
   | {
@@ -199,6 +250,33 @@ export type VerifiedCommandAuthority =
       readonly verificationId: VerificationId;
     }
   | {
+      /** P8 RetryVerification: authenticated human authority is exact-bound
+       * to the stale Open source and the preallocated successor identities. */
+      readonly _tag: "RetryVerificationAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly targetWorkspaceId: WorkspaceId;
+      readonly currentOwnerId: WorkspaceId;
+      readonly workId: WorkId;
+      readonly expectedWorkRevision: number;
+      readonly verificationId: VerificationId;
+      readonly settledVerifierExecutionIds: ReadonlyArray<ExecutionId>;
+    }
+  | {
+      /** P8 replay is Resolver-only and cannot authorize handler execution. */
+      readonly _tag: "RetryVerificationReplayOnlyAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly targetWorkspaceId: WorkspaceId;
+      readonly currentOwnerId: WorkspaceId;
+      readonly workId: WorkId;
+      readonly verificationId: VerificationId;
+    }
+  | {
       /** P8 `01` §6: deterministic consumer (System origin, causationRef =
        * the WorkOutcomeAccepted event) or explicit submitter. */
       readonly _tag: "CompleteWorkAuthority";
@@ -261,6 +339,28 @@ export type VerifiedCommandAuthority =
       readonly contentHash: string;
     }
   | {
+      /** P12-produced exact human CAPA binding for the V21 sandbox decision.
+       * The command handler independently re-reads Grant and provenance in
+       * the Gateway transaction before any durable write. */
+      readonly _tag: "SandboxPolicyDecisionAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly workspaceId: WorkspaceId;
+      readonly executionId: ExecutionId;
+      readonly episodeBinding: ExecutionEpisodeBinding;
+      readonly episodeRevision: number;
+      readonly permissionGrant: PermissionGrant;
+      readonly issuerProvenance: SandboxPolicyGrantIssuerProvenanceV1;
+      readonly authorityBundleRevision: number;
+      readonly authorityBundleDigest: string;
+      readonly providerRegistryRevision: number;
+      readonly providerRegistryDigest: string;
+      readonly operatorConfigRevision: number;
+      readonly operatorConfigDigest: string;
+    }
+  | {
       /** P12 `02` §5 (G2): `GrantPermission` governance command. The variant
        * is the authority surface the resolver produces and the handler
        * exact-matches; `put` is the only durable writer (CI-1). */
@@ -270,6 +370,17 @@ export type VerifiedCommandAuthority =
       readonly semanticRequestFingerprint: SemanticRequestFingerprint;
       readonly projectId: ProjectId;
       readonly permissionGrantId: PermissionGrantId;
+      /** Present only when this exact GrantPermission issues a sandbox policy
+       * decision Grant under the current P5 operator snapshot. */
+      readonly sandboxPolicyIssuerBinding?: {
+        readonly executionId: ExecutionId;
+        readonly operatorConfigRevision: number;
+        readonly operatorConfigDigest: string;
+        readonly authorityBundleRevision: number;
+        readonly authorityBundleDigest: string;
+        readonly providerRegistryRevision: number;
+        readonly providerRegistryDigest: string;
+      };
     }
   | {
       /** P12 `02` §5 (G2): `RevokePermission` governance command. The variant

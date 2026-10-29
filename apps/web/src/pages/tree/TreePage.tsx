@@ -37,7 +37,7 @@ function usageText(
 }
 
 function attentionText(node: TreeViewNode): string {
-  return `attention ${String(node.subtreeAttention.attention)} · actionRequired ${String(node.subtreeAttention.actionRequired)}`;
+  return `需关注 ${String(node.subtreeAttention.attention)} · 需要处理 ${String(node.subtreeAttention.actionRequired)}`;
 }
 
 function TreeNodeCard({
@@ -66,10 +66,10 @@ function TreeNodeCard({
           <span className={styles.nodeName}>{node.name}</span>
           <StatusBadge label={node.status} />
           {node.subtreeAttention.attention > 0 ? (
-            <Badge tone="attention">{`attention ${String(node.subtreeAttention.attention)}`}</Badge>
+            <Badge tone="attention">{`需关注 ${String(node.subtreeAttention.attention)}`}</Badge>
           ) : null}
           {node.subtreeAttention.actionRequired > 0 ? (
-            <Badge tone="danger">{`actionRequired ${String(node.subtreeAttention.actionRequired)}`}</Badge>
+            <Badge tone="danger">{`需要处理 ${String(node.subtreeAttention.actionRequired)}`}</Badge>
           ) : null}
         </span>
         {node.currentWork == null ? null : (

@@ -1,7 +1,4 @@
 import { createHash } from "node:crypto";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { newUuid7 } from "@arbor/application";
 import {
   ExecutionId,
@@ -17,13 +14,18 @@ import type { CanonicalProviderEvent } from "@arbor/ports";
 import { BlobStorePort } from "@arbor/ports";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
 import {
-  admitExecution,
-  buildSliceLayer,
-  P12_MIGRATIONS,
-  runMigrations,
-} from "../src/index.js";
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from "vitest";
+import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
+import { createCurrentSchemaTestDatabaseFactory } from "../../../tests/support/schema44-database.js";
+import { admitExecution, buildSingleWorkspaceLayer } from "../src/index.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789c1");
 const parentWorkspaceId = parse(WorkspaceId)(
@@ -49,6 +51,34 @@ const parentExecutionId = parse(ExecutionId)(
 const principal = parse(Principal)("worker:i0");
 const body = "The requested analysis is complete.";
 const invalidRootReportBody = "root-report-must-fail-closed-i0-20260927";
+let fixtureFactory:
+  | Awaited<ReturnType<typeof createCurrentSchemaTestDatabaseFactory>>
+  | undefined;
+let fixture:
+  | ReturnType<NonNullable<typeof fixtureFactory>["create"]>
+  | undefined;
+
+beforeAll(async () => {
+  fixtureFactory = await createCurrentSchemaTestDatabaseFactory({
+    prefix: ".i0-send-message-current-schema-",
+  });
+}, 120_000);
+
+beforeEach(() => {
+  if (fixtureFactory === undefined)
+    throw new Error("Current schema factory is missing");
+  fixture = fixtureFactory.create();
+});
+
+afterEach(() => {
+  fixture?.cleanup();
+  fixture = undefined;
+});
+
+afterAll(() => {
+  fixtureFactory?.cleanup();
+  fixtureFactory = undefined;
+});
 
 interface DurableIntegrationResult {
   readonly settlement: {
@@ -56,6 +86,7 @@ interface DurableIntegrationResult {
     readonly result?: { readonly _tag: string };
   };
   readonly invalidSettlement: { readonly _tag: string };
+  readonly invalidControlResult: string;
   readonly message:
     | {
         readonly message_id: string;
@@ -86,7 +117,7 @@ const reportTurn: ReadonlyArray<CanonicalProviderEvent> = [
   {
     _tag: "ToolCallProposed",
     callRef: "report-call",
-    toolName: "arbor_send_message",
+    toolName: "send_message",
     argumentsJson: JSON.stringify({ kind: "Report", body }),
   },
   { _tag: "TurnCompleted", finishReason: "ToolCall" },
@@ -96,7 +127,7 @@ const waitTurn: ReadonlyArray<CanonicalProviderEvent> = [
   {
     _tag: "ToolCallProposed",
     callRef: "wait-call",
-    toolName: "arbor_wait",
+    toolName: "wait",
     argumentsJson: JSON.stringify({
       reason: "Report submitted; wait for a wake.",
       waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
@@ -109,7 +140,7 @@ const invalidRootReportTurn: ReadonlyArray<CanonicalProviderEvent> = [
   {
     _tag: "ToolCallProposed",
     callRef: "root-report-call",
-    toolName: "arbor_send_message",
+    toolName: "send_message",
     argumentsJson: JSON.stringify({
       kind: "Report",
       body: invalidRootReportBody,
@@ -118,18 +149,36 @@ const invalidRootReportTurn: ReadonlyArray<CanonicalProviderEvent> = [
   { _tag: "TurnCompleted", finishReason: "ToolCall" },
 ];
 
+const rootRecoveryWaitTurn: ReadonlyArray<CanonicalProviderEvent> = [
+  {
+    _tag: "ToolCallProposed",
+    callRef: "root-recovery-wait-call",
+    toolName: "wait",
+    argumentsJson: JSON.stringify({
+      reason: "No parent target exists; wait for explicit coordination input.",
+      waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
+    }),
+  },
+  { _tag: "TurnCompleted", finishReason: "ToolCall" },
+];
+
 describe("I0 SendMessage durable integration", () => {
-  it("persists valid SendMessage and fails closed before persisting an invalid root Report", async () => {
-    const root = mkdtempSync(join(tmpdir(), "i0-send-message-durable-"));
-    const app = buildSliceLayer({
-      databaseFile: join(root, "slice.db"),
-      providerTurns: [reportTurn, waitTurn, invalidRootReportTurn],
+  it("persists valid SendMessage and returns an invalid root Report to the agent as useful feedback", async () => {
+    if (fixture === undefined)
+      throw new Error("Current schema fixture is missing");
+    const app = buildSingleWorkspaceLayer({
+      databaseFile: fixture.databaseFilename,
+      providerTurns: [
+        reportTurn,
+        waitTurn,
+        invalidRootReportTurn,
+        rootRecoveryWaitTurn,
+      ],
     });
 
     const result = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
-          yield* runMigrations(P12_MIGRATIONS);
           const sql = yield* SqlClient;
           yield* sql.withTransaction(
             Effect.gen(function* () {
@@ -247,6 +296,7 @@ describe("I0 SendMessage durable integration", () => {
               );
             }),
           );
+          yield* ensureLegacyProjectResourceSourceFixture();
 
           yield* admitExecution(
             childWorkspaceId,
@@ -296,6 +346,12 @@ describe("I0 SendMessage durable integration", () => {
           const turns = yield* sql.unsafe<{ provider_turn_id: string }>(
             "SELECT provider_turn_id FROM provider_turns ORDER BY started_at",
           );
+          const invalidControlResults = yield* sql.unsafe<{
+            payload_json: string;
+          }>(
+            "SELECT payload_json FROM session_entries WHERE session_id = ? AND item_type = 'ControlResult' ORDER BY sequence",
+            [parentSessionId],
+          );
           const message = messages[0];
           const content = yield* (yield* BlobStorePort).get(
             message?.body_ref ?? "",
@@ -308,6 +364,8 @@ describe("I0 SendMessage durable integration", () => {
           return {
             settlement,
             invalidSettlement,
+            invalidControlResult:
+              invalidControlResults[0]?.payload_json ?? "{}",
             message,
             messageCount: messages.length,
             inbox,
@@ -326,7 +384,17 @@ describe("I0 SendMessage durable integration", () => {
       _tag: "Completed",
       result: { _tag: "Yielded" },
     });
-    expect(result.invalidSettlement._tag).toBe("Interrupted");
+    expect(result.invalidSettlement).toMatchObject({
+      _tag: "Completed",
+      result: { _tag: "Yielded" },
+    });
+    expect(JSON.parse(result.invalidControlResult)).toMatchObject({
+      _tag: "ControlResult",
+      callRef: "root-report-call",
+      status: "Failed",
+      disposition: "ModelUsable:action/not-applicable",
+      outputText: expect.stringContaining("no parent target"),
+    });
     expect(result.invalidBodyLookup).toBe("Failure");
     expect(result.messageCount).toBe(1);
     expect(result.message).toMatchObject({

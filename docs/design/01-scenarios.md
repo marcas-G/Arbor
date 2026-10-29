@@ -1,11 +1,52 @@
 # Arbor 核心场景定义（S1–S4）
 
-**Version:** 1.2  
-**Status:** FROZEN — scenario behavior baseline  
-**Date:** 2026-09-19  
-**Depends on:** `Arbor Problem Definition & Goals v1.2`  
+**Version:** 1.10
+**Status:** FROZEN — Minimal Architecture Convergence, Native OS Sandbox, accepted S2-RDG-01, S3 child resource ownership/carve-outs, and first-release process-mode governance addenda
+**Date:** 2026-10-26
+**Depends on:** `Arbor Problem Definition & Goals v1.3`
 **Owns:** S1–S4 的参与者、端到端行为、分支、异常与恢复的用户可感知语义  
 **Does not own:** Domain Entity、Runtime/module、数据库、Command/Event、状态机、接口、技术实现
+
+**Governance clarification (v1.2 → v1.3; `ACCEPT_MINIMAL_ARCHITECTURE_CONVERGENCE`):**
+
+- the observable long-lived participant is a Workspace responsibility; Agent
+  wording denotes the currently executing cognitive role;
+- Plan is the local working reference of the Workspace Agent for one Work and
+  is never a user-managed cross-Workspace workflow;
+- Work placement/formation and temporary runtime subagent execution are
+  separate decisions: the former changes durable responsibility, the latter is
+  optional execution strategy inside an already formal Work;
+- S1 is accepted incrementally through four ordered closures: single Workspace,
+  long-term responsibility, cross-Work delivery, then optional subagent
+  parallelism. A later closure cannot be required for an earlier one to be
+  behaviorally correct;
+- every asynchronous approve/decide step must expose a later applied/blocked
+  outcome rather than presenting the decision itself as completed work.
+
+Accepted proposal SHA-256:
+`44B549EA81E21B3D4BE5D545EA446B544D50CCA0061C83E6FC40CDC2ADCCA932`.
+
+**Governance amendment (v1.3 → v1.4; accepted Blocked WorkEpisode and P8
+orphan-governance packages):**
+
+- In S1/S3, when a terminal action failure cannot be recovered locally, the
+  responsible Agent may explicitly report Blocked with the failed action
+  category, bounded request and exact missing human/Parent input. Work remains
+  Open; Plan status and ordinary Manual waiting do not imply a blocker. The
+  owning Workspace exposes Action Required and an inspectable Work Detail;
+  child Work routes the typed request to its direct Parent. No automatic
+  retry, PASS, Acceptance, or Work completion is implied.
+- A human/Parent response or authorized Work revision lets the same Work
+  continue under existing authority; merely viewing or clearing a projection
+  never resumes it.
+- For S1/S3 verifier orphan recovery, only an authenticated local human for
+  Root Work or the exact Parent Workspace human for child Work may explicitly
+  conclude the old Verification as `Unknown(Orphaned)` and start one new
+  identity. A further orphan requires another human decision; there is no
+  automatic restart or Attention dismissal.
+
+The detailed state, evidence, persistence and transport contracts remain in
+the System Design and DID owner documents.
 
 ---
 
@@ -504,6 +545,8 @@ Agent 吸收纠错后继续自行：
 Main Agent 处理第一层影响，深层工作自行吸收与自己相关的变化。
 
 如果变化只是目标、约束或接口调整，原责任单元继续存在并更新其工作；如果变化已经改变“谁长期负责什么”，系统不得仅为了方便把一个长期责任节点静默搬到新的 Parent。应形成正式的责任交接：建立新的承接责任单元、交接必要事实/产物/未完成事项，再让旧责任单元退出日常工作。历史关系仍然可追踪。
+
+局部纠错必须区分两种不同意图：只要求 Agent 改变方法的方向指导，以及明确改变 Work 必须产出什么、约束或验证判据的 Work contract 修订。普通文字、包括旧版 `scope="Constraint"`，不会隐式变成规范性修订。需要改变规范性目标或完成条件时，人类必须在精确当前 Work revision 上提交完整、明确的 contract replacement；不能由 Agent 从自由文本补齐、推断或弱化。Direction guidance 与 contract amendment 都保留原责任单元，Normal 不抢占，Critical 才按现有强中断路径处理；两者之后都由 Agent 自主继续。
 
 ## S2.5 场景原则
 
@@ -1039,3 +1082,118 @@ Agent 不再消耗模型调用。
 > 这个设计支撑 S1–S4 中的哪一步或哪一个分支？
 
 如果无法找到对应场景，应优先怀疑该设计是否属于过度设计。
+
+## Governance addendum — Native OS Sandbox (v1.5)
+
+Under `ACCEPT_NATIVE_OS_SANDBOX_CONVERGENCE_V1`, the executable-work journey
+now has a user-visible OS-sandbox policy boundary: `ReadOnly` and
+`WorkspaceWrite` are provider-enforced profiles; `FullAccess` is an explicit
+human choice and is never a fallback. If the required provider/capability is
+unavailable, the action does not spawn and the same Execution remains visibly
+blocked with typed Attention/unavailable status. A user may explicitly choose
+the clearly labeled weaker configured path where policy allows it. Approval
+still authorizes only the exact action and never widens the sandbox; the
+sandbox never supplies approval. These are cross-scenario observable
+behaviors and do not alter S1–S4 goal or domain meaning.
+
+## Governance addendum — RecoveryBinding Attention projection (v1.6)
+
+For a process-capable invocation that cannot be safely resumed because its
+immutable recovery binding is absent or invalid, the same active Execution
+stays paused before effect admission and is shown an ActionRequired Attention.
+The Attention is derived from durable invocation/binding evidence and is not
+a second persisted recovery event. It exposes no binding bytes, hash,
+arguments, regions or paths. It disappears only when the invocation is
+terminal or the Execution is stopped; v1 has no binding repair/rebind action.
+If the timestamp or stored binding-hash format is corrupt, the read fails
+closed through the existing corruption path rather than inventing public
+Attention identity or time. Existing provider-unavailable fact Attention is
+unchanged.
+
+## Governance addendum — S2 Work contract revision (v1.7)
+
+Accepted under `ACCEPT_S2_STEER_WORK_REVISION_CONTRACT_V1` on 2026-10-24;
+fixed proposal SHA-256
+`C878BBF615F92ED43125C79EFDC0F021F062FEE97BF740795889B65B44394088`.
+Direction guidance changes method only and cannot alter Work acceptance
+criteria. A normative Goal/Constraint/Outcome change is a separate typed,
+human-authored `ContractAmendment` using a complete replacement snapshot;
+free text and legacy `scope="Constraint"` are never promoted implicitly.
+The change remains on the same responsibility unit and Work, advances its
+exact revision, and preserves independent Verification/Parent Acceptance.
+Normal and Critical apply the same amendment semantics; Critical additionally
+uses the existing Stop/quiescence behavior. Old Verification remains bound to
+its old mission and revision, and its result cannot accept or complete the new
+revision. The acceptance is design-only: it does not authorize implementation,
+migration, UI, Provider, or database activity.
+
+The user journey is the same active Execution throughout. A missing/stale
+policy pauses the exact already-persisted process-capable invocation before
+effect admission; no new Work, Execution or retry is created. The human sees
+NeedsDecision and explicitly chooses the exact policy through the existing
+command route. After commitment, recovery resumes the same action only if the
+immutable original binding/targets and current access still verify. If the
+provider cannot prove a required OS control, no process starts; the durable
+no-effect outcome produces safe Unavailable Attention and the browser does
+not auto-retry. FullAccess is a separately confirmed, non-isolated
+TrustedLocal choice and never an automatic fallback.
+
+## Governance addendum — S3 Child Workspace resource ownership (v1.8)
+
+Accepted under `ACCEPT_S3_CHILD_WORKSPACE_RESOURCE_OWNERSHIP_DELEGATION_V1`
+on 2026-10-26; fixed proposal SHA-256
+`397A56BF13042D32EF0D062146F4A34AF703738A288B4881A5FF48C6DDFE52A2`.
+When a Parent forms a Child, it may explicitly delegate a bounded write region
+as part of the human-governed formation package. After activation, the Child
+can write only within that region; the Parent retains the non-delegated
+remainder. Formation without delegation may still create the Child, but the
+Child's write attempt is denied before filesystem effect. A capability grant
+does not create ownership or widen either Workspace's boundary. Overlap,
+stale boundary/delegation, or changed host mapping is rejected as a visible
+typed failure with no partial ownership change. Reclaim waits for safe Child
+quiescence and transfers ownership atomically. Existing children gain no
+ownership by inference. This addendum changes the observable S3 resource
+ownership outcome; it does not authorize implementation or release
+qualification.
+
+## Governance addendum — Native OS Sandbox first-release boundary (v1.9)
+
+Accepted under `ACCEPT_NATIVE_OS_SANDBOX_FIRST_RELEASE_BOUNDARY_V1` on
+2026-10-26; fixed proposal SHA-256
+`8A5FC8FED5DCED9B6E944397675738F94B43591B23F85869A2D5FA96D6CB32E8`.
+At first release, the human-visible process-execution mode is either
+`Disabled` or `NativeOsSupportedOnly`. The release defaults to `Disabled`;
+shell is absent from the model-facing catalog and process-capable actions are
+blocked before spawn, including stale or replayed actions, with the existing
+safe unavailable status. Native mode is available only for the exact fully
+qualified provider/version/capability/OS-build/profile-and-network tuple.
+For the current Windows candidate this is `ReadOnly × Disabled`; it does not
+claim support for write or network access. If its signed production materials
+and full qualification are unavailable, the release remains Disabled. There
+is no TrustedLocal, FullAccess, alternate-provider, or weaker-control
+fallback. Human approval remains separate from sandbox enforcement. Switching
+mode requires a controlled restart; rollback to Disabled stops new process
+admissions and preserves trust/evidence high-water state. This narrows the
+first-release executable surface without changing S1–S4 goals or authorizing
+implementation, Native qualification, or release.
+
+## Governance addendum — durable process-mode no-effect denial (v1.10)
+
+Accepted under `ACCEPT_NATIVE_PROCESS_MODE_DURABLE_NO_EFFECT_V2` on
+2026-10-26; supplement SHA-256
+`B9909E31C005FE3546EBA1EA72395BDE3231F68ECFD2ADA14045B0C50E018DEB`.
+If a shell action already has an exact durable P4 invocation but has not
+entered effect admission, and the daemon is Disabled or lacks its exact
+qualified Native tuple, the same action is terminally denied before it starts.
+The human sees a safe `ProcessExecutionUnavailable` status tied to that exact
+action and execution. No process, provider attempt, Sandbox, fallback, or
+effect is started; the action is not retried after a later mode or tuple
+change. A newly received action while Disabled continues to be rejected
+before P4 invocation intent. If effect may already have started or identity
+cannot be proven, the existing recovery/fail-closed path applies and the
+system does not infer “no effect.” This supplement adds no alternate process
+mode or Native qualification claim.
+
+The acceptance authorizes the exact design supplement and the separately
+stated conditional implementation scope; migration and release qualification
+remain subject to its exact gates.

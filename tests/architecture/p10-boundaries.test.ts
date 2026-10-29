@@ -116,12 +116,17 @@ describe("p10-boundaries", () => {
       "websocket",
       "cli",
     ]);
-    const isP12TransportOwned = (file: string): boolean =>
-      /\/apps\/[^/]+\/src\/transport\//.test(file) ||
-      // Capability-test harnesses capture live provider-call evidence over
-      // HTTP; they are test infrastructure, not production transport (the
-      // same spirit as the apps/*/src/transport carve-out).
-      file.includes("/tests/capability/");
+    const isP12TransportOwned = (file: string): boolean => {
+      const normalized = file.replaceAll("\\", "/");
+      return (
+        /\/apps\/[^/]+\/src\/transport\//.test(normalized) ||
+        // Capability and release-functional harnesses exercise the built
+        // product over real HTTP process boundaries. They are external test
+        // infrastructure, not production transport.
+        normalized.includes("/tests/capability/") ||
+        normalized.includes("/tests/functional/")
+      );
+    };
     for (const root of ["packages", "apps", "adapters", "tests"]) {
       for (const file of walkSourceFiles(join(repoRoot, root))) {
         if (isP12TransportOwned(file)) {

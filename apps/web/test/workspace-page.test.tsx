@@ -3,9 +3,15 @@
  * QueryClientProvider 包裹；fetch 按 /views/:view URL 分流，body 形状
  * {ok:true,status:200,body:{value,watermark}}（problem 走 {ok:false,problem}）。
  */
-import type { Problem } from "@arbor/api-contracts";
+import type { Problem, WorkspaceDetailRes } from "@arbor/api-contracts";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceTab } from "../src/api/router.js";
 import {
@@ -86,6 +92,56 @@ const sessionValue: SessionContextValue = {
   reportUnauthenticated: () => undefined,
 };
 
+const sandboxCandidateId = `spc2_${"1".repeat(64)}`;
+type CandidateRead = NonNullable<
+  WorkspaceDetailRes["sandboxPolicyCandidateRead"]
+>;
+const candidateReadForDigest = (digest: string): CandidateRead =>
+  ({
+    reason: "InitialDecision",
+    commonPreconditions: {
+      expectedEpisodeRevision: 0,
+      latestCommittedPolicyRevision: 0,
+      episodeBinding: {
+        _tag: "WorkEpisode",
+        workId: "wrk_018f6a2e-0000-7000-8000-0000000000a1",
+        targetWorkRevision: 0,
+      },
+      workspaceRevision: 4,
+      resourceBoundaryRevision: 2,
+      authorityBundleRevision: 3,
+      authorityBundleDigest: "a".repeat(64),
+      operatorConfigRevision: 1,
+      operatorConfigDigest: "b".repeat(64),
+    },
+    candidates: [
+      {
+        kind: "OsEnforced",
+        candidateId: sandboxCandidateId,
+        sandboxHandleBindingDigest: digest,
+        providerId: "linux-bwrap",
+        providerVersion: "bwrap-v2",
+        capabilityRevision: 7,
+        profile: "WorkspaceWrite",
+        networkMode: "Restricted",
+        providerRegistryRevision: 3,
+        providerRegistryDigest: "c".repeat(64),
+      },
+      {
+        kind: "TrustedLocalUnconfinedV1",
+        candidateId:
+          "spc2_5ed13734a81314c653c0487eea6a454283c800b71f9c0a2bed72f4a6d49cc98d",
+        sandboxHandleBindingDigest: "e".repeat(64),
+      },
+    ],
+  }) as unknown as CandidateRead;
+
+const detailWithSandboxCandidates = (digest: string): WorkspaceDetailRes =>
+  ({
+    ...detailTypical,
+    sandboxPolicyCandidateRead: candidateReadForDigest(digest),
+  }) as WorkspaceDetailRes;
+
 const renderWorkspace = (tab: WorkspaceTab = "overview") => {
   const path =
     tab === "overview"
@@ -97,7 +153,7 @@ const renderWorkspace = (tab: WorkspaceTab = "overview") => {
       queries: { retry: false, staleTime: Number.POSITIVE_INFINITY },
     },
   });
-  return render(
+  const view = render(
     <QueryClientProvider client={client}>
       <SessionContext.Provider value={sessionValue}>
         <WorkspacePage
@@ -111,6 +167,7 @@ const renderWorkspace = (tab: WorkspaceTab = "overview") => {
       </SessionContext.Provider>
     </QueryClientProvider>,
   );
+  return { ...view, client };
 };
 
 afterEach(() => {
@@ -118,6 +175,176 @@ afterEach(() => {
 });
 
 describe("W-05 Workspace page", () => {
+  it("shows only the path-free current sandbox policy projection", async () => {
+    const detail = {
+      ...detailTypical,
+      executionSummary: {
+        executionId: "exe_sandbox",
+        admittedAt: "2026-10-19T09:00:00.000Z",
+        sandboxPolicy: {
+          kind: "OsEnforced" as const,
+          policyRevision: 3,
+          profile: "WorkspaceWrite" as const,
+          providerId: "bwrap",
+          providerVersion: "0.8.0",
+          networkMode: "Restricted" as const,
+          status: "Unavailable" as const,
+          expiresAt: "2026-10-19T12:00:00.000Z",
+        },
+      },
+    };
+    installViews({
+      ...defaultHandlers,
+      "workspace-detail": () => ({ dto: detail }),
+    });
+    renderWorkspace();
+    await waitFor(() => expect(screen.getByText("bwrap")).toBeTruthy());
+    expect(screen.getByText("Unavailable")).toBeTruthy();
+    expect(screen.getByText("WorkspaceWrite")).toBeTruthy();
+    expect(screen.getByText("OS enforced")).toBeTruthy();
+    expect(screen.getByText("Restricted")).toBeTruthy();
+    expect(screen.getByText("3")).toBeTruthy();
+    expect(
+      within(screen.getByLabelText("Sandbox policy")).queryByText(
+        /\/srv\/|C:\\\\Users/u,
+      ),
+    ).toBeNull();
+  });
+
+  it("renders NeedsDecision and TrustedLocal without implying a provider or network sandbox", async () => {
+    const detail = {
+      ...detailTypical,
+      executionSummary: {
+        executionId: "exe_sandbox",
+        admittedAt: "2026-10-19T09:00:00.000Z",
+        sandboxPolicy: {
+          kind: "TrustedLocalUnconfinedV1" as const,
+          profile: "FullAccess" as const,
+          networkBoundary: "Unconfined" as const,
+          policyRevision: 2,
+          expiresAt: "2026-10-19T12:00:00.000Z",
+          status: "NeedsDecision" as const,
+        },
+      },
+    };
+    installViews({
+      ...defaultHandlers,
+      "workspace-detail": () => ({ dto: detail }),
+    });
+    renderWorkspace();
+    await waitFor(() => expect(screen.getByText("NeedsDecision")).toBeTruthy());
+    expect(screen.getByText("Trusted local / unconfined")).toBeTruthy();
+    expect(screen.queryByText("Network mode")).toBeNull();
+    expect(screen.queryByText("os-sandbox")).toBeNull();
+  });
+
+  it("shows candidate choices with no default and does not expose binding digests", async () => {
+    installViews({
+      ...defaultHandlers,
+      "workspace-detail": () => ({
+        dto: detailWithSandboxCandidates("c".repeat(64)),
+      }),
+    });
+    renderWorkspace();
+    const osChoice = await screen.findByRole("radio", {
+      name: /工作区写入隔离.*linux-bwrap.*capability 7/u,
+    });
+    const trustedChoice = screen.getByRole("radio", {
+      name: /TrustedLocal：FullAccess/u,
+    });
+    expect((osChoice as HTMLInputElement).checked).toBe(false);
+    expect((trustedChoice as HTMLInputElement).checked).toBe(false);
+    expect(screen.queryByText("c".repeat(64))).toBeNull();
+    expect(screen.queryByText("e".repeat(64))).toBeNull();
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "明确提交此策略",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+  });
+
+  it("clears a stale candidate read and requires a fresh deliberate reselection even when its ID is unchanged", async () => {
+    let detailReads = 0;
+    let commands = 0;
+    let afterStale = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: unknown, init?: { readonly body?: unknown }) => {
+        const url = String(input);
+        if (url === "/commands") {
+          commands += 1;
+          afterStale = true;
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              status: 200,
+              body: {
+                commandId: "cmd_sandbox_stale",
+                resolution: "TerminalRejected",
+                rejection: "StaleSandboxPolicyInputs",
+              },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        const view = url.split("/views/")[1] ?? "unknown-view";
+        const request =
+          typeof init?.body === "string"
+            ? (JSON.parse(init.body) as Record<string, unknown>)
+            : {};
+        const handler =
+          view === "workspace-detail"
+            ? () => {
+                detailReads += 1;
+                return {
+                  dto: detailWithSandboxCandidates(
+                    afterStale ? "f".repeat(64) : "c".repeat(64),
+                  ),
+                };
+              }
+            : (defaultHandlers[view] ?? (() => ({ dto: null })));
+        const outcome = handler(request);
+        return new Response(
+          "problem" in outcome
+            ? problemBody(outcome.problem)
+            : okBody(outcome.dto),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }),
+    );
+    renderWorkspace();
+    const osChoice = await screen.findByRole("radio", {
+      name: /工作区写入隔离.*linux-bwrap/u,
+    });
+    fireEvent.click(osChoice);
+    fireEvent.change(
+      screen.getByLabelText("策略过期时间（ISO 8601，需包含时区）"),
+      { target: { value: "2099-10-12T08:30:00Z" } },
+    );
+    fireEvent.change(
+      screen.getByLabelText("Restricted 网络目的地（每行一个 HTTPS origin）"),
+      { target: { value: "https://a.example" } },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "明确提交此策略" }));
+    await waitFor(() => expect(commands).toBe(1));
+    await waitFor(() => expect(detailReads).toBeGreaterThanOrEqual(2));
+    await waitFor(() =>
+      expect(
+        (
+          screen.getByRole("radio", {
+            name: /工作区写入隔离.*linux-bwrap/u,
+          }) as HTMLInputElement
+        ).checked,
+      ).toBe(false),
+    );
+    expect(commands).toBe(1);
+    expect(screen.getByRole("status").textContent).toContain("策略输入已变化");
+    expect(screen.queryByText("c".repeat(64))).toBeNull();
+    expect(screen.queryByText("f".repeat(64))).toBeNull();
+  });
+
   it("头部：workspaceId（Mono）/ purpose / status 徽章 / attention 计数 / boundary 简述", async () => {
     installViews();
     renderWorkspace();

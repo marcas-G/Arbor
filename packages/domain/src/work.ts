@@ -121,6 +121,58 @@ export const steerWork = (
   input: SteerWorkInput,
 ): DomainResult<Work> => refineWork(work, input);
 
+/** Complete normative contract carried by a human ContractAmendment. */
+export type WorkContractSnapshot = Pick<
+  Work,
+  | "objective"
+  | "why"
+  | "constraints"
+  | "completionExpectation"
+  | "verificationMission"
+>;
+
+export interface DirectionGuidanceInput {
+  readonly authorized: boolean;
+}
+
+export interface ContractAmendmentInput {
+  readonly authorized: boolean;
+  readonly contract: WorkContractSnapshot;
+}
+
+const revisionAdvanceDenied = () =>
+  err({
+    _tag: "AuthorityDenied" as const,
+    reason: "human Work revision requires exact route authority",
+  });
+
+/** A method-only steer advances the semantic revision but preserves its full contract. */
+export const directionGuideWork = (
+  work: Work,
+  input: DirectionGuidanceInput,
+): DomainResult<Work> => {
+  if (work.lifecycle !== "Open") return err(terminalError());
+  if (!input.authorized) return revisionAdvanceDenied();
+  return ok({
+    ...work,
+    revision: incrementOrdinal(WorkRevision)(work.revision),
+  });
+};
+
+/** An explicit human amendment replaces every normative Work contract field. */
+export const amendWorkContract = (
+  work: Work,
+  input: ContractAmendmentInput,
+): DomainResult<Work> => {
+  if (work.lifecycle !== "Open") return err(terminalError());
+  if (!input.authorized) return revisionAdvanceDenied();
+  return ok({
+    ...work,
+    ...input.contract,
+    revision: incrementOrdinal(WorkRevision)(work.revision),
+  });
+};
+
 const evidenceMismatch = (workId: WorkId) => ({
   _tag: "VerificationAcceptanceMismatch" as const,
   workId,

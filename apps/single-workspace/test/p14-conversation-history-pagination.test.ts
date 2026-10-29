@@ -1,34 +1,64 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type { TranscriptReq, TranscriptRes } from "@arbor/api-contracts";
 import { ProjectId, parse, SessionId, WorkspaceId } from "@arbor/domain";
 import { ProjectionQueryPort } from "@arbor/ports";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
 import {
-  buildSliceLayer,
-  P16_MIGRATIONS,
-  runMigrations,
-} from "../src/index.js";
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from "vitest";
+import { createCurrentSchemaTestDatabaseFactory } from "../../../tests/support/schema44-database.js";
+import { buildSingleWorkspaceLayer } from "../src/index.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789b1");
 const workspaceId = parse(WorkspaceId)(
   "ws_018f2b3c-4d5e-7abc-8def-0123456789b1",
 );
 const sessionId = parse(SessionId)("ses_018f2b3c-4d5e-7abc-8def-0123456789b1");
+let fixtureFactory:
+  | Awaited<ReturnType<typeof createCurrentSchemaTestDatabaseFactory>>
+  | undefined;
+let fixture:
+  | ReturnType<NonNullable<typeof fixtureFactory>["create"]>
+  | undefined;
+
+beforeAll(async () => {
+  fixtureFactory = await createCurrentSchemaTestDatabaseFactory({
+    prefix: ".p14-conversation-history-schema44-",
+  });
+}, 120_000);
+
+beforeEach(() => {
+  if (fixtureFactory === undefined)
+    throw new Error("Schema 42 factory is missing");
+  fixture = fixtureFactory.create();
+});
+
+afterEach(() => {
+  fixture?.cleanup();
+  fixture = undefined;
+}, 120_000);
+
+afterAll(() => {
+  fixtureFactory?.cleanup();
+  fixtureFactory = undefined;
+}, 120_000);
 
 describe("P14 conversation history paging", () => {
   it("returns the latest chronological page, then older pages by stable cursor", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "p14-conversation-history-"));
-    const databaseFile = join(dir, "history.db");
-    const app = buildSliceLayer({ databaseFile, projectId });
+    if (fixture === undefined) throw new Error("Schema 42 fixture is missing");
+    const testFixture = fixture;
+    const databaseFile = testFixture.databaseFilename;
+    const app = buildSingleWorkspaceLayer({ databaseFile, projectId });
     try {
       const pages = await Effect.runPromise(
         Effect.provide(
           Effect.gen(function* () {
-            yield* runMigrations(P16_MIGRATIONS);
             const sql = yield* SqlClient;
             yield* sql.withTransaction(
               Effect.gen(function* () {
@@ -90,6 +120,18 @@ describe("P14 conversation history paging", () => {
                       `assistant-${index}`,
                     ],
                   );
+                  yield* sql.unsafe(
+                    "INSERT INTO conversation_response_jobs (message_id, project_id, root_workspace_id, state, active_execution_id, next_attempt_no, next_eligible_at, attention_reason, last_failure_class, last_failure_fingerprint, policy_version, response_body, response_execution_id, provider_reasoning_json, revision, created_at, updated_at) VALUES (?,?,?,'Answered',NULL,1,NULL,NULL,NULL,NULL,'conversation-retry-v1',?,?,NULL,0,?,?)",
+                    [
+                      `msg_${minute}`,
+                      projectId,
+                      workspaceId,
+                      `assistant-${index}`,
+                      `exe_${minute}`,
+                      `2026-09-25T00:${minute}:00.000Z`,
+                      `2026-09-25T00:${minute}:30.000Z`,
+                    ],
+                  );
                 }
               }),
             );
@@ -147,7 +189,7 @@ describe("P14 conversation history paging", () => {
       expect(pages[0]?.entries.at(-1)?.kind).toBe("AssistantConversationTurn");
       expect(pages[2]?.nextCursor).toBeUndefined();
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      testFixture.cleanup();
     }
-  });
+  }, 120_000);
 });

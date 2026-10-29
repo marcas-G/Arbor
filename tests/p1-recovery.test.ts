@@ -8,18 +8,25 @@ import {
   ClockLive,
   ConsumerDeadLetterStoreLive,
   ConsumerOffsetStoreLive,
+  CURRENT_MIGRATIONS,
   DomainEventJournalLive,
   EnvironmentRevisionStoreLive,
   IdGeneratorLive,
   layer,
   OwnershipWriteServiceLive,
   P1_MIGRATIONS,
+  P36_MIGRATIONS,
+  P39_MAINTENANCE_MIGRATIONS,
   ProjectionStoreLive,
   ResourceOwnershipRepositoryLive,
   runConsumerBatch,
   runMigrations,
+  splitStatements,
   TransactionPortLive,
+  WorkspaceRepositoryLive,
+  WorkspaceResourceActivationStoreLive,
 } from "../adapters/persistence-sqlite/src/index.js";
+
 import {
   CommandId,
   type EventTypeName,
@@ -37,6 +44,26 @@ import {
   ProjectionStore,
   TransactionPort,
 } from "../packages/ports/src/index.js";
+
+const prepareCurrentTestSchema = Effect.gen(function* () {
+  yield* runMigrations(P36_MIGRATIONS);
+  const sql = yield* SqlClient;
+  yield* sql.unsafe("PRAGMA foreign_keys = OFF");
+  for (const migration of P39_MAINTENANCE_MIGRATIONS) {
+    for (const statement of splitStatements(migration.sql))
+      yield* sql.unsafe(statement);
+    if (migration.onApply !== undefined) yield* migration.onApply(sql);
+    yield* sql.unsafe(`PRAGMA user_version = ${migration.id}`);
+  }
+  yield* sql.unsafe("PRAGMA foreign_keys = ON");
+  yield* runMigrations(
+    CURRENT_MIGRATIONS.filter(({ id }) => id >= 40),
+    {
+      allowOfflineOnly: true,
+    },
+  );
+});
+
 import {
   countRows,
   faultingTransaction,
@@ -256,7 +283,11 @@ describe("P1-014 recovery matrix — consumer / projection", () => {
     const failingProjection = Layer.succeed(ProjectionStore, {
       apply: () =>
         Effect.fail({
-          _tag: "ConsumerOffsetStoreFailure" as const,
+          _tag: "PersistenceUnavailable" as const,
+          repository: "ConsumerOffsetStore" as const,
+          operation: "projection-test",
+          retryDisposition: "retryable" as const,
+          sourceTag: "InjectedFailure",
           cause: "injected projection error",
         }),
       reset: () => Effect.void,
@@ -275,9 +306,11 @@ describe("P1-014 recovery matrix — consumer / projection", () => {
       return { failed, offset };
     });
     const result = await Effect.runPromise(Effect.provide(program, app));
-    expect((result.failed as { _tag: string })._tag).toBe(
-      "ConsumerOffsetStoreFailure",
-    );
+    expect(result.failed).toMatchObject({
+      _tag: "PersistenceUnavailable",
+      repository: "ConsumerOffsetStore",
+      retryDisposition: "retryable",
+    });
     expect(result.offset).toBe(0);
   });
 
@@ -288,15 +321,33 @@ describe("P1-014 recovery matrix — consumer / projection", () => {
       const tx = yield* TransactionPort;
       const journal = yield* DomainEventJournal;
       const offsets = yield* ConsumerOffsetStore;
-      yield* tx.transact(
-        journal.append([
-          draft("ProjectCreated", 1),
-          draft("WorkspaceCreated", 2),
-        ]),
+      yield* tx.transact(journal.append([draft("ProjectCreated", 1)]));
+      const rejectedUnsupportedWrite = yield* Effect.result(
+        tx.transact(journal.append([draft("WorkspaceCreated", 2)])),
+      );
+      expect(rejectedUnsupportedWrite._tag).toBe("Failure");
+      const sql = yield* SqlClient;
+      // Reader poison qualification injects an unsupported historical row
+      // below the writer boundary; production writers must reject the pair.
+      yield* sql.withTransaction(
+        Effect.gen(function* () {
+          yield* sql.unsafe(
+            `INSERT INTO domain_events (
+              event_id,project_id,sequence,event_type,event_version,occurred_at,
+              aggregate_ref,actor,caused_by_command_id,caused_by_event_id,
+              correlation_ref,payload_json
+            ) VALUES ('evt_018f2b3c-4d5e-7abc-8def-0123456789f1',?,2,
+              'WorkspaceCreated',2,'t',?,'user:test',NULL,NULL,NULL,'{}')`,
+            [projectA, projectA],
+          );
+          yield* sql.unsafe(
+            "UPDATE project_event_sequences SET last_sequence = 2 WHERE project_id = ?",
+            [projectA],
+          );
+        }),
       );
       const batch = yield* runConsumerBatch(consumerId, projectA, 10);
       const offset = yield* tx.transact(offsets.read(consumerId, projectA));
-      const sql = yield* SqlClient;
       const dead = yield* sql.unsafe<{ sequence: number }>(
         "SELECT sequence FROM consumer_dead_letters WHERE consumer_id = ?",
         [consumerId],
@@ -323,6 +374,9 @@ describe("P1-014 recovery matrix — ownership and migration", () => {
       Layer.provide(TransactionPortLive, infra),
       Layer.provide(ResourceOwnershipRepositoryLive, infra),
       Layer.provide(EnvironmentRevisionStoreLive, infra),
+      Layer.provide(DomainEventJournalLive, infra),
+      Layer.provide(WorkspaceRepositoryLive, infra),
+      Layer.provide(WorkspaceResourceActivationStoreLive, infra),
       Layer.succeed(ProjectEnvironmentPort, {
         resolve: (_projectId, addresses) =>
           Effect.succeed({
@@ -337,7 +391,7 @@ describe("P1-014 recovery matrix — ownership and migration", () => {
     return Layer.mergeAll(
       infra,
       services,
-      Layer.provide(OwnershipWriteServiceLive, services),
+      Layer.provide(OwnershipWriteServiceLive, Layer.mergeAll(services, infra)),
     );
   };
 
@@ -406,7 +460,7 @@ describe("P1-014 recovery matrix — ownership and migration", () => {
   it("ownership write rolls back on a constraint failure", async () => {
     const app = makeOwnershipApp();
     const program = Effect.gen(function* () {
-      yield* runMigrations(P1_MIGRATIONS);
+      yield* prepareCurrentTestSchema;
       yield* seedOwnershipRows;
       const ownership = yield* OwnershipWriteService;
       const failed = yield* ownership
@@ -423,9 +477,10 @@ describe("P1-014 recovery matrix — ownership and migration", () => {
       };
     });
     const result = await Effect.runPromise(Effect.provide(program, app));
-    expect((result.failed as { _tag: string })._tag).toBe(
-      "ResourceOwnershipRepositoryFailure",
-    );
+    expect(result.failed).toMatchObject({
+      _tag: "PersistenceConstraintViolation",
+      repository: "ResourceOwnershipRepository",
+    });
     expect(result.claims).toBe(0);
     expect(result.revisions).toBe(0);
   });

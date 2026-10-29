@@ -32,7 +32,7 @@ export interface RuntimeSafetyPolicy {
 
 /**
  * Composition fallback. Finite on every dimension; the Composition Root
- * supplies an explicit policy (see `SliceConfig.runtimeSafetyPolicy`).
+ * supplies an explicit policy (see `SingleWorkspaceConfig.runtimeSafetyPolicy`).
  */
 export const DEFAULT_RUNTIME_SAFETY_POLICY: RuntimeSafetyPolicy = {
   maxRetries: 3,

@@ -7,14 +7,13 @@ import type {
 import {
   type DeliverableArtifactBinding,
   DeliverableRepository,
-  type DeliverableRepositoryError,
   DependencyRepository,
-  type DependencyRepositoryError,
   TransactionScope,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
+import { repositoryFailure } from "./repository-error.js";
 
 interface DependencyRow {
   readonly dependency_id: string;
@@ -58,10 +57,7 @@ export const DependencyRepositoryLive: Layer.Layer<
   DependencyRepository,
   Effect.gen(function* () {
     const sql = yield* SqlClient;
-    const failure = (cause: unknown): DependencyRepositoryError => ({
-      _tag: "DependencyRepositoryFailure",
-      cause,
-    });
+    const failure = repositoryFailure("DependencyRepository", "sql");
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(Effect.mapError(failure));
     return DependencyRepository.of({
@@ -162,10 +158,7 @@ export const DeliverableRepositoryLive: Layer.Layer<
   DeliverableRepository,
   Effect.gen(function* () {
     const sql = yield* SqlClient;
-    const failure = (cause: unknown): DeliverableRepositoryError => ({
-      _tag: "DeliverableRepositoryFailure",
-      cause,
-    });
+    const failure = repositoryFailure("DeliverableRepository", "sql");
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(Effect.mapError(failure));
     return DeliverableRepository.of({
@@ -223,6 +216,22 @@ export const DeliverableRepositoryLive: Layer.Layer<
                 sourceWorkRevision: row.source_work_revision,
                 kind: row.kind,
               });
+        }),
+      listByProject: (projectId) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const rows = yield* run(
+            sql.unsafe<DeliverableRow>(
+              "SELECT deliverable_id, source_work_id, source_work_revision, kind FROM deliverables WHERE project_id = ? ORDER BY deliverable_id",
+              [projectId],
+            ),
+          );
+          return rows.map((row) => ({
+            deliverableId: row.deliverable_id as DeliverableId,
+            sourceWorkId: row.source_work_id as import("@arbor/domain").WorkId,
+            sourceWorkRevision: row.source_work_revision,
+            kind: row.kind,
+          }));
         }),
       listArtifactRoles: (deliverableId: DeliverableId) =>
         Effect.gen(function* () {

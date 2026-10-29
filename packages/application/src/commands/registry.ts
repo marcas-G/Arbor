@@ -1,14 +1,29 @@
 import {
+  type AssignWorkTargetBindingRepositoryService,
+  Clock,
+  type ClockService,
+  type ControlApprovalStoreService,
+  type ConversationResponseJobStoreService,
+  type ExecutableApprovalStoreService,
+  type ExecutionRepositoryService,
+  type InboxProjectionStoreService,
   type PermissionGrantRepositoryService,
   ProjectRepository,
   type ProjectRepositoryService,
+  ProjectResourceProfilePort,
+  type ProjectResourceProfilePortService,
   type ProjectToolRegistryService,
+  type ResourceOwnershipRepositoryService,
   SessionRepository,
   type SessionRepositoryService,
+  WorkContractRevisionRepository,
+  type WorkContractRevisionRepositoryService,
   WorkRepository,
   type WorkRepositoryService,
   WorkspaceRepository,
   type WorkspaceRepositoryService,
+  WorkspaceResourceActivationStore,
+  type WorkspaceResourceActivationStoreService,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { type CommandHandler, CommandHandlerRegistry } from "../gateway.js";
@@ -16,14 +31,37 @@ import { makeAssignWorkHandler } from "./assign-work.js";
 import { makeCreateChildWorkspaceHandler } from "./create-child-workspace.js";
 import { makeCreateProjectHandler } from "./create-project.js";
 import { makeGrantPermissionHandler } from "./grant-permission.js";
+import {
+  makeCloseProjectHandler,
+  makeRenameProjectHandler,
+} from "./project-management.js";
 import { makeRegisterProjectToolHandler } from "./register-project-tool.js";
 import { makeRevokePermissionHandler } from "./revoke-permission.js";
+import { makeUpdateResourceBoundaryHandler } from "./update-resource-boundary.js";
 
 export interface P1CommandDependencies {
+  readonly clock?: Pick<ClockService, "now">;
   readonly projects: ProjectRepositoryService;
   readonly workspaces: WorkspaceRepositoryService;
   readonly sessions: SessionRepositoryService;
+  readonly activations?: WorkspaceResourceActivationStoreService;
+  readonly projectResourceProfiles?: ProjectResourceProfilePortService;
   readonly works: WorkRepositoryService;
+  readonly workContractRevisions?: Pick<
+    WorkContractRevisionRepositoryService,
+    "append"
+  >;
+  readonly resourceOwnership?: Pick<
+    ResourceOwnershipRepositoryService,
+    "listActiveByWorkspace" | "releaseClaim"
+  >;
+  readonly executions?: Pick<ExecutionRepositoryService, "findById">;
+  readonly bindings?: Pick<AssignWorkTargetBindingRepositoryService, "insert">;
+  readonly grants?: Pick<PermissionGrantRepositoryService, "findById">;
+  readonly approvals?: Pick<
+    ControlApprovalStoreService,
+    "findById" | "consumeApproved"
+  >;
 }
 
 export const makeP1CommandHandlers = (
@@ -37,10 +75,49 @@ export const makeP1CommandHandlers = (
     unknown,
     unknown
   >,
-  makeAssignWorkHandler(dependencies) as unknown as CommandHandler<
-    unknown,
-    unknown
-  >,
+  makeAssignWorkHandler({
+    ...dependencies,
+    ...(dependencies.workContractRevisions === undefined
+      ? {}
+      : { revisions: dependencies.workContractRevisions }),
+  }) as unknown as CommandHandler<unknown, unknown>,
+  ...(dependencies.resourceOwnership === undefined
+    ? []
+    : [
+        makeUpdateResourceBoundaryHandler({
+          workspaces: dependencies.workspaces,
+          ownership: dependencies.resourceOwnership,
+        }) as unknown as CommandHandler<unknown, unknown>,
+      ]),
+];
+
+export interface P15CommandDependencies {
+  readonly projects: ProjectRepositoryService;
+  readonly executions: ExecutionRepositoryService;
+  readonly responseJobs: Pick<
+    ConversationResponseJobStoreService,
+    "listForWorkspace" | "transition"
+  >;
+  readonly inbox: Pick<InboxProjectionStoreService, "markConsumed">;
+  readonly executableApprovals: Pick<
+    ExecutableApprovalStoreService,
+    "cancelForExecution"
+  >;
+}
+
+export const makeP15CommandHandlers = (
+  dependencies: P15CommandDependencies,
+): ReadonlyArray<CommandHandler<unknown, unknown>> => [
+  makeRenameProjectHandler({
+    projects: dependencies.projects,
+  }) as unknown as CommandHandler<unknown, unknown>,
+  makeCloseProjectHandler({
+    projects: dependencies.projects,
+    executions: dependencies.executions,
+    responseJobs: dependencies.responseJobs,
+    inbox: dependencies.inbox,
+    executableApprovals: dependencies.executableApprovals,
+  }) as unknown as CommandHandler<unknown, unknown>,
 ];
 
 export const P1CommandHandlerRegistryLive: Layer.Layer<
@@ -53,12 +130,30 @@ export const P1CommandHandlerRegistryLive: Layer.Layer<
     const projects = yield* ProjectRepository;
     const workspaces = yield* WorkspaceRepository;
     const sessions = yield* SessionRepository;
+    const activations = yield* Effect.serviceOption(
+      WorkspaceResourceActivationStore,
+    );
     const works = yield* WorkRepository;
+    const workContractRevisions = yield* Effect.serviceOption(
+      WorkContractRevisionRepository,
+    );
+    const projectResourceProfiles = yield* Effect.serviceOption(
+      ProjectResourceProfilePort,
+    );
+    const clock = yield* Effect.serviceOption(Clock);
     const handlers = makeP1CommandHandlers({
+      ...(Option.isSome(clock) ? { clock: clock.value } : {}),
       projects,
       workspaces,
       sessions,
+      ...(Option.isSome(activations) ? { activations: activations.value } : {}),
       works,
+      ...(Option.isSome(projectResourceProfiles)
+        ? { projectResourceProfiles: projectResourceProfiles.value }
+        : {}),
+      ...(Option.isSome(workContractRevisions)
+        ? { workContractRevisions: workContractRevisions.value }
+        : {}),
     });
     return CommandHandlerRegistry.of({
       lookup: (commandType) => {
