@@ -699,6 +699,19 @@ export const makeConcludeVerificationHandler = (
               `criterion ${result.criterionId} binds no evidence (invariant 26)`,
             );
           }
+          if (
+            new Set(result.evidenceRefs).size !== result.evidenceRefs.length ||
+            result.evidenceRefs.some((evidenceId, index) => {
+              const previous = result.evidenceRefs[index - 1];
+              return (
+                index > 0 && previous !== undefined && previous > evidenceId
+              );
+            })
+          ) {
+            return invalid(
+              `criterion ${result.criterionId} evidenceRefs must be duplicate-free and lexicographically ordered (P8 04 §2)`,
+            );
+          }
           evidenceRefs.push(...result.evidenceRefs);
         }
         const appended = yield* dependencies.evidence.listByVerification(

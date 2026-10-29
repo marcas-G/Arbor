@@ -496,6 +496,52 @@ describe("p8-conclude", () => {
     );
   });
 
+  it("rejects duplicate or non-canonical criterion evidence ordering before conclusion", async () => {
+    await runP7(
+      Effect.gen(function* () {
+        yield* seed;
+        yield* seedVerification(VER(1));
+        yield* seedEvidence(VER(1), EV(1), "c1");
+        yield* seedEvidence(VER(1), EV(2), "c1");
+        yield* seedEvidence(VER(1), EV(3), "c2");
+        const tx = yield* TransactionPort;
+        const handlers = yield* makeHandlers;
+
+        const unsorted: ConcludeOutcome = yield* tx.transact(
+          handlers.conclude.execute(
+            concludeEnvelope(
+              CMD("0123456789d2"),
+              concludePayload(VER(1), "Pass", [
+                criterionResult("c1", "Pass", [EV(2), EV(1)]),
+                criterionResult("c2", "Pass", [EV(3)]),
+              ]),
+            ),
+            verifierContext,
+          ),
+        );
+        expectRejected(unsorted, "InvalidVerificationMission");
+
+        const duplicate: ConcludeOutcome = yield* tx.transact(
+          handlers.conclude.execute(
+            concludeEnvelope(
+              CMD("0123456789d3"),
+              concludePayload(VER(1), "Pass", [
+                criterionResult("c1", "Pass", [EV(1), EV(1)]),
+                criterionResult("c2", "Pass", [EV(3)]),
+              ]),
+            ),
+            verifierContext,
+          ),
+        );
+        expectRejected(duplicate, "InvalidVerificationMission");
+        expect((yield* storedVerification(VER(1)))?.state).toEqual({
+          status: "Open",
+        });
+      }),
+      makeP7App(),
+    );
+  });
+
   it("aggregation: required Fail mixed → overall Fail must match (with VerificationReturned wake); a mismatching overall verdict is InvalidVerificationMission and the row stays Open", async () => {
     await runP7(
       Effect.gen(function* () {
