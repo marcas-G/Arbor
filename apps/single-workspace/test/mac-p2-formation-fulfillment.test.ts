@@ -183,7 +183,14 @@ describe("MAC-P2 formation fulfillment", () => {
             [proposalId],
           );
           const daemon = yield* ProductionDaemonService;
-          yield* daemon.daemon.pollConsumers;
+          yield* daemon.recovery.startup;
+          const afterRecovery = yield* sql.unsafe<{
+            state: string;
+            revision: number;
+          }>(
+            "SELECT state, revision FROM formation_fulfillments WHERE proposal_id = ?",
+            [proposalId],
+          );
           yield* daemon.daemon.pollConsumers;
           const after = yield* sql.unsafe<{
             state: string;
@@ -199,13 +206,20 @@ describe("MAC-P2 formation fulfillment", () => {
           }>(
             "SELECT (SELECT COUNT(*) FROM workspaces) AS workspaces, (SELECT COUNT(*) FROM works) AS works",
           );
-          return { decision: decision.resolution._tag, before, after, counts };
+          return {
+            decision: decision.resolution._tag,
+            before,
+            afterRecovery,
+            after,
+            counts,
+          };
         }),
         app,
       ),
     );
     expect(result.decision).toBe("Committed");
     expect(result.before).toEqual([{ state: "PendingApplication" }]);
+    expect(result.afterRecovery).toEqual([{ state: "Applied", revision: 3 }]);
     expect(result.after).toEqual([
       { state: "Applied", revision: 3, typed_block: null },
     ]);

@@ -290,6 +290,112 @@ describe("P6-004 approve consumer (D1)", () => {
     ]);
   });
 
+  it("keeps a delegated formation recoverable when resource activation is temporarily unavailable", async () => {
+    const address = { _tag: "FileTree" as const, path: "services/pending" };
+    const proposal = {
+      ...minimalProposal(),
+      resourceBoundaryDraft: {
+        ...minimalProposal().resourceBoundaryDraft,
+        addresses: [address],
+      },
+      resourceOwnershipDelegation: { addresses: [address] },
+    };
+    const snapshot = {
+      ...admitFormationProposal({
+        proposalId: FPR_1,
+        parentWorkspaceId: p6RootWorkspace,
+        proposal,
+      }),
+      state: "Approved" as const,
+    };
+    const approval = {
+      delegationSourceId: `formation:${FPR_1}:1`,
+      formationProposalId: FPR_1,
+      formationProposalRevision: 1,
+      addresses: [address],
+      approvedBy: p6TestActor,
+      causedByCommandId: decisionCommandId,
+      parentWorkspaceId: p6RootWorkspace,
+      expectedParentWorkspaceRevision: 0,
+      expectedChildWorkspaceRevision: 0,
+      expectedParentBoundaryRevision: 1,
+      expectedParentOwnershipRevision: 1,
+      expectedChildOwnershipRevision: 0,
+    };
+    const commands: string[] = [];
+    const fulfillmentStates: string[] = [];
+    let activationAttempts = 0;
+    const dependencies = {
+      gateway: {
+        execute: (envelope: { commandType: string }) => {
+          commands.push(envelope.commandType);
+          return Effect.succeed({
+            resolution: { _tag: "Committed", result: {} },
+          } as never);
+        },
+      } as never,
+      workspaces: {
+        findById: () =>
+          Effect.succeed(
+            Option.some({
+              resourceBoundary: proposal.resourceBoundaryDraft,
+            } as never),
+          ),
+      },
+      proposals: { findById: () => Effect.succeed(Option.some(snapshot)) },
+      fulfillments: {
+        put: (record: { readonly state: string }) =>
+          Effect.sync(() => {
+            fulfillmentStates.push(record.state);
+          }),
+      },
+      ownershipWrite: {
+        activateDelegatedOwnership: () => {
+          activationAttempts += 1;
+          return activationAttempts === 1
+            ? Effect.fail({
+                _tag: "EnvironmentError" as const,
+                cause: "delegated resource is not present yet",
+              })
+            : Effect.succeed({ _tag: "Activated" } as never);
+        },
+      } as never,
+    };
+    const event = {
+      eventType: "DecisionRecorded",
+      eventId: "evt-decision-recoverable",
+      payload: {
+        proposalId: FPR_1,
+        proposalRevision: 1,
+        decision: "Approve" as const,
+        decidedBy: p6TestActor,
+        delegationApproval: approval,
+      },
+    };
+
+    const first = await Effect.runPromise(
+      runFormationConsumer([event], dependencies, p6Project),
+    );
+    expect(first).toEqual(["CreateChildWorkspace"]);
+    expect(commands).toEqual(["CreateChildWorkspace"]);
+    expect(fulfillmentStates.at(-1)).toBe("WorkspaceCreated");
+
+    const second = await Effect.runPromise(
+      runFormationConsumer([event], dependencies, p6Project),
+    );
+    expect(second).toEqual([
+      "CreateChildWorkspace",
+      "ActivateDelegatedOwnership",
+      "AssignWork",
+    ]);
+    expect(commands).toEqual([
+      "CreateChildWorkspace",
+      "CreateChildWorkspace",
+      "AssignWork",
+    ]);
+    expect(fulfillmentStates.at(-1)).toBe("Applied");
+  });
+
   it("executes CreateChildWorkspace + AssignWork after approve; replay is idempotent", async () => {
     const program = Effect.gen(function* () {
       yield* approveSetup;

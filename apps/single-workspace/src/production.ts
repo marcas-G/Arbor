@@ -13,6 +13,7 @@ import {
   type DependencyCoordinatorDependencies,
   type EnvironmentDriftDeps,
   ensureVerifierSpawned,
+  type FormationConsumerDependencies,
   type ParentUserGovernanceFacts,
   planSnapshotRetention,
   pollOnce,
@@ -21,6 +22,7 @@ import {
   runAttentionPollOnce,
   runConversationResponseSettlementSweep,
   runConversationResponseTrigger,
+  runFormationConsumer,
   runVerificationConsumer,
   runVerificationSignalReconciliationSweep,
   type SnapshotPruningResult,
@@ -440,6 +442,22 @@ export const ProductionDaemonServiceLive = (
       const revisions = yield* EnvironmentRevisionStore;
       const blobs = yield* BlobStorePort;
 
+      const formationDeps: FormationConsumerDependencies = {
+        gateway,
+        workspaces: {
+          findById: (workspaceId) =>
+            tx.transact(workspaces.findById(workspaceId)),
+        },
+        proposals: {
+          findById: (proposalId) => tx.transact(proposals.findById(proposalId)),
+        },
+        fulfillments: {
+          put: (record) => tx.transact(formationFulfillments.put(record)),
+        },
+        ownershipWrite,
+        environment: projectEnvironment,
+      };
+
       const f18ReconciliationLeaseOwner = `f18-reconciliation:${randomUUID()}`;
       const reconcileVerificationSignals = Effect.gen(function* () {
         if (Option.isNone(verificationSignalReconciliation)) return;
@@ -711,23 +729,7 @@ export const ProductionDaemonServiceLive = (
               projectId,
               batchSize: config.batchSize ?? 50,
               stores,
-              dependencies: {
-                gateway,
-                workspaces: {
-                  findById: (workspaceId) =>
-                    tx.transact(workspaces.findById(workspaceId)),
-                },
-                proposals: {
-                  findById: (proposalId) =>
-                    tx.transact(proposals.findById(proposalId)),
-                },
-                fulfillments: {
-                  put: (record) =>
-                    tx.transact(formationFulfillments.put(record)),
-                },
-                ownershipWrite,
-                environment: projectEnvironment,
-              },
+              dependencies: formationDeps,
             }),
             verificationConsumerDaemon({
               consumerId: "verification",
@@ -946,6 +948,72 @@ export const ProductionDaemonServiceLive = (
         }
       });
 
+      const findApprovedFormationDecision = (
+        projectId: ProjectId,
+        proposalId: string,
+        proposalRevision: number,
+      ) =>
+        Effect.gen(function* () {
+          let sequence = 0;
+          while (true) {
+            const events = yield* tx.transact(
+              journal.readAfter(projectId, sequence, 500),
+            );
+            const found = events.find((event) => {
+              if (
+                event.eventType !== "DecisionRecorded" ||
+                typeof event.payload !== "object" ||
+                event.payload === null
+              ) {
+                return false;
+              }
+              const payload = event.payload as Record<string, unknown>;
+              return (
+                payload.proposalId === proposalId &&
+                payload.proposalRevision === proposalRevision &&
+                payload.decision === "Approve"
+              );
+            });
+            if (found !== undefined) return Option.some(found);
+            if (events.length < 500) return Option.none();
+            sequence = events.at(-1)?.sequence ?? sequence;
+          }
+        });
+
+      const recoverIncompleteFormations = Effect.gen(function* () {
+        const incomplete = yield* tx.transact(
+          formationFulfillments.listIncomplete(),
+        );
+        for (const fulfillment of incomplete) {
+          const proposal = yield* tx.transact(
+            proposals.findById(fulfillment.proposalId),
+          );
+          if (Option.isNone(proposal)) continue;
+          const parent = yield* tx.transact(
+            workspaces.findById(proposal.value.parentWorkspaceId),
+          );
+          if (Option.isNone(parent)) continue;
+          const decision = yield* findApprovedFormationDecision(
+            parent.value.projectId,
+            String(fulfillment.proposalId),
+            fulfillment.proposalRevision,
+          );
+          if (Option.isNone(decision)) continue;
+          yield* runFormationConsumer(
+            [
+              {
+                eventType: decision.value.eventType,
+                payload: decision.value.payload,
+                eventId: String(decision.value.eventId),
+                occurredAt: new Date().toISOString(),
+              },
+            ],
+            formationDeps,
+            parent.value.projectId,
+          );
+        }
+      });
+
       const recovery: RecoveryDaemon<ProductionDaemonServices> = {
         startup: Effect.gen(function* () {
           yield* expireExecutableApprovals;
@@ -969,6 +1037,7 @@ export const ProductionDaemonServiceLive = (
             }
           });
           yield* recoverProjectResourceActivations;
+          yield* recoverIncompleteFormations;
           yield* t1.markComplete;
         }),
         sweep: Effect.asVoid(
@@ -979,6 +1048,8 @@ export const ProductionDaemonServiceLive = (
               config.principal,
               config.submittedDecisionRecoveryQualificationProbe,
             );
+            yield* recoverProjectResourceActivations;
+            yield* recoverIncompleteFormations;
           }),
         ),
       };
