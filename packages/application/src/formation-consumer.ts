@@ -353,13 +353,34 @@ export const runFormationConsumer = (
           }
           continue;
         }
-        yield* dependencies.ownershipWrite.activateDelegatedOwnership({
-          projectId,
-          childWorkspaceId: ids.workspaceId,
-          childResourceBoundaryRevision:
-            create.payload.resourceBoundaryRevision,
-          delegationSourceId: decision.delegationApproval.delegationSourceId,
-        });
+        const activated = yield* Effect.match(
+          dependencies.ownershipWrite.activateDelegatedOwnership({
+            projectId,
+            childWorkspaceId: ids.workspaceId,
+            childResourceBoundaryRevision:
+              create.payload.resourceBoundaryRevision,
+            delegationSourceId: decision.delegationApproval.delegationSourceId,
+          }),
+          {
+            onFailure: (error) => {
+              const tag =
+                typeof error === "object" &&
+                error !== null &&
+                "_tag" in error &&
+                typeof error._tag === "string"
+                  ? error._tag
+                  : "UnknownActivationFailure";
+              console.error(
+                "[formation-consumer] delegated resource activation remains pending:",
+                String(snapshot.proposalId),
+                tag,
+              );
+              return false;
+            },
+            onSuccess: () => true,
+          },
+        );
+        if (!activated) continue;
         executed.push("ActivateDelegatedOwnership");
       }
 
