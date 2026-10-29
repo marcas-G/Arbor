@@ -54,11 +54,7 @@ import {
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { executeAgentLoopActions } from "./agent-loop-actions.js";
-import {
-  MAX_TURNS,
-  type ModelDecisionOutcome,
-  stopRequestedSettlement,
-} from "./agent-loop-policy.js";
+import { MAX_TURNS, type ModelDecisionOutcome } from "./agent-loop-policy.js";
 import { completeAgentLoopStep } from "./agent-loop-step-completion.js";
 import {
   decodeExhaustedRepairDisposition,
@@ -1113,21 +1109,6 @@ export const AgentLoopDriverLive = (
             turn < MAX_TURNS;
             turn += 1, repairAttempt = 0
           ) {
-            const currentExecution = Option.isSome(executionRepositoryOption)
-              ? yield* tx
-                  .transact(
-                    executionRepositoryOption.value.findById(
-                      input.execution.executionId,
-                    ),
-                  )
-                  .pipe(Effect.mapError(failure))
-              : Option.some(input.execution);
-            if (Option.isSome(currentExecution)) {
-              const stopSettlement = stopRequestedSettlement(
-                currentExecution.value,
-              );
-              if (stopSettlement !== undefined) return stopSettlement;
-            }
             if (
               Option.isSome(inboxOption) &&
               Option.isSome(inputPromotionOption) &&
