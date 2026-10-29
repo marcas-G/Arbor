@@ -1,14 +1,24 @@
-# S1–S4 Current-Candidate Pause Checkpoint — 2026-10-26
+# S1–S4 Release Closure — 2026-10-29
 
-**Status:** PAUSED BY USER AFTER CURRENT RUN / NOT A FORMAL S1–S4 CLOSURE
+**Status:** COMPLETE / FORMALLY CLOSED / DELIVERY READY
 
-## Candidate identity and repository state
+## Final candidate identity and repository state
 
 - Branch: `codex/release-quick-hardening`.
-- Committed and pushed base: `06337cac33b3b0eced35f0394f857c19140513be`.
+- Qualified executable candidate: `e78a914e779491808abe5881e1dd7ea873a9f89c`.
+- Qualified code/test head: `8055669d606532b085eeabefc61a36fa746620de`.
+  Its sole delta from the executable candidate is the P39 functional-test
+  load budget; production source and product behavior are identical. The
+  audit-record-only commit containing this document follows that qualified
+  head and changes no executable or test source.
 - PR: `https://github.com/marcas-G/Arbor/pull/1`.
-- All work below is uncommitted and unpushed.
 - No `docs/design/**` file was changed.
+
+The chronology below began as the user-requested 2026-10-26 pause snapshot.
+Its historical dirty/uncommitted statements are superseded by the final
+closure evidence at the end of this record.
+
+## Historical pause snapshot (superseded)
 
 Dirty implementation/test paths before this record:
 
@@ -603,3 +613,111 @@ case budget from 120s to 180s, two consecutive Luna runs plus an independent
 main-worktree run passed Before/After 6/6. All provider identity, checkpoint,
 frontier, no-replay and durable-state assertions are unchanged. Timeout errors
 now include the Work revision and exact reported Provider request summary.
+
+## Final closure evidence — 2026-10-29
+
+### Production defects and final corrections
+
+The final real journeys and release runner exposed two production defects that
+were corrected without changing frozen design semantics:
+
+1. `StopExecution` could commit while the in-memory Agent Loop still admitted
+   a later ProviderTurn. ProviderTurn+Manifest creation now uses one
+   transactionally ordered conditional insert against the durable Execution
+   stop/settlement fence. A Stop winner maps to
+   `Interrupted(StopRequested)` without a new ProviderTurn. Existing pinned
+   Pending actions still run their no-effect Interrupted settlement before the
+   next-Turn fence, so no unresolved invocation is abandoned.
+2. `ConcludeVerification` accepted criterion Evidence refs that were duplicate
+   or not lexicographically ordered, while the registered v2 event decoder
+   correctly required the frozen canonical ordering. The command boundary now
+   rejects non-canonical refs before any Verification/event commit, allowing
+   the Verifier loop to repair its action instead of persisting unreadable
+   history.
+
+Focused evidence: P3 Provider/driver files 58/58 PASS; P8 conclusion file
+13/13 PASS; P38 Stop-after-resolution 1/1 PASS; real S2 Stop 1/1 PASS after
+the refined fence; real S3 1/1 PASS after canonical Evidence validation.
+
+The release runner also exposed test-only oracle/fixture defects. P37 now
+checks the exact Deliver action's Observation ref, AH8 accepts the legitimate
+`ProviderResultAvailable` successor snapshot, F23/P6 binds to
+`CURRENT_SCHEMA_VERSION`, P38 Queue negative journeys explicitly use the
+functional-only TrustedLocal child while production remains Disabled, and the
+P39 deferred-acquire test uses a proportionally wider 600 ms/500 ms timing
+window under batch load. These changes do not relax product semantics.
+
+### Same executable SHA real Provider qualification
+
+All final real Provider journeys ran at
+`e78a914e779491808abe5881e1dd7ea873a9f89c`, with one worker and zero retry:
+
+- **S1 PASS, 1/1, 120.220 s.** Work completed only after independent
+  Verification PASS and Acceptance; evidence:
+  `.test-results/evidence-Q0wBbS/PUBLIC-S1-REAL-2026-10-29T01-16-56.060Z-b74fcac5-8339-4c00-a7c3-da8fea9c8712.json`.
+- **S2 PASS, 3/3, 173.459 s.** Normal and Critical Steer passed. Exact
+  StopExecution kept the stopped Execution's ProviderTurn count at 3 before
+  Stop, after commit and after quiescence, then settled
+  `Interrupted(StopRequested)` while Work remained Open revision 0 across
+  restart. Evidence:
+  `.test-results/real-public-s2-normal-917351ff5f-nnzVUp/evidence-vscD21/public-s2-S2-NORMAL-917351FF5F-2026-10-29T01-18-31.815Z.json`,
+  `.test-results/real-public-s2-critical-40590b13c5-6UoTyQ/evidence-ZWOAr1/public-s2-S2-CRITICAL-40590B13C5-2026-10-29T01-19-14.788Z.json`,
+  `.test-results/real-public-s2-stop-ac4c731faf-WREc3i/evidence-BLA6i4/public-s2-S2-STOP-AC4C731FAF-2026-10-29T01-19-53.342Z.json`.
+- **S3 PASS, 1/1, 187.330 s.** Child delivery and independent Child/Parent
+  Verification passed, daemon restarted during Parent Verification without
+  corrupt history, forbidden ownership access was denied, and Parent accepted
+  the canonical Child result. Evidence:
+  `.test-results/real-public-real-public-s3-real-s3-e240b6280a-qM2g0Z/evidence-q2ithd/real-public-s3-real-s3-e240b6280a-2026-10-29T01-23-08.988Z.json`.
+- **S4-A PASS, 1/1 (two unrelated cases filtered), 76.331 s.** Hard restart
+  preserved completed-turn identity, did not replay the pending Provider
+  request, and failed the unknown outcome closed as NeedsAttention. Evidence:
+  `.test-results/real-public-s4-a-conversation-hard-restart-yb8uP9/evidence-eB6oz3/s4-a-conversation-hard-restart-2026-10-29T01-24-44.496Z.json`.
+
+### Same executable SHA static/core/Web gate
+
+`pnpm check` at `e78a914e779491808abe5881e1dd7ea873a9f89c`
+passed with exit 0 in 5868.497 s:
+
+- Biome: 1439 files, no fixes.
+- Root TypeScript: PASS.
+- Architecture: 37 files / 194 tests PASS.
+- Core: 475 files / 48 of 48 batches; 2900 passed, 11 skipped,
+  1 expected-fail case; every batch exit 0.
+- Web TypeScript/build: PASS; the existing 575.79 kB chunk-size warning is
+  non-blocking.
+- Web Vitest: 34 files / 268 tests PASS.
+
+### Complete release coverage and delivery-head relationship
+
+The final official release result is:
+
+```text
+.test-results/2026-10-29T06-17-27-885Z-3932/result-manifest.json
+status           = passed
+completeCoverage = true
+gitSha           = 8055669d606532b085eeabefc61a36fa746620de
+selectedFiles    = 75
+passedFiles      = 75
+inheritedFiles   = 31
+executedFiles    = 44
+exitCode         = 0
+```
+
+The compatible resume inherited 31 passing files from the clean
+`e78a914e` run and reran the failed P39 file plus every remaining file after
+the sole P39 test-budget change. The resumed Vitest segment passed 38 files /
+99 tests; Playwright passed 6 files / 10 tests. Runner compatibility was
+`true (compatible)`, and all 75 selected files are present in `passedFiles`.
+The diff `e78a914e..8055669d` contains only
+`tests/functional/process/p39-maintenance-writer-exclusion.functional.test.ts`;
+there is no production-code delta.
+
+### Closure statement and boundaries
+
+S1, S2, S3 and S4-A are **COMPLETE / FORMALLY CLOSED** for the qualified
+executable candidate. Production process execution remains Disabled; the
+TrustedLocal path is functional-test-only and explicitly opted in. Native OS
+sandbox isolation is not claimed. No preserved user database was mutated or
+used as upgrade evidence. This closure does not broaden any separately open
+AH7/AH10/AH14 governance claim beyond the exact release journeys and gates
+recorded here.
