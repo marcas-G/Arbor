@@ -78,6 +78,16 @@ export const FormationFulfillmentStoreLive: Layer.Layer<
             ? Option.none()
             : Option.some(toRecord(rows[0]));
         }),
+      listIncomplete: () =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const rows = yield* run(
+            sql.unsafe<Row>(
+              "SELECT * FROM formation_fulfillments WHERE state IN ('PendingApplication','WorkspaceCreated') ORDER BY proposal_id, proposal_revision",
+            ),
+          );
+          return rows.map(toRecord);
+        }),
     });
   }),
 );

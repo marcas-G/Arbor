@@ -36,6 +36,11 @@ export interface FormationFulfillmentStoreService {
     FormationFulfillmentStoreError,
     TransactionScope
   >;
+  readonly listIncomplete: () => Effect.Effect<
+    ReadonlyArray<FormationFulfillmentRecord>,
+    FormationFulfillmentStoreError,
+    TransactionScope
+  >;
 }
 
 export class FormationFulfillmentStore extends Context.Service<
