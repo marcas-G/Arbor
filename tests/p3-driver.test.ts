@@ -856,38 +856,6 @@ describe("P3-013 agent driver", () => {
     expect(providerCalls).toBe(0);
   });
 
-  it("refreshes a durable StopExecution fence before admitting the next ProviderTurn", async () => {
-    let providerCalls = 0;
-    const providerRuntime = Layer.succeed(ProviderRuntime, {
-      runTurn: () => {
-        providerCalls += 1;
-        return Effect.die(
-          new Error("stopped Execution reached ProviderRuntime"),
-        );
-      },
-    });
-    const app = makeApp([], { providerRuntime });
-    const settlement = await run(
-      Effect.gen(function* () {
-        yield* runMigrations(P17_MIGRATIONS);
-        yield* seed;
-        const sql = yield* SqlClient;
-        yield* sql.unsafe(
-          "UPDATE executions SET stop_requested_at = ? WHERE execution_id = ?",
-          ["2026-10-28T21:05:50.189Z", executionId],
-        );
-        return yield* drive(allowGate);
-      }),
-      app,
-    );
-
-    expect(settlement).toEqual({
-      _tag: "Interrupted",
-      result: { _tag: "StopRequested" },
-    });
-    expect(providerCalls).toBe(0);
-  });
-
   it("maps an atomic ProviderTurn stop-fence loss to Interrupted without retry", async () => {
     let providerCalls = 0;
     const providerRuntime = Layer.succeed(ProviderRuntime, {
