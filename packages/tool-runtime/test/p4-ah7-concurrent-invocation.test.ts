@@ -158,11 +158,12 @@ describe("AH7 concurrent ToolInvocationId reentry", () => {
           intentWrites += 1;
           invocation = {
             ...record,
+            effectAdmissionState: "NotAdmitted",
             settledAt: null,
             settlement: null,
             resultRef: null,
           };
-          return Effect.void;
+          return Effect.succeed("Recorded" as const);
         },
         settle: (
           id: ToolInvocationRecord["invocationId"],
@@ -179,6 +180,9 @@ describe("AH7 concurrent ToolInvocationId reentry", () => {
           return Effect.succeed(true);
         },
         consumeApproval: () => Effect.succeed(false),
+        recordNoEffectDenial: () => Effect.die(new Error("unexpected denial")),
+        recordNoEffectInterruption: () => Effect.succeed(false),
+        admitEffect: () => Effect.succeed({ _tag: "Admitted" as const }),
         findApproval: () => Effect.succeed(Option.none()),
         findById: () =>
           Effect.promise(async () => {

@@ -6,6 +6,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import {
   P32_MIGRATIONS,
   P35_MIGRATIONS,
+  P36_MIGRATIONS,
   runMigrations,
 } from "../adapters/persistence-sqlite/src/index.js";
 import {
@@ -218,7 +219,7 @@ describe("p12 production composition (B-6 / B-7 / B-8)", () => {
         const health = yield* HealthPort;
         const beforeMigration = yield* health.readiness();
 
-        yield* runMigrations(P35_MIGRATIONS);
+        yield* runMigrations(P36_MIGRATIONS);
         const afterMigration = yield* health.readiness();
 
         const resolver = yield* AuthorityResolverPort;

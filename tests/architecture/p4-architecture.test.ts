@@ -76,7 +76,6 @@ describe("P4 package DAG", () => {
       "AuthorityResolution",
       "ApprovalLookup",
       "IntentJournal",
-      "ApprovalConsumption",
       "ResourceAdmission",
       "SandboxOpen",
       "Executor",

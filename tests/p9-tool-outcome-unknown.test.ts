@@ -10,6 +10,7 @@ import {
   LeaseServiceLive,
   layer,
   P8_MIGRATIONS,
+  P36_MIGRATIONS,
   ProjectRepositoryLive,
   runMigrations,
   SessionRepositoryLive,
@@ -299,7 +300,10 @@ const seed = Effect.gen(function* () {
 });
 
 const boot = Effect.gen(function* () {
+  // Retain the P8 historical starting schema but bring it forward before the
+  // current P4 ToolInvocation store accesses P36 admission-state columns.
   yield* runMigrations(P8_MIGRATIONS);
+  yield* runMigrations(P36_MIGRATIONS);
   yield* seed;
 });
 

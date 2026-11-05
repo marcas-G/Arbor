@@ -2,7 +2,10 @@
 
 **Authority:** DID v1.7 §3.4, §4.4, §6.3, §6A.5, §6A.6, §9.6, §9.7, §12.3,
 §12.11; DID v1.7 G1.
-**Status:** DRAFT (first draft for gap review).
+**Status:** FROZEN; accepted AH7-DG-03 amendment (2026-10-10). Post-landing
+consistency review pending.
+**Accepted amendment:** `planning/proposals/AH7-approval-settlement-fixed-decision-draft.md`,
+SHA-256 `E818CC208F6A3B233FEF213E54E02AA30A1E96D6147313870C75FDE38DC94CBE`.
 
 This document freezes the P2 lease/fencing mechanism. DID §9.7 freezes the
 *guarantees* (expiry + generation + authoritative same-transaction check); P2
@@ -59,7 +62,8 @@ Fencing protects **all** Worker-originated durable writes (DID §6.3):
 Execution semantic mutation
 Session append
 ProviderTurn settlement
-ToolInvocation settlement
+ToolInvocation intent / approval consumption / effect admission / settlement
+ToolInvocation no-effect Denied / Interrupted settlement
 Agent-produced canonical command
 ```
 
@@ -94,6 +98,13 @@ WHERE e.execution_id = ?
 - The check **must** share the transaction of the canonical write, Command
   resolution and Domain Event append; a transaction-external pre-check is only
   a fast-fail (no TOCTOU) (DID §6.3, §12.3).
+- P4 applies the same predicate in the mutation transaction for intent,
+  approval consumption, effect admission, no-effect Denied/Interrupted, and
+  ToolInvocation settlement. Approval-required claim composes intent insertion
+  and approval compare-and-set in one `TransactionScope`; a stale fence cannot
+  leave a partial claim. P4 effect admission also requires
+  `stop_requested_at IS NULL` before writing
+  `effect_admission_state = MayHaveStarted`.
 - `executions.settled_at IS NULL` means a fence can never authorize a write on
   a settled Execution.
 
@@ -113,6 +124,16 @@ Two **independent** checks (DID §9.7):
 
 - A generation that is still valid must never receive `FencingRejected` merely
   because `stop_requested_at != null`.
+- P4 claim/intent and effect-admission transactions apply both checks in this
+  order: validate the full current lease tuple and expiry, then inspect
+  `stop_requested_at` in the same transaction. If StopExecution committed
+  first, claim returns `ExecutionStopping` without intent or approval
+  consumption; an already claimed `NotAdmitted` invocation settles
+  `Interrupted` without effect. Neither outcome is permission Denied.
+- StopExecution and P4 effect admission linearize by commit order. If the
+  effect-admission commit wins, the invocation is in flight and P4
+  cancellation/confirmation/reconciliation applies; stop does not authorize a
+  new Executor call or replay.
 - `StopExecution` itself is not classified (`01` §3) and is admissible while
   the Execution is Active.
 - Admission (`AdmitExecution`) is not classified.
@@ -180,6 +201,11 @@ FencingRejected = authoritative persistence rejection
 - `FencingRejected` is terminal for the Execution-originated logical Command;
   the old Worker must stop durable mutation and must not ordinary-retry
   (DID §6A.5).
+- `LeaseFencingRejected` at a P4 intent/approval/effect-admission/settlement
+  boundary likewise rejects that old Worker write. If the effect-admission
+  marker already committed, generic external I/O may not accept a lease token;
+  a late old-Worker settlement is fenced and P2/P9 recover from the durable
+  `MayHaveStarted` state without assuming the effect was absent.
 - Neither automatically fails or cancels the Work (DID §6A.5).
 
 ## 8. Out of scope

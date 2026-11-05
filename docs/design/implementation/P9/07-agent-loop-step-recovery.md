@@ -3,6 +3,9 @@
 **Authority:** DID v1.20 AHT-1…AHT-8；P3 `08`；人工治理裁决
 `planning/proposals/provider-result-handoff-governance-decision.md`。
 **Status:** FROZEN；implementation AUTHORIZED by DID v1.21 ALS-I1。
+Accepted AH7-DG-03 amendment (2026-10-10); post-landing consistency review
+pending. Source proposal SHA-256:
+`E818CC208F6A3B233FEF213E54E02AA30A1E96D6147313870C75FDE38DC94CBE`.
 
 ## 1. Recovery order extension
 
@@ -36,6 +39,9 @@ settlement and cannot execute Agent actions.
 | `OutputRejected(Exhausted(settlement))` | advance to persisted `SettlementProposed` | forbidden |
 | `OutputAccepted` | rebuild decoded calls, verify hashes, continue at action cursor | forbidden |
 | `ActionsInProgress` | query each LogicalActionId; converge or execute next Pending | forbidden |
+| exact terminal P4 `Denied` + `NotAdmitted` | replay the stored closed reason code; converge the same ToolResult / `TerminalRejected` action / cursor once | forbidden |
+| exact P4 `Interrupted` + `NotAdmitted` + StopExecution | converge the same Interrupted ToolResult/action/cursor, then `Interrupted(StopRequested)` if no unresolved side effect remains | forbidden |
+| unsettled P4 `MayHaveStarted` | apply P4 `SideEffectSemantics`; reconcile or remain `ReconciliationPending` / `OutcomeUnknown`; never infer no effect | forbidden |
 | any `ReconciliationPending` | reconcile, Attention, or OutcomeUnknown | blind replay forbidden |
 | `StepEffectsCommitted` | persist one next-turn successor or settlement | only new successor |
 | `NextStepReady(successor)` | `ensureSuccessor`; resume exact record | only new successor |
@@ -157,7 +163,7 @@ Kill before and after every commit boundary, restart on the same durable DB:
 | AH4 | Provider terminal failure / repair exhaustion → SettlementProposed |
 | AH5 | decode complete → sourced ModelOutput SessionEntry |
 | AH6 | SessionEntry → AgentLoopStep OutputAccepted |
-| AH7 | each action intent/effect/settlement/Observation/cursor transition |
+| AH7 | each action intent/effect/settlement/Observation/cursor transition, including AH7-DG-03 approval claim, no-effect Denied/Interrupted, effect-admission and stop boundaries (`02` §5 supplement) |
 | AH8 | action A committed; before B, ControlBasis becomes stale |
 | AH9 | action proposes settlement; remaining actions not yet marked skipped |
 | AH10 | old-generation FencingRejected receipt → new-generation takeover |
@@ -174,6 +180,13 @@ Kill before and after every commit boundary, restart on the same durable DB:
 AH18 uses the DID v1.23 ordinal-0 ProviderTurn chain. Recovery ensures links
 idempotently and never rewrites the failed inference Manifest. A replacement
 overflow creates no second ordinal.
+
+The AH7-DG-03 supplement in P9 `02` qualifies both sides of the fenced
+intent+approval claim, no-effect Denied and Interrupted terminal records, and
+the `NotAdmitted → MayHaveStarted` commit. Stop/claim/effect-admission races
+are asserted by transaction commit order. After `MayHaveStarted`, recovery
+does not start a new executor call or replay; it confirms/cancels/reconciles,
+then records a known outcome or preserves the unresolved-side-effect gate.
 
 Every injection asserts stale-generation writes are rejected, stable identities
 prevent duplicate Session entries/external effects, and the state transition
@@ -195,6 +208,13 @@ settlement missing”: no blind replay and no ordinary completion until the tool
 contract supplies reconciliation evidence; otherwise Attention or
 OutcomeUnknown. The dense immediately-ready SSE test remains mandatory and
 must show an actual TTL/3 lease renewal commit.
+
+For stop at `NotAdmitted`, qualification requires no new effect, exact
+Interrupted result and action/cursor convergence; pre-claim stop leaves
+approval unused, post-claim stop preserves its consumed-by invocation. For
+stop after `MayHaveStarted`, do not issue another Executor call, including an
+Idempotent replay; only cancellation, confirmation or reconciliation may
+resolve the in-flight effect.
 
 ## 5. Completion gate
 

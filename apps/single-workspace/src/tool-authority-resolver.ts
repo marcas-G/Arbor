@@ -1,6 +1,7 @@
 import type { ParentUserGovernanceFacts } from "@arbor/application";
 import { AuthorityResolverPort } from "@arbor/application";
 import {
+  invocationAuthoritySourceRevisionOf,
   PermissionGrantRepository,
   ProjectRepository,
   sha256Hex,
@@ -65,7 +66,7 @@ export const ToolAuthorityResolverLive = (
                 argumentsJson: input.intent.argumentsJson,
               }),
             );
-            return yield* resolver
+            const authority = yield* resolver
               .resolveInvocation({
                 principal: input.context.authenticatedPrincipal,
                 workspaceId: input.context.workspaceId,
@@ -96,6 +97,21 @@ export const ToolAuthorityResolverLive = (
                   cause,
                 })),
               );
+            return {
+              ...authority,
+              sourceRevision: invocationAuthoritySourceRevisionOf({
+                workspacePolicyRevision: Number(
+                  snapshot.workspace.value.workspacePolicyRevision,
+                ),
+                activeGrants: snapshot.activeGrants.map((grant) => ({
+                  permissionGrantId: String(grant.permissionGrantId),
+                  revision: grant.revision ?? null,
+                })),
+                verifierId: Option.isSome(snapshot.verification)
+                  ? String(snapshot.verification.value.verificationId)
+                  : null,
+              }),
+            };
           }).pipe(
             Effect.mapError((cause) =>
               cause._tag === "ToolAuthorityResolutionError"

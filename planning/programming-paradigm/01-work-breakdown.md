@@ -41,7 +41,7 @@
 
 | ID | Task | Owner | Status | Acceptance |
 |---|---|---|---|---|
-| PP-W401 | Define Work/Root/Execution Session provenance | Manual governance | ACCEPTED / IN_PROGRESS | Accepted proposal; causal binding, migration 0036, SQLite round-trip, Work write paths, and fail-closed projection added; legacy write paths remain |
+| PP-W401 | Define Work/Root/Execution Session provenance | Manual governance | ACCEPTED / IN_PROGRESS | Accepted proposal; causal binding, migration 0037 after remote P36, SQLite round-trip, Work write paths, and fail-closed projection added; legacy write paths remain |
 | PP-W402 | Define durable Work admission handoff | Manual governance | GOVERNANCE | Accepted state machine and recovery predecessor/successor |
 | PP-W403 | Implement Work context frontier | Agent/Application Runtime | GOVERNANCE | Cross-episode pollution regression + restart proof |
 | PP-W404 | Implement admission recovery | Application/daemon | GOVERNANCE | Root failure still admits exact Work once |

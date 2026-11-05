@@ -14,6 +14,7 @@ import {
   layer,
   P12_MIGRATIONS,
   P16_MIGRATIONS,
+  P36_MIGRATIONS,
   ProjectRepositoryLive,
   ProviderTurnStoreLive,
   RuntimeClockLive,
@@ -2233,7 +2234,10 @@ describe("p9-acceptance", () => {
     expect(LEASE_RENEW_INTERVAL_MS).toBe(LEASE_TTL_MS / 3);
     await runOn(
       Effect.gen(function* () {
+        // Retain the historical P12 fixture schema, then apply current P4
+        // P36 storage before running the current ToolInvocation store.
         yield* runMigrations(P12_MIGRATIONS);
+        yield* runMigrations(P36_MIGRATIONS);
         yield* seedStoryC;
         // Takeover fixture: the old worker (g) resurrects across g+1.
         const old = yield* cAcquireLease("worker:a");
@@ -2609,7 +2613,10 @@ describe("p9-acceptance", () => {
     };
     await runOn(
       Effect.gen(function* () {
+        // Story E executes the current P4 tool pipeline: preserve its P12
+        // fixture start and upgrade it before admission-state reads/writes.
         yield* runMigrations(P12_MIGRATIONS);
+        yield* runMigrations(P36_MIGRATIONS);
         yield* seedStoryE;
         // ReadOnly: crash before the effect — nothing happened externally;
         // the crashed invocation settles the actual (no-op) outcome and a

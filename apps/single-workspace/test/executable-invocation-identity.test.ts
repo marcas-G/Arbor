@@ -123,6 +123,7 @@ describe("executable tool invocation identity scope", () => {
             argumentsJson: invocation.argumentsJson,
             resolvedRegions: [],
             approvalId: null,
+            effectAdmissionState: "LegacyUnknown",
             intentAt: "2026-10-04T00:00:00.000Z",
             settledAt: null,
             settlement: null,

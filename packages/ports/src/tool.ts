@@ -53,7 +53,28 @@ export interface InvocationAuthority {
   readonly controlBasisDigest: string;
   readonly expiresAt: string;
   readonly delegationDepth: number;
+  /** Persistence source snapshot used by the fenced pre-effect gate. This is
+   * an implementation token, not additional authority. */
+  readonly sourceRevision?: string;
 }
+
+export const invocationAuthoritySourceRevisionOf = (input: {
+  readonly workspacePolicyRevision: number;
+  readonly activeGrants: ReadonlyArray<{
+    readonly permissionGrantId: string;
+    readonly revision: number | null;
+  }>;
+  readonly verifierId: string | null;
+}): string =>
+  JSON.stringify({
+    workspacePolicyRevision: input.workspacePolicyRevision,
+    activeGrants: [...input.activeGrants]
+      .sort((left, right) =>
+        left.permissionGrantId.localeCompare(right.permissionGrantId),
+      )
+      .map((grant) => [grant.permissionGrantId, grant.revision]),
+    verifierId: input.verifierId,
+  });
 
 export interface ToolIntent {
   readonly callRef: string;
@@ -112,6 +133,25 @@ export interface BoundedObservation {
   readonly truncated: boolean;
 }
 
+export type NoEffectDenialCode =
+  | "InvocationAuthorityDenied"
+  | "ApprovalRequired"
+  | "ApprovalNotFound"
+  | "ApprovalMismatch"
+  | "ApprovalExpired"
+  | "ApprovalConsumedByOtherInvocation"
+  | "ResourceResolutionDenied"
+  | "ResourceAdmissionDenied"
+  | "ApprovalNoLongerAuthorized";
+
+export type ToolEffectAdmissionResult =
+  | { readonly _tag: "Admitted" }
+  | { readonly _tag: "ExecutionStopping" }
+  | {
+      readonly _tag: "Denied";
+      readonly reasonCode: NoEffectDenialCode;
+    };
+
 export type CanonicalToolObservation =
   | {
       readonly _tag: "Success";
@@ -122,7 +162,11 @@ export type CanonicalToolObservation =
       readonly _tag: "ExpectedFailure";
       readonly observation: BoundedObservation;
     }
-  | { readonly _tag: "Denied"; readonly reason: string }
+  | {
+      readonly _tag: "Denied";
+      readonly reasonCode: NoEffectDenialCode;
+      readonly reason: string;
+    }
   | { readonly _tag: "Interrupted" }
   | {
       readonly _tag: "OutcomeUnknown";
@@ -133,6 +177,7 @@ export type CanonicalToolObservation =
 export type ToolInvocationSettlement =
   | { readonly _tag: "Success" }
   | { readonly _tag: "ExpectedFailure" }
+  | { readonly _tag: "Denied"; readonly reasonCode: NoEffectDenialCode }
   | { readonly _tag: "Interrupted" }
   | {
       readonly _tag: "OutcomeUnknown";
@@ -255,6 +300,10 @@ export interface ToolInvocationIntent {
 }
 
 export interface ToolInvocationRecord extends ToolInvocationIntent {
+  readonly effectAdmissionState:
+    | "NotAdmitted"
+    | "MayHaveStarted"
+    | "LegacyUnknown";
   readonly settledAt: string | null;
   readonly settlement: ToolInvocationSettlement | null;
   readonly resultRef: string | null;
@@ -263,7 +312,13 @@ export interface ToolInvocationRecord extends ToolInvocationIntent {
 export interface ToolInvocationStoreService {
   readonly recordIntent: (
     invocation: ToolInvocationIntent,
-  ) => Effect.Effect<void, ToolInvocationStoreError, TransactionScope>;
+    executionFence?: ToolExecutionContext["executionFence"],
+    fenceNow?: string,
+  ) => Effect.Effect<
+    "Recorded" | "ExecutionStopping",
+    ToolInvocationStoreError,
+    TransactionScope
+  >;
   readonly settle: (
     invocationId: ToolInvocationId,
     settlement: ToolInvocationSettlement,
@@ -275,7 +330,40 @@ export interface ToolInvocationStoreService {
   readonly consumeApproval: (
     approvalId: string,
     invocationId: ToolInvocationId,
+    executionFence?: ToolExecutionContext["executionFence"],
+    fenceNow?: string,
+  ) => Effect.Effect<
+    boolean | "ExecutionStopping",
+    ToolInvocationStoreError,
+    TransactionScope
+  >;
+  readonly recordNoEffectDenial: (
+    invocation: ToolInvocationIntent,
+    reasonCode: NoEffectDenialCode,
+    settledAt: string,
+    executionFence?: ToolExecutionContext["executionFence"],
+    fenceNow?: string,
+  ) => Effect.Effect<
+    ToolInvocationRecord | "ExecutionStopping",
+    ToolInvocationStoreError,
+    TransactionScope
+  >;
+  readonly recordNoEffectInterruption: (
+    invocationId: ToolInvocationId,
+    settledAt: string,
+    executionFence?: ToolExecutionContext["executionFence"],
+    fenceNow?: string,
   ) => Effect.Effect<boolean, ToolInvocationStoreError, TransactionScope>;
+  readonly admitEffect: (
+    invocationId: ToolInvocationId,
+    currentAuthority: InvocationAuthority,
+    now: string,
+    executionFence?: ToolExecutionContext["executionFence"],
+  ) => Effect.Effect<
+    ToolEffectAdmissionResult,
+    ToolInvocationStoreError,
+    TransactionScope
+  >;
   readonly findApproval: (
     approvalId: string,
   ) => Effect.Effect<

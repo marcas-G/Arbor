@@ -56,6 +56,7 @@ export const toExecutableOutcome = (
         source: "Runtime",
         observation: bounded(`tool denied: ${result.reason}`),
         status: "Denied",
+        disposition: "AuthorizationDenied",
       };
     case "Interrupted":
       return {
@@ -63,6 +64,7 @@ export const toExecutableOutcome = (
         source: "Runtime",
         observation: bounded("tool invocation interrupted"),
         status: "Interrupted",
+        disposition: "ExecutionStopping",
       };
     case "OutcomeUnknown":
       return {

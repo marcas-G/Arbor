@@ -260,6 +260,7 @@ export type ExecutableInvocationOutcome =
       readonly source: "Runtime" | "Tool";
       readonly observation: BoundedObservation;
       readonly status?: import("@arbor/ports").PortableToolResultStatus;
+      readonly disposition?: string;
       readonly resultRef?: string;
       readonly artifactRefs?: ReadonlyArray<string>;
       readonly invocationId?: import("@arbor/domain").ToolInvocationId;

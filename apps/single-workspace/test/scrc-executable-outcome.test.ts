@@ -22,7 +22,14 @@ describe("SCRC executable outcome taxonomy", () => {
       },
       "Failed",
     ],
-    [{ _tag: "Denied" as const, reason: "policy" }, "Denied"],
+    [
+      {
+        _tag: "Denied" as const,
+        reasonCode: "InvocationAuthorityDenied" as const,
+        reason: "policy",
+      },
+      "Denied",
+    ],
     [{ _tag: "Interrupted" as const }, "Interrupted"],
     [{ _tag: "RuntimeFailure" as const, cause: "defect" }, "Failed"],
   ])("maps %s to typed status %s", (input, status) => {

@@ -86,8 +86,7 @@ import {
   P20_MIGRATIONS,
   P21_MIGRATIONS,
   P22_MIGRATIONS,
-  P35_MIGRATIONS,
-  P36_MIGRATIONS,
+  P37_MIGRATIONS,
   PermissionGrantRepositoryLive,
   ProjectDirectoryLive,
   ProjectionStoreLive,
@@ -965,6 +964,6 @@ export {
   P20_MIGRATIONS,
   P21_MIGRATIONS,
   P22_MIGRATIONS,
-  P36_MIGRATIONS as CURRENT_MIGRATIONS,
+  P37_MIGRATIONS as CURRENT_MIGRATIONS,
   runMigrations,
 };
