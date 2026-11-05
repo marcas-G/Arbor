@@ -323,6 +323,7 @@ export interface SessionEntryRecord {
   readonly payload: unknown;
   readonly createdAt: string;
   readonly source?: SessionEntrySource & { readonly contentHash: string };
+  readonly causalBinding?: import("./session-provenance.js").SessionCausalBinding;
 }
 
 export interface SessionEntrySource {

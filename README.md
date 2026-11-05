@@ -6,17 +6,29 @@ verification remain separate runtime concerns.
 
 ## Local start
 
-Install the pinned toolchain (Node 24.21.0 and pnpm 12.4.2), then run:
+Install the pinned toolchain (Node 24.21.0 and pnpm 12.4.2), install the
+workspace dependencies, and register the user command once:
 
 ```powershell
 pnpm install --frozen-lockfile
-pnpm start
+npm link
 ```
 
-`pnpm start` builds the TypeScript workspaces and web client, starts the local
-single-user daemon, and serves the app at `http://127.0.0.1:8787`. It creates
-an ignored `arbor-slice.db` in the current directory unless `ARBOR_DB` is set.
-Set `ARBOR_HTTP_PORT` to choose another port.
+Start Arbor from any directory with:
+
+```powershell
+arbor
+```
+
+The same command group also provides `arbor start --no-open`, `arbor status`,
+`arbor stop`, and `arbor doctor`. `arbor open` is an explicit alias for the
+default behavior.
+
+The command prepares missing build artifacts, starts the local single-user
+service, opens the app at `http://127.0.0.1:8787`, and stores application data
+in Arbor's managed application directory. Users do not need to choose a
+database or data path. `arbor --port <port>` is available when another local
+service already uses the default port.
 
 The default is a local fake provider. To configure a real provider, copy
 `apps/single-workspace/arbor.config.example.json` to the ignored

@@ -1,5 +1,7 @@
 import {
   Actor,
+  createProject,
+  makeProjectPolicy,
   CommandId,
   type CommandSubmissionContext,
   type DomainError,
@@ -257,8 +259,28 @@ const buildApp = (
     Layer.succeed(IdGenerator, ids),
     Layer.succeed(ProjectRepository, {
       findById: () =>
-        Effect.succeed(Option.some({ lifecycle: projectLifecycle } as never)),
-    } as unknown as ProjectRepositoryService),
+        Effect.succeed(
+          Option.some({
+            ...createProject({
+              projectId: parse(ProjectId)(
+                "prj_00000000-0000-7000-8000-0000000000f1",
+              ),
+              name: "test project",
+              rootWorkspaceId: parse(WorkspaceId)(
+                "ws_00000000-0000-7000-8000-0000000000f1",
+              ),
+              projectPolicy: makeProjectPolicy(),
+              projectPolicyRevision: 0 as never,
+              revision: 0 as never,
+            }),
+            lifecycle: projectLifecycle,
+          }),
+        ),
+      create: () => Effect.void,
+      updatePolicyIfRevision: () => Effect.void,
+      renameIfRevision: () => Effect.void,
+      closeIfRevision: () => Effect.void,
+    } satisfies ProjectRepositoryService),
     CommandHandlerRegistryLive(handlers),
     fence,
   );

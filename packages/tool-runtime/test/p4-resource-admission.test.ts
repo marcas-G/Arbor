@@ -2,7 +2,6 @@ import {
   type CanonicalResourceRegion,
   type Project,
   parse,
-  type Workspace,
   WorkspaceId,
 } from "@arbor/domain";
 import {
@@ -16,20 +15,19 @@ import {
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { describe, expect, it } from "vitest";
+import { makeWorkspaceFixture } from "../../testkit/dist/index.js";
 import { ResourceAdmissionLive } from "../src/index.js";
 
 const workspaceId = parse(WorkspaceId)(
   "ws_018f2b3c-4d5e-7abc-8def-0123456789a1",
 );
 
-const workspace = {
-  workspaceId,
+const workspace = makeWorkspaceFixture({
+  workspaceId: String(workspaceId),
   projectId: "prj_018f2b3c-4d5e-7abc-8def-0123456789a1",
-  resourceBoundary: {
-    basisResponsibilityRevision: 0,
-    addresses: [{ _tag: "FileTree", path: "/repo" }],
-  },
-} as unknown as Workspace;
+  sessionId: "ses_018f2b3c-4d5e-7abc-8def-0123456789a1",
+  resourcePath: "/repo",
+});
 
 const region = (path: string): CanonicalResourceRegion => ({
   resourceSpaceId: "filesystem",

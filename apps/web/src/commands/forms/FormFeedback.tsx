@@ -26,8 +26,7 @@ export function FormFeedback({
   if (state.phase === "committed" && state.receipt !== null) {
     return (
       <p className="arbor-command-receipt arbor-command-receipt-committed">
-        已提交（Committed）{" "}
-        <span className="arbor-mono">{state.receipt.commandId}</span>
+        已完成提交
       </p>
     );
   }

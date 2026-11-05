@@ -4,7 +4,16 @@
  */
 import type { InboxUnconsumedEntry, InboxViewRes } from "@arbor/api-contracts";
 import { Empty } from "../components/Empty.js";
-import { EnumBadge, Mono } from "./shared.js";
+import { EnumBadge } from "./shared.js";
+
+const entryKindLabel = (kind: string): string =>
+  ({
+    Message: "消息",
+    HumanConversation: "新消息",
+    Governance: "待决策",
+    ControlApproval: "待授权",
+    WorkAcceptance: "等待验收",
+  })[kind] ?? kind;
 
 export function InboxRows({
   rows,
@@ -15,9 +24,8 @@ export function InboxRows({
     <ul className="arbor-row-list">
       {rows.map((entry) => (
         <li key={entry.entryKey} className="arbor-inbox-row">
-          <EnumBadge label={entry.kind} />
+          <EnumBadge label={entryKindLabel(entry.kind)} />
           <span>{entry.summary}</span>
-          <Mono>{`wm ${String(entry.watermark)}`}</Mono>
         </li>
       ))}
     </ul>
@@ -26,7 +34,7 @@ export function InboxRows({
 
 export function InboxView({ res }: { readonly res: InboxViewRes }) {
   if (res.unconsumed.length === 0) {
-    return <Empty>无未消费条目</Empty>;
+    return <Empty>暂无待处理消息</Empty>;
   }
   return <InboxRows rows={res.unconsumed} />;
 }

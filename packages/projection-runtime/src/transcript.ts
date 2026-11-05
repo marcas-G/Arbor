@@ -216,6 +216,46 @@ const payloadRef = (payload: unknown): string | null => {
   return typeof ref === "string" ? ref : null;
 };
 
+const runtimeStep = (
+  payload: unknown,
+): { readonly kind: string; readonly summary: string } | null => {
+  if (typeof payload !== "object" || payload === null) return null;
+  const value = payload as Record<string, unknown>;
+  switch (value._tag) {
+    case "ToolCall":
+      return {
+        kind: "ToolCall",
+        summary: `工具调用：${String(value.toolRef ?? "unknown")}`,
+      };
+    case "ToolResult":
+      return {
+        kind: "ToolResult",
+        summary: `工具结果：${String(value.toolName ?? "unknown")} · ${String(value.status ?? "Unknown")}`,
+      };
+    case "ControlResult":
+      return {
+        kind: "ControlResult",
+        summary: `控制动作：${String(value.actionKind ?? "unknown")} · ${String(value.status ?? "Unknown")}`,
+      };
+    case "Observation": {
+      const observation = value.observation;
+      const text =
+        typeof observation === "object" && observation !== null
+          ? (observation as Record<string, unknown>).text
+          : undefined;
+      return {
+        kind: "Observation",
+        summary:
+          typeof text === "string" && text.length > 0
+            ? `运行观察：${text.slice(0, 240)}`
+            : "运行观察：已记录",
+      };
+    }
+    default:
+      return null;
+  }
+};
+
 /** One deterministic page. The summaryRef is a stable self-reference
  * (`session-entry:{sessionId}:{sequence}`), falling back to the payload
  * `ref` when the entry carries one — rendering detail stays P12. */
@@ -320,9 +360,11 @@ export const deriveTranscriptPage = (
           hasMore = true;
           break outer;
         }
+        const step = runtimeStep(record.payload);
         entries.push({
-          kind: record.entryKind,
+          kind: step?.kind ?? record.entryKind,
           summaryRef:
+            step?.summary ??
             payloadRef(record.payload) ??
             `session-entry:${record.sessionId}:${record.sequence}`,
           at: record.createdAt,

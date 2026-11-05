@@ -1,6 +1,7 @@
 import type {
   AgentBinding,
   AgentExecutionState,
+  CommandSubmissionContext,
   Execution,
   ExecutionSettlement,
   LeaseGeneration,
@@ -17,6 +18,7 @@ import {
   type ControlBasis,
   decideSessionProjection,
   decodeTurn,
+  filterEntriesForWork,
   GENERIC_COGNITION_PROGRAM,
   type InstructionFragment,
   latestSessionInputIndex,
@@ -57,7 +59,7 @@ import type {
   WorkspacePlacementPortService,
   WorkspaceRepositoryService,
 } from "@arbor/ports";
-import { sha256Hex } from "@arbor/ports";
+import { sessionCausalBindingForWork, sha256Hex } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import {
   isProviderExecutionTimeout,
@@ -71,6 +73,7 @@ import {
   REPAIR_POLICY,
   runtimeSafetyFragment,
   safetyStop,
+  sessionFence,
 } from "./agent-loop-policy.js";
 import {
   commitRecoveredNativeCompaction,
@@ -79,13 +82,41 @@ import {
   runSummaryCompaction,
 } from "./compaction-coordinator.js";
 import {
+  CANONICAL_TRUST,
   GENERIC_INSTRUCTION_ASSETS,
   instructionAssetFragment,
 } from "./prompt-assets.js";
 import type { AgentLoopQualificationProbe } from "./qualification-probe.js";
+import { decideDurableRecovery } from "./recovery-decision.js";
 import { decideRepair } from "./repair.js";
 import { makeAgentStepContext } from "./step-context.js";
 import { assembleWorkContext } from "./work-context.js";
+
+const workCompletionRepairFragment = (reason: string): InstructionFragment => {
+  const content =
+    `WorkspaceWork output repair: ${reason}. ` +
+    "This is a Work execution, not a conversation. Do not answer with plain text. " +
+    "Use the exact control tool claim_completion with one bounded claim when the completion expectation is satisfied. " +
+    "If it is not satisfied, use a supported Work control or wait for one concrete persisted condition; never end the turn with prose alone.";
+  return {
+    identity: "work-completion-output-repair",
+    revision: 1,
+    hash: sha256Hex(content),
+    semanticKind: "WorkCompletionOutputRepair",
+    source: "DynamicSurface",
+    scope: "work-completion-output-repair",
+    authorityRole: "A4",
+    strength: "Hard",
+    compositionMode: "Constrain",
+    activationCondition: "contract-violation",
+    lifetime: "Evictable",
+    cacheClass: "TurnDynamic",
+    budgetClass: "repair",
+    modelCompatibility: [],
+    contentRef: content,
+    provenance: CANONICAL_TRUST,
+  };
+};
 
 export interface ModelDecisionOptions {
   readonly secretRef?: SecretRef;
@@ -101,6 +132,7 @@ export interface ModelDecisionDependencies {
   readonly input: {
     readonly execution: Execution;
     readonly agentExecutionState: AgentExecutionState;
+    readonly context: CommandSubmissionContext;
   };
   readonly agentBinding: AgentBinding;
   readonly capability: ModelCapability;
@@ -484,6 +516,12 @@ export const runModelDecision = (
     let resumeOverflowCompactionProviderTurnId:
       | import("@arbor/domain").ProviderTurnId
       | undefined;
+    let resumeOverflowSummaryCompactionInput:
+      | {
+          readonly manifestJson: string;
+          readonly request: PortableModelRequestV2;
+        }
+      | undefined;
     let resumeOverflowNativeCompaction = false;
     let resumeOverflowNativeCompactionInput:
       | {
@@ -499,7 +537,7 @@ export const runModelDecision = (
     // cursor was last observed. Resolve its durable source before creating a
     // fresh Prepared step so restart cannot accidentally create/replay step 0.
     if (
-      executionEpisode(input.execution)?._tag === "WorkEpisode" &&
+      workEpisode(input.execution) !== null &&
       providerTurns !== undefined &&
       loopSteps !== undefined
     ) {
@@ -1329,6 +1367,38 @@ export const runModelDecision = (
                       manifestJson: compactionManifest.manifestJson,
                       request: nativeFrontier.request,
                     };
+                  } else if (compactionManifest !== null) {
+                    let persistedRequest: unknown;
+                    try {
+                      persistedRequest = JSON.parse(
+                        compactionManifest.portableRequestJson,
+                      );
+                    } catch {
+                      return yield* Effect.fail(
+                        failure({
+                          _tag: "AgentLoopStepReplayBindingMismatch",
+                        }),
+                      );
+                    }
+                    if (
+                      typeof persistedRequest !== "object" ||
+                      persistedRequest === null ||
+                      Array.isArray(persistedRequest) ||
+                      (persistedRequest as { requestVersion?: unknown })
+                        .requestVersion !== 2 ||
+                      (persistedRequest as { operationKind?: unknown })
+                        .operationKind !== "CompactionSummary"
+                    ) {
+                      return yield* Effect.fail(
+                        failure({
+                          _tag: "AgentLoopStepReplayBindingMismatch",
+                        }),
+                      );
+                    }
+                    resumeOverflowSummaryCompactionInput = {
+                      manifestJson: compactionManifest.manifestJson,
+                      request: persistedRequest as PortableModelRequestV2,
+                    };
                   }
                   // The committed link pins the exact Summary ProviderTurn.
                   // Rebuild the same canonical input later in this model
@@ -1823,8 +1893,12 @@ export const runModelDecision = (
             }
           }
         }
+        const durableRecovery = decideDurableRecovery({
+          step: loopStep,
+          providerResult: "NotFound",
+        });
         if (
-          loopStep.state === "SettlementProposed" &&
+          durableRecovery._tag === "Settle" &&
           loopStep.settlement !== undefined
         ) {
           return {
@@ -1993,11 +2067,22 @@ export const runModelDecision = (
           ),
         )
         .pipe(Effect.mapError(failure));
+      const typedTimeline = yield* tx
+        .transact(sessions.supportsTypedTimeline())
+        .pipe(Effect.mapError(failure));
       let recentSessionEntries = conversationExecution
         ? recentTimeline.filter((entry) =>
             belongsToConversationExecution(entry, input.execution.executionId),
           )
-        : recentTimeline;
+        : workEpisode(input.execution) !== null &&
+            typedTimeline &&
+            recentTimeline.length > 0 &&
+            recentTimeline.every((entry) => entry.causalBinding !== undefined)
+          ? filterEntriesForWork(recentTimeline, {
+              executionId: input.execution.executionId,
+              workId: workEpisode(input.execution)?.workId as never,
+            })
+          : recentTimeline;
       let projectionDecision = decideSessionProjection(
         recentSessionEntries,
         currentBindingFingerprint,
@@ -2081,6 +2166,21 @@ export const runModelDecision = (
                       ref: observationRef,
                     },
                     contentHash: sha256Hex(JSON.stringify(item)),
+                    ...(workEpisode(input.execution) === null
+                      ? {}
+                      : (() => {
+                          const work = workEpisode(input.execution);
+                          if (work === null) return {};
+                          return {
+                            causalBinding: sessionCausalBindingForWork({
+                              projectId: input.execution.projectId,
+                              workspaceId: input.execution.workspaceId,
+                              workId: work.workId,
+                              executionId: input.execution.executionId,
+                              causedByRef: observationRef,
+                            }),
+                          };
+                        })()),
                   },
                   loopStepFence,
                 ),
@@ -3822,10 +3922,7 @@ export const runModelDecision = (
           );
         }
         currentWork = work.value;
-        if (
-          localPlans !== undefined &&
-          executionEpisode(input.execution)?._tag === "WorkEpisode"
-        ) {
+        if (localPlans !== undefined && workEpisode(input.execution) !== null) {
           const plan = yield* tx
             .transact(localPlans.findByWork(boundWork.workId))
             .pipe(Effect.mapError(failure));
@@ -4039,7 +4136,13 @@ export const runModelDecision = (
                 failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
               );
             }
+            const overflowLoopSteps = loopSteps;
             if (isOverflowNativeCheckpoint) {
+              if (overflowLoopSteps === undefined) {
+                return yield* Effect.fail(
+                  failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+                );
+              }
               const replacementProviderTurnId =
                 `ptn_${input.execution.executionId}_${turn}_overflow_0` as never;
               const existingReplacement = stepProviderLinks.filter(
@@ -4067,7 +4170,7 @@ export const runModelDecision = (
               } else {
                 yield* tx
                   .transact(
-                    loopSteps!.ensureProviderTurnLink(
+                    overflowLoopSteps.ensureProviderTurnLink(
                       {
                         identity: loopStepIdentity,
                         overflowOrdinal: 0,
@@ -4260,6 +4363,9 @@ export const runModelDecision = (
             ...(resumeOverflowNativeCompactionInput === undefined
               ? {}
               : { nativeRecovery: resumeOverflowNativeCompactionInput }),
+            ...(resumeOverflowSummaryCompactionInput === undefined
+              ? {}
+              : { summaryRecovery: resumeOverflowSummaryCompactionInput }),
           },
           {
             providerRuntime,
@@ -4459,6 +4565,32 @@ export const runModelDecision = (
             }
           : {}),
       };
+      if (workEpisode(input.execution) !== null) {
+        const toolNames = preparation.turn.toolRoutes.map(
+          (route) => route.name,
+        );
+        yield* tx
+          .transact(
+            sessions.appendEntry(
+              input.execution.sessionId,
+              {
+                entryKind: "Observation",
+                payload: {
+                  _tag: "Observation",
+                  source: "Runtime",
+                  observation: {
+                    text: `WorkEpisode 工具面：${toolNames.join(", ") || "无"}`,
+                    truncated: false,
+                  },
+                },
+              },
+              input.context._tag === "ExecutionOrigin"
+                ? sessionFence(input.execution.executionId, input.context)
+                : undefined,
+            ),
+          )
+          .pipe(Effect.mapError(failure));
+      }
       if (
         loopStep !== undefined &&
         loopSteps !== undefined &&
@@ -4669,7 +4801,7 @@ export const runModelDecision = (
           );
         }
       }
-      const providerResult = replayPersistedContextLimit
+      let providerResult = replayPersistedContextLimit
         ? {
             ok: false as const,
             cause: {
@@ -4683,6 +4815,36 @@ export const runModelDecision = (
           });
       if (!providerResult.ok) {
         if (isProviderTurnBindingChanged(providerResult.cause)) {
+          if (providerTurns !== undefined) {
+            const durableResult = yield* tx
+              .transact(providerTurns.findSettledResult(providerTurnId))
+              .pipe(Effect.mapError(failure));
+            if (
+              durableResult._tag === "SettledFailure" &&
+              durableResult.failureKind === "ContextLimitExceeded"
+            ) {
+              providerResult = {
+                ok: false as const,
+                cause: {
+                  _tag: "ProviderFailure" as const,
+                  kind: "ContextLimitExceeded" as const,
+                },
+              };
+            } else {
+              return yield* proposeSettlement(
+                providerTurnBindingChangedSettlement(),
+              );
+            }
+          } else {
+            return yield* proposeSettlement(
+              providerTurnBindingChangedSettlement(),
+            );
+          }
+        }
+        if (
+          !providerResult.ok &&
+          isProviderTurnBindingChanged(providerResult.cause)
+        ) {
           return yield* proposeSettlement(
             providerTurnBindingChangedSettlement(),
           );
@@ -4933,7 +5095,13 @@ export const runModelDecision = (
         }
       }
       const decoded = decodeTurn(events);
-      if (decoded.ok) {
+      const workOutputContractViolation =
+        decoded.ok &&
+        workEpisode(input.execution) !== null &&
+        decoded.output.toolInvocations.length === 0
+          ? "WorkEpisode must produce a control or executable action; plain text cannot end a Work turn"
+          : null;
+      if (decoded.ok && workOutputContractViolation === null) {
         return {
           _tag: "Ready",
           turn: preparation.turn,
@@ -4946,7 +5114,10 @@ export const runModelDecision = (
         REPAIR_POLICY,
         repairAttempt,
         preparation.turn.manifest.outputContractRef,
-        decoded.reason,
+        workOutputContractViolation ??
+          (decoded.ok
+            ? "WorkEpisode output contract violation"
+            : decoded.reason),
       );
       if (repair._tag === "Exhausted") {
         if (
@@ -5083,7 +5254,19 @@ export const runModelDecision = (
           )
           .pipe(Effect.mapError(failure));
       }
-      repairFragments = [repair.repairFragment];
+      repairFragments = [
+        repair.repairFragment,
+        ...(workEpisode(input.execution) !== null
+          ? [
+              workCompletionRepairFragment(
+                workOutputContractViolation ??
+                  (decoded.ok
+                    ? "WorkEpisode output contract violation"
+                    : decoded.reason),
+              ),
+            ]
+          : []),
+      ];
       repairAttempt += 1;
     }
   });

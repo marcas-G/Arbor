@@ -28,7 +28,6 @@ import { Badge } from "../../components/Badge.js";
 import { Button } from "../../components/Button.js";
 import { Card } from "../../components/Card.js";
 import { Empty } from "../../components/Empty.js";
-import { MonoText } from "../../components/MonoText.js";
 import { StatusBadge } from "../../components/StatusBadge.js";
 import { Tabs } from "../../components/Tabs.js";
 import { ProblemCard } from "../../problems/ProblemCard.js";
@@ -36,7 +35,7 @@ import { useSession } from "../../session/SessionContext.js";
 import { CurrentWorkView } from "../../views/CurrentWorkView.js";
 import { DependencyView } from "../../views/DependencyView.js";
 import { InboxView } from "../../views/InboxView.js";
-import { TimeText } from "../../views/shared.js";
+import { TimeText, workLifecycleLabel } from "../../views/shared.js";
 import { TranscriptView } from "../../views/TranscriptView.js";
 import { VerificationView } from "../../views/VerificationView.js";
 import { ConversationTab } from "./ConversationTab.js";
@@ -45,7 +44,6 @@ import styles from "./workspace.module.css";
 type WorkspaceId = ViewRequestMap["workspace-detail"]["workspaceId"];
 type ProjectId = ViewRequestMap["responsibility-tree"]["projectId"];
 type Boundary = WorkspaceDetailRes["boundary"];
-type Address = Boundary["addresses"][number];
 
 const TAB_ITEMS: ReadonlyArray<{
   readonly key: WorkspaceTab;
@@ -72,30 +70,12 @@ const EMPTY_VERIFICATION: VerificationRes = {
 /** transport 层抛出的就是 frozen Problem（useViewQuery queryFn 约定）。 */
 const asProblem = (error: unknown): Problem => error as Problem;
 
-const addressText = (address: Address): string => {
-  switch (address._tag) {
-    case "FileTree":
-      return `FileTree ${address.path}`;
-    case "GitWorktree":
-      return `GitWorktree ${address.path}${
-        address.branch === undefined ? "" : ` @${address.branch}`
-      }`;
-    case "DatabaseNamespace":
-      return `DatabaseNamespace ${address.namespace}`;
-    case "ExternalResource":
-      return `ExternalResource ${address.address}`;
-    default:
-      return JSON.stringify(address) ?? "unknown-address";
-  }
-};
-
 const boundaryBrief = (boundary: Boundary): string => {
-  const first = boundary.addresses[0];
-  if (first === undefined) {
-    return "无资源地址";
-  }
   const total = boundary.addresses.length;
-  return `${addressText(first)}${total > 1 ? ` 等 ${String(total)} 个地址` : ""}`;
+  if (total === 0) {
+    return "暂未关联项目资源";
+  }
+  return `已关联 ${String(total)} 项项目资源`;
 };
 
 function WorkspaceHeader({
@@ -114,14 +94,14 @@ function WorkspaceHeader({
     <header className={styles.header}>
       <div className={styles.headerMain}>
         <div className={styles.idLine}>
-          <MonoText>{workspaceId}</MonoText>
+          <span className={styles.workspaceLabel}>项目分工</span>
           {attention === undefined ? null : (
             <span className={styles.attentionRow}>
               {attention.attention > 0 ? (
-                <Badge tone="attention">{`attention ${String(attention.attention)}`}</Badge>
+                <Badge tone="attention">{`需关注 ${String(attention.attention)}`}</Badge>
               ) : null}
               {attention.actionRequired > 0 ? (
-                <Badge tone="danger">{`actionRequired ${String(attention.actionRequired)}`}</Badge>
+                <Badge tone="danger">{`需要处理 ${String(attention.actionRequired)}`}</Badge>
               ) : null}
             </span>
           )}
@@ -134,7 +114,11 @@ function WorkspaceHeader({
           <>
             <div className={styles.metaLine}>
               <StatusBadge
-                label={detail.data.currentWork?.status ?? "无当前工作"}
+                label={
+                  detail.data.currentWork == null
+                    ? "无当前工作"
+                    : workLifecycleLabel(detail.data.currentWork.status)
+                }
               />
             </div>
             <p className={styles.purpose}>
@@ -171,7 +155,11 @@ function OverviewTab({
       ) : currentWork.isError ? (
         <ProblemCard problem={asProblem(currentWork.error)} />
       ) : (
-        <CurrentWorkView work={currentWork.data ?? null} />
+        <CurrentWorkView
+          work={currentWork.data ?? null}
+          projectId={projectId}
+          workspaceId={workspaceId}
+        />
       )}
       {detail.isPending ? (
         <Empty>加载中</Empty>
@@ -179,7 +167,7 @@ function OverviewTab({
         <ProblemCard problem={asProblem(detail.error)} />
       ) : (
         <>
-          <Card title="Pending Works">
+          <Card title="待办工作">
             {detail.data.pendingWorks.length === 0 ? (
               <Empty>无待办工作</Empty>
             ) : (
@@ -198,7 +186,7 @@ function OverviewTab({
                         });
                       }}
                     >
-                      <MonoText>{work.workId}</MonoText>
+                      <span className={styles.workLabel}>工作</span>
                       <span>{work.objective}</span>
                     </button>
                   </li>
@@ -207,10 +195,10 @@ function OverviewTab({
             )}
           </Card>
           {detail.data.executionSummary == null ? null : (
-            <Card title="执行摘要">
+            <Card title="最近一次运行">
               <span>
-                <MonoText>{detail.data.executionSummary.executionId}</MonoText>{" "}
-                <TimeText at={detail.data.executionSummary.admittedAt} />
+                已于 <TimeText at={detail.data.executionSummary.admittedAt} />{" "}
+                开始运行
               </span>
             </Card>
           )}
@@ -335,24 +323,29 @@ function ContextualGovernance({
   const session = useSession();
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<"steer" | "stop" | null>(null);
+  const [steerTarget, setSteerTarget] = useState<CurrentWorkSummary | null>(
+    null,
+  );
   const onSubmitted = (_receipt: CommandReceiptView): void => {
     setMode(null);
+    setSteerTarget(null);
     void queryClient.invalidateQueries({ queryKey: ["view"] });
   };
   const executionId = currentWork?.activeExecution?.executionId ?? null;
   const canSteer = currentWork?.workId !== undefined;
   return (
     <div className={styles.governance}>
-      <span className={styles.governanceCaption}>上下文治理</span>
+      <span className={styles.governanceCaption}>当前工作操作</span>
       <div className={styles.governanceActions}>
         <Button
           variant="quiet"
           disabled={!canSteer}
           onClick={() => {
+            setSteerTarget(currentWork);
             setMode("steer");
           }}
         >
-          纠偏
+          调整方向
         </Button>
         <Button
           variant="danger"
@@ -364,14 +357,14 @@ function ContextualGovernance({
           紧急停止
         </Button>
       </div>
-      {mode === "steer" && currentWork?.workId !== undefined ? (
+      {mode === "steer" && steerTarget?.workId !== undefined ? (
         <SteerWorkForm
           actor={session.actor ?? ""}
           projectId={projectId}
-          workId={currentWork.workId}
+          workId={steerTarget.workId}
           workspaceId={workspaceId}
-          objective={currentWork.objective}
-          expectedWorkRevision={currentWork.revision}
+          objective={steerTarget.objective}
+          expectedWorkRevision={steerTarget.revision}
           token={session.token ?? undefined}
           onSubmitted={onSubmitted}
         />

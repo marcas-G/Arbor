@@ -71,6 +71,27 @@ const translate = (
           },
         ];
       }
+      if (event.event._tag === "ReasoningDelta") {
+        return [
+          {
+            type: "thinking",
+            executionId,
+            providerTurnId: String(event.providerTurnId),
+            attemptNo: event.attemptNo,
+          },
+        ];
+      }
+      if (event.event._tag === "ToolCallProposed") {
+        return [
+          {
+            type: "tool-started",
+            executionId,
+            providerTurnId: String(event.providerTurnId),
+            attemptNo: event.attemptNo,
+            toolName: event.event.toolName,
+          },
+        ];
+      }
       return [];
     case "AttemptFailed":
       return event.retrying

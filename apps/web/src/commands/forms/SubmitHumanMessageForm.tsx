@@ -66,6 +66,8 @@ export function SubmitHumanMessageForm({
       onSubmitted?.(receipt);
     },
   });
+  const submissionLocked =
+    state.phase === "submitting" || state.phase === "transport-failed";
   const doSubmit = (event?: FormEvent): void => {
     event?.preventDefault();
     void handleSubmit((values) => {
@@ -89,6 +91,7 @@ export function SubmitHumanMessageForm({
       <Field
         control="textarea"
         label="消息"
+        disabled={submissionLocked}
         rows={3}
         placeholder="向 Arbor 描述你想让它做的事"
         value={bodyRef}
@@ -112,11 +115,7 @@ export function SubmitHumanMessageForm({
         <span className="arbor-composer-hint">
           Enter 发送 · Shift + Enter 换行
         </span>
-        <Button
-          variant="primary"
-          type="submit"
-          disabled={state.phase === "submitting"}
-        >
+        <Button variant="primary" type="submit" disabled={submissionLocked}>
           发送
         </Button>
       </div>

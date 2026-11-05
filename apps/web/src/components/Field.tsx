@@ -7,6 +7,7 @@ type FieldBase = {
   readonly value: string;
   readonly onChange: (value: string) => void;
   readonly disabled?: boolean | undefined;
+  readonly readOnly?: boolean | undefined;
   /** W-01: inline validation message, rendered in danger tone below the
    * control and wired via aria-invalid / aria-describedby. */
   readonly error?: string | undefined;
@@ -38,7 +39,7 @@ export type FieldProps =
 /** W-01 formal Field: controlled input | select | textarea with label and
  * optional inline error. */
 export function Field(props: FieldProps) {
-  const { label, value, onChange, disabled, error } = props;
+  const { label, value, onChange, disabled, readOnly, error } = props;
   const controlId = useId();
   const errorId = `${controlId}-error`;
   const describedBy = error !== undefined ? errorId : undefined;
@@ -52,6 +53,7 @@ export function Field(props: FieldProps) {
           className="arbor-field-control"
           value={value}
           disabled={disabled}
+          readOnly={readOnly}
           placeholder={props.placeholder}
           aria-invalid={invalid}
           aria-describedby={describedBy}

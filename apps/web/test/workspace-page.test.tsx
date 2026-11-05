@@ -118,7 +118,7 @@ afterEach(() => {
 });
 
 describe("W-05 Workspace page", () => {
-  it("头部：workspaceId（Mono）/ purpose / status 徽章 / attention 计数 / boundary 简述", async () => {
+  it("头部：工作区标签 / purpose / status 徽章 / 关注计数 / boundary 简述", async () => {
     installViews();
     renderWorkspace();
     await waitFor(() =>
@@ -126,11 +126,12 @@ describe("W-05 Workspace page", () => {
         screen.getByText(detailTypical.responsibility.purpose),
       ).toBeTruthy(),
     );
-    expect(screen.getByText("ws_1")).toBeTruthy();
-    expect(screen.getAllByText("Open").length).toBeGreaterThan(0);
-    expect(screen.getByText("attention 2")).toBeTruthy();
-    expect(screen.getByText("actionRequired 1")).toBeTruthy();
-    expect(screen.getByText(/FileTree \/srv\/arbor\/web/)).toBeTruthy();
+    expect(screen.getByText("项目分工")).toBeTruthy();
+    expect(screen.getAllByText("进行中").length).toBeGreaterThan(0);
+    expect(screen.getByText("需关注 2")).toBeTruthy();
+    expect(screen.getByText("需要处理 1")).toBeTruthy();
+    expect(screen.getByText("已关联 4 项项目资源")).toBeTruthy();
+    expect(screen.queryByText(/\/srv\/arbor\/web/)).toBeNull();
   });
 
   it("六 tab 导航：点击各 tab → location.pathname 变化；默认路由无 tab → 概要", async () => {
@@ -168,6 +169,18 @@ describe("W-05 Workspace page", () => {
     fireEvent.click(row as HTMLButtonElement);
     expect(window.location.pathname).toBe(
       "/p/prj_1/workspace/ws_1/work/wrk_018f6a2e-0000-7000-8000-0000000000a3",
+    );
+  });
+
+  it("概要：当前工作提供 Work Detail 入口", async () => {
+    installViews();
+    renderWorkspace();
+    await waitFor(() =>
+      expect(screen.getByText("交付 P13-004 视图渲染层")).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "查看工作详情" }));
+    expect(window.location.pathname).toBe(
+      "/p/prj_1/workspace/ws_1/work/wrk_018f6a2e-0000-7000-8000-0000000000a1",
     );
   });
 
@@ -210,11 +223,11 @@ describe("W-05 Workspace page", () => {
     expect(screen.getByText("治理决议待确认")).toBeTruthy();
   });
 
-  it("上下文治理动作：纠偏/紧急停止存在（W-08 真实接线），未点击无 /commands fetch", async () => {
+  it("当前工作操作：调整方向/紧急停止存在（W-08 真实接线），未点击无 /commands fetch", async () => {
     const calls = installViews();
     renderWorkspace();
-    await waitFor(() => expect(screen.getByText("上下文治理")).toBeTruthy());
-    expect(screen.getByRole("button", { name: "纠偏" })).toBeTruthy();
+    await waitFor(() => expect(screen.getByText("当前工作操作")).toBeTruthy());
+    expect(screen.getByRole("button", { name: "调整方向" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "紧急停止" })).toBeTruthy();
     // view names only — the harness intercepts /views/*; any /commands
     // call would surface as "unknown-view"
@@ -236,8 +249,8 @@ describe("W-05 Workspace page", () => {
         screen.getByText(revisionedDetail.responsibility.purpose),
       ).toBeTruthy(),
     );
-    fireEvent.click(screen.getByRole("button", { name: "纠偏" }));
-    expect(screen.getByText("rev 9")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "调整方向" }));
+    expect(screen.getByRole("heading", { name: "调整工作方向" })).toBeTruthy();
   });
 
   it("查询 problem → 就地 ProblemCard", async () => {

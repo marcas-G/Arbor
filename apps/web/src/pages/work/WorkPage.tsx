@@ -18,11 +18,11 @@ import type { CommandReceiptView } from "../../commands/submitCommand.js";
 import { Button } from "../../components/Button.js";
 import { Card } from "../../components/Card.js";
 import { Empty } from "../../components/Empty.js";
-import { MonoText } from "../../components/MonoText.js";
 import { ProblemCard } from "../../problems/ProblemCard.js";
 import { useSession } from "../../session/SessionContext.js";
 import { VerificationView } from "../../views/VerificationView.js";
 import { WorkDetailView } from "../../views/WorkDetailView.js";
+import { WorkProgressView } from "../../views/WorkProgressView.js";
 import styles from "./work.module.css";
 
 /** transport 层抛出的就是 frozen Problem（useViewQuery queryFn 约定）。 */
@@ -122,12 +122,9 @@ export function WorkPage({
               });
             }}
           >
-            返回工作区
+            返回分工详情
           </Button>
-          <details className={styles.idLine}>
-            <summary>工作引用</summary>
-            <MonoText>{workId}</MonoText>
-          </details>
+          <span className={styles.idLine}>工作详情</span>
         </div>
         {mayGovern ? (
           <WorkGovernance
@@ -145,6 +142,11 @@ export function WorkPage({
       ) : (
         <>
           <WorkDetailView view={workDetail.data} />
+          <WorkProgressView
+            work={workDetail.data}
+            current={current}
+            verification={verification.data}
+          />
           <Card title="验证明细">
             {verification.isPending ? (
               <Empty>加载中</Empty>
@@ -181,7 +183,7 @@ function WorkGovernance({
   };
   return (
     <div className={styles.governance}>
-      <span className={styles.governanceCaption}>治理动作</span>
+      <span className={styles.governanceCaption}>工作操作</span>
       <div className={styles.governanceActions}>
         <Button
           variant="primary"
@@ -197,7 +199,7 @@ function WorkGovernance({
           disabled={steer === null}
           onClick={() => setMode("steer")}
         >
-          纠偏
+          调整方向
         </Button>
       </div>
       {mode === "accept" && accept !== null ? (

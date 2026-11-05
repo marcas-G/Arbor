@@ -96,7 +96,33 @@ afterEach(() => {
 });
 
 describe("W-06 关注事项页（只读）", () => {
-  it("severity 分组顺序：ActionRequired 组在前；组头 danger/attention Badge + 计数", async () => {
+  it("explains a generated dependency failure and retains its diagnostic detail", async () => {
+    const original = attentionPageTypical.rows[1];
+    if (original === undefined) throw new Error("missing attention fixture");
+    installAttention({
+      dto: {
+        rows: [
+          {
+            ...original,
+            summaryRef: "dependency dep_123 marked unfulfillable (revision 2)",
+          },
+        ],
+      },
+    });
+    renderAttention();
+    const list = await screen.findByLabelText("关注事项分组");
+    expect(
+      within(list).getByText(
+        "一项工作所需的结果无法提供，请查看相关工作并调整安排。",
+      ),
+    ).toBeTruthy();
+    expect(within(list).queryByText(/dep_123/)).toBeNull();
+    const detail = screen.getByLabelText("关注事项检查面板");
+    expect(within(detail).getByText("技术详情")).toBeTruthy();
+    expect(within(detail).getByText(/dep_123/)).toBeTruthy();
+  });
+
+  it("severity 分组顺序：需要处理事项在前；组头保留优先级与计数", async () => {
     installAttention();
     renderAttention();
     await waitFor(() => expect(screen.getByText("dep-report#9")).toBeTruthy());
@@ -106,19 +132,19 @@ describe("W-06 关注事项页（只读）", () => {
       }),
     ];
     expect(headings.length).toBe(2);
-    expect(headings[0]?.textContent).toContain("ActionRequired");
+    expect(headings[0]?.textContent).toContain("需要处理");
     expect(headings[0]?.textContent).toContain("2 条");
     expect(headings[0]?.querySelector(".arbor-badge-danger")).not.toBeNull();
-    expect(headings[1]?.textContent).toContain("Attention");
+    expect(headings[1]?.textContent).toContain("需要留意");
     expect(headings[1]?.textContent).toContain("2 条");
     expect(headings[1]?.querySelector(".arbor-badge-attention")).not.toBeNull();
   });
 
-  it("source 筛选：单选 chip → 仅该源行；全部恢复；未知 source 原样行 + muted option", async () => {
+  it("source 筛选：单选 chip → 仅该源行；全部恢复；未知 source 保留原样", async () => {
     installAttention();
     renderAttention();
     await waitFor(() => expect(screen.getByText("mystery#1")).toBeTruthy());
-    fireEvent.click(screen.getByRole("button", { name: "Deadlock" }));
+    fireEvent.click(screen.getByRole("button", { name: "工作相互等待" }));
     expect(
       within(screen.getByLabelText("关注事项分组")).getByText("wait-cycles#1"),
     ).toBeTruthy();
@@ -154,9 +180,8 @@ describe("W-06 关注事项页（只读）", () => {
     const inspection = screen.getByRole("complementary", {
       name: "关注事项检查面板",
     });
-    expect(within(inspection).getByText("dl-1")).toBeTruthy();
-    expect(within(inspection).getByText("Deduplication key")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "打开目标工作区" }));
+    expect(within(inspection).getByText("状态")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "查看相关工作" }));
     expect(window.location.pathname).toBe("/p/prj_1/workspace/ws_1");
   });
 
@@ -172,9 +197,9 @@ describe("W-06 关注事项页（只读）", () => {
     const urls = installAttention();
     renderAttention();
     await waitFor(() => expect(screen.getByText("dep-report#9")).toBeTruthy());
-    fireEvent.click(screen.getByRole("button", { name: "Deadlock" }));
+    fireEvent.click(screen.getByRole("button", { name: "工作相互等待" }));
     fireEvent.click(screen.getByRole("button", { name: /wait-cycles#1/ }));
-    fireEvent.click(screen.getByRole("button", { name: "打开目标工作区" }));
+    fireEvent.click(screen.getByRole("button", { name: "查看相关工作" }));
     expect(window.location.pathname).toBe("/p/prj_1/workspace/ws_1");
     expect(urls.every((url) => url.startsWith("/views/"))).toBe(true);
   });
@@ -192,7 +217,7 @@ describe("W-06 关注事项页（只读）", () => {
     expect(screen.getByRole("dialog", { name: "关注事项检查" })).toBeTruthy();
     expect(
       within(screen.getByRole("dialog", { name: "关注事项检查" })).getByText(
-        "ws_1",
+        "相关分工",
       ),
     ).toBeTruthy();
     expect(

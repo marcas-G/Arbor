@@ -9,6 +9,7 @@ import type {
   InboxProjectionStoreService,
   PendingDomainEvent,
   WorkRepositoryService,
+  WorkWaitStoreService,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { commandErr, commandOk } from "../command-result.js";
@@ -48,6 +49,7 @@ export interface SteerWorkResult {
 export interface SteerWorkDependencies {
   readonly works: Pick<WorkRepositoryService, "findById" | "refineIfRevision">;
   readonly inbox: Pick<InboxProjectionStoreService, "admitUpsert">;
+  readonly waits?: Pick<WorkWaitStoreService, "clear">;
 }
 
 export const makeSteerWorkHandler = (
@@ -119,6 +121,9 @@ export const makeSteerWorkHandler = (
         },
         next.revision,
       );
+      if (dependencies.waits !== undefined) {
+        yield* dependencies.waits.clear(payload.workId);
+      }
 
       const events: PendingDomainEvent[] = [
         {

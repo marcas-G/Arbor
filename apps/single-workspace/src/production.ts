@@ -454,6 +454,7 @@ export const ProductionDaemonServiceLive = (
                     eventType: event.eventType,
                     payload: event.payload,
                     eventId: String(event.eventId),
+                    occurredAt: event.occurredAt,
                   })),
                   verificationDeps,
                   projectId,
@@ -723,6 +724,31 @@ export const ProductionDaemonServiceLive = (
                 ),
               );
             });
+          // Recovery boundary: a human stop/cancel or a completed response
+          // job may be durable before its main ConversationResponseEpisode
+          // settles. Such a stale active main would block the Work scheduler
+          // forever. Re-enter the normal fenced runner so it observes the
+          // stop request and settles the exact execution; never touch Work
+          // state or synthesize a response result here.
+          const unsettledWorkspaceExecutions = yield* tx.transact(
+            executions.findUnsettledExecutions(),
+          );
+          for (const execution of unsettledWorkspaceExecutions) {
+            const episode = conversationResponseEpisode(execution);
+            if (episode === null) continue;
+            const job = yield* tx.transact(
+              jobs.findByExecution(execution.executionId),
+            );
+            if (Option.isNone(job) || job.value.state._tag === "Running") {
+              continue;
+            }
+            yield* tx.transact(
+              executions.requestStop(execution.executionId, yield* clock.now()),
+            );
+            yield* runIfDispatchable(execution.executionId, {
+              _tag: "Recovery",
+            });
+          }
           // Product shape: the daemon drives EVERY project with conversation
           // work (any project a human submits to must be answered — a
           // single-project filter would silently orphan the rest). Per

@@ -47,6 +47,7 @@ interface SessionEntryRow {
   readonly item_type?: string | null;
   readonly schema_version?: number | null;
   readonly context_epoch?: number | null;
+  readonly causal_binding_json?: string | null;
 }
 
 interface TypedSessionItemRow extends SessionEntryRow {
@@ -61,6 +62,9 @@ const toSessionEntry = (row: SessionEntryRow) => ({
   entryKind: row.entry_kind,
   payload: JSON.parse(row.payload_json) as unknown,
   createdAt: row.created_at,
+  ...(row.causal_binding_json === null || row.causal_binding_json === undefined
+    ? {}
+    : { causalBinding: JSON.parse(row.causal_binding_json) }),
   ...(row.source_kind !== null &&
   row.source_ref !== null &&
   row.content_hash !== null
@@ -87,6 +91,9 @@ const toSessionItemRecord = (row: TypedSessionItemRow): SessionItemRecord => ({
     ref: row.source_ref as string,
   },
   contentHash: row.content_hash as string,
+  ...(row.causal_binding_json === null || row.causal_binding_json === undefined
+    ? {}
+    : { causalBinding: JSON.parse(row.causal_binding_json) }),
 });
 
 const toSession = (row: SessionRow): Session => ({
@@ -201,7 +208,7 @@ export const SessionRepositoryLive: Layer.Layer<
         const now = yield* clock.now();
         const rows = yield* run(
           sql.unsafe<{ sequence: number }>(
-            "INSERT INTO session_entries (session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at, source_kind, source_ref, content_hash) VALUES (?, COALESCE((SELECT MAX(sequence) + 1 FROM session_entries WHERE session_id = ?), 0), ?, ?, 2, ?, ?, ?, ?, ?, ?) RETURNING sequence",
+            "INSERT INTO session_entries (session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at, source_kind, source_ref, content_hash, causal_binding_json) VALUES (?, COALESCE((SELECT MAX(sequence) + 1 FROM session_entries WHERE session_id = ?), 0), ?, ?, 2, ?, ?, ?, ?, ?, ?, ?) RETURNING sequence",
             [
               sessionId,
               sessionId,
@@ -213,6 +220,9 @@ export const SessionRepositoryLive: Layer.Layer<
               write.source.kind,
               write.source.ref,
               write.contentHash,
+              write.causalBinding === undefined
+                ? null
+                : JSON.stringify(write.causalBinding),
             ],
           ),
         );
@@ -422,7 +432,7 @@ export const SessionRepositoryLive: Layer.Layer<
           if (!(yield* hasTimelineColumns)) return [];
           const rows = yield* run(
             sql.unsafe<TypedSessionItemRow>(
-              "SELECT session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at, source_kind, source_ref, content_hash FROM session_entries WHERE session_id = ? AND schema_version = 2 AND context_epoch <= ? ORDER BY sequence DESC LIMIT ?",
+              "SELECT session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at, source_kind, source_ref, content_hash, causal_binding_json FROM session_entries WHERE session_id = ? AND schema_version = 2 AND context_epoch <= ? ORDER BY sequence DESC LIMIT ?",
               [sessionId, contextEpoch, limit],
             ),
           );
@@ -514,7 +524,7 @@ export const SessionRepositoryLive: Layer.Layer<
           yield* TransactionScope;
           const rows = yield* run(
             sql.unsafe<SessionEntryRow>(
-              "SELECT session_id, sequence, entry_kind, payload_json, created_at, source_kind, source_ref, content_hash FROM session_entries WHERE session_id = ? AND sequence > ? ORDER BY sequence LIMIT ?",
+              "SELECT session_id, sequence, entry_kind, payload_json, created_at, source_kind, source_ref, content_hash, causal_binding_json FROM session_entries WHERE session_id = ? AND sequence > ? ORDER BY sequence LIMIT ?",
               [sessionId, afterSequence, limit],
             ),
           );
@@ -532,9 +542,12 @@ export const SessionRepositoryLive: Layer.Layer<
           const hasTimeline = columns.some(
             (column) => column.name === "item_type",
           );
+          const hasCausalBinding = columns.some(
+            (column) => column.name === "causal_binding_json",
+          );
           const selection = hasSources
-            ? "session_id, sequence, entry_kind, payload_json, created_at, source_kind, source_ref, content_hash"
-            : "session_id, sequence, entry_kind, payload_json, created_at, NULL AS source_kind, NULL AS source_ref, NULL AS content_hash";
+            ? `session_id, sequence, entry_kind, payload_json, created_at, source_kind, source_ref, content_hash${hasCausalBinding ? ", causal_binding_json" : ", NULL AS causal_binding_json"}`
+            : "session_id, sequence, entry_kind, payload_json, created_at, NULL AS source_kind, NULL AS source_ref, NULL AS content_hash, NULL AS causal_binding_json";
           const checkpointFloor = hasTimeline
             ? Number(
                 (yield* run(

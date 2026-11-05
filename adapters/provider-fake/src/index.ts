@@ -70,7 +70,22 @@ export const FakeProviderLive = (
               Stream.fail(failure(kind)),
             );
           }
-          const events = script.turns?.[attempt] ?? script.events ?? [];
+          const hasExplicitScript =
+            script.turns !== undefined ||
+            script.events !== undefined ||
+            script.failures !== undefined;
+          const events = hasExplicitScript
+            ? (script.turns?.[attempt] ?? script.events ?? [])
+            : [
+                {
+                  _tag: "TextDelta" as const,
+                  text: "Arbor 本地模式已收到请求。请配置模型后继续使用远程模型。",
+                },
+                {
+                  _tag: "TurnCompleted" as const,
+                  finishReason: "Stop" as const,
+                },
+              ];
           const canonicalEvents = events.some(
             (event) => event._tag === "TurnStarted",
           )

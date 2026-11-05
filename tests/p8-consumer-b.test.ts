@@ -233,6 +233,7 @@ const receiptResolution = (commandId: CommandId) =>
 const acceptedEvent = (n: number) => ({
   eventType: "WorkOutcomeAccepted",
   eventId: `evt-accepted-${n}`,
+  occurredAt: "2026-01-01T00:00:00.000Z",
   payload: {
     acceptanceId: ACC(n),
     workId: WORK_1,

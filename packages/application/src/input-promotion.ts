@@ -1,5 +1,7 @@
-import type { SessionId, WorkspaceId } from "@arbor/domain";
+import { type SessionId, type WorkspaceId, workEpisode } from "@arbor/domain";
 import {
+  ExecutionRepository,
+  type ExecutionRepositoryError,
   InboxProjectionStore,
   type InboxProjectionStoreError,
   type LeaseFencingRejected,
@@ -8,6 +10,7 @@ import {
   type SessionRepositoryError,
   type SessionSourceConflict,
   type SessionWriteFence,
+  sessionCausalBindingForWork,
   sha256Hex,
   type TransactionOperationalFailure,
   TransactionPort,
@@ -29,6 +32,7 @@ export type InputPromotionError =
   | SessionSourceConflict
   | SessionEpochConflict
   | TransactionOperationalFailure
+  | ExecutionRepositoryError
   | {
       readonly _tag: "InboxEntryNotFound";
       readonly workspaceId: WorkspaceId;
@@ -73,7 +77,10 @@ const makeInputPromotionServiceLive = (
 ): Layer.Layer<
   InputPromotionService,
   never,
-  TransactionPort | SessionRepository | InboxProjectionStore
+  | TransactionPort
+  | SessionRepository
+  | InboxProjectionStore
+  | ExecutionRepository
 > =>
   Layer.effect(
     InputPromotionService,
@@ -81,6 +88,7 @@ const makeInputPromotionServiceLive = (
       const tx = yield* TransactionPort;
       const sessions = yield* SessionRepository;
       const inbox = yield* InboxProjectionStore;
+      const executions = yield* ExecutionRepository;
       return InputPromotionService.of({
         promoteInbox: (input) =>
           Effect.gen(function* () {
@@ -115,6 +123,16 @@ const makeInputPromotionServiceLive = (
                     sessionId: input.targetSessionId,
                   });
                 }
+                const execution = yield* executions.findById(
+                  input.fence.executionId,
+                );
+                const executionValue = Option.isSome(execution)
+                  ? execution.value
+                  : undefined;
+                const episode =
+                  executionValue === undefined
+                    ? null
+                    : workEpisode(executionValue);
                 const item = {
                   _tag: "UserMessage" as const,
                   source: {
@@ -135,6 +153,17 @@ const makeInputPromotionServiceLive = (
                     contextEpoch: session.value.contextEpoch,
                     source: { kind: "InboxEntry", ref: entry.value.entryKey },
                     contentHash: sha256Hex(JSON.stringify(item)),
+                    ...(episode === null || executionValue === undefined
+                      ? {}
+                      : {
+                          causalBinding: sessionCausalBindingForWork({
+                            projectId: executionValue.projectId,
+                            workspaceId: input.workspaceId,
+                            workId: episode.workId,
+                            executionId: input.fence.executionId,
+                            causedByRef: `inbox:${entry.value.entryKey}`,
+                          }),
+                        }),
                   },
                   input.fence,
                 );
@@ -173,5 +202,8 @@ export const InputPromotionServiceWithQualificationProbe = (
 ): Layer.Layer<
   InputPromotionService,
   never,
-  TransactionPort | SessionRepository | InboxProjectionStore
+  | TransactionPort
+  | SessionRepository
+  | InboxProjectionStore
+  | ExecutionRepository
 > => makeInputPromotionServiceLive(qualificationProbe);

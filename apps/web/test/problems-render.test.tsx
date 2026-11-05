@@ -7,6 +7,7 @@
 import type { Problem } from "@arbor/api-contracts";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { ErrorBoundary } from "../src/ErrorBoundary.js";
 import { CommandInlineError } from "../src/problems/CommandInlineError.js";
 import { ProblemCard } from "../src/problems/ProblemCard.js";
 import { D0_PROBLEM_FIXTURES } from "../src/views/fixtures.js";
@@ -24,7 +25,7 @@ const problem = (overrides: Partial<Problem>): Problem => ({
 describe("ProblemCard treatments", () => {
   it("handles every frozen D0 Problem fixture with its explicit treatment", () => {
     const headings = {
-      unauthenticated: "未认证",
+      unauthenticated: "连接已失效",
       forbidden: "权限拒绝",
       "not-found": "对象不存在",
       "invalid-request": "请求错误",
@@ -41,7 +42,7 @@ describe("ProblemCard treatments", () => {
     }
   });
 
-  it("unauthenticated: global state, token hint, no retry button", () => {
+  it("unauthenticated: global state, reconnect hint, no retry button", () => {
     render(
       <ProblemCard
         problem={problem({
@@ -51,12 +52,12 @@ describe("ProblemCard treatments", () => {
         })}
       />,
     );
-    expect(screen.getByText("未认证")).toBeTruthy();
-    expect(screen.getByText(/提供访问令牌/)).toBeTruthy();
+    expect(screen.getByText("连接已失效")).toBeTruthy();
+    expect(screen.getByText(/重新连接 Arbor/)).toBeTruthy();
     expect(screen.queryByRole("button")).toBeNull();
   });
 
-  it("forbidden: denial panel with code and safeDetails.reason", () => {
+  it("forbidden: denial panel keeps diagnostics behind details", () => {
     render(
       <ProblemCard
         problem={problem({
@@ -67,8 +68,8 @@ describe("ProblemCard treatments", () => {
       />,
     );
     expect(screen.getByText("权限拒绝")).toBeTruthy();
-    expect(screen.getByText("authority/denied")).toBeTruthy();
-    expect(screen.getByText("缺少 RecordDecision 权限")).toBeTruthy();
+    expect(screen.getByText("当前连接没有执行此操作的权限。")).toBeTruthy();
+    expect(screen.getByText("错误代码：authority/denied")).toBeTruthy();
   });
 
   it("not-found: empty state with optional back action", () => {
@@ -111,10 +112,12 @@ describe("ProblemCard treatments", () => {
       />,
     );
     expect(screen.getByText("请求错误")).toBeTruthy();
-    expect(screen.getByText("transport/invalid-request")).toBeTruthy();
+    expect(
+      screen.getByText("错误代码：transport/invalid-request"),
+    ).toBeTruthy();
     const details = container.querySelector("details.arbor-problem-details");
     expect(details).not.toBeNull();
-    expect(container.textContent).toContain("correlationId corr-123");
+    expect(container.textContent).toContain("跟踪编号：corr-123");
     expect(container.textContent).toContain("must be a non-negative integer");
   });
 
@@ -177,7 +180,7 @@ describe("ProblemCard treatments", () => {
       />,
     );
     expect(screen.getByText("服务不可用")).toBeTruthy();
-    expect(screen.getByText("non-retryable")).toBeTruthy();
+    expect(screen.getByText("暂时无法恢复")).toBeTruthy();
     expect(screen.queryByRole("button")).toBeNull();
   });
 
@@ -188,11 +191,11 @@ describe("ProblemCard treatments", () => {
 
   it("names all frozen global states in text as well as status styling", () => {
     const categories = [
-      ["unauthenticated", "Unauthorized"],
-      ["forbidden", "AuthorityDenied"],
-      ["invalid-request", "Validation"],
-      ["stale", "Stale"],
-      ["unavailable", "Network / Unavailable"],
+      ["unauthenticated", "需要重新连接"],
+      ["forbidden", "没有操作权限"],
+      ["invalid-request", "请检查输入"],
+      ["stale", "正在同步"],
+      ["unavailable", "暂时无法恢复"],
     ] as const;
     for (const [category, label] of categories) {
       const rendered = render(<ProblemCard problem={problem({ category })} />);
@@ -203,7 +206,7 @@ describe("ProblemCard treatments", () => {
 });
 
 describe("CommandInlineError (TerminalRejected)", () => {
-  it("renders the rejection verbatim plus resubmission hint", () => {
+  it("shows a user-facing retry hint and keeps rejection in details", () => {
     render(
       <CommandInlineError rejection="authority/denied: 缺少 RecordDecision 权限" />,
     );
@@ -211,7 +214,7 @@ describe("CommandInlineError (TerminalRejected)", () => {
       screen.getByText("authority/denied: 缺少 RecordDecision 权限"),
     ).toBeTruthy();
     expect(screen.getByText(/重新提交/)).toBeTruthy();
-    expect(screen.getByText(/新的 commandId/)).toBeTruthy();
+    expect(screen.queryByText(/commandId/)).toBeNull();
   });
 
   it("names exact frozen RevisionConflict and AuthorityDenied rejection tags", () => {
@@ -221,5 +224,27 @@ describe("CommandInlineError (TerminalRejected)", () => {
     expect(screen.getByText("版本冲突")).toBeTruthy();
     rerender(<CommandInlineError rejection="AuthorityDenied" />);
     expect(screen.getByText("权限拒绝")).toBeTruthy();
+  });
+});
+
+describe("ErrorBoundary", () => {
+  it("keeps raw render errors in a collapsed detail", () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const Crash = () => {
+      throw new Error("private renderer detail");
+    };
+    const { container } = render(
+      <ErrorBoundary>
+        <Crash />
+      </ErrorBoundary>,
+    );
+    expect(screen.getByText("页面暂时无法显示")).toBeTruthy();
+    const details = container.querySelector("details");
+    expect(details?.open).toBe(false);
+    expect(details?.textContent).toContain("private renderer detail");
+    expect(screen.getByRole("button", { name: "重新加载页面" })).toBeTruthy();
+    consoleError.mockRestore();
   });
 });

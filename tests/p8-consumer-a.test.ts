@@ -108,6 +108,7 @@ const seed = Effect.gen(function* () {
 const settledEvent = (n: number) => ({
   eventType: "ExecutionSettled",
   eventId: `evt-settled-${n}`,
+  occurredAt: "2026-01-01T00:00:00.000Z",
   payload: {
     executionId: `exe_00000000-0000-7000-8000-00000000000${n}`,
     workId: WORK_1,
@@ -119,6 +120,7 @@ const settledEvent = (n: number) => ({
 const legacyNestedClaimEvent = {
   eventType: "ExecutionSettled",
   eventId: "evt-legacy-nested-claim",
+  occurredAt: "2026-01-01T00:00:00.000Z",
   payload: {
     executionId: LEGACY_EXECUTION,
     settlement: {
@@ -373,7 +375,11 @@ const consume = (
   Effect.gen(function* () {
     const deps = yield* makeConsumerDeps(wrapGateway);
     return yield* runVerificationConsumer(
-      events,
+      events.map((event) => ({
+        ...event,
+        occurredAt:
+          "occurredAt" in event ? event.occurredAt : "2026-01-01T00:00:00.000Z",
+      })),
       deps,
       p7Project,
       p7TestPrincipal,

@@ -93,6 +93,7 @@ const journalEvents = Effect.gen(function* () {
     eventType: event.eventType,
     payload: event.payload,
     eventId: `${event.sequence}`,
+    occurredAt: event.occurredAt,
   }));
 });
 

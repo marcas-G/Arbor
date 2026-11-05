@@ -28,10 +28,14 @@ export class ErrorBoundary extends Component<
         <div className="arbor-error-boundary">
           <section className="arbor-card">
             <header className="arbor-card-header">
-              <h2 className="arbor-card-title">界面渲染出错</h2>
+              <h2 className="arbor-card-title">页面暂时无法显示</h2>
             </header>
             <div className="arbor-card-body">
-              <p className="arbor-mono">{this.state.message}</p>
+              <p>重新加载页面通常可以恢复。未提交的输入可能需要重新填写。</p>
+              <details>
+                <summary>问题详情</summary>
+                <p className="arbor-mono">{this.state.message}</p>
+              </details>
               <button
                 type="button"
                 className="arbor-button arbor-button-primary"
@@ -39,7 +43,7 @@ export class ErrorBoundary extends Component<
                   location.reload();
                 }}
               >
-                重新加载
+                重新加载页面
               </button>
             </div>
           </section>

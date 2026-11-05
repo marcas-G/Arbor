@@ -1,4 +1,9 @@
-import type { Execution, Work, Workspace } from "@arbor/domain";
+import {
+  type Execution,
+  type Work,
+  type Workspace,
+  workEpisode,
+} from "@arbor/domain";
 import {
   hashInstructionContent,
   type InstructionFragment,
@@ -100,6 +105,20 @@ export const assembleWorkContext = (
             contentRef: `verification-mission:${work.workId}:${work.revision}`,
             content: JSON.stringify(work.verificationMission),
           },
+          ...(execution !== undefined && workEpisode(execution) !== null
+            ? [
+                {
+                  identity: `work-completion-protocol:${work.workId}`,
+                  revision: Number(work.revision),
+                  semanticKind: "WorkCompletionProtocol",
+                  scope: "work-completion-protocol",
+                  authorityRole: "A3" as const,
+                  contentRef: `work-completion-protocol:${work.workId}:${work.revision}`,
+                  content:
+                    "This is a Work execution, not a RootConversation. The Work-specific control surface for this turn includes claim_completion and wait, plus the applicable Work inspection and coordination controls such as list_workspaces, read_workspace, update_plan, accept_result, assign_work, send_message, and propose_workspace. Do not say these tools are unavailable unless the actual tool list in this request omits them. When the completion expectation is satisfied, call claim_completion with one bounded claim; do not end the turn with plain text alone. If it is not satisfied, use a supported action or wait only for one concrete persisted condition.",
+                },
+              ]
+            : []),
         ]),
     ...(execution?.binding._tag === "ExecutionBoundAgentBinding"
       ? [

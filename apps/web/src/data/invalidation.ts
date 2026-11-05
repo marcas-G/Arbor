@@ -97,6 +97,34 @@ export function connectInvalidation(
     let firstViewAccepted = false;
     let authenticationRejected = false;
     const pendingInvalidations = new Map<string, number>();
+    const lastDeliveredAt = new Map<string, number>();
+    let flushTimer: ReturnType<typeof setTimeout> | null = null;
+    const flushInvalidations = (): void => {
+      flushTimer = null;
+      const queued = [...pendingInvalidations.entries()];
+      pendingInvalidations.clear();
+      for (const [view, watermark] of queued) {
+        lastDeliveredAt.set(view, Date.now());
+        handlers.onInvalidate(view, watermark);
+      }
+    };
+    const queueInvalidation = (view: string, watermark: number): void => {
+      const previous = pendingInvalidations.get(view) ?? -1;
+      if (watermark <= previous) return;
+      const last = lastDeliveredAt.get(view) ?? 0;
+      if (flushTimer === null && Date.now() - last >= 50) {
+        lastDeliveredAt.set(view, Date.now());
+        handlers.onInvalidate(view, watermark);
+        return;
+      }
+      pendingInvalidations.set(view, watermark);
+      if (flushTimer === null) {
+        flushTimer = setTimeout(
+          flushInvalidations,
+          Math.max(1, 50 - (Date.now() - last)),
+        );
+      }
+    };
     nextSocket.onopen = () => {
       const firstView = options.firstView;
       nextSocket.send(
@@ -111,6 +139,12 @@ export function connectInvalidation(
     nextSocket.onclose = (event) => {
       if (event?.code === 1008) authenticationRejected = true;
       detach(nextSocket);
+      if (flushTimer !== null) {
+        clearTimeout(flushTimer);
+        flushTimer = null;
+      }
+      pendingInvalidations.clear();
+      lastDeliveredAt.clear();
       if (socket === nextSocket) {
         socket = null;
       }
@@ -142,9 +176,8 @@ export function connectInvalidation(
             firstViewAccepted = true;
             handlers.onOpen?.();
             for (const [view, watermark] of pendingInvalidations) {
-              handlers.onInvalidate(view, watermark);
+              queueInvalidation(view, watermark);
             }
-            pendingInvalidations.clear();
           } else {
             const record =
               typeof parsed === "object" && parsed !== null
@@ -175,7 +208,7 @@ export function connectInvalidation(
         }
         return;
       }
-      handlers.onInvalidate(parsed.view, parsed.watermark);
+      queueInvalidation(parsed.view, parsed.watermark);
     };
   };
 

@@ -1,4 +1,8 @@
-import type { CommandSubmissionContext, Execution } from "@arbor/domain";
+import {
+  type CommandSubmissionContext,
+  type Execution,
+  workEpisode,
+} from "@arbor/domain";
 import type { ModelOutput, PreparedModelTurn } from "@arbor/model-context";
 import type {
   AgentLoopStepFence,
@@ -8,7 +12,7 @@ import type {
   SessionRepositoryService,
   TransactionPortService,
 } from "@arbor/ports";
-import { sha256Hex } from "@arbor/ports";
+import { sessionCausalBindingForWork, sha256Hex } from "@arbor/ports";
 import { Effect } from "effect";
 import { sessionFence } from "./agent-loop-policy.js";
 import type { AgentLoopQualificationProbe } from "./qualification-probe.js";
@@ -51,6 +55,17 @@ export const recordAcceptedModelOutput = (
   } = dependencies;
 
   return Effect.gen(function* () {
+    const workBinding = workEpisode(input.execution);
+    const causalBinding =
+      workBinding === null
+        ? undefined
+        : sessionCausalBindingForWork({
+            projectId: input.execution.projectId,
+            workspaceId: input.execution.workspaceId,
+            workId: workBinding.workId,
+            executionId: input.execution.executionId,
+            causedByRef: String(preparedTurn.manifest.providerTurnId),
+          });
     const modelOutputPayload = {
       providerTurnId: preparedTurn.manifest.providerTurnId,
       outputContractRef: preparedTurn.manifest.outputContractRef,
@@ -94,6 +109,7 @@ export const recordAcceptedModelOutput = (
                           finishReason: decodedOutput.finishReason,
                         }),
                       ),
+                      ...(causalBinding === undefined ? {} : { causalBinding }),
                     },
                     loopStepFence,
                   )
@@ -127,6 +143,7 @@ export const recordAcceptedModelOutput = (
                         ref: `${preparedTurn.manifest.providerTurnId}:${invocation.callRef}`,
                       },
                       contentHash: sha256Hex(JSON.stringify(item)),
+                      ...(causalBinding === undefined ? {} : { causalBinding }),
                     },
                     loopStepFence,
                   );

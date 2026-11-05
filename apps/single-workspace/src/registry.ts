@@ -228,6 +228,7 @@ export const SingleWorkspaceCommandHandlerRegistryLive: Layer.Layer<
       makeSteerWorkHandler({
         works,
         inbox: inbox as Pick<InboxProjectionStoreService, "admitUpsert">,
+        waits: workWaits,
       }) as unknown as CommandHandler<unknown, unknown>,
       makeAcceptWorkOutcomeHandler({
         works,

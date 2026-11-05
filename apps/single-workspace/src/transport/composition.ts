@@ -41,7 +41,6 @@ import {
   AttentionProjectionStore,
   Clock,
   ExecutionRepository,
-  ExecutionScheduler,
   IdGenerator,
   OwnershipWriteService,
   PermissionGrantRepository,
@@ -438,14 +437,12 @@ export const makeExternalSubmissionFromServices = (
     );
     const clockOption = yield* Effect.serviceOption(Clock);
     const idsOption = yield* Effect.serviceOption(IdGenerator);
-    const schedulerOption = yield* Effect.serviceOption(ExecutionScheduler);
     if (
       Option.isNone(ownershipOption) ||
       Option.isNone(environmentOption) ||
       Option.isNone(ownershipWriteOption) ||
       Option.isNone(clockOption) ||
-      Option.isNone(idsOption) ||
-      Option.isNone(schedulerOption)
+      Option.isNone(idsOption)
     ) {
       return makeExternalSubmission({
         resolver,
@@ -462,7 +459,6 @@ export const makeExternalSubmissionFromServices = (
     const ownershipWrite = ownershipWriteOption.value;
     const clock = clockOption.value;
     const ids = idsOption.value;
-    const scheduler = schedulerOption.value;
     const reconcileActivationAttention = (
       projectId: DecodedExternalCommandEnvelope["projectId"],
     ) => {
@@ -586,10 +582,10 @@ export const makeExternalSubmissionFromServices = (
         });
       }
       if (envelope.commandType === "SteerWork") {
-        const workId = payloadString(payload, "workId") as WorkId | null;
-        return workId === null
-          ? Effect.void
-          : tx.transact(scheduler.clearWorkWait(workId));
+        // SteerWork owns clearing the wait in the command transaction. Keep
+        // this post-commit hook free of scheduler-side mutation so every
+        // command entry point has identical wake semantics.
+        return Effect.void;
       }
       return Effect.void;
     };

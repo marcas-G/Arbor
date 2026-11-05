@@ -86,15 +86,6 @@
   color: var(--arbor-ink-soft);
 }
 
-.technicalId {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-
 .renameLabel {
   display: grid;
   gap: var(--arbor-space-1);
@@ -111,21 +102,26 @@
   font: inherit;
 }
 
-.unavailableGrid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: var(--arbor-space-3);
-}
-
-.unavailableSection {
+.confirmPanel {
   display: flex;
   flex-direction: column;
   gap: var(--arbor-space-2);
-  min-width: 0;
   padding: var(--arbor-space-3);
-  border: 1px solid var(--arbor-line);
+  border: 1px solid var(--arbor-danger);
   border-radius: var(--arbor-radius);
-  background: color-mix(in srgb, var(--arbor-paper) 55%, var(--arbor-paper-2));
+  background: var(--arbor-paper-2);
+  color: var(--arbor-ink-soft);
+  font-size: var(--arbor-text-small);
+}
+
+.confirmPanel strong {
+  color: var(--arbor-ink);
+}
+
+.confirmActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--arbor-space-2);
 }
 
 .preferences {
@@ -180,10 +176,6 @@
 }
 
 @media (max-width: 48rem) {
-  .unavailableGrid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
   .preferences {
     align-items: stretch;
     flex-direction: column;

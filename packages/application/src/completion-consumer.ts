@@ -57,6 +57,7 @@ export interface CompletionConsumerEvent {
   readonly eventType: string;
   readonly payload: unknown;
   readonly eventId: string;
+  readonly occurredAt: string;
 }
 
 export interface CompletionConsumerDependencies {
@@ -207,7 +208,7 @@ export const runCompletionConsumer = (
         commandId,
         projectId,
         actor,
-        issuedAt: new Date().toISOString(),
+        issuedAt: event.occurredAt,
         causationRef: event.eventId,
         payload,
       };

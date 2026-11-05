@@ -1,8 +1,11 @@
-import type { Problem } from "@arbor/api-contracts";
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import type { Route } from "../api/router.js";
-import { fetchProjectDirectory, fetchView } from "../api/transport.js";
+import {
+  fetchProjectDirectory,
+  fetchView,
+  problemFromUnknown,
+} from "../api/transport.js";
 import { Empty } from "../components/Empty.js";
 import { ProblemCard } from "../problems/ProblemCard.js";
 import { useSession } from "../session/SessionContext.js";
@@ -60,11 +63,14 @@ export function ProjectRouteContent({
     refetchOnMount: "always",
   });
 
-  if (directory.isPending || directory.isFetching) {
+  if (
+    directory.isPending ||
+    (directory.isFetching && directory.data === undefined)
+  ) {
     return <Empty>正在确认项目</Empty>;
   }
   if (directory.isError) {
-    return <ProblemCard problem={directory.error as unknown as Problem} />;
+    return <ProblemCard problem={problemFromUnknown(directory.error)} />;
   }
   if (directory.data?.ok === false) {
     return <ProblemCard problem={directory.data.problem} />;
@@ -76,11 +82,11 @@ export function ProjectRouteContent({
     return <Empty>对象不存在</Empty>;
   }
   if (workspaceId !== null) {
-    if (tree.isPending || tree.isFetching) {
-      return <Empty>正在确认工作空间</Empty>;
+    if (tree.isPending || (tree.isFetching && tree.data === undefined)) {
+      return <Empty>正在确认项目分工</Empty>;
     }
     if (tree.isError) {
-      return <ProblemCard problem={tree.error as unknown as Problem} />;
+      return <ProblemCard problem={problemFromUnknown(tree.error)} />;
     }
     if (!tree.data.nodes.some((node) => node.workspaceId === workspaceId)) {
       return <Empty>对象不存在</Empty>;

@@ -1,6 +1,7 @@
 /**
  * Problem presentation (`03` §5): category → explicit UI treatment. code /
- * correlationId / safeDetails are always inspectable via ProblemDetail.
+ * correlationId / safeDetails remain available in the collapsed diagnostic
+ * detail without becoming the primary user-facing explanation.
  * Retry affordances follow `retryDisposition`, never guess it client-side.
  */
 import type { Problem } from "@arbor/api-contracts";
@@ -15,11 +16,11 @@ export function ProblemDetail({ problem }: { readonly problem: Problem }) {
       <summary>问题详情</summary>
       <div className="arbor-view-stack">
         <span>
-          <Mono>{`code ${problem.code}`}</Mono>
+          <Mono>{`错误代码：${problem.code}`}</Mono>
         </span>
         {problem.correlationId === null ? null : (
           <span>
-            <Mono>{`correlationId ${problem.correlationId}`}</Mono>
+            <Mono>{`跟踪编号：${problem.correlationId}`}</Mono>
           </span>
         )}
         <pre className="arbor-problem-pre">
@@ -33,24 +34,20 @@ export function ProblemDetail({ problem }: { readonly problem: Problem }) {
 function UnauthenticatedTreatment({ problem }: { readonly problem: Problem }) {
   return (
     <div className="arbor-problem" role="alert">
-      <h2 className="arbor-problem-title">未认证</h2>
-      <Badge tone="danger">Unauthorized</Badge>
-      <p>请提供访问令牌（token）后重连；内容区已屏蔽。</p>
+      <h2 className="arbor-problem-title">连接已失效</h2>
+      <Badge tone="danger">需要重新连接</Badge>
+      <p>请重新连接 Arbor 后继续。</p>
       <ProblemDetail problem={problem} />
     </div>
   );
 }
 
 function ForbiddenTreatment({ problem }: { readonly problem: Problem }) {
-  const reason = problem.safeDetails.reason;
   return (
     <div className="arbor-problem arbor-problem-danger" role="alert">
       <h2 className="arbor-problem-title">权限拒绝</h2>
-      <Badge tone="danger">AuthorityDenied</Badge>
-      <p>
-        <Mono>{problem.code}</Mono>
-      </p>
-      {typeof reason === "string" ? <p>{reason}</p> : null}
+      <Badge tone="danger">没有操作权限</Badge>
+      <p>当前连接没有执行此操作的权限。</p>
       <ProblemDetail problem={problem} />
     </div>
   );
@@ -85,10 +82,8 @@ function InvalidRequestTreatment({ problem }: { readonly problem: Problem }) {
   return (
     <div className="arbor-problem" role="alert">
       <h2 className="arbor-problem-title">请求错误</h2>
-      <Badge tone="attention">Validation</Badge>
-      <p>
-        <Mono>{problem.code}</Mono>
-      </p>
+      <Badge tone="attention">请检查输入</Badge>
+      <p>提交的内容无法处理，请检查后重试。</p>
       <ProblemDetail problem={problem} />
     </div>
   );
@@ -104,10 +99,8 @@ function StaleTreatment({
   return (
     <div className="arbor-problem" role="alert">
       <h2 className="arbor-problem-title">数据滞后</h2>
-      <Badge tone="attention">Stale</Badge>
-      <p>
-        <Badge tone="attention">stale</Badge> 投影尚未追上日志水位。
-      </p>
+      <Badge tone="attention">正在同步</Badge>
+      <p>最新变化仍在同步，请稍后重试。</p>
       {onRetry === undefined ? null : (
         <Button variant="quiet" onClick={onRetry}>
           重试
@@ -130,13 +123,9 @@ function UnavailableTreatment({
     <div className="arbor-problem" role="alert">
       <h2 className="arbor-problem-title">服务不可用</h2>
       <Badge tone={retryable ? "attention" : "muted"}>
-        Network / Unavailable
+        {retryable ? "可以重试" : "暂时无法恢复"}
       </Badge>
-      <p>
-        <Badge tone={retryable ? "attention" : "muted"}>
-          {problem.retryDisposition}
-        </Badge>
-      </p>
+      <p>{retryable ? "连接暂时中断，请重试。" : "当前请求暂时无法完成。"}</p>
       {retryable && onRetry !== undefined ? (
         <Button variant="quiet" onClick={onRetry}>
           重试
@@ -151,7 +140,7 @@ function UnknownTreatment({ problem }: { readonly problem: Problem }) {
   return (
     <div className="arbor-problem" role="alert">
       <h2 className="arbor-problem-title">未知问题</h2>
-      <Badge tone="muted">Unknown Problem</Badge>
+      <Badge tone="muted">暂时无法完成</Badge>
       <ProblemDetail problem={problem} />
     </div>
   );

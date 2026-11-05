@@ -1,7 +1,13 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_WORKBENCH_LAYOUT,
@@ -57,7 +63,7 @@ const renderWorkbench = () => {
   );
 };
 
-const installTree = () => {
+const installTree = (tree = treeTypical) => {
   const commandCalls: Array<Record<string, unknown>> = [];
   vi.stubGlobal(
     "fetch",
@@ -76,9 +82,7 @@ const installTree = () => {
           { status: 200 },
         );
       }
-      const value = url.includes("/transcript")
-        ? transcriptTypical
-        : treeTypical;
+      const value = url.includes("/transcript") ? transcriptTypical : tree;
       return new Response(
         JSON.stringify({
           ok: true,
@@ -102,11 +106,11 @@ describe("D3 Root Workbench shell", () => {
     installTree();
     renderWorkbench();
     expect(screen.getByRole("heading", { name: "工作台" })).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "责任树" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "工作分工" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "对话" })).toBeTruthy();
     expect(await screen.findByText("平台根工作区")).toBeTruthy();
     fireEvent.click(screen.getByText("前端渲染"));
-    expect(screen.getByText("打开工作区")).toBeTruthy();
+    expect(screen.getByText("查看工作")).toBeTruthy();
     expect(location.pathname).toBe("/");
   });
 
@@ -115,10 +119,34 @@ describe("D3 Root Workbench shell", () => {
     renderWorkbench();
     expect(await screen.findByLabelText("项目概览")).toBeTruthy();
     expect(screen.getByText("3")).toBeTruthy();
-    expect(screen.getByText("工作空间")).toBeTruthy();
-    expect(screen.getByText("进行中工作")).toBeTruthy();
+    expect(screen.getByText("分工数量")).toBeTruthy();
+    expect(screen.getByText("正在运行")).toBeTruthy();
     expect(screen.getByText("需要关注")).toBeTruthy();
-    expect(screen.getByText("根责任：平台根工作区")).toBeTruthy();
+    expect(screen.getByText("主要分工：平台根工作区")).toBeTruthy();
+  });
+
+  it("counts active runs rather than open work that is waiting", async () => {
+    const root = treeTypical.nodes[0];
+    const child = treeTypical.nodes[1];
+    if (
+      root === undefined ||
+      child === undefined ||
+      root.currentWork === undefined
+    )
+      throw new Error("missing tree fixture");
+    installTree({
+      nodes: [
+        root,
+        {
+          ...child,
+          currentWork: { ...root.currentWork, activeExecution: undefined },
+        },
+      ],
+    });
+    renderWorkbench();
+    const overview = await screen.findByLabelText("项目概览");
+    const metric = within(overview).getByText("正在运行").parentElement;
+    expect(metric?.textContent).toBe("正在运行1");
   });
 
   it("keeps the composer bound to the unique root when tree inspection changes", async () => {
@@ -142,7 +170,7 @@ describe("D3 Root Workbench shell", () => {
     renderWorkbench();
     const shell = screen.getByTestId("workbench-layout");
     const divider = screen.getByRole("separator", {
-      name: "调整责任树与对话比例",
+      name: "调整工作分工与对话比例",
     });
     vi.spyOn(shell, "getBoundingClientRect").mockReturnValue({
       left: 0,
@@ -153,7 +181,7 @@ describe("D3 Root Workbench shell", () => {
     expect(shell.dataset.treeBasis).toBe(
       String(DEFAULT_WORKBENCH_LAYOUT.treeBasis),
     );
-    fireEvent.click(screen.getByRole("button", { name: "交换树与对话位置" }));
+    fireEvent.click(screen.getByRole("button", { name: "交换分工与对话位置" }));
     expect(shell.dataset.order).toBe("conversation-first");
     fireEvent.pointerDown(divider, { pointerId: 1, clientX: 600 });
     expect(shell.dataset.treeBasis).toBe(
@@ -211,13 +239,13 @@ describe("D3 Root Workbench shell", () => {
     const { unmount } = renderWorkbench();
     const shell = screen.getByTestId("workbench-layout");
     const divider = screen.getByRole("separator", {
-      name: "调整责任树与对话比例",
+      name: "调整工作分工与对话比例",
     });
     vi.spyOn(shell, "getBoundingClientRect").mockReturnValue({
       left: 0,
       width: 1000,
     } as DOMRect);
-    fireEvent.click(screen.getByRole("button", { name: "交换树与对话位置" }));
+    fireEvent.click(screen.getByRole("button", { name: "交换分工与对话位置" }));
     fireEvent.pointerDown(divider, { pointerId: 1, clientX: 600 });
     fireEvent.pointerMove(document, { pointerId: 1, clientX: 600 });
     fireEvent.pointerUp(document, { pointerId: 1 });
@@ -240,7 +268,7 @@ describe("D3 Root Workbench shell", () => {
     installTree();
     renderWorkbench();
     const shell = screen.getByTestId("workbench-layout");
-    const tree = screen.getByRole("button", { name: "责任树" });
+    const tree = screen.getByRole("button", { name: "工作分工" });
     const conversation = screen.getByRole("button", { name: "对话" });
     expect(conversation.getAttribute("aria-pressed")).toBe("true");
     fireEvent.click(tree);

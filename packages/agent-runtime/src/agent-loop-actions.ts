@@ -3,6 +3,7 @@ import type {
   Execution,
   ExecutionSettlement,
 } from "@arbor/domain";
+import { conversationResponseEpisode, workEpisode } from "@arbor/domain";
 import type {
   ControlBasis,
   ModelOutput,
@@ -22,7 +23,7 @@ import type {
   SessionRepositoryService,
   TransactionPortService,
 } from "@arbor/ports";
-import { sha256Hex } from "@arbor/ports";
+import { sessionCausalBindingForWork, sha256Hex } from "@arbor/ports";
 import { Effect } from "effect";
 import { MAX_TURNS, safetyStop } from "./agent-loop-policy.js";
 import {
@@ -34,6 +35,7 @@ import {
 import type { ControlActionAuthorizerService } from "./control-authorization.js";
 import { checkFreshness, requirementForAction } from "./freshness.js";
 import type { AgentLoopQualificationProbe } from "./qualification-probe.js";
+import { decideActionTransition } from "./step-transition.js";
 
 const actionRejectionObservation = (
   error: Extract<AgentActionError, { readonly _tag: "AgentActionRejected" }>,
@@ -235,6 +237,17 @@ export const executeAgentLoopActions = (
         fence: AgentLoopStepFence,
       ) =>
         Effect.gen(function* () {
+          const workBinding = workEpisode(input.execution);
+          const causalBinding =
+            workBinding === null
+              ? undefined
+              : sessionCausalBindingForWork({
+                  projectId: input.execution.projectId,
+                  workspaceId: input.execution.workspaceId,
+                  workId: workBinding.workId,
+                  executionId: input.execution.executionId,
+                  causedByRef: String(preparedTurn.manifest.providerTurnId),
+                });
           const resultRef = `result_${sha256Hex(
             JSON.stringify({
               callRef: targetInvocation.callRef,
@@ -285,6 +298,7 @@ export const executeAgentLoopActions = (
                   ref: observationSourceRef,
                 },
                 contentHash: sha256Hex(JSON.stringify(item)),
+                ...(causalBinding === undefined ? {} : { causalBinding }),
               },
               fence,
             );
@@ -542,8 +556,28 @@ export const executeAgentLoopActions = (
           }
           const pendingAction = loopAction;
           const actionsStep = currentLoopStep;
+          const workBinding = workEpisode(input.execution);
+          const causalBinding =
+            workBinding === null
+              ? undefined
+              : sessionCausalBindingForWork({
+                  projectId: input.execution.projectId,
+                  workspaceId: input.execution.workspaceId,
+                  workId: workBinding.workId,
+                  executionId: input.execution.executionId,
+                  causedByRef: String(preparedTurn.manifest.providerTurnId),
+                });
           const status = resultMetadata.status ?? "Succeeded";
           const disposition = resultMetadata.disposition ?? "Applied";
+          const transition = decideActionTransition({
+            freshness: "Fresh",
+            effect: status === "OutcomeUnknown" ? "Unknown" : "Applied",
+            settlementRequested: false,
+          });
+          const actionState =
+            transition._tag === "OutcomeUnknown"
+              ? "ReconciliationPending"
+              : "Applied";
           const payload = { source, observation, status, disposition };
           const resultRef = `result_${sha256Hex(JSON.stringify(payload))}`;
           const observationSourceRef = `observation_${input.execution.executionId}_${sha256Hex(
@@ -594,6 +628,7 @@ export const executeAgentLoopActions = (
                         ref: observationSourceRef,
                       },
                       contentHash: sha256Hex(JSON.stringify(item)),
+                      ...(causalBinding === undefined ? {} : { causalBinding }),
                     },
                     loopStepFence,
                   );
@@ -614,7 +649,7 @@ export const executeAgentLoopActions = (
                     expectedState: "Pending",
                     next: {
                       ...pendingAction,
-                      state: "Applied",
+                      state: actionState,
                       resultRef,
                       disposition: { _tag: disposition, status },
                       observationSourceRef,
@@ -728,6 +763,16 @@ export const executeAgentLoopActions = (
             continue;
           }
           const settlement = safetyStop("ExecutableToolInvocationRejected");
+          const rejectedTransition = decideActionTransition({
+            freshness: "Fresh",
+            effect: "Rejected",
+            settlementRequested: false,
+          });
+          if (rejectedTransition._tag !== "TerminalRejected") {
+            return yield* Effect.fail(
+              failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+            );
+          }
           yield* persistActionRejection(settlement, "HandlerRejected");
           return {
             _tag: "Settle",
@@ -818,6 +863,16 @@ export const executeAgentLoopActions = (
         requirementForAction(decodedAction.value.action),
       );
       if (freshness !== null) {
+        const staleTransition = decideActionTransition({
+          freshness: "Stale",
+          effect: "Rejected",
+          settlementRequested: false,
+        });
+        if (staleTransition._tag !== "SkippedStale") {
+          return yield* Effect.fail(
+            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+          );
+        }
         if (
           loopAction !== undefined &&
           currentLoopStep !== undefined &&
@@ -1063,6 +1118,16 @@ export const executeAgentLoopActions = (
           continue;
         }
         const settlement = safetyStop("ControlActionHandlerRejected");
+        const rejectedTransition = decideActionTransition({
+          freshness: "Fresh",
+          effect: "Rejected",
+          settlementRequested: false,
+        });
+        if (rejectedTransition._tag !== "TerminalRejected") {
+          return yield* Effect.fail(
+            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+          );
+        }
         yield* persistActionRejection(settlement, "HandlerRejected");
         return {
           _tag: "Settle",
@@ -1087,6 +1152,19 @@ export const executeAgentLoopActions = (
         return { _tag: "Settle", settlement };
       }
       if (handled.outcome._tag === "Settle") {
+        const settleTransition = decideActionTransition({
+          freshness: "Fresh",
+          effect: "Applied",
+          settlementRequested: true,
+        });
+        if (
+          settleTransition._tag !== "Applied" ||
+          settleTransition.next !== "Settle"
+        ) {
+          return yield* Effect.fail(
+            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+          );
+        }
         yield* persistActionSettlement(handled.outcome.settlement);
         return {
           _tag: "Settle",
@@ -1122,6 +1200,21 @@ export const executeAgentLoopActions = (
         });
       }
       durableProgress = true;
+      // Root placement is terminal for this turn. A provider may include
+      // speculative follow-up placement calls in the same tool batch; once
+      // the exact AssignWork action has applied, do not execute those calls
+      // and let them turn a successful placement into RuntimeSafetyStop.
+      if (
+        conversationResponseEpisode(input.execution) !== null &&
+        decodedAction.value.action._tag === "AssignWork" &&
+        handled.outcome.observation.text.includes("WorkAssigned(")
+      ) {
+        return {
+          _tag: "Completed",
+          observations,
+          durableProgress,
+        };
+      }
     }
 
     return {

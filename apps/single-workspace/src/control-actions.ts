@@ -227,6 +227,7 @@ export interface ProposeChildDependencies {
   readonly clock: ClockService;
   readonly workspaces: WorkspaceRepositoryService;
   readonly tx: TransactionPortService;
+  readonly ids?: IdGeneratorService;
 }
 
 export interface DeclareDependencyDependencies {
@@ -2197,7 +2198,11 @@ const proposeChildWorkspaceHandler = (
         );
       }
       const record = admitFormationProposal({
-        proposalId: newFormationProposalId(),
+        proposalId: newFormationProposalId(
+          dependencies.ids === undefined
+            ? `${execution.executionId}:${JSON.stringify(proposal)}`
+            : yield* dependencies.ids.generate<string>("FormationProposalId"),
+        ),
         parentWorkspaceId: execution.workspaceId,
         proposal,
       });

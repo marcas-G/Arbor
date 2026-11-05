@@ -3,13 +3,12 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import type { Route } from "../../api/router.js";
 import { fetchProjectDirectory } from "../../api/transport.js";
+import { FormFeedback } from "../../commands/forms/FormFeedback.js";
 import { GrantPermissionForm } from "../../commands/forms/GrantPermissionForm.js";
 import { useCommandSubmission } from "../../commands/useCommandSubmission.js";
 import { Button } from "../../components/Button.js";
 import { Card } from "../../components/Card.js";
 import { Empty } from "../../components/Empty.js";
-import { KeyValue, type KeyValuePair } from "../../components/KeyValue.js";
-import { MonoText } from "../../components/MonoText.js";
 import { useSession } from "../../session/SessionContext.js";
 import {
   DEFAULT_WORKBENCH_LAYOUT,
@@ -20,29 +19,33 @@ import styles from "./settings.module.css";
 function PermissionsSection({
   actor,
   projectId,
+  workspaceId,
   token,
 }: {
   readonly actor: string | null;
   readonly projectId: string;
+  readonly workspaceId?: string | undefined;
   readonly token: string | null;
 }) {
   return (
     <section className={styles.section} aria-label="权限管理">
-      <h2 className={styles.sectionTitle}>权限管理</h2>
+      <h2 className={styles.sectionTitle}>高级权限设置</h2>
       {actor === null || token === null ? (
         <Empty>未连接——连接后可管理权限</Empty>
       ) : (
-        <div className={styles.stack}>
-          <GrantPermissionForm
-            actor={actor}
-            projectId={projectId}
-            token={token}
-            onSubmitted={() => undefined}
-          />
-          <p className={styles.note}>
-            当前冻结接口未提供授权清单，无法定位可撤销授权。
-          </p>
-        </div>
+        <details>
+          <summary>为特定用户或自动分工开放额外操作</summary>
+          <div className={styles.stack}>
+            <GrantPermissionForm
+              actor={actor}
+              projectId={projectId}
+              workspaceId={workspaceId}
+              token={token}
+              onSubmitted={() => undefined}
+            />
+            <p className={styles.note}>已授予的权限暂时不能在这里撤销。</p>
+          </div>
+        </details>
       )}
     </section>
   );
@@ -74,10 +77,12 @@ function ProjectSection({
         )
       : undefined;
   const [name, setName] = useState("");
+  const [closeConfirming, setCloseConfirming] = useState(false);
   const rename = useCommandSubmission({
     actor: actor ?? "",
     token: token ?? undefined,
     onSubmitted: () => {
+      setName("");
       void directory.refetch();
     },
   });
@@ -85,18 +90,36 @@ function ProjectSection({
     actor: actor ?? "",
     token: token ?? undefined,
     onSubmitted: () => {
+      setCloseConfirming(false);
       void directory.refetch();
     },
   });
+  const renameLocked =
+    rename.state.phase === "submitting" ||
+    rename.state.phase === "transport-failed";
+  const closeLocked =
+    close.state.phase === "submitting" ||
+    close.state.phase === "transport-failed";
+  const submitRename = (): void => {
+    if (current === undefined) return;
+    void rename.submit("RenameProject", projectId, {
+      name: name.trim(),
+      expectedRevision: current.revision,
+    });
+  };
+  const submitClose = (): void => {
+    if (current === undefined) return;
+    void close.submit("CloseProject", projectId, {
+      expectedRevision: current.revision,
+      confirmed: true,
+    });
+  };
   return (
     <section className={styles.section} aria-label="项目">
       <h2 className={styles.sectionTitle}>项目</h2>
       <p className={styles.note}>
         当前项目：{current?.name ?? "正在获取项目名称"}
         。切换与新建项目统一使用全局项目中心。
-        <span className={styles.technicalId} aria-hidden="true">
-          {projectId}
-        </span>
       </p>
       {actor !== null &&
       token !== null &&
@@ -108,66 +131,55 @@ function ProjectSection({
               项目名称
               <input
                 value={name}
+                disabled={renameLocked}
                 placeholder={current.name}
                 onChange={(event) => setName(event.target.value)}
               />
             </label>
             <Button
               variant="quiet"
-              disabled={
-                name.trim().length === 0 || rename.state.phase === "submitting"
-              }
-              onClick={() => {
-                void rename.submit("RenameProject", projectId, {
-                  name: name.trim(),
-                  expectedRevision: current.revision,
-                });
-              }}
+              disabled={name.trim().length === 0 || renameLocked}
+              onClick={submitRename}
             >
               重命名项目
             </Button>
+            <FormFeedback state={rename.state} onRetry={submitRename} />
             <p className={styles.note}>
               归档后不会删除历史，但不再接收新任务或新对话。
             </p>
-            <Button
-              variant="danger"
-              disabled={close.state.phase === "submitting"}
-              onClick={() => {
-                void close.submit("CloseProject", projectId, {
-                  expectedRevision: current.revision,
-                  confirmed: true,
-                });
-              }}
-            >
-              归档项目
-            </Button>
+            {closeConfirming ? (
+              <div className={styles.confirmPanel}>
+                <strong>确认归档这个项目？</strong>
+                <span>
+                  归档后仍可查看历史，但所有分工都不能再接收新工作或新对话。
+                </span>
+                <FormFeedback state={close.state} onRetry={submitClose} />
+                <div className={styles.confirmActions}>
+                  <Button
+                    variant="danger"
+                    disabled={closeLocked}
+                    onClick={submitClose}
+                  >
+                    确认归档
+                  </Button>
+                  <Button
+                    variant="quiet"
+                    disabled={closeLocked}
+                    onClick={() => setCloseConfirming(false)}
+                  >
+                    取消
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <Button variant="danger" onClick={() => setCloseConfirming(true)}>
+                归档项目
+              </Button>
+            )}
           </div>
         </Card>
       ) : null}
     </section>
-  );
-}
-
-function CapabilityUnavailableSections() {
-  const unavailable = [
-    ["成员管理", "当前冻结接口未提供成员清单或管理能力。"],
-    ["供应商与模型", "当前冻结接口未提供供应商或模型配置能力。"],
-    ["运行时、资源与存储", "当前冻结接口未提供运行时、资源或存储配置能力。"],
-    ["通知与安全策略", "当前冻结接口未提供通知或安全策略配置能力。"],
-  ] as const;
-  return (
-    <div className={styles.unavailableGrid}>
-      {unavailable.map(([label, description]) => (
-        <section
-          key={label}
-          className={styles.unavailableSection}
-          aria-label={label}
-        >
-          <h2 className={styles.sectionTitle}>{label}</h2>
-          <p className={styles.note}>{description}</p>
-        </section>
-      ))}
-    </div>
   );
 }
 
@@ -189,7 +201,7 @@ function WorkbenchPreferences() {
               checked={layout.order === "tree-first"}
               onChange={() => setOrder("tree-first")}
             />
-            树优先
+            分工优先
           </label>
           <label>
             <input
@@ -203,7 +215,7 @@ function WorkbenchPreferences() {
           </label>
         </fieldset>
         <label className={styles.rangePreference}>
-          责任树宽度（桌面）
+          工作分工宽度（桌面）
           <input
             type="range"
             min="30"
@@ -230,7 +242,7 @@ function WorkbenchPreferences() {
 }
 
 function SessionSection() {
-  const { actor, token, clearSession } = useSession();
+  const { token, clearSession } = useSession();
   if (token === null) {
     return (
       <Card title="会话">
@@ -238,17 +250,13 @@ function SessionSection() {
       </Card>
     );
   }
-  const pairs: ReadonlyArray<KeyValuePair> = [
-    { label: "执行者（actor）", value: <MonoText>{actor ?? "—"}</MonoText> },
-    { label: "令牌（token）", value: "已连接（保存在内存，不展示）" },
-  ];
   return (
-    <Card title="会话">
+    <Card title="连接">
       <div className={styles.stack}>
-        <KeyValue pairs={pairs} />
-        <p className={styles.note}>令牌仅保存在内存，刷新页面即失效</p>
+        <p className={styles.note}>Arbor 已连接到当前工作环境。</p>
+        <p className={styles.note}>刷新页面后可能需要重新连接。</p>
         <Button variant="danger" onClick={clearSession}>
-          断开
+          断开连接
         </Button>
       </div>
     </Card>
@@ -260,7 +268,23 @@ export function SettingsPage({
 }: {
   readonly route: Extract<Route, { name: "settings" }>;
 }) {
-  const { actor, token } = useSession();
+  const session = useSession();
+  const { actor, token } = session;
+  const directory = useQuery({
+    queryKey: ["project-directory", "settings"],
+    queryFn: () =>
+      fetchProjectDirectory({
+        token,
+        onUnauthenticated: session.reportUnauthenticated,
+      }),
+    enabled: token !== null,
+  });
+  const workspaceId =
+    directory.data?.ok === true
+      ? directory.data.dto.projects.find(
+          (project) => project.projectId === route.projectId,
+        )?.rootWorkspaceId
+      : undefined;
   return (
     <div className={styles.page}>
       <header className={styles.pageHeader}>
@@ -277,6 +301,7 @@ export function SettingsPage({
           <PermissionsSection
             actor={actor}
             projectId={route.projectId}
+            workspaceId={workspaceId}
             token={token}
           />
           <ProjectSection
@@ -288,7 +313,6 @@ export function SettingsPage({
         </main>
         <aside className={styles.secondaryColumn}>
           <SessionSection />
-          <CapabilityUnavailableSections />
         </aside>
       </div>
     </div>

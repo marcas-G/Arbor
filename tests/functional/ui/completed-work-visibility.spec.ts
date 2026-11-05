@@ -190,9 +190,9 @@ test("F22 a completed Work remains visible from its original page", async ({
     timeout: 15_000,
   });
   await expect(page.getByText(`Complete ${marker}.`)).toBeVisible();
-  await expect(page.getByText("验收记录", { exact: true })).toBeVisible();
-  await expect(page.getByText(acceptanceId).first()).toBeVisible();
-  await expect(page.getByText(verificationId).first()).toBeVisible();
+  await expect(page.getByText("验收结果", { exact: true })).toBeVisible();
+  await expect(page.getByText(acceptanceId).first()).toHaveCount(0);
+  await expect(page.getByText(verificationId).first()).toHaveCount(0);
   await expect(page.getByText("治理动作")).toHaveCount(0);
   expect(fixture.daemonErrors).toEqual([]);
 });

@@ -9,6 +9,24 @@ import { Button } from "../components/Button.js";
 import { Empty } from "../components/Empty.js";
 import { EnumBadge, TimeText } from "./shared.js";
 
+function eventKindLabel(kind: string): string {
+  return (
+    {
+      Message: "消息",
+      HumanInput: "人工调整",
+      SpecialistSettled: "协作结果已确认",
+      ToolCall: "工具调用",
+      ToolResult: "工具结果",
+      ControlResult: "控制动作",
+      Observation: "运行观察",
+    }[kind] ?? kind
+  );
+}
+
+function summaryLabel(summary: string): string {
+  return summary.startsWith("session-entry:") ? "历史会话记录" : summary;
+}
+
 export function TranscriptView({
   res,
   onLoadMore,
@@ -61,8 +79,8 @@ export function TranscriptView({
                 key={`${entry.at}:${String(index)}`}
                 className="arbor-conversation-turn arbor-conversation-event"
               >
-                <EnumBadge label={entry.kind} />
-                <span>{entry.summaryRef}</span>
+                <EnumBadge label={eventKindLabel(entry.kind)} />
+                <span>{summaryLabel(entry.summaryRef)}</span>
                 <TimeText at={entry.at} />
               </li>
             );

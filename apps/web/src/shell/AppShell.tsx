@@ -71,7 +71,7 @@ export function AppShell({
             connected && (path === "/" || path === "") ? (
               <BootstrapPage />
             ) : (
-              <RouteNotFound path={path} connected={connected} />
+              <RouteNotFound onOpenProjects={() => setProjectPanelOpen(true)} />
             )
           ) : session.unauthenticatedProblem !== null ? null : (
             <ProjectRouteContent
@@ -98,21 +98,27 @@ const routeScopeKey = (route: Route): string =>
     : route.projectId;
 
 function RouteNotFound({
-  path,
-  connected,
+  onOpenProjects,
 }: {
-  readonly path: string;
-  readonly connected: boolean;
+  readonly onOpenProjects: () => void;
 }) {
   const session = useSession();
   return (
-    <Empty>
-      {connected && (path === "/" || path === "")
-        ? "先选择或创建一个项目"
-        : `未知路由 ${path}`}
-      {connected && (path === "/" || path === "") && session.projectId === null
-        ? ""
-        : ""}
+    <Empty
+      action={
+        session.projectId === null
+          ? { label: "选择项目", onClick: onOpenProjects }
+          : {
+              label: "返回工作台",
+              onClick: () =>
+                navigate({
+                  name: "workbench",
+                  projectId: session.projectId as string,
+                }),
+            }
+      }
+    >
+      页面不存在或已被移除
     </Empty>
   );
 }
@@ -132,8 +138,8 @@ const NAV: ReadonlyArray<{
     go: (projectId) => navigate({ name: "workbench", projectId }),
   },
   {
-    label: "树",
-    description: "责任结构",
+    label: "项目结构",
+    description: "工作分工",
     icon: "tree",
     match: (route) =>
       route.name === "tree" ||
@@ -223,18 +229,18 @@ function SideRail({
       </div>
       <div className={styles.sessionBlock}>
         <span className={styles.avatar} aria-hidden="true">
-          {(session.actor ?? "U").slice(0, 1).toUpperCase()}
+          <Icon name="leaf" size={16} />
         </span>
         <span className={styles.sessionCopy}>
-          <span className={styles.sessionLabel}>本地会话</span>
-          <span className={styles.sessionActor}>{session.actor}</span>
+          <span className={styles.sessionLabel}>已连接</span>
+          <span className={styles.sessionActor}>当前工作环境</span>
         </span>
         <button
           type="button"
           className={styles.disconnect}
           onClick={session.clearSession}
-          title="断开"
-          aria-label="断开"
+          title="断开连接"
+          aria-label="断开连接"
         >
           <Icon name="disconnect" size={17} />
         </button>
@@ -368,7 +374,7 @@ function ProjectPanel({
             <Icon name="spark" size={17} />
             <span>
               <strong>新建项目</strong>
-              <small>创建独立的长期工作空间</small>
+              <small>创建一个可持续推进的新项目</small>
             </span>
           </button>
           <label className={styles.projectFilter}>
@@ -481,7 +487,7 @@ const breadcrumbOf = (route: Route | null): string => {
     case "settings":
       return labelOf(route.name);
     case "workspace":
-      return `工作空间 / ${workspaceTabLabel(route.tab)}`;
+      return `分工详情 / ${workspaceTabLabel(route.tab)}`;
     case "work":
       return "工作详情";
   }
@@ -492,6 +498,7 @@ const workspaceTabLabel = (tab: string): string =>
     overview: "概览",
     work: "工作",
     dependencies: "依赖",
+    verification: "验证",
     inbox: "收件箱",
     conversation: "对话",
     transcript: "记录",
@@ -504,13 +511,14 @@ const labelOf = (name: string): string =>
 const romanize = (label: string): string =>
   ({
     工作台: "workbench",
-    树: "tree",
+    项目结构: "tree",
     待处理: "queue",
     关注事项: "attention",
     用量: "usage",
     设置: "settings",
-  })[label as "工作台" | "树" | "待处理" | "关注事项" | "用量" | "设置"] ??
-  label;
+  })[
+    label as "工作台" | "项目结构" | "待处理" | "关注事项" | "用量" | "设置"
+  ] ?? label;
 
 function MobileTabbar({ route }: { readonly route: Route | null }) {
   const session = useSession();
@@ -575,7 +583,7 @@ function MobileTabbar({ route }: { readonly route: Route | null }) {
                 session.clearSession();
               }}
             >
-              断开会话
+              断开连接
             </button>
           </div>
         </Sheet>

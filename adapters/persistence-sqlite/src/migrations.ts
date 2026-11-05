@@ -1902,3 +1902,14 @@ export const P35_MIGRATIONS: ReadonlyArray<MigrationFile> = [
     `,
   },
 ];
+
+/** PP-W401: additive provenance for new typed Session entries. Historical
+ * rows remain NULL and are never inferred into a Work frontier. */
+export const P36_MIGRATIONS: ReadonlyArray<MigrationFile> = [
+  ...P35_MIGRATIONS,
+  {
+    id: 36,
+    name: "session_causal_provenance",
+    sql: `ALTER TABLE session_entries ADD COLUMN causal_binding_json TEXT;`,
+  },
+];
