@@ -1,4 +1,4 @@
-import type { Problem, ViewRequestMap } from "@arbor/api-contracts";
+import type { ViewRequestMap } from "@arbor/api-contracts";
 import {
   type CSSProperties,
   type PointerEvent,
@@ -8,6 +8,7 @@ import {
 } from "react";
 import type { Route } from "../../api/router.js";
 import { navigate } from "../../api/router.js";
+import { problemFromUnknown } from "../../api/transport.js";
 import { useViewQuery } from "../../api/useViewQuery.js";
 import { Badge } from "../../components/Badge.js";
 import { Button } from "../../components/Button.js";
@@ -65,8 +66,8 @@ function TreePane({
             <Icon name="tree" size={18} />
           </span>
           <div>
-            <p className={styles.eyebrow}>组织视图</p>
-            <h2 id="workbench-tree-title">责任树</h2>
+            <p className={styles.eyebrow}>项目结构</p>
+            <h2 id="workbench-tree-title">工作分工</h2>
           </div>
         </div>
         <Button
@@ -75,23 +76,23 @@ function TreePane({
             navigate({ name: "tree", projectId });
           }}
         >
-          树焦点
+          查看完整结构
         </Button>
       </header>
       {tree.isPending ? (
-        <Empty>加载责任树</Empty>
+        <Empty>正在加载工作分工</Empty>
       ) : tree.isError ? (
         <ProblemCard
-          problem={tree.error as unknown as Problem}
+          problem={problemFromUnknown(tree.error)}
           onRetry={() => {
             void tree.refetch();
           }}
         />
       ) : presented === null || presented === undefined ? (
-        <Empty>责任树结构不可用，请刷新后重试</Empty>
+        <Empty>项目结构暂不可用，请刷新后重试</Empty>
       ) : (
         <>
-          <ul className={styles.treeList} aria-label="责任树节点">
+          <ul className={styles.treeList} aria-label="工作分工">
             {tree.data.nodes.map((node) => {
               const depth =
                 presented.depths.get(node.workspaceId as string) ?? 0;
@@ -136,7 +137,7 @@ function TreePane({
             })}
           </ul>
           {selected === undefined ? (
-            <p className={styles.treeInspection}>选择节点查看责任上下文。</p>
+            <p className={styles.treeInspection}>选择一项分工查看当前工作。</p>
           ) : (
             <div className={styles.treeInspection}>
               <strong>{selected.name}</strong>
@@ -152,7 +153,7 @@ function TreePane({
                   });
                 }}
               >
-                打开工作区
+                查看工作
               </Button>
             </div>
           )}
@@ -187,23 +188,23 @@ function ConversationPane({
             <Icon name="conversation" size={18} />
           </span>
           <div>
-            <p className={styles.eyebrow}>协作上下文</p>
+            <p className={styles.eyebrow}>项目对话</p>
             <h2 id="workbench-conversation-title">对话</h2>
           </div>
         </div>
-        <span className={styles.paneState}>根工作区</span>
+        <span className={styles.paneState}>项目主对话</span>
       </header>
       {tree.isPending ? (
-        <Empty>正在确认根工作区</Empty>
+        <Empty>正在准备项目对话</Empty>
       ) : tree.isError ? (
         <ProblemCard
-          problem={tree.error as unknown as Problem}
+          problem={problemFromUnknown(tree.error)}
           onRetry={() => {
             void tree.refetch();
           }}
         />
       ) : presented === null || presented === undefined ? (
-        <Empty>责任树结构不可用，无法绑定根对话。</Empty>
+        <Empty>项目结构暂不可用，无法打开项目对话。</Empty>
       ) : (
         <ConversationTab
           projectId={projectId}
@@ -244,8 +245,8 @@ export function RootWorkbenchPage({
       : {
           rootName: projectTreePresented.root.name,
           workspaceCount: projectTree.data.nodes.length,
-          activeWorkCount: projectTree.data.nodes.filter(
-            (node) => node.currentWork?.activeExecution !== undefined,
+          runningCount: projectTree.data.nodes.filter(
+            (node) => node.currentWork?.activeExecution != null,
           ).length,
           attention: projectTreePresented.root.subtreeAttention.attention,
           actionRequired:
@@ -344,10 +345,10 @@ export function RootWorkbenchPage({
             <Icon name="workbench" size={21} />
           </span>
           <div>
-            <p className={styles.eyebrow}>项目工作空间</p>
+            <p className={styles.eyebrow}>项目主页</p>
             <h1>工作台</h1>
             <p className={styles.intro}>
-              从一次对话开始，让责任树承接持续推进的工作。
+              从一次对话开始，让项目分工承接持续推进的工作。
             </p>
           </div>
         </div>
@@ -355,16 +356,16 @@ export function RootWorkbenchPage({
           <section className={styles.projectOverview} aria-label="项目概览">
             <div className={styles.projectRoot}>
               <span className={styles.liveDot} />
-              <strong>{`根责任：${projectOverview.rootName}`}</strong>
+              <strong>{`主要分工：${projectOverview.rootName}`}</strong>
             </div>
             <dl className={styles.projectStats}>
               <div>
-                <dt>工作空间</dt>
+                <dt>分工数量</dt>
                 <dd>{projectOverview.workspaceCount}</dd>
               </div>
               <div>
-                <dt>进行中工作</dt>
-                <dd>{projectOverview.activeWorkCount}</dd>
+                <dt>正在运行</dt>
+                <dd>{projectOverview.runningCount}</dd>
               </div>
               <div>
                 <dt>需要关注</dt>
@@ -388,7 +389,7 @@ export function RootWorkbenchPage({
           }
           onClick={() => setMobilePane("tree")}
         >
-          责任树
+          工作分工
         </button>
         <button
           type="button"
@@ -405,10 +406,10 @@ export function RootWorkbenchPage({
       </fieldset>
 
       <div className={styles.layoutActions}>
-        <span className={styles.layoutHint}>工作空间布局</span>
+        <span className={styles.layoutHint}>工作台布局</span>
         <div className={styles.layoutButtons}>
           <Button variant="quiet" onClick={swapPanes}>
-            交换树与对话位置
+            交换分工与对话位置
           </Button>
           <Button variant="quiet" onClick={resetTreeBasis}>
             重置分栏比例
@@ -428,7 +429,7 @@ export function RootWorkbenchPage({
         {panes[0]}
         <hr
           aria-orientation="vertical"
-          aria-label="调整责任树与对话比例"
+          aria-label="调整工作分工与对话比例"
           aria-valuemin={MIN_TREE_BASIS}
           aria-valuemax={MAX_TREE_BASIS}
           aria-valuenow={layout.treeBasis}

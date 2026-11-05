@@ -77,14 +77,11 @@ describe("no forbidden command controls in src", () => {
     expect(violations).toEqual([]);
   });
 
-  it("conversation uses no browser streaming or optimistic message store", () => {
+  it("conversation streaming remains presentation-only and has no optimistic transcript store", () => {
     const violations = collectSourceFiles(srcRoot).filter((path) => {
       const source = readFileSync(path, { encoding: "utf8" });
       return (
-        source.includes("/conversation-progress/") ||
-        source.includes("EventSource") ||
-        source.includes("addOptimisticHuman") ||
-        source.includes("appendDelta")
+        source.includes("addOptimisticHuman") || source.includes("appendDelta")
       );
     });
     expect(violations).toEqual([]);

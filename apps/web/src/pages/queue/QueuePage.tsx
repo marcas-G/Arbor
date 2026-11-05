@@ -12,13 +12,15 @@ import { fetchView } from "../../api/transport.js";
 import { useViewQuery } from "../../api/useViewQuery.js";
 import { AcceptWorkOutcomeForm } from "../../commands/forms/AcceptWorkOutcomeForm.js";
 import { RecordDecisionForm } from "../../commands/forms/RecordDecisionForm.js";
-import { ResolveControlApprovalForm } from "../../commands/forms/ResolveControlApprovalForm.js";
+import {
+  approvalTitle,
+  ResolveControlApprovalForm,
+} from "../../commands/forms/ResolveControlApprovalForm.js";
 import type { CommandReceiptView } from "../../commands/submitCommand.js";
 import { Badge } from "../../components/Badge.js";
 import { Button } from "../../components/Button.js";
 import { Card } from "../../components/Card.js";
 import { Empty } from "../../components/Empty.js";
-import { MonoText } from "../../components/MonoText.js";
 import { Sheet } from "../../components/Sheet.js";
 import { useCompactLayout } from "../../components/useCompactLayout.js";
 import { ProblemCard } from "../../problems/ProblemCard.js";
@@ -35,6 +37,7 @@ type DecisionItem = {
   readonly type: "decision";
   readonly id: string;
   readonly workspaceId: string;
+  readonly workspaceName: string;
   readonly entryKey: string;
   readonly summary: string;
   readonly watermark: number;
@@ -45,6 +48,7 @@ type AcceptanceItem = {
   readonly type: "acceptance";
   readonly id: string;
   readonly workspaceId: string;
+  readonly workspaceName: string;
   readonly workId: string;
   readonly objective: string;
   readonly targetWorkRevision: number;
@@ -55,6 +59,7 @@ type ControlApprovalItem = {
   readonly type: "control-approval";
   readonly id: string;
   readonly workspaceId: string;
+  readonly workspaceName: string;
   readonly entryKey: string;
   readonly summary: string;
   readonly watermark: number;
@@ -64,6 +69,16 @@ type ControlApprovalItem = {
 type QueueItem = DecisionItem | AcceptanceItem | ControlApprovalItem;
 
 const asProblem = (error: unknown): Problem => error as Problem;
+
+const decisionSummary = (summary: string): string => {
+  const match =
+    /^formation proposal "(.+)" revision \d+ awaiting human decision$/.exec(
+      summary,
+    );
+  return match?.[1] === undefined
+    ? summary
+    : `创建分工“${match[1]}”需要你的决定`;
+};
 
 const fetchInbox = async (
   workspaceId: TreeViewNode["workspaceId"],
@@ -179,6 +194,7 @@ export function QueuePage({
         type: "decision",
         id: `decision:${node.workspaceId}:${entry.entryKey}`,
         workspaceId: node.workspaceId,
+        workspaceName: node.name,
         entryKey: entry.entryKey,
         summary: entry.summary,
         watermark: entry.watermark,
@@ -203,6 +219,7 @@ export function QueuePage({
         type: "control-approval",
         id: `control-approval:${node.workspaceId}:${entry.entryKey}`,
         workspaceId: node.workspaceId,
+        workspaceName: node.name,
         entryKey: entry.entryKey,
         summary: entry.summary,
         watermark: entry.watermark,
@@ -234,6 +251,7 @@ export function QueuePage({
         type: "acceptance",
         id: `acceptance:${currentWork.workId}:${selectedVerification.verificationId}:${selectedVerification.targetWorkRevision}`,
         workspaceId: node.workspaceId,
+        workspaceName: node.name,
         workId: currentWork.workId,
         objective: currentWork.objective,
         targetWorkRevision: selectedVerification.targetWorkRevision,
@@ -270,7 +288,7 @@ export function QueuePage({
       <div className={styles.page}>
         <QueueHeader />
         <Card title="待处理">
-          <Empty>正在加载项目工作区</Empty>
+          <Empty>正在加载项目分工</Empty>
         </Card>
       </div>
     );
@@ -309,28 +327,28 @@ export function QueuePage({
         <section
           key={`inbox-problem:${workspaceId}`}
           className={styles.sourceProblem}
-          aria-label={`工作区 ${workspaceId} 收件箱问题`}
+          aria-label="相关消息加载问题"
         >
-          <h2>工作区 {workspaceId} 暂不可用</h2>
+          <h2>一项分工暂时不可用</h2>
           <ProblemCard problem={problem} />
         </section>
       ))}
-      {verificationProblems.map(({ workspaceId, workId, problem }) => (
+      {verificationProblems.map(({ workId, problem }) => (
         <section
           key={`verification-problem:${workId}`}
           className={styles.sourceProblem}
-          aria-label={`工作区 ${workspaceId} 验证问题`}
+          aria-label="分工验收问题"
         >
-          <h2>工作 {workId} 的验收条件暂不可用</h2>
+          <h2>一项工作的验收条件暂不可用</h2>
           <ProblemCard problem={problem} />
         </section>
       ))}
       {items.length === 0 ? (
         <Card title="待处理事项">
           {anyPending ? (
-            <Empty>正在核对可精确绑定的待处理事项</Empty>
-          ) : inboxProblems.length > 0 ? (
-            <Empty>部分工作区无法加载，暂时不能确认队列为空</Empty>
+            <Empty>正在核对待处理事项</Empty>
+          ) : inboxProblems.length > 0 || verificationProblems.length > 0 ? (
+            <Empty>部分分工无法加载，暂时不能确认是否还有待处理事项</Empty>
           ) : (
             <Empty>没有等你处理的事项</Empty>
           )}
@@ -344,14 +362,14 @@ export function QueuePage({
           >
             <header className={styles.listHeader}>
               <div>
-                <p className={styles.eyebrow}>Actionable inbox</p>
+                <p className={styles.eyebrow}>需要你处理</p>
                 <h2>可处理事项</h2>
               </div>
               <Badge tone="attention">{items.length} 条</Badge>
             </header>
             {anyPending ? (
               <p className={styles.pendingNote} role="status">
-                正在加载其余工作区事项
+                正在加载其余分工事项
               </p>
             ) : null}
             <ul className={styles.list}>
@@ -376,25 +394,22 @@ export function QueuePage({
                             ? "待授权"
                             : "等待验收"}
                       </Badge>
-                      <MonoText>{item.workspaceId}</MonoText>
+                      <span>{item.workspaceName}</span>
                     </span>
                     <span className={styles.itemSummary}>
                       {item.type === "acceptance"
                         ? item.objective
-                        : item.summary}
+                        : item.type === "decision"
+                          ? decisionSummary(item.summary)
+                          : approvalTitle(item.summary)}
                     </span>
                     {item.type === "decision" ? (
-                      <span className={styles.itemTarget}>
-                        {item.target.proposalId} · revision{" "}
-                        {item.target.proposalRevision}
-                      </span>
+                      <span className={styles.itemTarget}>等待你的决定</span>
                     ) : item.type === "control-approval" ? (
-                      <span className={styles.itemTarget}>
-                        精确动作 · revision {item.target.approvalRevision}
-                      </span>
+                      <span className={styles.itemTarget}>敏感操作待审批</span>
                     ) : (
                       <span className={styles.itemTarget}>
-                        {item.workId} · revision {item.targetWorkRevision}
+                        验证通过，等待验收
                       </span>
                     )}
                   </button>
@@ -405,7 +420,13 @@ export function QueuePage({
           {!compact ? (
             <aside className={styles.detailPanel} aria-label="待处理详情">
               <QueueDetail
+                key={selectedItem?.id ?? "empty"}
                 item={selectedItem}
+                workspaceNames={
+                  new Map(
+                    workspaces.map((node) => [node.workspaceId, node.name]),
+                  )
+                }
                 projectId={projectId}
                 actor={actor ?? ""}
                 token={token ?? undefined}
@@ -428,7 +449,11 @@ export function QueuePage({
             }}
           >
             <QueueDetail
+              key={selectedItem?.id ?? "empty"}
               item={selectedItem}
+              workspaceNames={
+                new Map(workspaces.map((node) => [node.workspaceId, node.name]))
+              }
               projectId={projectId}
               actor={actor ?? ""}
               token={token ?? undefined}
@@ -450,16 +475,17 @@ function QueueHeader() {
   return (
     <header className={styles.header}>
       <div>
-        <p className={styles.eyebrow}>Actionable inbox</p>
+        <p className={styles.eyebrow}>需要你处理</p>
         <h1 className={styles.heading}>待处理</h1>
       </div>
-      <p className={styles.intro}>仅显示具有精确结构化目标的决策与验收事项。</p>
+      <p className={styles.intro}>这里集中显示需要你确认、授权或验收的事项。</p>
     </header>
   );
 }
 
 function QueueDetail({
   item,
+  workspaceNames,
   projectId,
   actor,
   token,
@@ -469,6 +495,7 @@ function QueueDetail({
   onSubmitted,
 }: {
   readonly item: QueueItem | null;
+  readonly workspaceNames: ReadonlyMap<string, string>;
   readonly projectId: string;
   readonly actor: string;
   readonly token?: string | undefined;
@@ -478,7 +505,7 @@ function QueueDetail({
   readonly onSubmitted: (receipt: CommandReceiptView) => void;
 }) {
   if (item === null) {
-    return <Empty>选择一条待处理事项查看精确目标与可用动作。</Empty>;
+    return <Empty>选择一条待处理事项查看详情和可用操作。</Empty>;
   }
   const openTarget = (): void => {
     if (item.type !== "acceptance") {
@@ -502,45 +529,23 @@ function QueueDetail({
       <div className={styles.detailTopline}>
         <Badge tone={item.type === "acceptance" ? "leaf" : "attention"}>
           {item.type === "decision"
-            ? "治理决策"
+            ? "待决事项"
             : item.type === "control-approval"
-              ? "控制动作审批"
+              ? "操作审批"
               : "工作验收"}
         </Badge>
-        <span className={styles.detailWorkspace}>
-          工作区 {item.workspaceId}
-        </span>
+        <span className={styles.detailWorkspace}>{item.workspaceName}</span>
       </div>
       {item.type === "decision" ? (
         <>
-          <h2>{item.summary}</h2>
-          <dl className={styles.targetList}>
-            <div>
-              <dt>提案</dt>
-              <dd>
-                <MonoText>{item.target.proposalId}</MonoText>
-              </dd>
-            </div>
-            <div>
-              <dt>目标版本</dt>
-              <dd>
-                <MonoText>{item.target.proposalRevision}</MonoText>
-              </dd>
-            </div>
-            <div>
-              <dt>收件箱水位</dt>
-              <dd>
-                <MonoText>{item.watermark}</MonoText>
-              </dd>
-            </div>
-          </dl>
+          <h2>{decisionSummary(item.summary)}</h2>
           <RecordDecisionForm
             actor={actor}
             projectId={projectId}
             target={{
               proposalId: item.target.proposalId,
               proposalRevision: item.target.proposalRevision,
-              summary: item.summary,
+              summary: decisionSummary(item.summary),
             }}
             token={token}
             onSubmitted={onSubmitted}
@@ -548,13 +553,15 @@ function QueueDetail({
         </>
       ) : item.type === "control-approval" ? (
         <>
-          <h2>{item.summary}</h2>
+          <h2>{approvalTitle(item.summary)}</h2>
           <ResolveControlApprovalForm
             actor={actor}
             projectId={projectId}
             approvalId={item.target.approvalId}
             approvalRevision={item.target.approvalRevision}
             summary={item.summary}
+            workspaceId={item.workspaceId}
+            workspaceNames={workspaceNames}
             token={token}
             onSubmitted={onSubmitted}
           />
@@ -562,26 +569,6 @@ function QueueDetail({
       ) : (
         <>
           <h2>{item.objective}</h2>
-          <dl className={styles.targetList}>
-            <div>
-              <dt>工作</dt>
-              <dd>
-                <MonoText>{item.workId}</MonoText>
-              </dd>
-            </div>
-            <div>
-              <dt>目标版本</dt>
-              <dd>
-                <MonoText>{item.targetWorkRevision}</MonoText>
-              </dd>
-            </div>
-            <div>
-              <dt>验证</dt>
-              <dd>
-                <MonoText>{item.verificationId}</MonoText>
-              </dd>
-            </div>
-          </dl>
           {acceptanceOpen ? (
             <AcceptWorkOutcomeForm
               actor={actor}
@@ -600,7 +587,7 @@ function QueueDetail({
         </>
       )}
       <Button variant="quiet" onClick={openTarget}>
-        {item.type === "acceptance" ? "查看工作与验证" : "打开工作区收件箱"}
+        {item.type === "acceptance" ? "查看工作与验证" : "查看相关消息"}
       </Button>
       {lastReceipt === null ? null : (
         <p
@@ -611,9 +598,9 @@ function QueueDetail({
           }
           role="status"
         >
-          最近命令：
-          {lastReceipt.resolution === "Committed" ? "已提交" : "被拒绝"}{" "}
-          <MonoText>{lastReceipt.commandId}</MonoText>
+          {lastReceipt.resolution === "Committed"
+            ? "已完成处理"
+            : "这项操作未能完成，请检查后重试"}
         </p>
       )}
     </div>

@@ -1,6 +1,7 @@
 import {
   type CommandHandler,
   CommandHandlerRegistry,
+  eraseCommandHandler,
 } from "@arbor/application";
 import {
   ExecutionRepository,
@@ -25,18 +26,9 @@ export interface P2CommandDependencies {
 export const makeP2CommandHandlers = (
   dependencies: P2CommandDependencies,
 ): ReadonlyArray<CommandHandler<unknown, unknown>> => [
-  makeAdmitExecutionHandler(dependencies) as unknown as CommandHandler<
-    unknown,
-    unknown
-  >,
-  makeStopExecutionHandler(dependencies) as unknown as CommandHandler<
-    unknown,
-    unknown
-  >,
-  makeSettleExecutionHandler(dependencies) as unknown as CommandHandler<
-    unknown,
-    unknown
-  >,
+  eraseCommandHandler(makeAdmitExecutionHandler(dependencies)),
+  eraseCommandHandler(makeStopExecutionHandler(dependencies)),
+  eraseCommandHandler(makeSettleExecutionHandler(dependencies)),
 ];
 
 export const P2CommandHandlerRegistryLive: Layer.Layer<

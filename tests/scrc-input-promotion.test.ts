@@ -6,7 +6,7 @@ import {
   ExecutionRepositoryLive,
   InboxProjectionStoreLive,
   layer,
-  P19_MIGRATIONS,
+  P36_MIGRATIONS,
   runMigrations,
   SessionRepositoryLive,
   TransactionPortLive,
@@ -59,7 +59,11 @@ const execution: Execution = {
   binding: {
     _tag: "WorkspaceExecution",
     workspaceId,
-    focus: { _tag: "Coordination" },
+    episode: {
+      _tag: "WorkEpisode",
+      workId: "wrk_018f2b3c-4d5e-7abc-8def-0123456789c1" as never,
+      targetWorkRevision: 0 as never,
+    },
   },
   sessionId,
   admittedAt: "t",
@@ -152,7 +156,7 @@ const request = {
 describe("SCRC durable input promotion", () => {
   it("promotes one Inbox source exactly once and consumes it atomically", async () => {
     const program = Effect.gen(function* () {
-      yield* runMigrations(P19_MIGRATIONS);
+      yield* runMigrations(P36_MIGRATIONS);
       yield* seed;
       const promotions = yield* InputPromotionService;
       const first = yield* promotions.promoteInbox(request);
@@ -161,22 +165,34 @@ describe("SCRC durable input promotion", () => {
       const rows = yield* sql.unsafe<{ count: number }>(
         "SELECT COUNT(*) AS count FROM session_entries WHERE item_type = 'UserMessage' AND source_kind = 'InboxEntry' AND source_ref = 'msg:one'",
       );
+      const provenance = yield* sql.unsafe<{
+        causal_binding_json: string | null;
+      }>(
+        "SELECT causal_binding_json FROM session_entries WHERE item_type = 'UserMessage' AND source_ref = 'msg:one'",
+      );
       const inbox = yield* sql.unsafe<{ consumed_at: string | null }>(
         "SELECT consumed_at FROM inbox_entries WHERE workspace_id = ? AND entry_key = ?",
         [workspaceId, "msg:one"],
       );
-      return { first, replay, count: Number(rows[0]?.count), inbox };
+      return {
+        first,
+        replay,
+        count: Number(rows[0]?.count),
+        inbox,
+        provenance,
+      };
     });
     const result = await Effect.runPromise(Effect.provide(program, makeApp()));
     expect(result.first).toEqual({ sequence: 0, inserted: true });
     expect(result.replay).toEqual({ sequence: 0, inserted: false });
     expect(result.count).toBe(1);
     expect(result.inbox[0]?.consumed_at).not.toBeNull();
+    expect(result.provenance[0]?.causal_binding_json).not.toBeNull();
   });
 
   it("rolls back Session append when Inbox consumption fails, then retries cleanly", async () => {
     const program = Effect.gen(function* () {
-      yield* runMigrations(P19_MIGRATIONS);
+      yield* runMigrations(P36_MIGRATIONS);
       yield* seed;
       const sql = yield* SqlClient;
       yield* sql.unsafe(`

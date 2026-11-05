@@ -12,8 +12,10 @@ import {
   type ConversationMessage,
   useConversation,
 } from "../../conversation/useConversation.js";
+import { useConversationProgress } from "../../conversation/useConversationProgress.js";
 import { ProblemCard } from "../../problems/ProblemCard.js";
 import { useSession } from "../../session/SessionContext.js";
+import { TimeText } from "../../views/shared.js";
 import { presentResponsibilityTree } from "../tree/treePresentation.js";
 import styles from "./workspace.module.css";
 
@@ -52,13 +54,46 @@ function ResponseStatusPanel({
     token,
     onSubmitted: onChanged,
   });
+  const pendingAction = useRef<{
+    readonly commandType:
+      | "CancelConversationResponse"
+      | "ResumeConversationResponse";
+    readonly messageId: string;
+    readonly revision: number;
+  } | null>(null);
   const status = message.responseStatus;
+  const progress = useConversationProgress(
+    message.messageId,
+    status?.state === "Running",
+  );
   if (message.messageId === undefined || status === undefined) return null;
   if (status.state === "Answered") return null;
   if (status.state === "Running") {
     return (
       <div className={styles.conversationStatus} role="status">
-        <strong>正在处理（第 {status.attemptNo + 1} 次执行）</strong>
+        <strong>正在处理（第 {status.attemptNo + 1} 次尝试）</strong>
+        <span className={styles.liveStage}>
+          {progress === null
+            ? "正在连接模型"
+            : progress.stage === "tool"
+              ? "正在调用工具"
+              : progress.stage === "retrying"
+                ? "正在重试模型请求"
+                : progress.stage === "answering"
+                  ? "正在生成回复"
+                  : "正在分析请求"}
+        </span>
+        {progress?.toolNames.map((toolName) => (
+          <span className={styles.liveStep} key={toolName}>
+            <span className={styles.liveStepDot} aria-hidden="true" />
+            工具调用：{toolName}
+          </span>
+        ))}
+        {progress?.text ? (
+          <span className={styles.liveAnswer} aria-live="polite">
+            {progress.text}
+          </span>
+        ) : null}
         <StopExecutionForm
           actor={actor}
           token={token}
@@ -69,33 +104,50 @@ function ResponseStatusPanel({
       </div>
     );
   }
-  const cancel = () =>
-    void submit("CancelConversationResponse", projectId, {
-      messageId: message.messageId,
-      expectedJobRevision: status.revision,
+  const sendPending = () => {
+    const action = pendingAction.current;
+    if (action === null) return;
+    void submit(action.commandType, projectId, {
+      messageId: action.messageId,
+      expectedJobRevision: action.revision,
     });
-  const resume = () =>
-    void submit("ResumeConversationResponse", projectId, {
-      messageId: message.messageId,
-      expectedJobRevision: status.revision,
-    });
+  };
+  const chooseAction = (
+    commandType: "CancelConversationResponse" | "ResumeConversationResponse",
+  ) => {
+    if (state.phase === "submitting" || state.phase === "transport-failed")
+      return;
+    pendingAction.current = {
+      commandType,
+      messageId: message.messageId as string,
+      revision: status.revision,
+    };
+    sendPending();
+  };
   const attentionReason =
     status.state === "NeedsAttention" ? status.reason : undefined;
   const attentionCopy =
     attentionReason === undefined
       ? undefined
       : presentAttentionReason(attentionReason);
+  const cancelledCopy =
+    status.state === "Cancelled" ? presentCancelledReason(status.reason) : null;
   return (
     <div className={styles.conversationStatus} role="status">
       <strong>
         {status.state === "Queued"
           ? "已排队"
           : status.state === "RetryScheduled"
-            ? `等待重试（${status.nextEligibleAt}）`
+            ? "等待自动重试"
             : status.state === "NeedsAttention"
               ? attentionCopy?.title
-              : `已停止：${status.reason}`}
+              : cancelledCopy?.title}
       </strong>
+      {status.state === "RetryScheduled" ? (
+        <span>
+          预计于 <TimeText at={status.nextEligibleAt} /> 再次尝试
+        </span>
+      ) : null}
       {attentionCopy === undefined ? null : (
         <>
           <span>{attentionCopy.description}</span>
@@ -108,17 +160,41 @@ function ResponseStatusPanel({
       {status.state === "RetryScheduled" ? (
         <span>{status.safeReason}</span>
       ) : null}
+      {cancelledCopy === null ? null : (
+        <>
+          <span>{cancelledCopy.description}</span>
+          {cancelledCopy.known ? null : (
+            <details className={styles.technicalReason}>
+              <summary>技术详情</summary>
+              <code>{status.state === "Cancelled" ? status.reason : ""}</code>
+            </details>
+          )}
+        </>
+      )}
       {status.state === "NeedsAttention" ? (
-        <Button onClick={resume}>再次尝试</Button>
+        <Button
+          disabled={
+            state.phase === "submitting" || state.phase === "transport-failed"
+          }
+          onClick={() => chooseAction("ResumeConversationResponse")}
+        >
+          再次尝试
+        </Button>
       ) : null}
       {status.state === "Queued" ||
       status.state === "RetryScheduled" ||
       status.state === "NeedsAttention" ? (
-        <Button variant="quiet" onClick={cancel}>
+        <Button
+          variant="quiet"
+          disabled={
+            state.phase === "submitting" || state.phase === "transport-failed"
+          }
+          onClick={() => chooseAction("CancelConversationResponse")}
+        >
           停止本次回复
         </Button>
       ) : null}
-      <FormFeedback state={state} onRetry={onChanged} />
+      <FormFeedback state={state} onRetry={sendPending} />
     </div>
   );
 }
@@ -165,6 +241,41 @@ const presentAttentionReason = (
   }
 };
 
+const presentCancelledReason = (
+  reason: string,
+): {
+  readonly title: string;
+  readonly description: string;
+  readonly known: boolean;
+} => {
+  switch (reason) {
+    case "HumanCancelled":
+      return {
+        title: "已按你的要求停止",
+        description: "Arbor 不会继续生成这次回复。",
+        known: true,
+      };
+    case "ProjectClosed":
+      return {
+        title: "项目已归档，回复已停止",
+        description: "重新打开项目后可以发送新的消息。",
+        known: true,
+      };
+    case "ControlledStop":
+      return {
+        title: "回复已停止",
+        description: "Arbor 已安全停止这次回复。",
+        known: true,
+      };
+    default:
+      return {
+        title: "回复已停止",
+        description: "这次回复没有继续生成。",
+        known: false,
+      };
+  }
+};
+
 export function ConversationTab({
   projectId,
   workspaceId,
@@ -195,7 +306,7 @@ export function ConversationTab({
   return (
     <div className={styles.conversation}>
       <p className={styles.conversationLabel}>
-        {isRoot ? "根工作区对话" : "对话记录（只读）"}
+        {isRoot ? "项目主对话" : "对话记录（只读）"}
       </p>
       {conversation.loadingHistory && conversation.messages.length === 0 ? (
         <Empty>加载中</Empty>

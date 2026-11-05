@@ -6,6 +6,7 @@ import type {
   WorkspaceId,
 } from "@arbor/domain";
 import type { PortableToolResultStatus } from "./provider.js";
+import type { SessionCausalBinding } from "./session-provenance.js";
 
 export type SessionItemTrust =
   | "CanonicalInstruction"
@@ -106,6 +107,7 @@ export interface SessionItemWrite {
   readonly contextEpoch: ContextEpochNumber;
   readonly source: SessionItemSource;
   readonly contentHash: string;
+  readonly causalBinding?: SessionCausalBinding;
 }
 
 export interface SessionItemRecord extends SessionItemWrite {
@@ -125,6 +127,7 @@ export interface SessionCompactionCommit {
   >;
   readonly source: SessionItemSource;
   readonly contentHash: string;
+  readonly causalBinding?: SessionCausalBinding;
 }
 
 export interface SessionWriteFence {

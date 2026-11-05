@@ -4,6 +4,7 @@ import {
   ControlActionAuthorizer,
   ControlToolRegistry,
   ControlToolRegistryLive,
+  type WaitRegistration,
 } from "@arbor/agent-runtime";
 import {
   type AuthorityResolverPort,
@@ -23,7 +24,7 @@ import {
   WorkflowSignalConsumerLive,
 } from "@arbor/application";
 import { BlobStorePortLive } from "@arbor/blob-local";
-import { Principal, type ProjectId, parse } from "@arbor/domain";
+import { Principal, type ProjectId, parse, workEpisode } from "@arbor/domain";
 import {
   EnvironmentResolverLocalLive,
   ProjectEnvironmentPortFromResolverLive,
@@ -86,6 +87,7 @@ import {
   P21_MIGRATIONS,
   P22_MIGRATIONS,
   P35_MIGRATIONS,
+  P36_MIGRATIONS,
   PermissionGrantRepositoryLive,
   ProjectDirectoryLive,
   ProjectionStoreLive,
@@ -112,7 +114,7 @@ import {
 import {
   type AgentLoopStepStore,
   type CanonicalProviderEvent,
-  type Clock,
+  Clock,
   type CommandStore,
   type DecisionRequestStore,
   type DeliverableRepository,
@@ -148,12 +150,12 @@ import {
   type SessionRepository,
   SkillRegistry,
   type ToolCatalogPort,
-  type TransactionPort,
+  TransactionPort,
   type WorkRepository,
   type WorkspaceKnowledgePort,
   type WorkspacePlacementPort,
   type WorkspaceRepository,
-  type WorkWaitStore,
+  WorkWaitStore,
 } from "@arbor/ports";
 import { type UsageService, UsageServiceLive } from "@arbor/projection-runtime";
 import type { OpenAISdkClient } from "@arbor/provider-openai";
@@ -703,10 +705,43 @@ export const buildSingleWorkspaceLayer = (
     Layer.unwrap(
       Effect.gen(function* () {
         const handlers = yield* SingleWorkspaceControlActionHandlers;
-        return ControlToolRegistryLive(handlers);
+        const waits = yield* WorkWaitStore;
+        const tx = yield* TransactionPort;
+        const clock = yield* Clock;
+        const registerWait: WaitRegistration = ({ execution, action }) => {
+          const episode = workEpisode(execution);
+          if (episode === null) {
+            return Effect.fail({
+              _tag: "AgentActionRejected" as const,
+              code: "action/not-applicable" as const,
+              safeMessage: "Wait requires an active Work binding",
+              correction: "ChooseAlternative" as const,
+            });
+          }
+          return tx
+            .transact(
+              Effect.gen(function* () {
+                const now = yield* clock.now();
+                yield* waits.upsert({
+                  workId: episode.workId,
+                  waitSpec: action.waitSpec,
+                  registeredAt: now,
+                  updatedAt: now,
+                });
+              }),
+            )
+            .pipe(
+              Effect.mapError((cause) => ({
+                _tag: "AgentActionOperationalFailure" as const,
+                operation: "ControlRegistry.WaitRegistration",
+                cause,
+              })),
+            );
+        };
+        return ControlToolRegistryLive(handlers, registerWait);
       }),
     ),
-    controlActionHandlers,
+    Layer.mergeAll(controlActionHandlers, repos, infra),
   );
   const controlAuthorizer = Layer.provide(
     ControlActionAuthorizerLive,
@@ -930,6 +965,6 @@ export {
   P20_MIGRATIONS,
   P21_MIGRATIONS,
   P22_MIGRATIONS,
-  P35_MIGRATIONS as CURRENT_MIGRATIONS,
+  P36_MIGRATIONS as CURRENT_MIGRATIONS,
   runMigrations,
 };

@@ -1,4 +1,4 @@
-import { workEpisode } from "@arbor/domain";
+import { type Execution, workEpisode } from "@arbor/domain";
 import { ControlToolCatalogPort } from "@arbor/ports";
 import { Effect, Layer } from "effect";
 
@@ -19,11 +19,17 @@ export {
 
 import {
   type AgentAction,
+  type AgentActionError,
   type AgentActionHandler,
   type ControlToolDecodeError,
   ControlToolRegistry,
   type ControlToolRegistryService,
 } from "./control-types.js";
+
+export type WaitRegistration = (input: {
+  readonly execution: Execution;
+  readonly action: Extract<AgentAction, { readonly _tag: "Wait" }>;
+}) => Effect.Effect<void, AgentActionError>;
 
 export type ToolRouteClassification =
   | { readonly _tag: "Executable" }
@@ -101,6 +107,7 @@ import { decodeControlInvocation } from "./control-decoder.js";
 
 export const makeControlToolRegistry = (
   handlers: ReadonlyArray<AgentActionHandler> = [],
+  registerWait?: WaitRegistration,
 ): ControlToolRegistryService => {
   const waitHandler: AgentActionHandler = {
     action: "Wait",
@@ -119,6 +126,19 @@ export const makeControlToolRegistry = (
           safeMessage:
             "Wait requires an active Work binding for durable WorkWait registration",
           correction: "ChooseAlternative",
+        });
+      }
+      if (registerWait !== undefined) {
+        return Effect.as(registerWait({ execution, action }), {
+          _tag: "Settle" as const,
+          settlement: {
+            _tag: "Completed" as const,
+            result: {
+              _tag: "Yielded" as const,
+              reason: action.reason,
+              waitSpec: action.waitSpec,
+            },
+          },
         });
       }
       return Effect.succeed({
@@ -197,8 +217,9 @@ export const makeControlToolRegistry = (
 
 export const ControlToolRegistryLive = (
   handlers: ReadonlyArray<AgentActionHandler> = [],
+  registerWait?: WaitRegistration,
 ): Layer.Layer<ControlToolRegistry | ControlToolCatalogPort> => {
-  const registry = makeControlToolRegistry(handlers);
+  const registry = makeControlToolRegistry(handlers, registerWait);
   return Layer.merge(
     Layer.succeed(ControlToolRegistry, registry),
     Layer.succeed(ControlToolCatalogPort, {

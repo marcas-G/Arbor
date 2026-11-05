@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "packageManager": "pnpm@12.4.2",
+  "bin": {
+    "arbor": "scripts/start-user.mjs"
+  },
   "engines": {
     "node": "24.21.0"
   },

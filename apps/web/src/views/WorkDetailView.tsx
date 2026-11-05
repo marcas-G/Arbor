@@ -1,7 +1,10 @@
 import type { WorkDetailRes } from "@arbor/api-contracts";
 import { Card } from "../components/Card.js";
 import { Empty } from "../components/Empty.js";
-import { EnumBadge, Mono, TimeText } from "./shared.js";
+import { EnumBadge, TimeText } from "./shared.js";
+
+const verdictLabel = (verdict: string): string =>
+  ({ Pass: "通过", Fail: "未通过", Unknown: "无法判断" })[verdict] ?? verdict;
 
 const lifecycleLabel = (view: WorkDetailRes): string => {
   if (view.lifecycle === "Completed") return "已完成";
@@ -20,7 +23,6 @@ export function WorkDetailView({ view }: { readonly view: WorkDetailRes }) {
       <div className="arbor-view-stack">
         <div className="arbor-badge-row">
           <EnumBadge label={lifecycleLabel(view)} />
-          <span>修订版本 {view.revision}</span>
         </div>
         <h2>{view.objective}</h2>
         <div className="arbor-kv">
@@ -34,29 +36,15 @@ export function WorkDetailView({ view }: { readonly view: WorkDetailRes }) {
           </span>
         </div>
         {accepted === undefined ? (
-          <Empty>尚无本修订版本的验收记录</Empty>
+          <Empty>这项工作尚未验收</Empty>
         ) : (
           <section aria-label="验收结果">
             <h3>{view.lifecycle === "Cancelled" ? "历史验收" : "验收结果"}</h3>
             <div className="arbor-badge-row">
-              <EnumBadge label={accepted.verdict} />
-              <span>{accepted.actor}</span>
+              <EnumBadge label={verdictLabel(accepted.verdict)} />
+              <span>用户确认</span>
               <TimeText at={accepted.acceptedAt} />
             </div>
-            <dl>
-              <div>
-                <dt>验收记录</dt>
-                <dd>
-                  <Mono>{accepted.acceptanceId}</Mono>
-                </dd>
-              </div>
-              <div>
-                <dt>验证记录</dt>
-                <dd>
-                  <Mono>{accepted.verificationId}</Mono>
-                </dd>
-              </div>
-            </dl>
           </section>
         )}
       </div>

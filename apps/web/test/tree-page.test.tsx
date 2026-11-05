@@ -107,10 +107,10 @@ describe("W-04 TreePage (read-only navigation)", () => {
     expect(screen.getByText("需要处理 1")).toBeTruthy();
     expect(screen.getByText("维护 P13 视图渲染合同")).toBeTruthy();
     expect(
-      screen.getByText("tokens 1200 · cost 0.42 USD · turns 7"),
+      screen.getByText("处理量 1200 · 费用 0.42 USD · 运行次数 7"),
     ).toBeTruthy();
     expect(
-      screen.getByText("tokens 300 · cost unknown · turns 2"),
+      screen.getByText("处理量 300 · 费用 暂不可用 · 运行次数 2"),
     ).toBeTruthy();
   });
 
@@ -135,8 +135,8 @@ describe("W-04 TreePage (read-only navigation)", () => {
     renderTree();
     fireEvent.click(await screen.findByText("平台根工作区"));
     expect(window.location.pathname).toBe("/");
-    expect(screen.getByText("节点详情")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "打开工作区" }));
+    expect(screen.getByText("分工详情")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "查看工作" }));
     expect(window.location.pathname).toBe(
       "/p/prj_1/workspace/ws_018f6a2e-0000-7000-8000-000000000001",
     );
@@ -148,7 +148,7 @@ describe("W-04 TreePage (read-only navigation)", () => {
     renderTree();
     await screen.findByText("平台根工作区");
     expect(fetchMock.bodies).toEqual([{ projectId: "prj_1", depth: 3 }]);
-    fireEvent.change(screen.getByLabelText("树深度"), {
+    fireEvent.change(screen.getByLabelText("显示层级"), {
       target: { value: "5" },
     });
     await waitFor(() => expect(fetchMock.bodies.length).toBe(2));
@@ -159,16 +159,17 @@ describe("W-04 TreePage (read-only navigation)", () => {
     vi.stubGlobal("fetch", makeFetch([okBody(treeTypical)]).fn);
     renderTree();
     fireEvent.click(await screen.findByText("前端渲染"));
-    expect(await screen.findByText("子树关注")).toBeTruthy();
+    expect(await screen.findByText("相关提醒")).toBeTruthy();
     expect(screen.getByText("名称")).toBeTruthy();
-    expect(screen.getByText("工作区")).toBeTruthy();
+    expect(screen.getByText("类型")).toBeTruthy();
+    expect(screen.getByText("项目分工")).toBeTruthy();
     expect(screen.getByText("状态")).toBeTruthy();
     expect(screen.getByText("当前工作")).toBeTruthy();
     expect(screen.getByText("用量")).toBeTruthy();
     expect(screen.getByText("需关注 0 · 需要处理 0")).toBeTruthy();
     expect(screen.getByText("—")).toBeTruthy();
     window.history.replaceState(null, "", "/");
-    fireEvent.click(screen.getByRole("button", { name: "打开工作区" }));
+    fireEvent.click(screen.getByRole("button", { name: "查看工作" }));
     expect(window.location.pathname).toBe(
       "/p/prj_1/workspace/ws_018f6a2e-0000-7000-8000-000000000002",
     );

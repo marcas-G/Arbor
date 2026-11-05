@@ -60,6 +60,7 @@ import { runModelDecision } from "./model-decision.js";
 import { recordAcceptedModelOutput } from "./model-output-journal.js";
 import type { AgentLoopQualificationProbe } from "./qualification-probe.js";
 import { selectPendingInputPromotions } from "./safe-input-drain.js";
+import { settlementProposal } from "./settlement-proposal.js";
 
 export interface AgentLoopDriverOptions {
   /** P12 `03` §3: the credential reference the driver binds to a ProviderTurn.
@@ -169,6 +170,9 @@ export const AgentLoopDriverLive = (
         readonly safetyGate: RuntimeSafetyGateService;
       }): Effect.Effect<ExecutionDriveOutcome, ExecutionDriverError> =>
         Effect.gen(function* () {
+          const commitSettlementProposal = (
+            settlement: import("@arbor/domain").ExecutionSettlement,
+          ) => settlementProposal(settlement).settlement;
           if (
             input.execution.binding._tag === "WorkspaceExecution" &&
             executionEpisode(input.execution) === undefined
@@ -264,7 +268,11 @@ export const AgentLoopDriverLive = (
           ): Effect.Effect<ModelDecisionOutcome, ExecutionDriverError> =>
             runModelDecision(
               {
-                input,
+                input: {
+                  execution: input.execution,
+                  agentExecutionState: input.agentExecutionState,
+                  context: input.context,
+                },
                 agentBinding,
                 capability,
                 currentControlBasis,
@@ -346,7 +354,7 @@ export const AgentLoopDriverLive = (
 
             const modelDecision = yield* decideModelOutput(turn, activity);
             if (modelDecision._tag === "Settle") {
-              return modelDecision.settlement;
+              return commitSettlementProposal(modelDecision.settlement);
             }
             const preparedTurn = modelDecision.turn;
             const decodedOutput = modelDecision.output;
@@ -396,7 +404,7 @@ export const AgentLoopDriverLive = (
                 : { qualificationProbe: options.qualificationProbe }),
             });
             if (actionProgression._tag === "Settle") {
-              return actionProgression.settlement;
+              return commitSettlementProposal(actionProgression.settlement);
             }
             if (actionProgression._tag === "DecisionStale") {
               continue;
@@ -429,7 +437,7 @@ export const AgentLoopDriverLive = (
                 : { qualificationProbe: options.qualificationProbe }),
             });
             if (finalization._tag === "Settle") {
-              return finalization.settlement;
+              return commitSettlementProposal(finalization.settlement);
             }
           }
           return {

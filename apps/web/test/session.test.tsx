@@ -99,11 +99,11 @@ async function login(actor = "human:root", token = "tok_1"): Promise<void> {
   // The app now opens pre-authenticated (local single-user form); the login
   // card is reached via an explicit disconnect.
   fireEvent.click(screen.getByRole("button", { name: /断开/ }));
-  await waitFor(() => expect(screen.getByLabelText(/token/)).toBeTruthy());
-  fireEvent.change(screen.getByLabelText(/token/), {
+  await waitFor(() => expect(screen.getByLabelText("访问凭据")).toBeTruthy());
+  fireEvent.change(screen.getByLabelText("访问凭据"), {
     target: { value: token },
   });
-  fireEvent.change(screen.getByLabelText(/actor/), {
+  fireEvent.change(screen.getByLabelText("用户标识"), {
     target: { value: actor },
   });
   fireEvent.click(screen.getByRole("button", { name: "连接" }));
@@ -152,16 +152,16 @@ describe("P13-007 LoginCard", () => {
       token: "local",
       actor: "user:local",
     });
-    fireEvent.change(screen.getByLabelText(/token/), {
+    fireEvent.change(screen.getByLabelText("访问凭据"), {
       target: { value: "tok_1" },
     });
     // The actor field pre-fills with the remembered local principal; clear
     // it to prove the disabled gate, then re-enter.
-    fireEvent.change(screen.getByLabelText(/actor/), {
+    fireEvent.change(screen.getByLabelText("用户标识"), {
       target: { value: "" },
     });
     expect(connect.disabled).toBe(true);
-    fireEvent.change(screen.getByLabelText(/actor/), {
+    fireEvent.change(screen.getByLabelText("用户标识"), {
       target: { value: "human:root" },
     });
     expect(connect.disabled).toBe(false);
@@ -224,9 +224,9 @@ describe("session unauthenticated gate (EC-4, Web v1 shell)", () => {
     render(<App />);
     await login();
     await switchProject("prj_demo");
-    const treeButtons = screen.getAllByRole("button", { name: "树" });
+    const treeButtons = screen.getAllByRole("button", { name: "项目结构" });
     fireEvent.click(treeButtons[0] as HTMLElement);
-    await waitFor(() => expect(screen.getByText("未认证")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("连接已失效")).toBeTruthy());
     expect(screen.queryByRole("heading", { name: "工作台" })).toBeNull();
     const call = fetchMock.mock.calls.find(([url]) => /^\/views\//.test(url));
     expect(call).toBeDefined();
@@ -237,8 +237,8 @@ describe("session unauthenticated gate (EC-4, Web v1 shell)", () => {
       "Bearer tok_1",
     );
     fireEvent.click(screen.getByRole("button", { name: "重新登录" }));
-    await waitFor(() => expect(screen.getByLabelText(/token/)).toBeTruthy());
-    expect(screen.queryByText("未认证")).toBeNull();
+    await waitFor(() => expect(screen.getByLabelText("访问凭据")).toBeTruthy());
+    expect(screen.queryByText("连接已失效")).toBeNull();
   });
 });
 
@@ -296,17 +296,22 @@ describe("Web v1 shell integration smoke (W-02)", () => {
     history.replaceState(null, "", "/");
     render(<App />);
     await login();
-    expect(screen.getByText("human:root")).toBeTruthy();
+    expect(screen.getByText("已连接")).toBeTruthy();
+    expect(screen.queryByText("human:root")).toBeNull();
     await switchProject("prj_demo");
     await waitFor(() =>
       expect(screen.getByRole("heading", { name: "工作台" })).toBeTruthy(),
     );
     expect(location.pathname).toBe("/p/prj_demo");
-    const treeButtons = screen.getAllByRole("button", { name: "树" });
+    const treeButtons = screen.getAllByRole("button", { name: "项目结构" });
     fireEvent.click(treeButtons[0] as HTMLElement);
-    await waitFor(() => expect(screen.getByText(/责任树（W-04/)).toBeTruthy());
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { level: 1, name: "项目结构" }),
+      ).toBeTruthy(),
+    );
     expect(location.pathname).toBe("/p/prj_demo/tree");
-    fireEvent.click(screen.getByRole("button", { name: "断开" }));
-    await waitFor(() => expect(screen.getByLabelText(/token/)).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "断开连接" }));
+    await waitFor(() => expect(screen.getByLabelText("访问凭据")).toBeTruthy());
   });
 });

@@ -205,6 +205,7 @@ const toConsumerEvent = (event: DomainEvent<unknown>) => ({
   eventType: event.eventType as string,
   payload: event.payload,
   eventId: event.eventId as string,
+  occurredAt: event.occurredAt,
 });
 
 /** P7 coordinator wired as a handlers function for `pollOnce`

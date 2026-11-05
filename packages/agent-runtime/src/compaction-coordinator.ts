@@ -14,7 +14,7 @@ import type {
   SessionWriteFence,
   TransactionPortService,
 } from "@arbor/ports";
-import { sha256Hex } from "@arbor/ports";
+import { sessionCausalBindingForWork, sha256Hex } from "@arbor/ports";
 import { Effect } from "effect";
 import type { AgentLoopQualificationProbe } from "./qualification-probe.js";
 
@@ -42,6 +42,11 @@ export interface SummaryCompactionInput {
   readonly inputItems: ReadonlyArray<PortableInputItem>;
   /** Exact durable Native request when P9 is retrying its pinned Turn. */
   readonly nativeRecovery?: {
+    readonly manifestJson: string;
+    readonly request: PortableModelRequestV2;
+  };
+  /** Exact durable Summary request when resuming a persisted compaction turn. */
+  readonly summaryRecovery?: {
     readonly manifestJson: string;
     readonly request: PortableModelRequestV2;
   };
@@ -90,6 +95,18 @@ const commitCheckpointEpoch = (
           checkpoint: input.checkpoint,
           source: { kind: "CompactionTurn", ref: input.providerTurnId },
           contentHash: sha256Hex(JSON.stringify(input.checkpoint)),
+          ...(input.execution.binding._tag === "WorkspaceExecution" &&
+          input.execution.binding.episode?._tag === "WorkEpisode"
+            ? {
+                causalBinding: sessionCausalBindingForWork({
+                  projectId: input.execution.projectId,
+                  workspaceId: input.execution.workspaceId,
+                  workId: input.execution.binding.episode.workId,
+                  executionId: input.execution.executionId,
+                  causedByRef: String(input.providerTurnId),
+                }),
+              }
+            : {}),
         },
         input.fence,
       ),
@@ -113,7 +130,7 @@ export const runSummaryCompaction = (
     const providerTurnId =
       `ptn_${input.execution.executionId}_${input.logicalStepNo}_compact_${input.currentEpoch}` as ProviderTurnId;
     const nextEpoch = parse(ContextEpochNumber)(Number(input.currentEpoch) + 1);
-    const request = {
+    const request = input.summaryRecovery?.request ?? {
       requestVersion: 2 as const,
       operationKind: "CompactionSummary" as const,
       modelRef: input.modelRef,
@@ -159,7 +176,8 @@ export const runSummaryCompaction = (
       modelRef: input.modelRef,
       ...(input.secretRef === undefined ? {} : { secretRef: input.secretRef }),
       outputContractRef: "compaction-result-v1",
-      manifestJson: JSON.stringify(manifest),
+      manifestJson:
+        input.summaryRecovery?.manifestJson ?? JSON.stringify(manifest),
       request,
     });
     const summary = result.events

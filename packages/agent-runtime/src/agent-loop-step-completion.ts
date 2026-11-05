@@ -185,6 +185,67 @@ export const completeAgentLoopStep = (
       return { _tag: "Settle", settlement };
     }
 
+    // Placement is a terminal RootConversation action. The durable Work is
+    // now the owner of execution; do not ask the model for another placement
+    // turn (which can loop on assign_work and hold the Workspace main lease).
+    // Persist a bounded, non-CoT status line so the response job can settle
+    // authoritatively and the scheduler can admit the WorkEpisode next tick.
+    if (
+      conversation &&
+      decodedOutput.toolInvocations.some(
+        (invocation) => invocation.toolName === "assign_work",
+      ) &&
+      observations.some((entry) =>
+        entry.observation.text.includes("WorkAssigned("),
+      )
+    ) {
+      const statusText = "已建立 Work，后续由该 Work 继续执行并提交验证结果。";
+      yield* tx
+        .transact(
+          sessions.appendEntry(
+            input.execution.sessionId,
+            {
+              entryKind: "ModelOutput",
+              payload: {
+                providerTurnId: "runtime-placement-summary",
+                outputContractRef: "conversation-placement-summary-v1",
+                decoderVersion: "runtime-v1",
+                text: statusText,
+                finishReason: "Stop",
+                toolInvocations: [],
+              },
+            },
+            input.context._tag === "ExecutionOrigin"
+              ? sessionFence(input.execution.executionId, input.context)
+              : undefined,
+          ),
+        )
+        .pipe(Effect.mapError(failure));
+      const episode = conversationResponseEpisode(input.execution);
+      if (episode === null) {
+        return {
+          _tag: "Settle",
+          settlement: {
+            _tag: "Failed",
+            failure: {
+              _tag: "ExecutionFailure",
+              reason: "conversation response lacks exact episode binding",
+            },
+          },
+        };
+      }
+      return {
+        _tag: "Settle",
+        settlement: {
+          _tag: "Completed",
+          result: {
+            _tag: "ConversationResponseProduced",
+            messageId: episode.messageId,
+          },
+        },
+      };
+    }
+
     const episode = executionEpisode(input.execution);
     if (
       episode?._tag === "InboxEpisode" &&

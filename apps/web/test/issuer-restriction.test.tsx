@@ -46,7 +46,7 @@ describe("Grant issuer read-only restriction", () => {
         onSubmitted={vi.fn()}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "授予" }));
+    fireEvent.click(screen.getByRole("button", { name: "开放操作" }));
     await waitFor(() => expect(mock.mock.calls.length).toBe(1));
     const body = readBody(mock);
     expect(body.actor).toBe("user:lgao");

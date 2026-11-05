@@ -16,27 +16,35 @@ const GROUP_BY_OPTIONS: ReadonlyArray<UsageReq["groupBy"]> = [
   "project",
 ];
 
+const GROUP_BY_LABELS: Readonly<Record<UsageReq["groupBy"], string>> = {
+  workspace: "按责任",
+  subtree: "含下级责任",
+  project: "整个项目",
+};
+
 export function UsageView({
   res,
   groupBy,
   onGroupByChange,
+  workspaceNames,
 }: {
   readonly res: UsageRes;
   readonly groupBy: UsageReq["groupBy"];
   readonly onGroupByChange?: ((next: UsageReq["groupBy"]) => void) | undefined;
+  readonly workspaceNames?: ReadonlyMap<string, string> | undefined;
 }) {
   const knownGroup = GROUP_BY_OPTIONS.includes(groupBy);
   const compact = useCompactLayout();
   return (
     <div className="arbor-view-stack">
-      <fieldset className="arbor-segmented" aria-label="groupBy">
+      <fieldset className="arbor-segmented" aria-label="统计范围">
         {GROUP_BY_OPTIONS.map((option) => (
           <Button
             key={option}
             variant={option === groupBy ? "primary" : "quiet"}
             onClick={() => onGroupByChange?.(option)}
           >
-            {option}
+            {GROUP_BY_LABELS[option]}
           </Button>
         ))}
         {knownGroup ? null : <Mono>{groupBy}</Mono>}
@@ -45,27 +53,28 @@ export function UsageView({
         <Empty>无用量数据</Empty>
       ) : compact ? (
         <ul className={styles.mobileRows} aria-label="用量明细">
-          {res.rows.map((row) => (
+          {res.rows.map((row, index) => (
             <li className={styles.mobileRow} key={row.workspaceId}>
               <dl className={styles.rowValues}>
                 <div>
-                  <dt>workspaceId</dt>
+                  <dt>分工</dt>
                   <dd>
-                    <Mono>{row.workspaceId}</Mono>
+                    {workspaceNames?.get(row.workspaceId) ??
+                      `责任 ${String(index + 1)}`}
                   </dd>
                 </div>
                 <div>
-                  <dt>tokens</dt>
+                  <dt>处理量</dt>
                   <dd>{String(row.tokens)}</dd>
                 </div>
                 <div>
-                  <dt>cost</dt>
+                  <dt>费用</dt>
                   <dd>
                     <Mono>{formatCost(row.cost)}</Mono>
                   </dd>
                 </div>
                 <div>
-                  <dt>turns</dt>
+                  <dt>运行次数</dt>
                   <dd>{String(row.turns)}</dd>
                 </div>
               </dl>
@@ -76,17 +85,18 @@ export function UsageView({
         <table className="arbor-table">
           <thead>
             <tr>
-              <th scope="col">workspaceId</th>
-              <th scope="col">tokens</th>
-              <th scope="col">cost</th>
-              <th scope="col">turns</th>
+              <th scope="col">分工</th>
+              <th scope="col">处理量</th>
+              <th scope="col">费用</th>
+              <th scope="col">运行次数</th>
             </tr>
           </thead>
           <tbody>
-            {res.rows.map((row) => (
+            {res.rows.map((row, index) => (
               <tr key={row.workspaceId}>
                 <td>
-                  <Mono>{row.workspaceId}</Mono>
+                  {workspaceNames?.get(row.workspaceId) ??
+                    `责任 ${String(index + 1)}`}
                 </td>
                 <td>{String(row.tokens)}</td>
                 <td>

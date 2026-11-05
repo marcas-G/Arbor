@@ -151,7 +151,18 @@ const installProjectQueue = (
       }
       if (view === "verification") {
         const request = body as { readonly workId: string };
-        return new Response(okBody(verificationFor(request.workId)), {
+        const result = verificationFor(request.workId);
+        if (
+          typeof result === "object" &&
+          result !== null &&
+          "problem" in result
+        ) {
+          return new Response(
+            JSON.stringify({ ok: false, problem: result.problem }),
+            { status: 200 },
+          );
+        }
+        return new Response(okBody(result), {
           status: 200,
         });
       }
@@ -179,9 +190,17 @@ describe("W-08 Governance Queue（待处理）", () => {
     renderQueue();
     await waitFor(() => expect(screen.getByText("待决策")).toBeTruthy());
     expect(
-      screen.getAllByText("fpr_018f6a2e-0000-7000-8000-00000000000f").length,
-    ).toBeGreaterThan(0);
-    expect(screen.getAllByText(/revision 3/).length).toBeGreaterThan(0);
+      within(screen.getByLabelText("可处理事项列表")).getByText("root"),
+    ).toBeTruthy();
+    expect(
+      within(screen.getByLabelText("待处理详情")).getByText("root"),
+    ).toBeTruthy();
+    expect(
+      within(screen.getByLabelText("可处理事项列表")).getByText(
+        "创建分工“拆分”需要你的决定",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText("等待你的决定")).toBeTruthy();
     expect(screen.getByRole("button", { name: "提交决策" })).toBeTruthy();
   });
 
@@ -210,6 +229,38 @@ describe("W-08 Governance Queue（待处理）", () => {
     );
     expect(screen.queryByText("格式未知的治理条目")).toBeNull();
     expect(screen.queryByText("普通消息")).toBeNull();
+  });
+
+  it("submits the selected proposal after switching between decisions", async () => {
+    const recorded = installProjectQueue(
+      treeDto.nodes,
+      () => [
+        {
+          entryKey: "gov:fpr_first:1",
+          kind: "Governance",
+          summary: "第一个提案",
+          watermark: 2,
+        },
+        {
+          entryKey: "gov:fpr_second:3",
+          kind: "Governance",
+          summary: "第二个提案",
+          watermark: 1,
+        },
+      ],
+      () => ({}),
+    );
+    renderQueue();
+    fireEvent.click(await screen.findByRole("button", { name: /第二个提案/ }));
+    fireEvent.click(screen.getByRole("button", { name: "提交决策" }));
+    await waitFor(() => expect(recorded.urls).toContain("/commands"));
+    const command = recorded.bodies[recorded.urls.indexOf("/commands")] as {
+      payload: unknown;
+    };
+    expect(command.payload).toMatchObject({
+      proposalId: "fpr_second",
+      expectedProposalRevision: 3,
+    });
   });
 
   it("decision submit posts the frozen RecordDecision payload via /commands", async () => {
@@ -266,7 +317,7 @@ describe("W-08 Governance Queue（待处理）", () => {
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "提交决策" })).toBeTruthy(),
     );
-    expect(screen.getByText("记录治理决策")).toBeTruthy();
+    expect(screen.getByText("处理待决事项")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "提交决策" }));
     await waitFor(() =>
       expect(recorded.urls.some((url) => url === "/commands")).toBe(true),
@@ -279,7 +330,7 @@ describe("W-08 Governance Queue（待处理）", () => {
     expect(payload.proposalId).toBe("fpr_018f6a2e-0000-7000-8000-00000000000f");
     expect(payload.expectedProposalRevision).toBe(2);
     expect(payload.outcome).toEqual({ _tag: "Approve" });
-    expect(screen.getByText(/最近命令：已提交/)).toBeTruthy();
+    expect(screen.getByText("已完成处理")).toBeTruthy();
   });
 
   it("submits an exact control approval decision", async () => {
@@ -289,8 +340,25 @@ describe("W-08 Governance Queue（待处理）", () => {
         {
           entryKey: "cap:cap_deadbeef:0",
           kind: "Governance",
-          summary:
-            "core.control.assign-work requires approval for target ws_root",
+          summary: JSON.stringify({
+            action: "AssignWork",
+            targetWorkspaceId: "ws_root",
+            objective: "准备报告",
+            why: "支持决策",
+            constraints: ["使用公开数据"],
+            completionExpectation: "提交报告",
+            verificationMission: {
+              goal: "核实报告",
+              criteria: [
+                {
+                  criterionId: "c1",
+                  requirement: "来源可追溯",
+                  required: true,
+                },
+              ],
+              riskRequirements: ["保护隐私"],
+            },
+          }),
           watermark: 10,
         },
       ],
@@ -300,6 +368,25 @@ describe("W-08 Governance Queue（待处理）", () => {
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "批准并继续" })).toBeTruthy(),
     );
+    expect(
+      within(screen.getByLabelText("待处理详情")).getByText("工作目标"),
+    ).toBeTruthy();
+    expect(
+      within(screen.getByLabelText("待处理详情")).getByText("支持决策"),
+    ).toBeTruthy();
+    expect(
+      within(screen.getByLabelText("待处理详情")).getByText("提交报告"),
+    ).toBeTruthy();
+    expect(
+      within(screen.getByLabelText("待处理详情")).getByText("工作交给：root"),
+    ).toBeTruthy();
+    expect(screen.getByText("来源可追溯（必须）")).toBeTruthy();
+    expect(screen.getByText("保护隐私")).toBeTruthy();
+    expect(
+      within(screen.getByLabelText("可处理事项列表")).getByText(
+        "安排工作：准备报告",
+      ),
+    ).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "批准并继续" }));
     await waitFor(() =>
       expect(recorded.urls.some((url) => url === "/commands")).toBe(true),
@@ -369,7 +456,7 @@ describe("W-08 Governance Queue（待处理）", () => {
         "proposal ws_1",
       ),
     ).toBeTruthy();
-    expect(screen.getByLabelText("工作区 ws_2 收件箱问题")).toBeTruthy();
+    expect(screen.getByLabelText("相关消息加载问题")).toBeTruthy();
     expect(screen.queryByText("proposal ws_2")).toBeNull();
     expect(screen.queryByText("read only ws_1")).toBeNull();
   });
@@ -471,6 +558,40 @@ describe("W-08 Governance Queue（待处理）", () => {
     await waitFor(() =>
       expect(recorded.urls.some((url) => url === "/commands")).toBe(true),
     );
+  });
+
+  it("does not claim the queue is empty when verification cannot be loaded", async () => {
+    installProjectQueue(
+      [
+        {
+          ...treeDto.nodes[0],
+          currentWork: {
+            workId: "wrk_1",
+            objective: "准备报告",
+            status: "Open",
+            revision: 1,
+          },
+        },
+      ],
+      () => [],
+      () => ({
+        problem: {
+          code: "view/unavailable",
+          category: "unavailable",
+          message: "unavailable",
+          correlationId: null,
+          retryDisposition: "retryable",
+          safeDetails: {},
+        },
+      }),
+    );
+    renderQueue();
+    expect(
+      await screen.findByText(
+        "部分分工无法加载，暂时不能确认是否还有待处理事项",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText("没有等你处理的事项")).toBeNull();
   });
 
   it("opens selected queue detail in a mobile dialog sheet", async () => {

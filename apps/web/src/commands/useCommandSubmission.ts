@@ -69,6 +69,11 @@ export function useCommandSubmission({
   ) => Promise<void>;
 } {
   const pendingCommandIdRef = useRef<string | null>(null);
+  const pendingRequestRef = useRef<{
+    readonly commandType: HumanActionableCommand;
+    readonly projectId: string;
+    readonly payload: unknown;
+  } | null>(null);
   const inFlightRef = useRef(false);
   const [state, setState] = useState<CommandSubmissionState>(IDLE);
 
@@ -90,6 +95,12 @@ export function useCommandSubmission({
         });
         return;
       }
+      const pendingRequest = pendingRequestRef.current ?? {
+        commandType,
+        projectId,
+        payload,
+      };
+      pendingRequestRef.current = pendingRequest;
       const commandId = pendingCommandIdRef.current ?? newCommandId();
       pendingCommandIdRef.current = commandId;
       inFlightRef.current = true;
@@ -100,7 +111,13 @@ export function useCommandSubmission({
         receipt: null,
       });
       const response = await submitCommand(
-        buildEnvelope({ commandType, commandId, projectId, actor, payload }),
+        buildEnvelope({
+          commandType: pendingRequest.commandType,
+          commandId,
+          projectId: pendingRequest.projectId,
+          actor,
+          payload: pendingRequest.payload,
+        }),
         token,
       );
       inFlightRef.current = false;
@@ -114,6 +131,7 @@ export function useCommandSubmission({
         return;
       }
       pendingCommandIdRef.current = null;
+      pendingRequestRef.current = null;
       if (response.body.resolution === "Committed") {
         setState({
           phase: "committed",

@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "arbor-real-provider-evidence-v1",
+  "recordedAt": "2026-10-03T19:28:24.662Z",
+  "caseId": "MAC-P3-DELIVERY-L3-REAL",
+  "status": "FAIL",
+  "error": "Error: DeclareDependency failed: {\"status\":403,\"payload\":{\"ok\":false,\"status\":403,\"problem\":{\"code\":\"authority/denied\",\"category\":\"forbidden\",\"message\":\"authority/denied\",\"correlationId\":null,\"retryDisposition\":\"non-retryable\",\"safeDetails\":{\"reason\":\"UnsupportedOrigin:DeclareDependency\"}}}}",
+  "provider": {
+    "provider": "OpenAI-compatible endpoint",
+    "endpoint": "https://api.deepseek.com",
+    "model": "deepseek-flash",
+    "serverBuildId": "deepseek-official",
+    "modelRevision": "not exposed by provider; local model file revision/hash not requested",
+    "authMode": "env",
+    "serverProps": {}
+  },
+  "generation": [],
+  "requestsAndResponses": []
+}

@@ -18,7 +18,7 @@ import {
   ClockLive,
   ExecutionRepositoryLive,
   layer,
-  P19_MIGRATIONS,
+  P36_MIGRATIONS,
   runMigrations,
   SessionRepositoryLive,
   TransactionPortLive,
@@ -51,7 +51,11 @@ const execution: Execution = {
   binding: {
     _tag: "WorkspaceExecution",
     workspaceId,
-    focus: { _tag: "Coordination" },
+    episode: {
+      _tag: "WorkEpisode",
+      workId: "wrk_018f2b3c-4d5e-7abc-8def-0123456789b1" as never,
+      targetWorkRevision: 0 as never,
+    },
   },
   sessionId,
   admittedAt: "t",
@@ -110,7 +114,7 @@ const seed = Effect.gen(function* () {
 describe("SCRC typed Session store", () => {
   it("idempotently appends typed items and returns the active frontier", async () => {
     const program = Effect.gen(function* () {
-      yield* runMigrations(P19_MIGRATIONS);
+      yield* runMigrations(P36_MIGRATIONS);
       yield* seed;
       const tx = yield* TransactionPort;
       const executions = yield* ExecutionRepository;
@@ -147,6 +151,14 @@ describe("SCRC typed Session store", () => {
         contextEpoch: 0 as never,
         source: { kind: "InboxEntry", ref: "msg:one" },
         contentHash: "hash-one",
+        causalBinding: {
+          projectId,
+          workspaceId,
+          workId: "wrk_018f2b3c-4d5e-7abc-8def-0123456789b1" as never,
+          executionId,
+          episodeBinding: "WorkEpisode",
+          causedByRef: null,
+        },
       };
       const first = yield* tx.transact(
         sessions.appendItemIdempotent(sessionId, write, fence),
@@ -184,9 +196,69 @@ describe("SCRC typed Session store", () => {
     });
   });
 
+  it("round-trips causal provenance and leaves historical rows unbound", async () => {
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P36_MIGRATIONS);
+      yield* seed;
+      const tx = yield* TransactionPort;
+      const executions = yield* ExecutionRepository;
+      const sessions = yield* SessionRepository;
+      yield* tx.transact(executions.tryAdmitMainExecution(execution));
+      yield* tx.transact(
+        executions.tryAcquireLease(
+          executionId,
+          "worker:prov",
+          "inc:prov",
+          "2999-01-01T00:00:00.000Z",
+        ),
+      );
+      const fence = {
+        executionId,
+        workerId: "worker:prov",
+        workerIncarnationId: "inc:prov",
+        fencingGeneration: 0 as never,
+      };
+      const write = {
+        item: {
+          _tag: "AssistantMessage" as const,
+          providerTurnId: "ptn_018f2b3c-4d5e-7abc-8def-0123456789b1" as never,
+          contentRef: "provider:test:assistant",
+          text: "bound",
+          finishReason: "stop",
+        },
+        contextEpoch: 0 as never,
+        source: {
+          kind: "ProviderTurn",
+          ref: "ptn_018f2b3c-4d5e-7abc-8def-0123456789b1",
+        },
+        contentHash: "provenance-hash",
+        causalBinding: {
+          projectId,
+          workspaceId,
+          workId: "wrk_018f2b3c-4d5e-7abc-8def-0123456789b1" as never,
+          executionId,
+          episodeBinding: "WorkEpisode",
+          causedByRef: null,
+        },
+      };
+      yield* tx.transact(
+        sessions.appendItemIdempotent(sessionId, write, fence),
+      );
+      const frontier = yield* tx.transact(
+        sessions.listActiveFrontier(sessionId, 0 as never, 20),
+      );
+      return frontier[0];
+    });
+    const result = await Effect.runPromise(Effect.provide(program, app()));
+    expect(result?.causalBinding).toMatchObject({
+      executionId,
+      episodeBinding: "WorkEpisode",
+    });
+  });
+
   it("atomically commits a checkpoint and epoch with idempotent replay", async () => {
     const program = Effect.gen(function* () {
-      yield* runMigrations(P19_MIGRATIONS);
+      yield* runMigrations(P36_MIGRATIONS);
       yield* seed;
       const tx = yield* TransactionPort;
       const executions = yield* ExecutionRepository;

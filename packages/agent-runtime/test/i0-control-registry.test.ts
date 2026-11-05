@@ -138,6 +138,52 @@ describe("I0 ControlToolRegistry", () => {
     ).toThrow();
   });
 
+  it("registers a durable wait before yielding when a wait registrar is provided", async () => {
+    let registered = 0;
+    const registry = makeControlToolRegistry([], ({ action }) => {
+      registered += 1;
+      expect(action.waitSpec.conditions).toHaveLength(1);
+      return Effect.void;
+    });
+    const decoded = Effect.runSync(
+      registry.decode(
+        invocation("wait", {
+          reason: "await verification",
+          waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
+        }),
+      ),
+    );
+    const outcome = await Effect.runPromise(
+      registry.handle({
+        action: decoded.action,
+        invocation: invocation("wait", {
+          reason: "await verification",
+          waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
+        }),
+        execution: {
+          executionId: "exe_018f2b3c-4d5e-7abc-8def-0123456789a1" as never,
+          projectId: "prj_018f2b3c-4d5e-7abc-8def-0123456789a1" as never,
+          workspaceId: "ws_018f2b3c-4d5e-7abc-8def-0123456789a1" as never,
+          binding: {
+            _tag: "WorkspaceExecution",
+            workspaceId: "ws_018f2b3c-4d5e-7abc-8def-0123456789a1" as never,
+            episode: {
+              _tag: "WorkEpisode",
+              workId: "wrk_018f2b3c-4d5e-7abc-8def-0123456789a1" as never,
+              targetWorkRevision: 0,
+            },
+          },
+        } as never,
+        context: { _tag: "System", principal: "runtime:system" } as never,
+      }),
+    );
+    expect(registered).toBe(1);
+    expect(outcome).toMatchObject({
+      _tag: "Settle",
+      settlement: { _tag: "Completed" },
+    });
+  });
+
   it("decodes SendMessage semantic fields without requiring Runtime bindings", () => {
     const registry = makeControlToolRegistry([sendHandler]);
     const query = Effect.runSync(

@@ -139,7 +139,12 @@ describe("CreateProjectForm", () => {
         onSubmitted={onSubmitted}
       />,
     );
-    await screen.findByRole("radio", { name: /Project files.*可用/u });
+    await waitFor(() =>
+      expect(
+        (screen.getByRole("button", { name: "创建项目" }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(false),
+    );
     fireEvent.change(screen.getByLabelText("项目名称"), {
       target: { value: "论文写作平台" },
     });
@@ -182,7 +187,7 @@ describe("CreateProjectForm", () => {
     await waitFor(() => expect(onSubmitted).toHaveBeenCalledTimes(1));
   });
 
-  it("preselects one host Profile, displays only its friendly name, and posts the closed v2 selector", async () => {
+  it("creates without binding a folder even when host Profiles exist", async () => {
     const onSubmitted = vi.fn();
     const hostPath = "C:\\private\\host\\workspace";
     const fetchMock = stubFetch((url) =>
@@ -206,26 +211,28 @@ describe("CreateProjectForm", () => {
         onSubmitted={onSubmitted}
       />,
     );
-    const profileChoice = await screen.findByRole("radio", {
-      name: /Friendly writing workspace.*可用/u,
-    });
-    expect((profileChoice as HTMLInputElement).checked).toBe(true);
     expect(
       screen.queryByText(/opaque-profile-secret|opaque-version-secret/u),
     ).toBeNull();
     expect(screen.queryByText(hostPath)).toBeNull();
+    await waitFor(() =>
+      expect(
+        (screen.getByRole("button", { name: "创建项目" }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(false),
+    );
     fireEvent.change(screen.getByLabelText("项目名称"), {
       target: { value: "Profile project" },
     });
     fireEvent.click(screen.getByRole("button", { name: "创建项目" }));
-    await waitFor(() => expect(onSubmitted).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.filter(([url]) => url === "/commands"),
+      ).toHaveLength(1),
+    );
     const { envelope } = readCommandCall(fetchMock);
     const root = payloadOf(envelope).rootWorkspace as Record<string, unknown>;
-    expect(root.resourceSelection).toEqual({
-      _tag: "Profile",
-      resourceProfileRef: "opaque-profile-secret",
-      version: "opaque-version-secret",
-    });
+    expect(root.resourceSelection).toEqual({ _tag: "ConversationOnly" });
     expect(root).not.toHaveProperty("resourceBoundary");
     expect(JSON.stringify(envelope)).not.toContain(hostPath);
     const catalogCall = fetchMock.mock.calls.find(
@@ -236,7 +243,7 @@ describe("CreateProjectForm", () => {
     });
   });
 
-  it("requires an explicit choice when multiple Profiles are available", async () => {
+  it("does not bind any host Profile when multiple Profiles are available", async () => {
     const onSubmitted = vi.fn();
     const fetchMock = stubFetch((url) =>
       Promise.resolve(
@@ -259,19 +266,10 @@ describe("CreateProjectForm", () => {
       ),
     );
     render(<CreateProjectForm actor="human:root" onSubmitted={onSubmitted} />);
-    const first = await screen.findByRole("radio", {
-      name: /First workspace.*可用/u,
-    });
-    const second = screen.getByRole("radio", {
-      name: /Second workspace.*可用/u,
-    });
-    expect((first as HTMLInputElement).checked).toBe(false);
-    expect((second as HTMLInputElement).checked).toBe(false);
     const create = screen.getByRole("button", { name: "创建项目" });
-    expect((create as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(second);
-    expect((second as HTMLInputElement).checked).toBe(true);
-    expect((create as HTMLButtonElement).disabled).toBe(false);
+    await waitFor(() =>
+      expect((create as HTMLButtonElement).disabled).toBe(false),
+    );
     fireEvent.change(screen.getByLabelText("项目名称"), {
       target: { value: "Second profile project" },
     });
@@ -279,14 +277,10 @@ describe("CreateProjectForm", () => {
     await waitFor(() => expect(onSubmitted).toHaveBeenCalledTimes(1));
     const root = payloadOf(readCommandCall(fetchMock).envelope)
       .rootWorkspace as Record<string, unknown>;
-    expect(root.resourceSelection).toEqual({
-      _tag: "Profile",
-      resourceProfileRef: "opaque-second",
-      version: "v2",
-    });
+    expect(root.resourceSelection).toEqual({ _tag: "ConversationOnly" });
   });
 
-  it("requires an explicit ConversationOnly choice when no Profile is available", async () => {
+  it("silently creates a folderless project when no Profile is available", async () => {
     const onSubmitted = vi.fn();
     const fetchMock = stubFetch((url) =>
       Promise.resolve(
@@ -294,17 +288,10 @@ describe("CreateProjectForm", () => {
       ),
     );
     render(<CreateProjectForm actor="human:root" onSubmitted={onSubmitted} />);
-    const onlyConversation = await screen.findByRole("radio", {
-      name: "仅对话",
-    });
-    expect((onlyConversation as HTMLInputElement).checked).toBe(false);
-    expect(
-      screen.getByText(/不能使用文件工具，也不能完成需要文件证据的 Work/u),
-    ).toBeTruthy();
     const create = screen.getByRole("button", { name: "创建项目" });
-    expect((create as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(onlyConversation);
-    expect((create as HTMLButtonElement).disabled).toBe(false);
+    await waitFor(() =>
+      expect((create as HTMLButtonElement).disabled).toBe(false),
+    );
     fireEvent.change(screen.getByLabelText("项目名称"), {
       target: { value: "Conversation only project" },
     });
@@ -316,7 +303,7 @@ describe("CreateProjectForm", () => {
     expect(root).not.toHaveProperty("resourceBoundary");
   });
 
-  it("keeps an unavailable Profile unselectable and does not convert it to ConversationOnly", async () => {
+  it("falls back to a folderless project when the configured Profile is unavailable", async () => {
     const fetchMock = stubFetch((url) =>
       Promise.resolve(
         url === "/project-resources"
@@ -332,20 +319,22 @@ describe("CreateProjectForm", () => {
       ),
     );
     render(<CreateProjectForm actor="human:root" onSubmitted={vi.fn()} />);
-    const unavailable = await screen.findByRole("radio", {
-      name: /Offline repository.*不可用/u,
-    });
-    expect((unavailable as HTMLInputElement).disabled).toBe(true);
-    expect((unavailable as HTMLInputElement).checked).toBe(false);
-    const onlyConversation = screen.getByRole("radio", { name: "仅对话" });
-    expect((onlyConversation as HTMLInputElement).checked).toBe(false);
-    expect(
-      (screen.getByRole("button", { name: "创建项目" }) as HTMLButtonElement)
-        .disabled,
-    ).toBe(true);
-    expect(fetchMock.mock.calls.some(([url]) => url === "/commands")).toBe(
-      false,
+    const create = screen.getByRole("button", { name: "创建项目" });
+    await waitFor(() =>
+      expect((create as HTMLButtonElement).disabled).toBe(false),
     );
+    fireEvent.change(screen.getByLabelText("项目名称"), {
+      target: { value: "Folderless project" },
+    });
+    fireEvent.click(create);
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([url]) => url === "/commands")).toBe(
+        true,
+      ),
+    );
+    const root = payloadOf(readCommandCall(fetchMock).envelope)
+      .rootWorkspace as Record<string, unknown>;
+    expect(root.resourceSelection).toEqual({ _tag: "ConversationOnly" });
   });
 
   it("shows a stable readable rejection when a selected Profile becomes stale", async () => {
@@ -365,17 +354,19 @@ describe("CreateProjectForm", () => {
       ),
     );
     render(<CreateProjectForm actor="human:root" onSubmitted={onSubmitted} />);
-    const selected = await screen.findByRole("radio", {
-      name: /Selected repository.*可用/u,
-    });
-    expect((selected as HTMLInputElement).checked).toBe(true);
+    await waitFor(() =>
+      expect(
+        (screen.getByRole("button", { name: "创建项目" }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(false),
+    );
     fireEvent.change(screen.getByLabelText("项目名称"), {
       target: { value: "Stale profile project" },
     });
     fireEvent.click(screen.getByRole("button", { name: "创建项目" }));
     await waitFor(() =>
       expect(screen.getByRole("alert").textContent).toMatch(
-        /文件目录.*不可用|配置.*变化/u,
+        /项目文件位置.*不可用|已变化/u,
       ),
     );
     expect(screen.getByRole("alert").textContent).not.toContain(
@@ -398,7 +389,12 @@ describe("CreateProjectForm", () => {
         : Promise.resolve(committed());
     });
     render(<CreateProjectForm actor="human:root" onSubmitted={onSubmitted} />);
-    await screen.findByRole("radio", { name: /Project files.*可用/u });
+    await waitFor(() =>
+      expect(
+        (screen.getByRole("button", { name: "创建项目" }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(false),
+    );
     fireEvent.change(screen.getByLabelText("项目名称"), {
       target: { value: "p1" },
     });
@@ -408,7 +404,10 @@ describe("CreateProjectForm", () => {
       fetchMock.mock.calls.filter(([url]) => url === "/commands"),
     ).toHaveLength(1);
     expect(screen.getByText(/transport\/unavailable/)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "创建项目" }));
+    expect(
+      (screen.getByLabelText("项目名称") as HTMLInputElement).disabled,
+    ).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
     await waitFor(() =>
       expect(
         fetchMock.mock.calls.filter(([url]) => url === "/commands"),
@@ -447,8 +446,7 @@ describe("RecordDecisionForm", () => {
         onSubmitted={vi.fn()}
       />,
     );
-    expect(screen.getByText(proposal.proposalId)).toBeTruthy();
-    expect(screen.getByText(/revision 3/)).toBeTruthy();
+    expect(screen.queryByText(/当前提案版本/)).toBeNull();
     fireEvent.change(screen.getByLabelText("决策"), {
       target: { value: "Reject" },
     });
@@ -550,10 +548,10 @@ describe("SteerWorkForm", () => {
 
   it("submits a Normal steer with message and workId", async () => {
     const fetchMock = setup();
-    fireEvent.change(screen.getByLabelText("纠偏消息"), {
+    fireEvent.change(screen.getByLabelText("调整说明"), {
       target: { value: "先完成大纲再动笔" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "发送纠偏" }));
+    fireEvent.click(screen.getByRole("button", { name: "发送调整" }));
     await waitFor(() => expect(fetchMock.mock.calls.length).toBe(1));
     const { envelope } = readCall(fetchMock);
     expect(envelope.commandType).toBe("SteerWork");
@@ -568,22 +566,22 @@ describe("SteerWorkForm", () => {
 
   it("Critical requires the explicit second confirmation before submit", async () => {
     const fetchMock = setup();
-    fireEvent.change(screen.getByLabelText("纠偏消息"), {
+    fireEvent.change(screen.getByLabelText("调整说明"), {
       target: { value: "立即停止扩写，回到主题" },
     });
-    fireEvent.change(screen.getByLabelText("severity"), {
+    fireEvent.change(screen.getByLabelText("紧急程度"), {
       target: { value: "Critical" },
     });
     const submit = screen.getByRole("button", {
-      name: "发送纠偏",
+      name: "发送调整",
     }) as HTMLButtonElement;
     expect(submit.disabled).toBe(true);
-    fireEvent.click(screen.getByLabelText("确认紧急纠偏"));
+    fireEvent.click(screen.getByLabelText("我确认这项调整需要立即生效"));
     expect(
-      (screen.getByRole("button", { name: "发送纠偏" }) as HTMLButtonElement)
+      (screen.getByRole("button", { name: "发送调整" }) as HTMLButtonElement)
         .disabled,
     ).toBe(false);
-    fireEvent.click(screen.getByRole("button", { name: "发送纠偏" }));
+    fireEvent.click(screen.getByRole("button", { name: "发送调整" }));
     await waitFor(() => expect(fetchMock.mock.calls.length).toBe(1));
     expect(payloadOf(readCall(fetchMock).envelope)).toEqual({
       workId: "wrk_9",
@@ -664,8 +662,7 @@ describe("StopExecutionForm", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "紧急停止执行" }));
     expect(fetchMock.mock.calls.length).toBe(0);
-    expect(screen.getByText(/确认停止执行/).textContent).toContain("exe_42");
-    expect(screen.getByText(/检索工作区/)).toBeTruthy();
+    expect(screen.getByText(/检索工作区将不再继续当前运行/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
     expect(fetchMock.mock.calls.length).toBe(0);
     fireEvent.click(screen.getByRole("button", { name: "紧急停止执行" }));
@@ -673,7 +670,7 @@ describe("StopExecutionForm", () => {
       name: "确认停止",
     }) as HTMLButtonElement;
     expect(confirmStop.disabled).toBe(true);
-    fireEvent.click(screen.getByLabelText("我确认要立即停止该执行"));
+    fireEvent.click(screen.getByLabelText("我确认要立即停止"));
     fireEvent.click(screen.getByRole("button", { name: "确认停止" }));
     await waitFor(() => expect(fetchMock.mock.calls.length).toBe(1));
     const { envelope } = readCall(fetchMock);
@@ -698,11 +695,14 @@ describe("StopExecutionForm", () => {
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "紧急停止执行" }));
-    fireEvent.click(screen.getByLabelText("我确认要立即停止该执行"));
+    fireEvent.click(screen.getByLabelText("我确认要立即停止"));
     fireEvent.click(screen.getByRole("button", { name: "确认停止" }));
     await waitFor(() => expect(fetchMock.mock.calls.length).toBe(1));
     await waitFor(() => expect(screen.getByText("服务不可用")).toBeTruthy());
-    fireEvent.click(screen.getByRole("button", { name: "确认停止" }));
+    expect(
+      (screen.getByLabelText("我确认要立即停止") as HTMLInputElement).disabled,
+    ).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
     await waitFor(() => expect(fetchMock.mock.calls.length).toBe(2));
     const first = readCall(fetchMock, 0).envelope;
     const second = readCall(fetchMock, 1).envelope;
@@ -721,13 +721,13 @@ describe("GrantPermissionForm", () => {
         onSubmitted={vi.fn()}
       />,
     );
-    fireEvent.change(screen.getByLabelText("capability"), {
+    fireEvent.change(screen.getByLabelText("允许的操作"), {
       target: { value: "RecordDecision" },
     });
-    fireEvent.change(screen.getByLabelText(/target（可选）/), {
+    fireEvent.change(screen.getByLabelText(/适用范围（可选）/), {
       target: { value: "ws_9" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "授予" }));
+    fireEvent.click(screen.getByRole("button", { name: "开放操作" }));
     await waitFor(() => expect(fetchMock.mock.calls.length).toBe(1));
     const { envelope } = readCall(fetchMock);
     expect(envelope.commandType).toBe("GrantPermission");
@@ -753,13 +753,13 @@ describe("GrantPermissionForm", () => {
         onSubmitted={vi.fn()}
       />,
     );
-    fireEvent.change(screen.getByLabelText("capability"), {
+    fireEvent.change(screen.getByLabelText("允许的操作"), {
       target: { value: "__custom__" },
     });
-    fireEvent.change(screen.getByLabelText(/自由输入/), {
+    fireEvent.change(screen.getByLabelText("操作名称"), {
       target: { value: "RegisterProjectTool" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "授予" }));
+    fireEvent.click(screen.getByRole("button", { name: "开放操作" }));
     await waitFor(() => expect(fetchMock.mock.calls.length).toBe(1));
     const payload = payloadOf(readCall(fetchMock).envelope) as Record<
       string,
@@ -794,10 +794,14 @@ describe("RevokePermissionForm", () => {
         onSubmitted={vi.fn()}
       />,
     );
-    fireEvent.change(screen.getByLabelText("选择 grant"), {
+    expect(screen.queryByText("pgr_1")).toBeNull();
+    expect(
+      screen.getByRole("option", { name: "human:reviewer · 确认项目决策" }),
+    ).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("选择授权"), {
       target: { value: "pgr_2" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "撤销" }));
+    fireEvent.click(screen.getByRole("button", { name: "撤销授权" }));
     await waitFor(() => expect(fetchMock.mock.calls.length).toBe(1));
     const { envelope } = readCall(fetchMock);
     expect(envelope.commandType).toBe("RevokePermission");
@@ -814,8 +818,8 @@ describe("RevokePermissionForm", () => {
         onSubmitted={vi.fn()}
       />,
     );
-    expect(screen.getByText("无待撤销的授权")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "撤销" })).toBeNull();
+    expect(screen.getByText("暂无可撤销的授权")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "撤销授权" })).toBeNull();
     expect(fetchMock.mock.calls.length).toBe(0);
   });
 });

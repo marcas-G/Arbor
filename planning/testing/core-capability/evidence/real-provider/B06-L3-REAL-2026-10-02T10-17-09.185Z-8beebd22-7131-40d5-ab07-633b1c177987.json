@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "arbor-real-provider-evidence-v1",
+  "recordedAt": "2026-10-02T10:17:09.185Z",
+  "caseId": "B06-L3-REAL",
+  "status": "FAIL",
+  "error": "public CreateChildWorkspace failed: 503 {\"ok\":false,\"status\":503,\"problem\":{\"code\":\"command/post-commit-convergence-failure\",\"category\":\"unavailable\",\"message\":\"command/post-commit-convergence-failure\",\"correlationId\":null,\"retryDisposition\":\"retryable\",\"safeDetails\":{\"cause\":\"[object Object]\"}}}",
+  "provider": {
+    "provider": "OpenAI-compatible endpoint",
+    "endpoint": "https://api.agicto.cn/v1",
+    "model": "deepseek-flash",
+    "serverBuildId": "agict-deepseek-flash-20261002",
+    "modelRevision": "not exposed by provider; local model file revision/hash not requested",
+    "authMode": "env",
+    "serverProps": {}
+  },
+  "generation": [],
+  "requestsAndResponses": []
+}
