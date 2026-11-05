@@ -9,6 +9,21 @@
 fifth design layer; they are the P2-owned implementation contracts authorized
 by DID §13.
 
+## Accepted owner amendment — AH7-DG-03 (2026-10-10)
+
+Decision: `ACCEPT_TOOL_APPROVAL_SETTLEMENT_ATOMICITY`. Accepted proposal SHA-256:
+`E818CC208F6A3B233FEF213E54E02AA30A1E96D6147313870C75FDE38DC94CBE`;
+source and delegated decision record are
+`planning/proposals/AH7-approval-settlement-fixed-decision-draft.md` and
+`planning/results/AH7-DG-03-governance-acceptance-and-landing.review.md`.
+
+P2 `03` §3–§4 now identifies P4 intent, approval, effect-admission,
+no-effect-settlement and ToolInvocation settlement writes as fenced Worker
+mutations, and freezes the independent `stop_requested_at` check at P4 claim
+and effect admission. Existing RecoveryController stop/unresolved-side-effect
+disposition in P2 `06` is unchanged. This is an additive owner-contract
+amendment; DID versions and lease identity semantics are unchanged.
+
 ```text
 Detailed Implementation Design v1.7 (frozen)
         ↓ delegates phase-scoped closure

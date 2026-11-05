@@ -18,7 +18,7 @@ import {
   ClockLive,
   ExecutionRepositoryLive,
   layer,
-  P36_MIGRATIONS,
+  P37_MIGRATIONS,
   runMigrations,
   SessionRepositoryLive,
   TransactionPortLive,
@@ -114,7 +114,7 @@ const seed = Effect.gen(function* () {
 describe("SCRC typed Session store", () => {
   it("idempotently appends typed items and returns the active frontier", async () => {
     const program = Effect.gen(function* () {
-      yield* runMigrations(P36_MIGRATIONS);
+      yield* runMigrations(P37_MIGRATIONS);
       yield* seed;
       const tx = yield* TransactionPort;
       const executions = yield* ExecutionRepository;
@@ -198,7 +198,7 @@ describe("SCRC typed Session store", () => {
 
   it("round-trips causal provenance and leaves historical rows unbound", async () => {
     const program = Effect.gen(function* () {
-      yield* runMigrations(P36_MIGRATIONS);
+      yield* runMigrations(P37_MIGRATIONS);
       yield* seed;
       const tx = yield* TransactionPort;
       const executions = yield* ExecutionRepository;
@@ -258,7 +258,7 @@ describe("SCRC typed Session store", () => {
 
   it("atomically commits a checkpoint and epoch with idempotent replay", async () => {
     const program = Effect.gen(function* () {
-      yield* runMigrations(P36_MIGRATIONS);
+      yield* runMigrations(P37_MIGRATIONS);
       yield* seed;
       const tx = yield* TransactionPort;
       const executions = yield* ExecutionRepository;

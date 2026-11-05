@@ -109,6 +109,8 @@ describe("AH7 exact approval reentry before the tool effect", () => {
     let intentWrites = 0;
     let approvalConsumeWrites = 0;
     let settlementWrites = 0;
+    let effectAdmissionWrites = 0;
+    const claimTransactions: Array<string> = [];
 
     const executor: ToolExecutor = {
       name: "read",
@@ -125,10 +127,14 @@ describe("AH7 exact approval reentry before the tool effect", () => {
     };
     const dependencies = Layer.mergeAll(
       Layer.succeed(TransactionPort, {
-        transact: <A, E, R>(body: Effect.Effect<A, E, R | TransactionScope>) =>
-          Effect.provideService(body, TransactionScope, {
-            session: { id: "ah7-approval-reentry" },
-          }),
+        transact: <A, E, R>(
+          body: Effect.Effect<A, E, R | TransactionScope>,
+        ) => {
+          const transactionId = `ah7-approval-reentry-${claimTransactions.length + 1}`;
+          return Effect.provideService(body, TransactionScope, {
+            session: { id: transactionId },
+          });
+        },
       }),
       Layer.succeed(ToolDefinitionStore, {
         definition: () => Effect.succeed(Option.some(definition)),
@@ -164,16 +170,20 @@ describe("AH7 exact approval reentry before the tool effect", () => {
         now: () => Effect.succeed("2026-10-06T00:00:00.000Z"),
       }),
       Layer.succeed(ToolInvocationStore, {
-        recordIntent: (record: ToolInvocationRecord) => {
-          intentWrites += 1;
-          invocation = {
-            ...record,
-            settledAt: null,
-            settlement: null,
-            resultRef: null,
-          };
-          return Effect.void;
-        },
+        recordIntent: (record: ToolInvocationRecord) =>
+          Effect.gen(function* () {
+            const transaction = yield* TransactionScope;
+            claimTransactions.push(transaction.session.id);
+            intentWrites += 1;
+            invocation = {
+              ...record,
+              effectAdmissionState: "NotAdmitted",
+              settledAt: null,
+              settlement: null,
+              resultRef: null,
+            };
+            return "Recorded" as const;
+          }),
         settle: (
           id: ToolInvocationRecord["invocationId"],
           settledAt: string,
@@ -193,13 +203,23 @@ describe("AH7 exact approval reentry before the tool effect", () => {
           };
           return Effect.succeed(true);
         },
-        consumeApproval: (id: string, consumer: ToolInvocationId) => {
-          expect(id).toBe(approvalId);
-          if (approval.consumedBy !== null) return Effect.succeed(false);
-          approvalConsumeWrites += 1;
-          approval = { ...approval, consumedBy: consumer };
-          return Effect.succeed(true);
-        },
+        consumeApproval: (id: string, consumer: ToolInvocationId) =>
+          Effect.gen(function* () {
+            const transaction = yield* TransactionScope;
+            claimTransactions.push(transaction.session.id);
+            expect(id).toBe(approvalId);
+            if (approval.consumedBy !== null) return false;
+            approvalConsumeWrites += 1;
+            approval = { ...approval, consumedBy: consumer };
+            return true;
+          }),
+        admitEffect: () =>
+          Effect.sync(() => {
+            effectAdmissionWrites += 1;
+            return { _tag: "Admitted" as const };
+          }),
+        recordNoEffectDenial: () => Effect.die(new Error("unexpected denial")),
+        recordNoEffectInterruption: () => Effect.succeed(false),
         findApproval: () => Effect.succeed(Option.some(approval)),
         findById: (id: ToolInvocationId) => {
           expect(id).toBe(invocationId);
@@ -245,5 +265,8 @@ describe("AH7 exact approval reentry before the tool effect", () => {
     expect(approvalConsumeWrites).toBe(1);
     expect(executorCalls).toBe(1);
     expect(settlementWrites).toBe(1);
+    expect(effectAdmissionWrites).toBe(2);
+    expect(claimTransactions).toHaveLength(2);
+    expect(claimTransactions[0]).toBe(claimTransactions[1]);
   });
 });

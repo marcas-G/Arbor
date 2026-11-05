@@ -225,7 +225,7 @@ fixed by weakening unit assertions or binding validation.
 
 ## Not claimed
 
-G-01 storage Batch B is complete for the additive path: migration 0036 adds
+G-01 storage Batch B is complete for the additive path: migration 0037 adds
 nullable `causal_binding_json`, typed Session writes persist it, typed frontier
 reads restore it, and historical NULL rows remain unbound. The focused SQLite
 Session store tests pass 3/3; Ports, persistence, and Single Workspace builds

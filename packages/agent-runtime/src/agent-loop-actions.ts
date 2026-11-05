@@ -577,7 +577,9 @@ export const executeAgentLoopActions = (
           const actionState =
             transition._tag === "OutcomeUnknown"
               ? "ReconciliationPending"
-              : "Applied";
+              : route._tag === "Executable" && status === "Denied"
+                ? "TerminalRejected"
+                : "Applied";
           const payload = { source, observation, status, disposition };
           const resultRef = `result_${sha256Hex(JSON.stringify(payload))}`;
           const observationSourceRef = `observation_${input.execution.executionId}_${sha256Hex(
@@ -659,7 +661,7 @@ export const executeAgentLoopActions = (
                   },
                   loopStepFence,
                 );
-                return yield* loopSteps.transition(
+                const advancedStep = yield* loopSteps.transition(
                   {
                     identity: actionsStep.identity,
                     expectedRevision: actionsStep.revision,
@@ -676,6 +678,20 @@ export const executeAgentLoopActions = (
                   },
                   loopStepFence,
                 );
+                if (dependencies.qualificationProbe !== undefined) {
+                  yield* Effect.promise(
+                    () =>
+                      dependencies.qualificationProbe?.({
+                        boundary: "AH7BeforeActionResultCommit",
+                        providerTurnId: preparedTurn.manifest.providerTurnId,
+                        executionId: input.execution.executionId,
+                        logicalActionId: pendingAction.logicalActionId,
+                        callRef: invocation.callRef,
+                        actionIndex,
+                      }) ?? Promise.resolve(),
+                  );
+                }
+                return advancedStep;
               }),
             )
             .pipe(Effect.mapError(failure));
@@ -786,6 +802,16 @@ export const executeAgentLoopActions = (
             settlement: executed.outcome.settlement,
           };
         }
+        if (executed.outcome.status === "Interrupted") {
+          const settlement: ExecutionSettlement = {
+            _tag: "Interrupted",
+            result: { _tag: "StopRequested" },
+          };
+          const disposition =
+            executed.outcome.disposition ?? "ExecutionStopping";
+          yield* persistActionRejection(settlement, disposition, "Interrupted");
+          return { _tag: "Settle", settlement };
+        }
         const persisted = yield* persistActionObservation(
           executed.outcome.source,
           executed.outcome.observation,
@@ -793,6 +819,9 @@ export const executeAgentLoopActions = (
             ...(executed.outcome.status === undefined
               ? {}
               : { status: executed.outcome.status }),
+            ...(executed.outcome.disposition === undefined
+              ? {}
+              : { disposition: executed.outcome.disposition }),
             ...(executed.outcome.resultRef === undefined
               ? {}
               : { resultRef: executed.outcome.resultRef }),

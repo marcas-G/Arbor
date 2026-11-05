@@ -7,7 +7,7 @@ const withClient = <A>(program: Effect.Effect<A, unknown, SqlClient>) =>
   Effect.runPromise(Effect.provide(program, layer({ filename: ":memory:" })));
 
 describe("P4 DDL", () => {
-  it("migrates to user_version 4 with the tool-runtime tables", async () => {
+  it("migrates to user_version 36 with the AH7 tool-invocation state", async () => {
     const result = await withClient(
       Effect.gen(function* () {
         yield* runMigrations(P4_MIGRATIONS);
@@ -18,18 +18,23 @@ describe("P4 DDL", () => {
         const tables = yield* sql.unsafe<{ name: string }>(
           "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('tool_invocations','artifacts','invocation_approvals')",
         );
+        const invocationColumns = yield* sql.unsafe<{ name: string }>(
+          'PRAGMA table_info("tool_invocations")',
+        );
         return {
           version: Number(version[0]?.user_version),
           tables: tables.map((t) => t.name).sort(),
+          invocationColumns: invocationColumns.map((column) => column.name),
         };
       }),
     );
-    expect(result.version).toBe(4);
+    expect(result.version).toBe(36);
     expect(result.tables).toEqual([
       "artifacts",
       "invocation_approvals",
       "tool_invocations",
     ]);
+    expect(result.invocationColumns).toContain("effect_admission_state");
   });
 
   it("rejects an invalid SideEffectSemantics or inconsistent settlement", async () => {

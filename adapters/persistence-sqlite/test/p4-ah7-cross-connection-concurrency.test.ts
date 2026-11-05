@@ -34,7 +34,7 @@ import type { ToolExecutor } from "../../../packages/tool-runtime/src/index.js";
 import { ToolRuntimeLive } from "../../../packages/tool-runtime/src/index.js";
 import {
   layer,
-  P4_MIGRATIONS,
+  P36_MIGRATIONS,
   runMigrations,
   type SqliteAdapterError,
   ToolInvocationStoreLive,
@@ -175,7 +175,7 @@ const makeInfrastructure = (databaseFile: string): StoreLayer => {
 };
 
 const seedDatabase = Effect.gen(function* () {
-  yield* runMigrations(P4_MIGRATIONS);
+  yield* runMigrations(P36_MIGRATIONS);
   const sql = yield* SqlClient;
   yield* sql.withTransaction(
     Effect.gen(function* () {
@@ -220,13 +220,15 @@ const seedDatabase = Effect.gen(function* () {
         ],
       );
       yield* sql.unsafe(
-        "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, focus_kind, focus_work_id, parent_execution_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?,?,?,?,NULL,NULL,NULL,?,?,NULL,NULL,NULL,NULL)",
+        "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, episode_kind, episode_ref, episode_revision, parent_execution_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?,?,?,?,?,?,NULL,NULL,?,?,NULL,NULL,NULL,NULL)",
         [
           executionId,
           projectId,
           "workspace",
           workspaceId,
-          "coordination",
+          "ConversationResponseEpisode",
+          "ah7-cross-connection",
+          0,
           sessionId,
           "t",
         ],
@@ -260,7 +262,7 @@ const runIntentInsert = (app: StoreLayer) =>
           }),
           {
             onFailure: (error) => ({ _tag: "Rejected" as const, error }),
-            onSuccess: () => ({ _tag: "Inserted" as const }),
+            onSuccess: (recorded) => ({ _tag: recorded }),
           },
         ),
         app,
@@ -533,7 +535,7 @@ const runCrossProcessRace = async (
 };
 
 describe("AH7 SQLite cross-connection concurrent NonIdempotent invocation", () => {
-  it("uses the durable invocation key and admits exactly one external effect across connections", async () => {
+  it("converges exact same-invocation intent claims to one durable row across connections", async () => {
     const directory = mkdtempSync(
       join(tmpdir(), "arbor-ah7-cross-connection-"),
     );
@@ -548,16 +550,10 @@ describe("AH7 SQLite cross-connection concurrent NonIdempotent invocation", () =
       runIntentInsert(infraA),
       runIntentInsert(infraB),
     ]);
-    expect(
-      competing.filter((result) => result._tag === "Inserted"),
-    ).toHaveLength(1);
-    expect(
-      competing.filter((result) => result._tag === "Rejected"),
-    ).toHaveLength(1);
-    const duplicateInsert = competing.find(
-      (result) => result._tag === "Rejected",
-    );
-    expect(duplicateInsert).toBeDefined();
+    expect(competing.map((result) => result._tag)).toEqual([
+      "Recorded",
+      "Recorded",
+    ]);
     const persistedAfterInsertRace = await Effect.runPromise(
       Effect.scoped(
         Effect.provide(
@@ -577,13 +573,6 @@ describe("AH7 SQLite cross-connection concurrent NonIdempotent invocation", () =
         ),
       ),
     );
-    expect(duplicateInsert).toMatchObject({
-      _tag: "Rejected",
-      error: {
-        _tag: "PersistenceConstraintViolation",
-        repository: "ToolInvocationStore",
-      },
-    });
     expect(
       persistedAfterInsertRace.columns.find(
         (column) => column.name === "invocation_id",

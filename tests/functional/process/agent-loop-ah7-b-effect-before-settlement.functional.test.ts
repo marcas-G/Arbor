@@ -27,7 +27,11 @@ const toolEffectBoundary = "AH7AfterToolEffectBeforeSettlement";
 
 const toolResultPayload = (
   value: unknown,
-): { readonly callRef?: string; readonly invocationId?: string } => {
+): {
+  readonly callRef?: string;
+  readonly invocationId?: string;
+  readonly observationRef?: string;
+} => {
   if (typeof value !== "string") {
     throw new Error("AH7 sourced ToolResult payload is not JSON text");
   }
@@ -824,9 +828,10 @@ describe("AH7 multi-action B effect before settlement", () => {
       isObservationForExecution(entry.source_ref, actionACommit.executionId),
     );
     expect(recoveredTargetToolResults).toHaveLength(2);
-    const toolResults = recoveredTargetToolResults.map((entry) =>
-      toolResultPayload(entry.payload_json),
-    );
+    const toolResults = recoveredTargetToolResults.map((entry) => ({
+      ...toolResultPayload(entry.payload_json),
+      sourceRef: entry.source_ref,
+    }));
     expect(toolResults.map((result) => result.callRef).sort()).toEqual(
       [actionACommit.callRef, actionBEffect.callRef].sort(),
     );
@@ -835,6 +840,21 @@ describe("AH7 multi-action B effect before settlement", () => {
         (result) => result.invocationId === actionBEffect.invocationId,
       ),
     ).toHaveLength(1);
+    const actionByCallRef = new Map(
+      recovered.actions
+        .filter((action) => action.execution_id === actionACommit.executionId)
+        .map((action) => [action.call_ref, action]),
+    );
+    for (const result of toolResults) {
+      const action = actionByCallRef.get(result.callRef ?? "");
+      expect(action?.observation_source_ref).toBe(result.observationRef);
+      expect(result.sourceRef).toBe(result.observationRef);
+      expect(
+        recoveredTargetToolResults.filter(
+          (entry) => entry.source_ref === result.observationRef,
+        ),
+      ).toHaveLength(1);
+    }
     expect(recovered.artifacts).toHaveLength(2);
     expect(
       recovered.artifacts.filter(
