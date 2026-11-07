@@ -6,7 +6,8 @@ export interface WorkFrontierIdentity {
   readonly workId: WorkId;
 }
 
-/** Keep only explicitly bound entries; historical/unbound rows fail closed. */
+/** Keep only explicitly bound entries for this durable Work across its
+ * successive Execution episodes; historical/unbound rows fail closed. */
 export const filterEntriesForWork = (
   entries: ReadonlyArray<
     SessionEntryRecord & {
@@ -18,8 +19,4 @@ export const filterEntriesForWork = (
   >,
   identity: WorkFrontierIdentity,
 ): ReadonlyArray<SessionEntryRecord> =>
-  entries.filter(
-    (entry) =>
-      entry.causalBinding?.executionId === identity.executionId &&
-      entry.causalBinding.workId === identity.workId,
-  );
+  entries.filter((entry) => entry.causalBinding?.workId === identity.workId);

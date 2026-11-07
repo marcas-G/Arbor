@@ -133,6 +133,12 @@ export const SessionRepositoryLive: Layer.Layer<
       );
       return columns.some((column) => column.name === "item_type");
     });
+    const hasCausalBindingColumn = Effect.gen(function* () {
+      const columns = yield* run(
+        sql.unsafe<{ name: string }>("PRAGMA table_info(session_entries)"),
+      );
+      return columns.some((column) => column.name === "causal_binding_json");
+    });
     const checkFence = (fence: SessionWriteFence) =>
       Effect.gen(function* () {
         const fenceNow = yield* clock.now();
@@ -273,7 +279,7 @@ export const SessionRepositoryLive: Layer.Layer<
             ),
           );
         }),
-      appendEntry: (sessionId, entry, fence) =>
+      appendEntry: (sessionId, entry, fence, causalBinding) =>
         Effect.gen(function* () {
           yield* TransactionScope;
           if (fence !== undefined) {
@@ -310,10 +316,11 @@ export const SessionRepositoryLive: Layer.Layer<
           }
           const now = yield* clock.now();
           const timeline = yield* hasTimelineColumns;
+          const causal = timeline && (yield* hasCausalBindingColumn);
           const rows = yield* run(
-            timeline
+            causal
               ? sql.unsafe<{ sequence: number }>(
-                  "INSERT INTO session_entries (session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at) VALUES (?, COALESCE((SELECT MAX(sequence) + 1 FROM session_entries WHERE session_id = ?), 0), ?, ?, 1, NULL, ?, ?) RETURNING sequence",
+                  "INSERT INTO session_entries (session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at, causal_binding_json) VALUES (?, COALESCE((SELECT MAX(sequence) + 1 FROM session_entries WHERE session_id = ?), 0), ?, ?, 1, NULL, ?, ?, ?) RETURNING sequence",
                   [
                     sessionId,
                     sessionId,
@@ -321,22 +328,44 @@ export const SessionRepositoryLive: Layer.Layer<
                     `Legacy${entry.entryKind}`,
                     JSON.stringify(entry.payload),
                     now,
+                    causalBinding === undefined
+                      ? null
+                      : JSON.stringify(causalBinding),
                   ],
                 )
-              : sql.unsafe<{ sequence: number }>(
-                  "INSERT INTO session_entries (session_id, sequence, entry_kind, payload_json, created_at) VALUES (?, COALESCE((SELECT MAX(sequence) + 1 FROM session_entries WHERE session_id = ?), 0), ?, ?, ?) RETURNING sequence",
-                  [
-                    sessionId,
-                    sessionId,
-                    entry.entryKind satisfies SessionEntryKind,
-                    JSON.stringify(entry.payload),
-                    now,
-                  ],
-                ),
+              : timeline
+                ? sql.unsafe<{ sequence: number }>(
+                    "INSERT INTO session_entries (session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at) VALUES (?, COALESCE((SELECT MAX(sequence) + 1 FROM session_entries WHERE session_id = ?), 0), ?, ?, 1, NULL, ?, ?) RETURNING sequence",
+                    [
+                      sessionId,
+                      sessionId,
+                      entry.entryKind satisfies SessionEntryKind,
+                      `Legacy${entry.entryKind}`,
+                      JSON.stringify(entry.payload),
+                      now,
+                    ],
+                  )
+                : sql.unsafe<{ sequence: number }>(
+                    "INSERT INTO session_entries (session_id, sequence, entry_kind, payload_json, created_at) VALUES (?, COALESCE((SELECT MAX(sequence) + 1 FROM session_entries WHERE session_id = ?), 0), ?, ?, ?) RETURNING sequence",
+                    [
+                      sessionId,
+                      sessionId,
+                      entry.entryKind satisfies SessionEntryKind,
+                      JSON.stringify(entry.payload),
+                      now,
+                    ],
+                  ),
           );
           return { sequence: Number(rows[0]?.sequence ?? 0) };
         }),
-      appendEntryIdempotent: (sessionId, source, entry, contentHash, fence) =>
+      appendEntryIdempotent: (
+        sessionId,
+        source,
+        entry,
+        contentHash,
+        fence,
+        causalBinding,
+      ) =>
         Effect.gen(function* () {
           yield* TransactionScope;
           const fenceNow = yield* clock.now();
@@ -361,6 +390,7 @@ export const SessionRepositoryLive: Layer.Layer<
           }
 
           const timeline = yield* hasTimelineColumns;
+          const causal = timeline && (yield* hasCausalBindingColumn);
           const existing = yield* run(
             sql.unsafe<{ sequence: number; content_hash: string }>(
               timeline
@@ -390,9 +420,9 @@ export const SessionRepositoryLive: Layer.Layer<
 
           const now = yield* clock.now();
           const rows = yield* run(
-            timeline
+            causal
               ? sql.unsafe<{ sequence: number }>(
-                  "INSERT INTO session_entries (session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at, source_kind, source_ref, content_hash) VALUES (?, COALESCE((SELECT MAX(sequence) + 1 FROM session_entries WHERE session_id = ?), 0), ?, ?, 1, NULL, ?, ?, ?, ?, ?) RETURNING sequence",
+                  "INSERT INTO session_entries (session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at, source_kind, source_ref, content_hash, causal_binding_json) VALUES (?, COALESCE((SELECT MAX(sequence) + 1 FROM session_entries WHERE session_id = ?), 0), ?, ?, 1, NULL, ?, ?, ?, ?, ?, ?) RETURNING sequence",
                   [
                     sessionId,
                     sessionId,
@@ -403,21 +433,39 @@ export const SessionRepositoryLive: Layer.Layer<
                     source.kind,
                     source.ref,
                     contentHash,
+                    causalBinding === undefined
+                      ? null
+                      : JSON.stringify(causalBinding),
                   ],
                 )
-              : sql.unsafe<{ sequence: number }>(
-                  "INSERT INTO session_entries (session_id, sequence, entry_kind, payload_json, created_at, source_kind, source_ref, content_hash) VALUES (?, COALESCE((SELECT MAX(sequence) + 1 FROM session_entries WHERE session_id = ?), 0), ?, ?, ?, ?, ?, ?) RETURNING sequence",
-                  [
-                    sessionId,
-                    sessionId,
-                    entry.entryKind satisfies SessionEntryKind,
-                    JSON.stringify(entry.payload),
-                    now,
-                    source.kind,
-                    source.ref,
-                    contentHash,
-                  ],
-                ),
+              : timeline
+                ? sql.unsafe<{ sequence: number }>(
+                    "INSERT INTO session_entries (session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at, source_kind, source_ref, content_hash) VALUES (?, COALESCE((SELECT MAX(sequence) + 1 FROM session_entries WHERE session_id = ?), 0), ?, ?, 1, NULL, ?, ?, ?, ?, ?) RETURNING sequence",
+                    [
+                      sessionId,
+                      sessionId,
+                      entry.entryKind satisfies SessionEntryKind,
+                      `Legacy${entry.entryKind}`,
+                      JSON.stringify(entry.payload),
+                      now,
+                      source.kind,
+                      source.ref,
+                      contentHash,
+                    ],
+                  )
+                : sql.unsafe<{ sequence: number }>(
+                    "INSERT INTO session_entries (session_id, sequence, entry_kind, payload_json, created_at, source_kind, source_ref, content_hash) VALUES (?, COALESCE((SELECT MAX(sequence) + 1 FROM session_entries WHERE session_id = ?), 0), ?, ?, ?, ?, ?, ?) RETURNING sequence",
+                    [
+                      sessionId,
+                      sessionId,
+                      entry.entryKind satisfies SessionEntryKind,
+                      JSON.stringify(entry.payload),
+                      now,
+                      source.kind,
+                      source.ref,
+                      contentHash,
+                    ],
+                  ),
           );
           return {
             sequence: Number(rows[0]?.sequence ?? 0),
@@ -514,6 +562,9 @@ export const SessionRepositoryLive: Layer.Layer<
               contextEpoch: input.nextEpoch,
               source: input.source,
               contentHash: input.contentHash,
+              ...(input.causalBinding === undefined
+                ? {}
+                : { causalBinding: input.causalBinding }),
             },
             fence,
           );

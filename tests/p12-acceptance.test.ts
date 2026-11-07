@@ -34,8 +34,7 @@ import {
   MessageStoreLive,
   P11_MIGRATIONS,
   P12_MIGRATIONS,
-  P26_MIGRATIONS,
-  P35_MIGRATIONS,
+  P37_MIGRATIONS,
   PermissionGrantRepositoryLive,
   ProjectRepositoryLive,
   ProjectToolRegistryLive,
@@ -768,7 +767,7 @@ describe("p12-acceptance story 4 — secret store + no-leak invariant", () => {
       const result = await Effect.runPromise(
         Effect.provide(
           Effect.gen(function* () {
-            yield* runMigrations(P26_MIGRATIONS);
+            yield* runMigrations(P37_MIGRATIONS);
             const gateway = yield* CommandGateway;
             yield* gateway.execute(
               secretEnvelope("CreateProject", secretProjectPayload(), "1"),
@@ -1699,7 +1698,7 @@ const runSafetyScenario = async (
   return Effect.runPromise(
     Effect.provide(
       Effect.gen(function* () {
-        yield* runMigrations(P35_MIGRATIONS);
+        yield* runMigrations(P37_MIGRATIONS);
         const gateway = yield* CommandGateway;
         const created = yield* gateway.execute(
           safetyEnvelope("CreateProject", selectedSafetyProjectPayload, "1"),

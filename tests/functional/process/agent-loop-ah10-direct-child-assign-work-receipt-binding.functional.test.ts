@@ -388,6 +388,39 @@ const makePreBindingP32Copy = async (
     );
     const p32SchemaDb = new DatabaseSync(baselineFile, { readOnly: true });
     try {
+      const baselineSessionTable = p32SchemaDb
+        .prepare(
+          `SELECT sql FROM sqlite_master
+            WHERE type = 'table' AND name = 'session_entries'`,
+        )
+        .get() as { sql?: string | null } | undefined;
+      if (baselineSessionTable?.sql == null) {
+        throw new Error("P32 baseline has no session_entries table DDL");
+      }
+      const sessionColumns = p32SchemaDb
+        .prepare('PRAGMA table_info("session_entries")')
+        .all() as Array<{ name: string }>;
+      const sessionColumnList = sessionColumns
+        .map(({ name }) => `"${name.replaceAll('"', '""')}"`)
+        .join(", ");
+      const sessionIndexes = p32SchemaDb
+        .prepare(
+          `SELECT sql FROM sqlite_master
+            WHERE type = 'index' AND tbl_name = 'session_entries'
+              AND sql IS NOT NULL
+            ORDER BY name`,
+        )
+        .all() as Array<{ sql: string }>;
+      db.exec("DROP INDEX IF EXISTS idx_session_entries_source");
+      db.exec("ALTER TABLE session_entries RENAME TO session_entries_p37");
+      db.exec(baselineSessionTable.sql);
+      db.exec(
+        `INSERT INTO session_entries (${sessionColumnList})
+          SELECT ${sessionColumnList} FROM session_entries_p37`,
+      );
+      db.exec("DROP TABLE session_entries_p37");
+      for (const index of sessionIndexes) db.exec(index.sql);
+
       const baselineInvocationTable = p32SchemaDb
         .prepare(
           `SELECT sql FROM sqlite_master
@@ -961,7 +994,7 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
             return {
               _tag: "ToolCall",
               name: "list_workspaces",
-              arguments: { query: marker },
+              arguments: { query: childName },
             };
           }
           const ref = /wref_[a-f0-9]{64}/u.exec(context)?.[0];
@@ -1833,9 +1866,8 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
       }
       if (crashSide === "legacy-p32-upgrade") {
         const upgraded = readRows(recoveryDatabaseFile);
-        // The P32 pre-binding image upgrades through P36, whose accepted
-        // ToolInvocation admission migration is the current version 36.
-        expect(upgraded.schemaVersion).toBe(36);
+        // The P32 pre-binding image upgrades through the current P37 schema.
+        expect(upgraded.schemaVersion).toBe(37);
         expect(upgraded.assignWorkTargetBindings).toHaveLength(0);
         expect(
           upgraded.commands.find(

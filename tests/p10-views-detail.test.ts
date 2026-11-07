@@ -9,7 +9,6 @@ import type {
   WorkspaceDetailRes,
 } from "../packages/api-contracts/src/index.js";
 import { parse, WorkId, WorkRevision } from "../packages/domain/dist/index.js";
-import { makeVerificationFixture } from "../packages/testkit/dist/index.js";
 import {
   AUDIT_TIMELINE_EVENT_TYPES,
   deriveAuditTimeline,
@@ -20,6 +19,7 @@ import {
   deriveWorkspaceDetail,
   makeProjectionQueryService,
 } from "../packages/projection-runtime/src/index.js";
+import { makeVerificationFixture } from "../packages/testkit/dist/index.js";
 import {
   insertAcceptanceRow,
   insertDependencyRow,

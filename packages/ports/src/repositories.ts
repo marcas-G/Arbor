@@ -222,6 +222,7 @@ export interface SessionRepositoryService {
       readonly workerIncarnationId?: string;
       readonly fencingGeneration: LeaseGeneration;
     },
+    causalBinding?: import("./session-provenance.js").SessionCausalBinding,
   ) => Effect.Effect<
     { readonly sequence: number },
     SessionRepositoryError | LeaseFencingRejected,
@@ -238,6 +239,7 @@ export interface SessionRepositoryService {
       readonly workerIncarnationId: string;
       readonly fencingGeneration: LeaseGeneration;
     },
+    causalBinding?: import("./session-provenance.js").SessionCausalBinding,
   ) => Effect.Effect<
     { readonly sequence: number; readonly inserted: boolean },
     SessionRepositoryError | LeaseFencingRejected | SessionSourceConflict,

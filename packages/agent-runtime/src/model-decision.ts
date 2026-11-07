@@ -2070,19 +2070,21 @@ export const runModelDecision = (
       const typedTimeline = yield* tx
         .transact(sessions.supportsTypedTimeline())
         .pipe(Effect.mapError(failure));
+      const workBinding = workEpisode(input.execution);
+      const scopeWorkFrontier = (
+        entries: ReadonlyArray<SessionEntryRecord>,
+      ): ReadonlyArray<SessionEntryRecord> =>
+        workBinding !== null && typedTimeline
+          ? filterEntriesForWork(entries, {
+              executionId: input.execution.executionId,
+              workId: workBinding.workId,
+            })
+          : entries;
       let recentSessionEntries = conversationExecution
         ? recentTimeline.filter((entry) =>
             belongsToConversationExecution(entry, input.execution.executionId),
           )
-        : workEpisode(input.execution) !== null &&
-            typedTimeline &&
-            recentTimeline.length > 0 &&
-            recentTimeline.every((entry) => entry.causalBinding !== undefined)
-          ? filterEntriesForWork(recentTimeline, {
-              executionId: input.execution.executionId,
-              workId: workEpisode(input.execution)?.workId as never,
-            })
-          : recentTimeline;
+        : scopeWorkFrontier(recentTimeline);
       let projectionDecision = decideSessionProjection(
         recentSessionEntries,
         currentBindingFingerprint,
@@ -2187,14 +2189,16 @@ export const runModelDecision = (
               )
               .pipe(Effect.mapError(failure));
           }
-          recentSessionEntries = yield* tx
-            .transact(
-              sessions.listRecentEntries(
-                input.execution.sessionId,
-                SESSION_TIMELINE_ENTRY_LIMIT,
-              ),
-            )
-            .pipe(Effect.mapError(failure));
+          recentSessionEntries = scopeWorkFrontier(
+            yield* tx
+              .transact(
+                sessions.listRecentEntries(
+                  input.execution.sessionId,
+                  SESSION_TIMELINE_ENTRY_LIMIT,
+                ),
+              )
+              .pipe(Effect.mapError(failure)),
+          );
           projectionDecision = decideSessionProjection(
             recentSessionEntries,
             currentBindingFingerprint,
@@ -4566,6 +4570,17 @@ export const runModelDecision = (
           : {}),
       };
       if (workEpisode(input.execution) !== null) {
+        const workBinding = workEpisode(input.execution);
+        const causalBinding =
+          workBinding === null
+            ? undefined
+            : sessionCausalBindingForWork({
+                projectId: input.execution.projectId,
+                workspaceId: input.execution.workspaceId,
+                workId: workBinding.workId,
+                executionId: input.execution.executionId,
+                causedByRef: String(preparation.turn.manifest.providerTurnId),
+              });
         const toolNames = preparation.turn.toolRoutes.map(
           (route) => route.name,
         );
@@ -4587,6 +4602,7 @@ export const runModelDecision = (
               input.context._tag === "ExecutionOrigin"
                 ? sessionFence(input.execution.executionId, input.context)
                 : undefined,
+              causalBinding,
             ),
           )
           .pipe(Effect.mapError(failure));
@@ -5109,6 +5125,89 @@ export const runModelDecision = (
           ...(loopStep === undefined ? {} : { loopStep }),
           ...(conversationExecution ? { conversation: true } : {}),
         };
+      }
+      // A decoded result that fails the output contract is still durable
+      // provider evidence.  Persist its AssistantMessage before scheduling a
+      // repair so recovery can observe the exact successor turn.  Previously
+      // rejected Work text was only kept in the process-local decision and
+      // disappeared when the repair exhausted or the worker restarted.
+      if (decoded.ok && loopStep !== undefined && loopStepFence !== undefined) {
+        const rejectedOutput = {
+          _tag: "AssistantMessage" as const,
+          providerTurnId,
+          contentRef: `provider:${String(providerTurnId)}:assistant`,
+          text: decoded.output.text,
+          finishReason: decoded.output.finishReason,
+        };
+        const rejectedBinding =
+          workEpisode(input.execution) === null
+            ? undefined
+            : (() => {
+                const work = workEpisode(input.execution);
+                return work === null
+                  ? undefined
+                  : sessionCausalBindingForWork({
+                      projectId: input.execution.projectId,
+                      workspaceId: input.execution.workspaceId,
+                      workId: work.workId,
+                      executionId: input.execution.executionId,
+                      causedByRef: String(providerTurnId),
+                    });
+              })();
+        const rejectedHash = sha256Hex(
+          JSON.stringify({
+            text: decoded.output.text,
+            finishReason: decoded.output.finishReason,
+          }),
+        );
+        yield* tx
+          .transact(
+            Effect.gen(function* () {
+              const typed = yield* sessions.supportsTypedTimeline();
+              if (typed) {
+                yield* sessions.appendItemIdempotent(
+                  input.execution.sessionId,
+                  {
+                    item: rejectedOutput,
+                    contextEpoch: preparation.turn.manifest.contextEpoch,
+                    source: {
+                      kind: "ProviderTurn",
+                      ref: `${String(providerTurnId)}:assistant`,
+                    },
+                    contentHash: rejectedHash,
+                    ...(rejectedBinding === undefined
+                      ? {}
+                      : { causalBinding: rejectedBinding }),
+                  },
+                  loopStepFence,
+                );
+              } else {
+                yield* sessions.appendEntryIdempotent(
+                  input.execution.sessionId,
+                  {
+                    kind: "ProviderTurn",
+                    ref: `${String(providerTurnId)}:assistant`,
+                  },
+                  {
+                    entryKind: "ModelOutput",
+                    payload: {
+                      providerTurnId: String(providerTurnId),
+                      outputContractRef:
+                        preparation.turn.manifest.outputContractRef,
+                      decoderVersion: "decode-turn-v1",
+                      text: decoded.output.text,
+                      finishReason: decoded.output.finishReason,
+                      toolInvocations: decoded.output.toolInvocations,
+                    },
+                  },
+                  rejectedHash,
+                  loopStepFence,
+                  rejectedBinding,
+                );
+              }
+            }),
+          )
+          .pipe(Effect.mapError(failure));
       }
       const repair = decideRepair(
         REPAIR_POLICY,
