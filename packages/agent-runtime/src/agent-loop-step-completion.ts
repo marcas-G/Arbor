@@ -3,7 +3,11 @@ import type {
   Execution,
   ExecutionSettlement,
 } from "@arbor/domain";
-import { conversationResponseEpisode, executionEpisode } from "@arbor/domain";
+import {
+  conversationResponseEpisode,
+  executionEpisode,
+  workEpisode,
+} from "@arbor/domain";
 import type { ModelOutput } from "@arbor/model-context";
 import type {
   AgentLoopStepFence,
@@ -14,6 +18,7 @@ import type {
   SessionRepositoryService,
   TransactionPortService,
 } from "@arbor/ports";
+import { sessionCausalBindingForWork } from "@arbor/ports";
 import { Effect } from "effect";
 import { MAX_TURNS, sessionFence } from "./agent-loop-policy.js";
 import type { AgentLoopQualificationProbe } from "./qualification-probe.js";
@@ -69,6 +74,20 @@ export const completeAgentLoopStep = (
 
   return Effect.gen(function* () {
     let currentLoopStep = dependencies.currentLoopStep;
+    const workBinding = workEpisode(input.execution);
+    const causalBinding =
+      workBinding === null
+        ? undefined
+        : sessionCausalBindingForWork({
+            projectId: input.execution.projectId,
+            workspaceId: input.execution.workspaceId,
+            workId: workBinding.workId,
+            executionId: input.execution.executionId,
+            causedByRef:
+              currentLoopStep === undefined
+                ? null
+                : String(currentLoopStep.providerTurnId),
+          });
     for (const entry of observations) {
       yield* tx
         .transact(
@@ -78,6 +97,7 @@ export const completeAgentLoopStep = (
             input.context._tag === "ExecutionOrigin"
               ? sessionFence(input.execution.executionId, input.context)
               : undefined,
+            causalBinding,
           ),
         )
         .pipe(Effect.mapError(failure));
@@ -218,6 +238,7 @@ export const completeAgentLoopStep = (
             input.context._tag === "ExecutionOrigin"
               ? sessionFence(input.execution.executionId, input.context)
               : undefined,
+            causalBinding,
           ),
         )
         .pipe(Effect.mapError(failure));

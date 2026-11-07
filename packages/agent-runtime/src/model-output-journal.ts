@@ -122,6 +122,7 @@ export const recordAcceptedModelOutput = (
                     { entryKind: "ModelOutput", payload: modelOutputPayload },
                     sha256Hex(JSON.stringify(modelOutputPayload)),
                     loopStepFence,
+                    causalBinding,
                   );
               if (typed) {
                 for (const invocation of decodedOutput.toolInvocations) {
@@ -189,6 +190,7 @@ export const recordAcceptedModelOutput = (
             input.context._tag === "ExecutionOrigin"
               ? sessionFence(input.execution.executionId, input.context)
               : undefined,
+            causalBinding,
           ),
         )
         .pipe(Effect.mapError(failure));

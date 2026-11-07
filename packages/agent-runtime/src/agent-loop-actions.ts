@@ -316,6 +316,7 @@ export const executeAgentLoopActions = (
               { entryKind: "Observation", payload },
               sha256Hex(JSON.stringify(payload)),
               fence,
+              causalBinding,
             );
           }
           return { resultRef, observationSourceRef };
@@ -641,6 +642,7 @@ export const executeAgentLoopActions = (
                     { entryKind: "Observation", payload },
                     sha256Hex(JSON.stringify(payload)),
                     loopStepFence,
+                    causalBinding,
                   );
                 }
                 yield* loopSteps.transitionAction(

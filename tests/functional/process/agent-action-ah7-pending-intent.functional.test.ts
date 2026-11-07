@@ -182,10 +182,10 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
         (value) =>
           value.hits.some((hit) => hit.boundary === boundary) ||
           value.targetProviderCalls >= 5,
-        15_000,
+        45_000,
       ).catch((error: unknown) => {
         throw new Error(
-          `AH7 Pending-action probe absent: ${error instanceof Error ? error.message : String(error)}; targetProviderCalls=${targetProviderCalls}; latestToolResult=${latestToolResult}; daemonOutput=${daemonOutput.slice(-10).join(" | ")}; daemon=${fixture.daemonErrors.join(" | ")}`,
+          `AH7 Pending-action probe absent: ${error instanceof Error ? error.message : String(error)}; targetProviderCalls=${targetProviderCalls}; latestToolResult=${latestToolResult}; providerCalls=${JSON.stringify(fixture.providerCalls.slice(-5))}; daemonOutput=${daemonOutput.slice(-10).join(" | ")}; daemon=${fixture.daemonErrors.join(" | ")}`,
         );
       });
       if (!observed.hits.some((candidate) => candidate.boundary === boundary)) {

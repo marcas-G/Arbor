@@ -1,7 +1,4 @@
-import type {
-  CommandSubmissionContext,
-  PermissionGrant,
-} from "@arbor/domain";
+import type { CommandSubmissionContext, PermissionGrant } from "@arbor/domain";
 import {
   type AssignWorkCommandEvidence,
   type AssignWorkControlAuthorizationEvidence,

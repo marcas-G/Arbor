@@ -404,11 +404,27 @@ const stopChild = async (child: ChildProcess | undefined): Promise<void> => {
   }
   await Promise.race([
     exited,
-    new Promise<void>((_, rejectTimeout) =>
-      setTimeout(
-        () => rejectTimeout(new Error("Arbor process did not exit")),
-        5_000,
-      ),
+    new Promise<void>((resolveTimeout, rejectTimeout) =>
+      setTimeout(() => {
+        // On POSIX, a killed child can disappear before Node delivers the
+        // `exit` event to this parent (especially when the daemon inherited
+        // a piped stdio handle). Treat that only as success when the PID is
+        // demonstrably gone; a still-live PID remains a real fixture leak.
+        if (child.pid === undefined) {
+          resolveTimeout();
+          return;
+        }
+        try {
+          process.kill(child.pid, 0);
+          rejectTimeout(new Error("Arbor process did not exit"));
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ESRCH") {
+            resolveTimeout();
+          } else {
+            rejectTimeout(error);
+          }
+        }
+      }, 5_000),
     ),
   ]);
 };

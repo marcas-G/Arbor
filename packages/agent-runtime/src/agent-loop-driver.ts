@@ -317,9 +317,24 @@ export const AgentLoopDriverLive = (
                   inboxOption.value.listUnconsumed(input.execution.workspaceId),
                 )
                 .pipe(Effect.mapError(failure));
-              for (const selected of selectPendingInputPromotions(pending, {
-                freshDrain: turn === 0,
-              })) {
+              const workExecution =
+                input.execution.binding._tag === "WorkspaceExecution" &&
+                executionEpisode(input.execution)?._tag === "WorkEpisode";
+              // Child PASS notifications are addressed to the owning Parent
+              // Work. A RootConversation must not consume them before that
+              // Work is admitted; doing so loses the ready result from the
+              // Work's durable frontier.
+              const eligiblePending = workExecution
+                ? pending
+                : pending.filter(
+                    (entry) => !entry.entryKey.startsWith("child-result:"),
+                  );
+              for (const selected of selectPendingInputPromotions(
+                eligiblePending,
+                {
+                  freshDrain: turn === 0,
+                },
+              )) {
                 yield* inputPromotionOption.value
                   .promoteInbox({
                     workspaceId: input.execution.workspaceId,

@@ -38,4 +38,51 @@ describe("Work context frontier", () => {
       ),
     ).toEqual([2]);
   });
+
+  it("retains bound history from prior executions of the same Work", () => {
+    const executionId = parse(ExecutionId)(
+      "exe_00000000-0000-7000-8000-0000000000f1",
+    );
+    const priorExecutionId = parse(ExecutionId)(
+      "exe_00000000-0000-7000-8000-0000000000f2",
+    );
+    const workId = parse(WorkId)("wrk_00000000-0000-7000-8000-0000000000f1");
+    const entries = [
+      {
+        sessionId: "ses_x" as never,
+        sequence: 1,
+        entryKind: "Observation" as const,
+        payload: {},
+        createdAt: "t",
+        causalBinding: {
+          projectId: "prj_00000000-0000-7000-8000-0000000000f1" as never,
+          workspaceId: "ws_00000000-0000-7000-8000-0000000000f1" as never,
+          executionId: priorExecutionId,
+          workId,
+          episodeBinding: "WorkEpisode",
+          causedByRef: null,
+        },
+      },
+      {
+        sessionId: "ses_x" as never,
+        sequence: 2,
+        entryKind: "Observation" as const,
+        payload: {},
+        createdAt: "t",
+        causalBinding: {
+          projectId: "prj_00000000-0000-7000-8000-0000000000f1" as never,
+          workspaceId: "ws_00000000-0000-7000-8000-0000000000f1" as never,
+          executionId,
+          workId,
+          episodeBinding: "WorkEpisode",
+          causedByRef: null,
+        },
+      },
+    ];
+    expect(
+      filterEntriesForWork(entries, { executionId, workId }).map(
+        (entry) => entry.sequence,
+      ),
+    ).toEqual([1, 2]);
+  });
 });
