@@ -1051,7 +1051,6 @@ export const AgentLoopDriverLive = (
                 input: {
                   execution: input.execution,
                   agentExecutionState: input.agentExecutionState,
-                  context: input.context,
                 },
                 agentBinding,
                 capability,

@@ -156,7 +156,7 @@ const upgradeHistoricalAttentionFixtureToSchema51 = async (
   });
   const currentSchema = new DatabaseSync(databaseFile, { readOnly: true });
   try {
-    expect(CURRENT_SCHEMA_VERSION).toBe(54);
+    expect(CURRENT_SCHEMA_VERSION).toBe(55);
     expect(
       Number(
         (

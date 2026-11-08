@@ -1,7 +1,7 @@
 import type { WorkDetailRes } from "@arbor/api-contracts";
 import { Card } from "../components/Card.js";
 import { Empty } from "../components/Empty.js";
-import { EnumBadge, TimeText } from "./shared.js";
+import { EnumBadge, Mono, TimeText } from "./shared.js";
 
 const verdictLabel = (verdict: string): string =>
   ({ Pass: "通过", Fail: "未通过", Unknown: "无法判断" })[verdict] ?? verdict;

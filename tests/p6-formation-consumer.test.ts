@@ -158,6 +158,7 @@ describe("P6-004 approve consumer (D1)", () => {
           {
             eventType: "DecisionRecorded",
             eventId: "evt-old-approve",
+            occurredAt: "2026-01-01T00:00:00.000Z",
             payload: {
               proposalId: FPR_1,
               proposalRevision: 1,
@@ -235,6 +236,7 @@ describe("P6-004 approve consumer (D1)", () => {
           {
             eventType: "DecisionRecorded",
             eventId: "evt-decision-1",
+            occurredAt: "2026-01-01T00:00:00.000Z",
             payload: {
               proposalId: FPR_1,
               proposalRevision: 1,
@@ -365,6 +367,7 @@ describe("P6-004 approve consumer (D1)", () => {
     const event = {
       eventType: "DecisionRecorded",
       eventId: "evt-decision-recoverable",
+      occurredAt: "2026-01-01T00:00:00.000Z",
       payload: {
         proposalId: FPR_1,
         proposalRevision: 1,

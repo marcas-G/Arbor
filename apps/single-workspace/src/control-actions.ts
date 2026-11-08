@@ -2842,7 +2842,9 @@ const proposeChildWorkspaceHandler = (
             );
           }
           const record = admitFormationProposal({
-            proposalId: newFormationProposalId(),
+            proposalId: newFormationProposalId(
+              `${execution.executionId}:${JSON.stringify(action.proposal)}`,
+            ),
             parentWorkspaceId: execution.workspaceId,
             proposal,
           });

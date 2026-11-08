@@ -287,6 +287,7 @@ const buildApp = (
               projectPolicy: makeProjectPolicy(),
               projectPolicyRevision: 0 as never,
               revision: 0 as never,
+              resourceSource: { _tag: "ConversationOnly" },
             }),
             lifecycle: projectLifecycle,
           }),
