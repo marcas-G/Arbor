@@ -114,8 +114,8 @@ describe("W-06 Work Detail 页", () => {
     renderWork(WORK_CURRENT);
     await waitFor(() => expect(screen.getByText("当前工作目标")).toBeTruthy());
     expect(screen.getByText("测试当前工作详情")).toBeTruthy();
-    expect(screen.getByText(WORK_CURRENT).closest("details")?.open).toBe(false);
-    fireEvent.click(screen.getByRole("button", { name: "返回工作区" }));
+    expect(screen.getByText("工作详情")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "返回分工详情" }));
     expect(window.location.pathname).toBe(`/p/prj_1/workspace/${WS}`);
   });
 
@@ -127,7 +127,7 @@ describe("W-06 Work Detail 页", () => {
     });
     renderWork(WORK_PENDING);
     await waitFor(() => expect(screen.getByText("待办工作目标")).toBeTruthy());
-    expect(screen.getByText(WORK_PENDING)).toBeTruthy();
+    expect(screen.getByText("工作目标")).toBeTruthy();
   });
 
   it("目标不存在由 Work Detail 的 not-found Problem 呈现", async () => {
@@ -156,25 +156,25 @@ describe("W-06 Work Detail 页", () => {
   it("验证与验收区：verdict 徽章 / criteria 行 / evidence / acceptance", async () => {
     installViews();
     renderWork(WORK_CURRENT);
-    await waitFor(() => expect(screen.getByText("crit-render")).toBeTruthy());
+    await waitFor(() =>
+      expect(screen.getByText("10 视图 ×3 fixture 全部可渲染")).toBeTruthy(),
+    );
     expect(screen.getByText("10 视图 ×3 fixture 全部可渲染")).toBeTruthy();
-    expect(screen.getByText("crit-problem")).toBeTruthy();
-    expect(screen.getAllByText("Pass").length).toBeGreaterThanOrEqual(2);
-    expect(screen.getByText(/human:root/)).toBeTruthy();
-    expect(screen.getByText("evd_1")).toBeTruthy();
-    expect(screen.getByText("evd_2")).toBeTruthy();
+    expect(screen.getByText("六类 Problem 呈现齐备")).toBeTruthy();
+    expect(screen.getAllByText("通过").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("已记录 2 条依据")).toBeTruthy();
   });
 
   it("已验收 verification 不再重复暴露验收，但 exact current revision 仍可纠偏", async () => {
     const urls = installViews();
     renderWork(WORK_CURRENT);
     await waitFor(() => expect(screen.getByText("当前工作目标")).toBeTruthy());
-    await waitFor(() => expect(screen.getByText("治理动作")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("工作操作")).toBeTruthy());
     const accept = screen.getByRole("button", {
       name: "验收工作成果",
     }) as HTMLButtonElement;
     const steer = screen.getByRole("button", {
-      name: "纠偏",
+      name: "调整方向",
     }) as HTMLButtonElement;
     expect(accept.disabled).toBe(true);
     expect(steer.disabled).toBe(false);
@@ -187,13 +187,17 @@ describe("W-06 Work Detail 页", () => {
       verification: () => ({ dto: verificationEligible }),
     });
     renderWork(WORK_CURRENT);
-    await waitFor(() => expect(screen.getByText("crit-render")).toBeTruthy());
+    await waitFor(() =>
+      expect(screen.getByText("10 视图 ×3 fixture 全部可渲染")).toBeTruthy(),
+    );
     const accept = screen.getByRole("button", {
       name: "验收工作成果",
     }) as HTMLButtonElement;
     expect(accept.disabled).toBe(false);
     fireEvent.click(accept);
-    expect(screen.getByText(`rev 7 · ${"ver_1"}`)).toBeTruthy();
+    expect(
+      screen.getByText("确认后，这项工作的当前成果将被标记为已验收。"),
+    ).toBeTruthy();
   });
 
   it("target revision 与 canonical current revision 不一致时不暴露验收", async () => {
@@ -204,7 +208,9 @@ describe("W-06 Work Detail 页", () => {
       }),
     });
     renderWork(WORK_CURRENT);
-    await waitFor(() => expect(screen.getByText("crit-render")).toBeTruthy());
+    await waitFor(() =>
+      expect(screen.getByText("10 视图 ×3 fixture 全部可渲染")).toBeTruthy(),
+    );
     expect(
       (
         screen.getByRole("button", {
@@ -232,9 +238,9 @@ describe("W-06 Work Detail 页", () => {
     });
     renderWork(WORK_CURRENT);
     await waitFor(() => expect(screen.getByText("已完成")).toBeTruthy());
-    expect(screen.getByText("验收记录")).toBeTruthy();
-    expect(screen.getByText("acc_1")).toBeTruthy();
-    expect(screen.queryByText("治理动作")).toBeNull();
+    expect(screen.getByText("验收结果")).toBeTruthy();
+    expect(screen.getByText("用户确认")).toBeTruthy();
+    expect(screen.queryByText("工作操作")).toBeNull();
     expect(urls.some((url) => url.includes("/views/work-detail"))).toBe(true);
   });
 
@@ -251,7 +257,7 @@ describe("W-06 Work Detail 页", () => {
     );
     expect(screen.queryByText("已完成")).toBeNull();
     expect(screen.getByText("验收结果")).toBeTruthy();
-    expect(screen.getByText("acc_1")).toBeTruthy();
+    expect(screen.getByText("用户确认")).toBeTruthy();
   });
 
   it("Cancelled Work keeps its lifecycle and has no governance commands", async () => {
@@ -264,6 +270,6 @@ describe("W-06 Work Detail 页", () => {
     renderWork(WORK_CURRENT);
     await waitFor(() => expect(screen.getByText("已取消")).toBeTruthy());
     expect(screen.getByText("历史验收")).toBeTruthy();
-    expect(screen.queryByText("治理动作")).toBeNull();
+    expect(screen.queryByText("工作操作")).toBeNull();
   });
 });

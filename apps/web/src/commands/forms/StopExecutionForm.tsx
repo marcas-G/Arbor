@@ -8,14 +8,13 @@ import { useState } from "react";
 import { type Resolver, useForm } from "react-hook-form";
 import { Button } from "../../components/Button.js";
 import { Card } from "../../components/Card.js";
-import { Mono } from "../../views/shared.js";
 import { stopExecutionSchema, zodResolver } from "../schemas.js";
 import type { CommandReceiptView } from "../submitCommand.js";
 import { useCommandSubmission } from "../useCommandSubmission.js";
 import { FormFeedback } from "./FormFeedback.js";
 import "./forms.css";
 
-type StopValues = { executionId: string; confirmed: true };
+type StopValues = { executionId: string; confirmed: boolean };
 
 export function StopExecutionForm({
   actor,
@@ -42,10 +41,12 @@ export function StopExecutionForm({
     resolver: zodResolver(stopExecutionSchema) as Resolver<StopValues>,
     defaultValues: {
       executionId,
-      confirmed: false as unknown as true,
+      confirmed: false,
     },
   });
   const confirmed = watch("confirmed");
+  const submissionLocked =
+    state.phase === "submitting" || state.phase === "transport-failed";
   if (stage === "idle") {
     return (
       <Button variant="danger" onClick={() => setStage("confirming")}>
@@ -63,32 +64,38 @@ export function StopExecutionForm({
     )();
   };
   return (
-    <Card title="紧急停止（StopExecution）">
+    <Card title="停止当前运行">
       <form className="arbor-command-form" onSubmit={doSubmit}>
         <p>
-          确认停止执行 <Mono>{executionId}</Mono>
-          {workspaceName === undefined ? null : `（${workspaceName}）`}
+          {workspaceName === undefined
+            ? "停止后，Arbor 将不再继续当前运行。"
+            : `停止后，${workspaceName}将不再继续当前运行。`}
         </p>
         <label className="arbor-command-check">
           <input
             type="checkbox"
+            disabled={submissionLocked}
             checked={confirmed === true}
             onChange={(event) => {
-              setValue("confirmed", event.target.checked as true);
+              setValue("confirmed", event.target.checked);
             }}
           />
-          我确认要立即停止该执行
+          我确认要立即停止
         </label>
         <FormFeedback state={state} onRetry={() => doSubmit()} />
         <div className="arbor-command-actions">
           <Button
             variant="danger"
             type="submit"
-            disabled={state.phase === "submitting" || confirmed !== true}
+            disabled={submissionLocked || confirmed !== true}
           >
             确认停止
           </Button>
-          <Button variant="quiet" onClick={() => setStage("idle")}>
+          <Button
+            variant="quiet"
+            disabled={submissionLocked}
+            onClick={() => setStage("idle")}
+          >
             取消
           </Button>
         </div>

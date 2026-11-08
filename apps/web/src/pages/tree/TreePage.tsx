@@ -5,10 +5,11 @@
  * `parentWorkspaceId`，绝不从顺序或名称推断。
  * 硬约束：本页 0 个 command 发起——只有 view 查询与本地导航状态。
  */
-import type { Problem, TreeViewNode } from "@arbor/api-contracts";
+import type { TreeViewNode } from "@arbor/api-contracts";
 import { type CSSProperties, useState } from "react";
 import type { Route } from "../../api/router.js";
 import { navigate } from "../../api/router.js";
+import { problemFromUnknown } from "../../api/transport.js";
 import { useViewQuery } from "../../api/useViewQuery.js";
 import { Badge } from "../../components/Badge.js";
 import { Button } from "../../components/Button.js";
@@ -16,7 +17,6 @@ import { Card } from "../../components/Card.js";
 import { cx } from "../../components/cx.js";
 import { Empty } from "../../components/Empty.js";
 import { KeyValue, type KeyValuePair } from "../../components/KeyValue.js";
-import { MonoText } from "../../components/MonoText.js";
 import { StatusBadge } from "../../components/StatusBadge.js";
 import { ProblemCard } from "../../problems/ProblemCard.js";
 import { formatCost } from "../../views/shared.js";
@@ -33,7 +33,7 @@ function openWorkspace(projectId: string, workspaceId: string): void {
 function usageText(
   usageSummary: NonNullable<TreeViewNode["usageSummary"]>,
 ): string {
-  return `tokens ${String(usageSummary.tokens)} · cost ${formatCost(usageSummary.cost)} · turns ${String(usageSummary.turns)}`;
+  return `处理量 ${String(usageSummary.tokens)} · 费用 ${formatCost(usageSummary.cost)} · 运行次数 ${String(usageSummary.turns)}`;
 }
 
 function attentionText(node: TreeViewNode): string {
@@ -96,20 +96,20 @@ function MiniDetail({
 }) {
   const pairs: ReadonlyArray<KeyValuePair> = [
     { label: "名称", value: node.name },
-    { label: "工作区", value: <MonoText>{node.workspaceId}</MonoText> },
+    { label: "类型", value: "项目分工" },
     { label: "状态", value: <StatusBadge label={node.status} /> },
     {
       label: "当前工作",
       value: node.currentWork == null ? "—" : node.currentWork.objective,
     },
-    { label: "子树关注", value: attentionText(node) },
+    { label: "相关提醒", value: attentionText(node) },
     {
       label: "用量",
       value: node.usageSummary == null ? "—" : usageText(node.usageSummary),
     },
   ];
   return (
-    <Card title="节点详情">
+    <Card title="分工详情">
       <div className={styles.detailBody}>
         <KeyValue pairs={pairs} />
         <Button
@@ -118,7 +118,7 @@ function MiniDetail({
             openWorkspace(projectId, node.workspaceId);
           }}
         >
-          打开工作区
+          查看工作
         </Button>
       </div>
     </Card>
@@ -146,14 +146,14 @@ export function TreePage({
     <div className={styles.page}>
       <header className={styles.header}>
         {/* W-02 shell smoke（不可改）锁定页面标记为单一文本节点。 */}
-        <h1 className={styles.title} aria-label="责任树">
-          责任树（W-04，只读导航）
+        <h1 className={styles.title} aria-label="项目结构">
+          项目结构
         </h1>
         <label className={styles.depthLabel}>
-          深度
+          显示层级
           <select
             className={styles.depthSelect}
-            aria-label="树深度"
+            aria-label="显示层级"
             value={depth}
             onChange={(event) => {
               setDepth(Number(event.target.value));
@@ -168,18 +168,18 @@ export function TreePage({
         </label>
       </header>
       <div className={styles.layout}>
-        <section className={styles.listSection} aria-label="节点列表">
+        <section className={styles.listSection} aria-label="工作分工列表">
           {query.isPending ? (
             <Empty>加载中</Empty>
           ) : query.isError ? (
             <ProblemCard
-              problem={query.error as unknown as Problem}
+              problem={problemFromUnknown(query.error)}
               onRetry={() => {
                 void query.refetch();
               }}
             />
           ) : presented === null || presented === undefined ? (
-            <Empty>责任树结构不可用，请刷新后重试</Empty>
+            <Empty>项目结构暂不可用，请刷新后重试</Empty>
           ) : (
             <ul className={styles.list}>
               {nodes.map((node) => (
@@ -196,10 +196,10 @@ export function TreePage({
             </ul>
           )}
         </section>
-        <aside className={styles.detail} aria-label="节点详情">
+        <aside className={styles.detail} aria-label="分工详情">
           {selected === null ? (
-            <Card title="节点详情">
-              <Empty>选中节点查看详情</Empty>
+            <Card title="分工详情">
+              <Empty>选择一项分工查看详情</Empty>
             </Card>
           ) : (
             <MiniDetail node={selected} projectId={route.projectId} />

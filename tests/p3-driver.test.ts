@@ -3,6 +3,7 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
   AgentLoopStepStoreLive,
+  runMigrations as applyMigrations,
   ClockLive,
   ConversationAttemptStoreLive,
   ConversationCheckpointStoreLive,
@@ -18,12 +19,12 @@ import {
   ProjectRepositoryLive,
   ProviderTurnStoreLive,
   RuntimeClockLive,
-  runMigrations,
   SessionRepositoryLive,
   TransactionPortLive,
   WorkRepositoryLive,
   WorkspaceRepositoryLive,
 } from "../adapters/persistence-sqlite/src/index.js";
+import type { MigrationFile } from "../adapters/persistence-sqlite/src/migrate.js";
 import { FakeProviderLive } from "../adapters/provider-fake/src/index.js";
 import {
   type AgentActionHandler,
@@ -82,10 +83,38 @@ import {
   sha256Hex,
   TransactionPort,
 } from "../packages/ports/src/index.js";
+
 import { ProviderRuntimeLive } from "../packages/provider-runtime/src/index.js";
 import { FixedSecretStoreLive } from "../packages/testkit/src/index.js";
 import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-project-resource-source.js";
 import { createCurrentSchemaTestDatabase } from "./support/schema44-database.js";
+
+/**
+ * P3 keeps exercising historical P17/P19/P20 schemas, but the current
+ * SessionRepository write contract also emits the additive P37 provenance
+ * column. Add only that column after the historical migration set so these
+ * tests retain the old focus/overflow schema semantics they are intended to
+ * cover.
+ */
+const runMigrations = (migrations: ReadonlyArray<MigrationFile>) =>
+  Effect.gen(function* () {
+    yield* applyMigrations(migrations);
+    const sql = yield* SqlClient;
+    const sessionTable = yield* sql.unsafe<{ name: string }>(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'session_entries'",
+    );
+    if (sessionTable.length === 0) {
+      return;
+    }
+    const columns = yield* sql.unsafe<{ name: string }>(
+      "PRAGMA table_info(session_entries)",
+    );
+    if (!columns.some((column) => column.name === "causal_binding_json")) {
+      yield* sql.unsafe(
+        "ALTER TABLE session_entries ADD COLUMN causal_binding_json TEXT",
+      );
+    }
+  });
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const workspaceId = parse(WorkspaceId)(

@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "arbor-real-provider-evidence-v1",
+  "recordedAt": "2026-10-02T10:16:57.296Z",
+  "caseId": "B05-L3-REAL",
+  "status": "FAIL",
+  "error": "Unexpected end of JSON input",
+  "provider": {
+    "provider": "OpenAI-compatible endpoint",
+    "endpoint": "https://api.agicto.cn/v1",
+    "model": "deepseek-flash",
+    "serverBuildId": "agict-deepseek-flash-20261002",
+    "modelRevision": "not exposed by provider; local model file revision/hash not requested",
+    "authMode": "env",
+    "serverProps": {}
+  },
+  "generation": [],
+  "requestsAndResponses": []
+}

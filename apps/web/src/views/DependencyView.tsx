@@ -4,19 +4,37 @@
  * Human-actionable command, `02` §4).
  */
 import type { DependencyRes, DependencyRow } from "@arbor/api-contracts";
+import { Badge } from "../components/Badge.js";
 import { Empty } from "../components/Empty.js";
-import { EnumBadge, Mono } from "./shared.js";
 
 export function formatBinding(binding: DependencyRow["binding"]): string {
   switch (binding._tag) {
     case "AnyProducer":
-      return "AnyProducer";
+      return "任意工作";
     case "WorkspaceBound":
-      return `WorkspaceBound ${binding.workspaceId}`;
+      return "指定分工";
     case "WorkBound":
-      return `WorkBound ${binding.workId}`;
+      return "指定工作";
     default:
       return JSON.stringify(binding) ?? "unknown-binding";
+  }
+}
+
+function dependencyState(state: DependencyRow["state"]): {
+  readonly label: string;
+  readonly tone: "leaf" | "attention" | "danger" | "muted";
+} {
+  switch (state) {
+    case "Satisfied":
+      return { label: "已满足", tone: "leaf" };
+    case "Unsatisfied":
+      return { label: "等待中", tone: "attention" };
+    case "Withdrawn":
+      return { label: "已撤回", tone: "muted" };
+    case "Unfulfillable":
+      return { label: "无法满足", tone: "danger" };
+    default:
+      return { label: state, tone: "muted" };
   }
 }
 
@@ -29,33 +47,26 @@ export function DependencyTable({
     <table className="arbor-table">
       <thead>
         <tr>
-          <th scope="col">dependencyId</th>
-          <th scope="col">consumerWorkId</th>
-          <th scope="col">binding</th>
-          <th scope="col">state</th>
-          <th scope="col">satisfiedBy</th>
+          <th scope="col">事项</th>
+          <th scope="col">等待对象</th>
+          <th scope="col">状态</th>
+          <th scope="col">进展</th>
         </tr>
       </thead>
       <tbody>
-        {rows.map((row) => (
-          <tr key={row.dependencyId}>
-            <td>
-              <Mono>{row.dependencyId}</Mono>
-            </td>
-            <td>
-              <Mono>{row.consumerWorkId}</Mono>
-            </td>
-            <td>
-              <Mono>{formatBinding(row.binding)}</Mono>
-            </td>
-            <td>
-              <EnumBadge label={row.state} />
-            </td>
-            <td>
-              {row.satisfiedBy == null ? null : <Mono>{row.satisfiedBy}</Mono>}
-            </td>
-          </tr>
-        ))}
+        {rows.map((row, index) => {
+          const state = dependencyState(row.state);
+          return (
+            <tr key={row.dependencyId}>
+              <td>{`依赖 ${String(index + 1)}`}</td>
+              <td>{formatBinding(row.binding)}</td>
+              <td>
+                <Badge tone={state.tone}>{state.label}</Badge>
+              </td>
+              <td>{row.satisfiedBy == null ? "—" : "已收到结果"}</td>
+            </tr>
+          );
+        })}
       </tbody>
     </table>
   );

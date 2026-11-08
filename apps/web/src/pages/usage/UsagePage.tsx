@@ -5,9 +5,10 @@
  * 原样 "unknown"（P12 `04` TR-5）。ceiling 对照条仅当 DTO 提供字段时呈现
  * （当前 UsageRes 只有 rows → 不渲染，不发明）。空态/失败就地处理。
  */
-import type { Problem, UsageReq } from "@arbor/api-contracts";
-import { useState } from "react";
+import type { UsageReq } from "@arbor/api-contracts";
+import { useMemo, useState } from "react";
 import type { Route } from "../../api/router.js";
+import { problemFromUnknown } from "../../api/transport.js";
 import { useViewQuery } from "../../api/useViewQuery.js";
 import { Card } from "../../components/Card.js";
 import { Empty } from "../../components/Empty.js";
@@ -25,6 +26,18 @@ export function UsagePage({
     projectId: route.projectId as never,
     groupBy,
   });
+  const tree = useViewQuery("responsibility-tree", {
+    projectId: route.projectId as never,
+  });
+  const workspaceNames = useMemo(
+    () =>
+      new Map(
+        tree.data?.nodes.map(
+          (node) => [node.workspaceId, node.name] as const,
+        ) ?? [],
+      ),
+    [tree.data],
+  );
   return (
     <div className={styles.page}>
       <h1 className={styles.title}>用量</h1>
@@ -33,7 +46,7 @@ export function UsagePage({
           <Empty>加载中</Empty>
         ) : query.isError ? (
           <ProblemCard
-            problem={query.error as unknown as Problem}
+            problem={problemFromUnknown(query.error)}
             onRetry={() => {
               void query.refetch();
             }}
@@ -43,6 +56,7 @@ export function UsagePage({
             res={query.data}
             groupBy={groupBy}
             onGroupByChange={setGroupBy}
+            workspaceNames={workspaceNames}
           />
         )}
       </Card>

@@ -12,14 +12,15 @@ export function CommandInlineError({
       ? "版本冲突"
       : rejection === "AuthorityDenied"
         ? "权限拒绝"
-        : "命令被终态拒绝";
+        : "操作未完成";
   return (
     <div className="arbor-inline-error" role="alert">
       <h2 className="arbor-inline-error-title">{title}</h2>
-      <p>
+      <p>请检查当前内容或权限，修改后重新提交。</p>
+      <details>
+        <summary>问题详情</summary>
         <span className="arbor-mono">{rejection}</span>
-      </p>
-      <p>命令被终态拒绝：可修改后重新提交（将生成新的 commandId）。</p>
+      </details>
     </div>
   );
 }

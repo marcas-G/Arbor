@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "arbor-real-provider-evidence-v1",
+  "recordedAt": "2026-10-02T20:15:07.725Z",
+  "caseId": "B10-L3-REAL",
+  "status": "FAIL",
+  "error": "Error: StartVerification failed: 403 {\"ok\":false,\"status\":403,\"problem\":{\"code\":\"authority/denied\",\"category\":\"forbidden\",\"message\":\"authority/denied\",\"correlationId\":null,\"retryDisposition\":\"non-retryable\",\"safeDetails\":{\"reason\":\"UnsupportedOrigin:StartVerification\"}}}",
+  "provider": {
+    "provider": "OpenAI-compatible endpoint",
+    "endpoint": "https://api.deepseek.com",
+    "model": "deepseek-flash",
+    "serverBuildId": "deepseek-official-2026-10-03",
+    "modelRevision": "not exposed by provider; local model file revision/hash not requested",
+    "authMode": "env",
+    "serverProps": {}
+  },
+  "generation": [],
+  "requestsAndResponses": []
+}

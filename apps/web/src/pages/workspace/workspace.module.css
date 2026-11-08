@@ -31,6 +31,15 @@
   gap: var(--arbor-space-2);
 }
 
+.workspaceLabel,
+.workLabel {
+  color: var(--arbor-ink-soft);
+  font-size: var(--arbor-text-caption);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .attentionRow {
   display: flex;
   flex-wrap: wrap;
@@ -149,6 +158,41 @@
 
 .conversationStatus strong {
   color: var(--arbor-ink);
+}
+
+.liveStep {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--arbor-ink-soft);
+}
+
+.liveStepDot {
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 999px;
+  background: var(--arbor-leaf-bright);
+  animation: arbor-live-pulse 1.2s ease-in-out infinite;
+}
+
+.liveAnswer {
+  max-height: 10rem;
+  overflow: auto;
+  padding: var(--arbor-space-2);
+  border-left: 2px solid var(--arbor-leaf-bright);
+  background: color-mix(in srgb, var(--arbor-paper) 70%, transparent);
+  color: var(--arbor-ink);
+  white-space: pre-wrap;
+}
+
+@keyframes arbor-live-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 .technicalReason {

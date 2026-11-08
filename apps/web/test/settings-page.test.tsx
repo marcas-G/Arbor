@@ -91,28 +91,56 @@ afterEach(() => {
 });
 
 describe("W-07 SettingsPage (frozen §2.10)", () => {
-  it("三块标题呈现；会话块 actor 展示 + 断开回登录态（真实 SessionProvider）", () => {
+  it("项目、权限和连接入口呈现；断开回登录态（真实 SessionProvider）", () => {
     renderSettingsLive();
-    expect(screen.getAllByText("user:test").length).toBeGreaterThan(0);
-    expect(screen.getByRole("heading", { name: "权限管理" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "高级权限设置" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "项目" })).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "会话" })).toBeTruthy();
-    expect(screen.getByText("令牌仅保存在内存，刷新页面即失效")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "断开" }));
+    expect(screen.getByRole("heading", { name: "连接" })).toBeTruthy();
+    expect(screen.getByText("Arbor 已连接到当前工作环境。")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "断开连接" }));
     expect(screen.getByText(/已断开/)).toBeTruthy();
-    expect(screen.queryByText("user:test")).toBeNull();
+  });
+
+  it("requires confirmation before archiving the current project", async () => {
+    fetchMock.mockResolvedValue({
+      json: async () => ({
+        ok: true,
+        body: {
+          projects: [
+            {
+              projectId: "prj_1",
+              name: "当前项目",
+              lifecycle: "Open",
+              revision: 4,
+            },
+          ],
+        },
+      }),
+    });
+    renderSettingsLive();
+    expect(
+      await screen.findByRole("button", { name: "归档项目" }),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "归档项目" }));
+    expect(screen.getByText("确认归档这个项目？")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "确认归档" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    expect(screen.queryByText("确认归档这个项目？")).toBeNull();
   });
 
   it("Grant 表单可用：capability 选项来自 HUMAN_ACTIONABLE_COMMANDS，issuer 无可编辑控件（W-00 证明④延续）", () => {
     renderSettings();
     const permissions = screen.getByLabelText("权限管理");
-    const capability = within(permissions).getByLabelText("capability");
+    fireEvent.click(
+      within(permissions).getByText("为特定用户或自动分工开放额外操作"),
+    );
+    const capability = within(permissions).getByLabelText("允许的操作");
     for (const command of HUMAN_ACTIONABLE_COMMANDS) {
       expect(
-        within(capability as HTMLElement).getByRole("option", {
-          name: command,
-        }),
-      ).toBeTruthy();
+        (capability as HTMLSelectElement).querySelector(
+          `option[value="${command}"]`,
+        ),
+      ).not.toBeNull();
     }
     expect(screen.queryByLabelText(/issuer/i)).toBeNull();
     expect(screen.queryByPlaceholderText(/issuer/i)).toBeNull();
@@ -121,10 +149,11 @@ describe("W-07 SettingsPage (frozen §2.10)", () => {
   it("grant inventory unavailable is not presented as an empty grant list or actionable Revoke UI", () => {
     renderSettings();
     const permissions = screen.getByLabelText("权限管理");
+    fireEvent.click(
+      within(permissions).getByText("为特定用户或自动分工开放额外操作"),
+    );
     expect(
-      within(permissions).getByText(
-        "当前冻结接口未提供授权清单，无法定位可撤销授权。",
-      ),
+      within(permissions).getByText("已授予的权限暂时不能在这里撤销。"),
     ).toBeTruthy();
     expect(
       within(permissions).queryByRole("button", { name: "撤销" }),
@@ -150,21 +179,18 @@ describe("W-07 SettingsPage (frozen §2.10)", () => {
     ).toBeNull();
     expect(
       within(permissions).getByRole("heading", {
-        name: "授予权限（GrantPermission）",
+        name: "开放额外操作",
       }),
     ).toBeTruthy();
   });
 
-  it("shows the route project, exact authenticated issuer, and frozen capability-unavailable sections", () => {
+  it("does not expose internal project, actor, or unavailable backend sections", () => {
     renderSettings();
-    const project = screen.getByLabelText("项目");
-    expect(within(project).getByText("prj_1")).toBeTruthy();
-    const permissions = screen.getByLabelText("权限管理");
-    expect(within(permissions).getByText("user:test")).toBeTruthy();
-    expect(screen.getByLabelText("成员管理")).toBeTruthy();
-    expect(screen.getByLabelText("供应商与模型")).toBeTruthy();
-    expect(screen.getByLabelText("运行时、资源与存储")).toBeTruthy();
-    expect(screen.getByLabelText("通知与安全策略")).toBeTruthy();
+    expect(screen.queryByText("prj_1")).toBeNull();
+    expect(screen.queryByText("user:test")).toBeNull();
+    expect(screen.queryByLabelText("成员管理")).toBeNull();
+    expect(screen.queryByLabelText("供应商与模型")).toBeNull();
+    expect(screen.queryByLabelText("运行时、资源与存储")).toBeNull();
     expect(
       screen.queryByRole("textbox", { name: /provider|model|runtime/i }),
     ).toBeNull();
@@ -248,7 +274,7 @@ describe("W-07 SettingsPage (frozen §2.10)", () => {
 
   it("saves only the existing local Workbench layout preference", () => {
     renderSettings();
-    fireEvent.click(screen.getByRole("radio", { name: "树优先" }));
+    fireEvent.click(screen.getByRole("radio", { name: "分工优先" }));
     expect(
       JSON.parse(localStorage.getItem("arbor.workbench-layout.v1") ?? "null"),
     ).toMatchObject({ order: "tree-first" });

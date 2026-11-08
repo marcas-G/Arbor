@@ -897,7 +897,10 @@ const runCoordinatorOverProducedEvents = Effect.gen(function* () {
   const events = yield* producedEvents;
   const deps = yield* makeCoordinatorDeps;
   return yield* runDependencyCoordinator(
-    events,
+    events.map((event) => ({
+      ...event,
+      occurredAt: "2026-01-01T00:00:00.000Z",
+    })),
     deps,
     p7Project,
     p7TestPrincipal,

@@ -18,6 +18,21 @@ export type ConversationStreamEvent =
       readonly text: string;
     }
   | {
+      /** A safe progress marker. Reasoning text is intentionally never sent
+       * to the browser; this is only a UI stage indicator. */
+      readonly type: "thinking";
+      readonly executionId: string;
+      readonly providerTurnId: string;
+      readonly attemptNo: number;
+    }
+  | {
+      readonly type: "tool-started";
+      readonly executionId: string;
+      readonly providerTurnId: string;
+      readonly attemptNo: number;
+      readonly toolName: string;
+    }
+  | {
       readonly type: "reset";
       readonly executionId?: string;
       readonly providerTurnId?: string;

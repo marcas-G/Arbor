@@ -19,12 +19,19 @@ export function EnumBadge({ label }: { readonly label: string }) {
   return <Badge tone={statusTone(label)}>{label}</Badge>;
 }
 
+export function workLifecycleLabel(lifecycle: string): string {
+  return (
+    { Open: "进行中", Completed: "已完成", Cancelled: "已取消" }[lifecycle] ??
+    lifecycle
+  );
+}
+
 /** P12 `04` TR-5: `UsageCost` ADT — `_tag` discriminant; Unknown renders
  * "unknown", never 0. Known renders `amount currency`. */
 export function formatCost(cost: UsageRow["cost"]): string {
   return cost._tag === "Known"
     ? `${String(cost.amount)} ${cost.currency}`
-    : "unknown";
+    : "暂不可用";
 }
 
 /** ISO timestamp: localized text, raw value always inspectable via title. */

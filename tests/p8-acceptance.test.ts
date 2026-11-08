@@ -247,9 +247,15 @@ const settledEventOf = (
   eventId: string,
   workId: WorkId,
   claimRef: string,
-): { eventType: string; eventId: string; payload: unknown } => ({
+): {
+  eventType: string;
+  eventId: string;
+  occurredAt: string;
+  payload: unknown;
+} => ({
   eventType: "ExecutionSettled",
   eventId,
+  occurredAt: "2026-01-01T00:00:00.000Z",
   payload: {
     executionId: `exe_acceptance_${claimRef}`,
     workId,
@@ -266,9 +272,15 @@ const acceptedEventOf = (
     targetWorkRevision: number;
     verificationId: VerificationId;
   },
-): { eventType: string; eventId: string; payload: unknown } => ({
+): {
+  eventType: string;
+  eventId: string;
+  occurredAt: string;
+  payload: unknown;
+} => ({
   eventType: "WorkOutcomeAccepted",
   eventId,
+  occurredAt: "2026-01-01T00:00:00.000Z",
   payload: { ...payload, actor: p7TestActor },
 });
 

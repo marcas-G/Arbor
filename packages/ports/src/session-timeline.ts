@@ -6,6 +6,7 @@ import type {
   WorkspaceId,
 } from "@arbor/domain";
 import type { PortableToolResultStatus } from "./provider.js";
+import type { SessionCausalBinding } from "./session-provenance.js";
 
 /** Typed Session attachment carrier for P16 reasoning round-trip state. */
 export const PROVIDER_REASONING_ATTACHMENT_MEDIA_TYPE =
@@ -116,6 +117,7 @@ export interface SessionItemWrite {
   readonly contextEpoch: ContextEpochNumber;
   readonly source: SessionItemSource;
   readonly contentHash: string;
+  readonly causalBinding?: SessionCausalBinding;
 }
 
 export interface SessionItemRecord extends SessionItemWrite {
@@ -135,6 +137,7 @@ export interface SessionCompactionCommit {
   >;
   readonly source: SessionItemSource;
   readonly contentHash: string;
+  readonly causalBinding?: SessionCausalBinding;
 }
 
 export interface SessionWriteFence {

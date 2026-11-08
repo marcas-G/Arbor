@@ -7,10 +7,7 @@
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type Resolver, useForm } from "react-hook-form";
-import type {
-  ProjectResourceCatalog,
-  ProjectResourceProfileEntry,
-} from "../../api/transport.js";
+import type { ProjectResourceCatalog } from "../../api/transport.js";
 import { fetchProjectResources } from "../../api/transport.js";
 import { Button } from "../../components/Button.js";
 import { Card } from "../../components/Card.js";
@@ -31,24 +28,6 @@ type ResourceSelection =
       readonly version: string;
     }
   | { readonly _tag: "ConversationOnly" };
-
-const profileSelectionOf = (
-  profile: ProjectResourceProfileEntry,
-): ResourceSelection => ({
-  _tag: "Profile",
-  resourceProfileRef: profile.resourceProfileRef,
-  version: profile.version,
-});
-
-const isSameSelection = (
-  left: ResourceSelection | null,
-  right: ResourceSelection,
-): boolean =>
-  left?._tag === right._tag &&
-  (right._tag === "ConversationOnly" ||
-    (left?._tag === "Profile" &&
-      left.resourceProfileRef === right.resourceProfileRef &&
-      left.version === right.version));
 
 const isSelectionAvailable = (
   catalog: ProjectResourceCatalog | null,
@@ -71,11 +50,15 @@ export function CreateProjectForm({
   token,
   onSubmitted,
   embedded = false,
+  quickStart = false,
 }: {
   readonly actor: string;
   readonly token?: string | undefined;
   readonly onSubmitted: (receipt: CommandReceiptView) => void;
   readonly embedded?: boolean | undefined;
+  /** Homepage mode: the daemon's current project directory is the implicit
+   * primary folder, matching Codex local-project behavior. */
+  readonly quickStart?: boolean | undefined;
 }) {
   const idsRef = useRef<{
     readonly projectId: string;
@@ -93,7 +76,7 @@ export function CreateProjectForm({
   });
   const { handleSubmit, setValue, watch, formState } = useForm<CreateValues>({
     resolver: zodResolver(createProjectSchema) as Resolver<CreateValues>,
-    defaultValues: { name: "" },
+    defaultValues: { name: quickStart ? "新项目" : "" },
   });
   const [catalog, setCatalog] = useState<ProjectResourceCatalog | null>(null);
   const [catalogLoading, setCatalogLoading] = useState(true);
@@ -128,11 +111,8 @@ export function CreateProjectForm({
           return current;
         }
         if (current !== null) return null;
-        const available = outcome.dto.profiles.filter(
-          (profile) => profile.available,
-        );
-        return available.length === 1 && available[0] !== undefined
-          ? profileSelectionOf(available[0])
+        return outcome.dto.conversationOnlySupported
+          ? { _tag: "ConversationOnly" }
           : null;
       });
     },
@@ -206,8 +186,11 @@ export function CreateProjectForm({
     <form className="arbor-command-form" onSubmit={doSubmit}>
       <Field
         control="input"
-        label="项目名称"
-        placeholder="例如：论文写作平台"
+        label={quickStart ? "项目名称（可选）" : "项目名称"}
+        disabled={resourceChoiceLocked}
+        placeholder={
+          quickStart ? "保留“新项目”或改成一个名称" : "例如：论文写作平台"
+        }
         value={name}
         onChange={(next) => {
           setValue("name", next);
@@ -216,72 +199,21 @@ export function CreateProjectForm({
       {formState.errors.name ? (
         <p className="arbor-command-error">{formState.errors.name.message}</p>
       ) : null}
-      <fieldset
-        className="arbor-project-resource-selection"
-        disabled={resourceChoiceLocked}
-      >
-        <legend>项目资源</legend>
-        {catalogLoading ? (
-          <p role="status">正在读取可用文件目录…</p>
-        ) : catalogError ? (
-          <div role="alert" className="arbor-command-error">
-            <p>无法读取项目资源目录。加载完成前不会创建项目。</p>
-            <Button type="button" onClick={() => void loadCatalog()}>
-              重新加载目录
-            </Button>
-          </div>
-        ) : catalog !== null ? (
-          <>
-            {catalog.profiles.map((profile) => {
-              const choice = profileSelectionOf(profile);
-              return (
-                <label
-                  key={`${profile.resourceProfileRef}\u0000${profile.version}`}
-                >
-                  <input
-                    type="radio"
-                    name="project-resource-selection"
-                    checked={isSameSelection(resourceSelection, choice)}
-                    disabled={!profile.available}
-                    onChange={() => setResourceSelection(choice)}
-                  />
-                  <span>{profile.displayName}</span>
-                  <span>{profile.available ? "可用" : "不可用"}</span>
-                </label>
-              );
-            })}
-            {catalog.conversationOnlySupported ? (
-              <label>
-                <input
-                  type="radio"
-                  name="project-resource-selection"
-                  checked={resourceSelection?._tag === "ConversationOnly"}
-                  onChange={() =>
-                    setResourceSelection({ _tag: "ConversationOnly" })
-                  }
-                />
-                <span>仅对话</span>
-              </label>
-            ) : null}
-            {catalog.profiles.every((profile) => !profile.available) ? (
-              <p>
-                当前没有可用的文件目录。仅对话项目不能使用文件工具，也不能完成需要文件证据的
-                Work；如仍要创建，请明确选择“仅对话”。
-              </p>
-            ) : catalog.profiles.filter((profile) => profile.available).length >
-                1 && resourceSelection === null ? (
-              <p>请选择一个可用文件目录，或明确选择“仅对话”。</p>
-            ) : null}
-          </>
-        ) : null}
-      </fieldset>
+      {quickStart && catalogError ? (
+        <div role="alert" className="arbor-command-error">
+          <p>默认项目文件夹暂时不可用，请重试。</p>
+          <Button type="button" onClick={() => void loadCatalog()}>
+            重试
+          </Button>
+        </div>
+      ) : null}
       {state.rejection === "ProjectResourceUnavailable" ? (
         <div role="alert" className="arbor-command-error">
           <p>
-            所选文件目录不可用或配置已变化。请重新加载目录并选择可用资源，或明确选择“仅对话”，然后再次提交。
+            所选项目文件位置不可用或已变化。请重新检查并选择可用位置后再次提交。
           </p>
           <Button type="button" onClick={() => void loadCatalog()}>
-            重新加载目录
+            重新检查文件位置
           </Button>
         </div>
       ) : (
@@ -290,9 +222,9 @@ export function CreateProjectForm({
       <Button
         variant="primary"
         type="submit"
-        disabled={state.phase === "submitting" || !canCreate}
+        disabled={resourceChoiceLocked || !canCreate}
       >
-        创建项目
+        {quickStart ? "开始使用" : "创建项目"}
       </Button>
     </form>
   );

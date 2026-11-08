@@ -43,14 +43,11 @@ export const newUuid7 = (salt: string, seed: string): string =>
   deterministicUuid(`${salt}:${seed}`);
 
 /** Fresh caller-preallocated FormationProposalId (uuid v7 shape). */
-export const newFormationProposalId = (): FormationProposalId => {
-  const ts = Date.now().toString(16).padStart(12, "0");
-  const rand = createHash("sha256")
-    .update(`${ts}:${Math.random()}`)
-    .digest("hex");
+export const newFormationProposalId = (seed: string): FormationProposalId => {
+  const rand = createHash("sha256").update(seed).digest("hex");
   const uuid = [
-    ts.slice(4, 12),
-    ts.slice(0, 4),
+    rand.slice(0, 8),
+    rand.slice(8, 12),
     `7${rand.slice(0, 3)}`,
     `8${rand.slice(3, 6)}`,
     rand.slice(6, 18),

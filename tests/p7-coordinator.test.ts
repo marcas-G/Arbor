@@ -177,6 +177,7 @@ const receiptResolution = (commandId: CommandId) =>
 const producedEvent = (n: number) => ({
   eventType: "DeliverableProduced",
   eventId: `evt-produced-${n}`,
+  occurredAt: "2026-01-01T00:00:00.000Z",
   payload: {
     deliverableId: DEL(n),
     sourceWorkId: WORK_P,
@@ -189,6 +190,7 @@ const producedEvent = (n: number) => ({
 const declaredEvent = (n: number) => ({
   eventType: "DependencyDeclared",
   eventId: `evt-declared-${n}`,
+  occurredAt: "2026-01-01T00:00:00.000Z",
   payload: {
     dependencyId: DEP(n),
     consumerWorkId: WORK_C,

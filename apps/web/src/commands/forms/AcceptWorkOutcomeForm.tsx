@@ -9,7 +9,6 @@ import { useRef } from "react";
 import { type Resolver, useForm } from "react-hook-form";
 import { Button } from "../../components/Button.js";
 import { Card } from "../../components/Card.js";
-import { Mono } from "../../views/shared.js";
 import { acceptWorkOutcomeSchema, zodResolver } from "../schemas.js";
 import type { CommandReceiptView } from "../submitCommand.js";
 import { useCommandSubmission } from "../useCommandSubmission.js";
@@ -70,17 +69,14 @@ export function AcceptWorkOutcomeForm({
   return (
     <Card title="验收工作成果">
       <form className="arbor-command-form" onSubmit={doSubmit}>
-        <p>
-          <Mono>{workId}</Mono>{" "}
-          <span className="arbor-command-static">
-            rev {targetWorkRevision} · {verificationId}
-          </span>
-        </p>
+        <p>确认后，这项工作的当前成果将被标记为已验收。</p>
         <FormFeedback state={state} onRetry={() => doSubmit()} />
         <Button
           variant="primary"
           type="submit"
-          disabled={state.phase === "submitting"}
+          disabled={
+            state.phase === "submitting" || state.phase === "transport-failed"
+          }
         >
           记录验收
         </Button>

@@ -9,7 +9,6 @@ import { type Resolver, useForm } from "react-hook-form";
 import { Button } from "../../components/Button.js";
 import { Card } from "../../components/Card.js";
 import { Field } from "../../components/Field.js";
-import { Mono } from "../../views/shared.js";
 import { steerWorkSchema, zodResolver } from "../schemas.js";
 import type { CommandReceiptView } from "../submitCommand.js";
 import { useCommandSubmission } from "../useCommandSubmission.js";
@@ -63,6 +62,8 @@ export function SteerWorkForm({
   const severity = watch("severity");
   const guidance = watch("guidance");
   const criticalConfirmed = watch("criticalConfirmed");
+  const submissionLocked =
+    state.phase === "submitting" || state.phase === "transport-failed";
   const doSubmit = (event?: FormEvent): void => {
     event?.preventDefault();
     void handleSubmit((values) =>
@@ -79,23 +80,17 @@ export function SteerWorkForm({
     )();
   };
   const blocked =
-    state.phase === "submitting" ||
-    (severity === "Critical" && !criticalConfirmed);
+    submissionLocked || (severity === "Critical" && !criticalConfirmed);
   return (
-    <Card title="纠偏（SteerWork）">
+    <Card title="调整工作方向">
       <form className="arbor-command-form" onSubmit={doSubmit}>
-        <p>
-          <Mono>{workId}</Mono>{" "}
-          <span className="arbor-command-static">
-            rev {expectedWorkRevision}
-          </span>
-        </p>
         <p className="arbor-command-static">{objective}</p>
         <Field
           control="textarea"
-          label="纠偏消息"
+          label="调整说明"
+          disabled={submissionLocked}
           rows={3}
-          placeholder="向执行中的 workspace 传达的纠偏内容"
+          placeholder="说明希望 Arbor 如何调整接下来的工作"
           value={guidance}
           onChange={(next) => {
             setValue("guidance", next);
@@ -108,32 +103,34 @@ export function SteerWorkForm({
         ) : null}
         <Field
           control="select"
-          label="severity"
+          label="紧急程度"
+          disabled={submissionLocked}
           value={severity}
           onChange={(next) => {
             setValue("severity", next as SteerValues["severity"]);
             setValue("criticalConfirmed", false);
           }}
           options={[
-            { value: "Normal", label: "Normal（常规）" },
-            { value: "Critical", label: "Critical（紧急）" },
+            { value: "Normal", label: "常规调整" },
+            { value: "Critical", label: "紧急调整" },
           ]}
         />
         {severity === "Critical" ? (
           <label className="arbor-command-check">
             <input
               type="checkbox"
+              disabled={submissionLocked}
               checked={criticalConfirmed}
               onChange={(event) => {
                 setValue("criticalConfirmed", event.target.checked);
               }}
             />
-            确认紧急纠偏
+            我确认这项调整需要立即生效
           </label>
         ) : null}
         <FormFeedback state={state} onRetry={() => doSubmit()} />
         <Button variant="primary" type="submit" disabled={blocked}>
-          发送纠偏
+          发送调整
         </Button>
       </form>
     </Card>

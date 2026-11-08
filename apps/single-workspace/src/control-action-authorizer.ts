@@ -498,6 +498,11 @@ export const ControlActionAuthorizerLive: Layer.Layer<
               actionDigest,
               controlBasisDigest,
               ...(input.action._tag === "AssignWork" &&
+              ((input.action.targetWorkspaceRef !== undefined &&
+                input.action.targetWorkspaceRef !== "current") ||
+                (input.action.targetWorkspaceId !== undefined &&
+                  input.action.targetWorkspaceId !==
+                    input.execution.workspaceId)) &&
               approval.state === "Approved" &&
               approval.bindingProven === true
                 ? {
