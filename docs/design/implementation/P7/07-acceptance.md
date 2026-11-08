@@ -24,8 +24,8 @@
 
 ## 3. Story C — Deliver primitive（G2）
 
-1. child `Deliver(deliverableId)` directive → SendMessage(kind=Deliver) → parent Inbox（Message 条目，summary 含 deliverable）+ `MessageSent`。
-2. 断言：成功 delivery 产生 `ChildDelivered` wake（同一提交边界）。
+1. child `Deliver(deliverableId)` directive → `DeliverMessage/1` CommandGateway route → parent Inbox（Message 条目，summary=`Deliver <deliverableId> from <senderWorkspaceId>`）+ `MessageSent(v1)` + Committed receipt in one transaction.
+2. 断言：唯一 committed `MessageSent` 是 `ChildDelivered` 唯一 durable wake source；consumer 从 canonical Message 重建 `{messageId, deliverableId}` detail 并以 at-least-once/幂等 sink wake。不存在单独 wake row。Event delivery/restart 不重复 Message、Inbox admission、Command effect 或 Workspace Episode。
 3. 断言：Deliver 本身**不**满足任何 Dependency（`02`；满足仍走 Story B 的 matcher 链）。
 4. sender ≠ deliverable source Workspace → `AuthorityDenied`。
 5. Report 通道零 Dependency 副果（P6 D2 回归）。

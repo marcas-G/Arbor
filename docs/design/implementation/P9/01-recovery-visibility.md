@@ -39,3 +39,42 @@ T4  pre-dispatch check      — the targeted lease/fence predicate ONLY
 - No Attention presentation/UI (P10); the fact event is the whole P9 surface.
 - No settle-rule changes beyond the P2-frozen two deterministic cases.
 - No change to the nine-step order (P2 `06`).
+
+## Accepted AH7-DG-02 escalation source (DID v1.40)
+
+P9 drives the P4-owned proof/recovery contract; P9 does not establish external
+reality. Only `StillUnknown`/unprofiled unresolved effect evidence enters the
+existing `ReconciliationEscalated{executionId, invocationRefsFingerprint,
+refs}` path. P4 owns the immutable attempt/fact and settlement; P9 owns
+RecoveryController trigger/order and the existing event payload/dedup identity.
+Repeated recovery with the same `(executionId, invocationRefsFingerprint)` is
+idempotent. A missing ref, temporary negative lookup or `StillUnknown` is never
+reconciliation success, never an Executor replay permit, and never ordinary
+Execution completion. Known `Occurred` facts and selected terminal results
+converge under the current full Worker fence, including after Stop; stale
+generation writes remain rejected.
+
+P10 owns the `ActionRequired` read-model row and rebuild. Its visibility is
+bounded by the accepted P1 journal retention horizon; this contract does not
+add a durable post-pruning P9 fact store or new event.
+
+## Accepted AH7-DG-01 replay-evidence failure fact (DID v1.41)
+
+An exact current P3 action whose P4 terminal Settlement/Observation envelope
+is missing or inconsistent under a valid lease stops at RecoveryBlocked. P9
+records the source-specific `ToolObservationReplayEvidenceEscalated(v1)` event
+and immutable fact atomically. Its identity is `(executionId, invocationId)`;
+the bound LogicalActionId/ProviderTurn/callRef and closed P40 failureCode must
+match on duplicate delivery. Fact ID is `att_` + SHA-256 lowercase hex of
+canonical UTF-8 JSON `{"executionId":...,"invocationId":...,"version":1}`
+with fixed key order/no whitespace/no trailing newline.
+
+The event payload is exactly
+`{attentionFactId, executionId, targetWorkspaceId, logicalActionId,
+providerTurnId, callRef, invocationId, failureCode}`. Envelope: project from
+Execution, `aggregateRef=targetWorkspaceId`,
+`correlationRef=logicalActionId`, `actor=system:recovery`, no Command cause.
+No tool args/output, Artifact content, observation bytes, cause, parser/OS
+detail or secret is stored. The P9 write transaction rechecks the complete
+current lease/expiry; stale generations write no fact/event. This event is not
+`ReconciliationEscalated` and does not imply an unresolved external effect.

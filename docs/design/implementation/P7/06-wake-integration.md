@@ -7,7 +7,7 @@
 
 ```text
 P2 owns: durable WorkWait 注册/清除、timer/wake 机器、lost-wake-up 防护
-P7 owns: DependencyChanged wake-signal 生产（本次实现）
+P7 owns: DependencyChanged wake-signal 生产；Deliver 的 MessageSent → ChildDelivered source mapping
 P6 已接: InboxAdvanced→InputArrived（settlement/specialist wakeReason 先例）
 ```
 
@@ -40,6 +40,17 @@ SatisfyDependency（及 Withdraw/MarkUnfulfillable/ContractRevised）handler 事
 | `reevaluate` 忽略 `_wakeReason` | wakeReason→目标 workspace 集合路由（DependencySatisfied→consumer Work 的 Workspace；其余→reason 携带的目标） |
 | `AdmissionOutcome.wakeReason` 零消费方 | 统一 wake sink：daemon-lite（composition 内的后台 fiber：消费 journal 事件表驱动 reevaluate 循环）或同步 consumer 管线直调——**实现选择**，契约只冻结"事件提交后最终至少触发一次 reevaluate，at-least-once，幂等" |
 | `clearWorkWait` 零调用 | durable WorkflowSignalConsumer 在 reevaluate 前幂等清除对应 wait |
+
+### Deliver source ownership (DID v1.37 AH10)
+
+The committed `MessageSent(v1)` event is the only durable source for
+`ChildDelivered`. `DeliverMessage` does not insert a separate wake row or
+duplicate wake payload. After commit, the existing WorkflowSignalConsumer
+loads the Message referenced by the event and calls the existing idempotent
+wake sink with its direct-parent recipient, `ChildDelivered`, and the exact
+`{messageId, deliverableId}` detail. Re-delivery/restart reuses this same
+event/message identity. P2 still owns durable WorkWait/timer mechanics; this
+addition does not change the wake reason set or scheduler decision table.
 
 - 禁止模型轮询（No.53 原文：等待期间禁止**模型轮询**）：一切唤醒由 durable 事实驱动。
 - `ChildDelivered`（scheduler.ts:16 已预留）自 v1.10 G2 起由 Deliver 的成功 Inbox delivery 接线（`02` §6）。

@@ -76,6 +76,17 @@ raw result bytes -> ArtifactService.store -> Artifact reference
 model sees -> BoundedObservation { text, truncated }   (SD §6.6)
 ```
 
+Accepted AH7-DG-01/P40 keeps these as separate durable values: the bounded
+Observation is the inline immutable `tool_invocations` v1 evidence body; a
+`result_ref`/`CanonicalToolObservation.resultRef` remains an ArtifactRef only.
+For P39 `ReconciledNoEffect`, the same distinction applies: P39 proof fact
+`evidence_ref`, P39 NotOccurred fact `result_ref=NULL`, P4 terminal ArtifactRef,
+and P3 bounded-payload hash are not interchangeable. P4 Artifact content must
+never be used after settlement to reconstruct missing Observation `text` or
+`truncated`; P4 fails closed instead. A transaction rollback may leave the
+existing P4-permitted unreferenced content-addressed blob, but no committed
+Artifact metadata or terminal result ref.
+
 ## 6. Must Not Decide
 
 - No concrete blob backend/layout or size thresholds (implementation/empirical).

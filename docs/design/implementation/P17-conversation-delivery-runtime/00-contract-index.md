@@ -10,6 +10,17 @@
 
 **Status:** FROZEN / IMPLEMENTATION COMPLETE / FORMALLY CLOSED
 
+## Accepted owner amendment — EA-DG-01 (DID v1.39)
+
+Fixed proposal SHA-256:
+`E4F1B2935E0397292049BB3FDB1AB5847B02443CCE1B55A9827F823C63F145EB`;
+acceptance record `planning/results/EA-DG-01-governance-acceptance.md`.
+P17 `03`/`04`/`07` clarify that Executable `ApprovalRequired` pauses the same
+Execution and does not consume conversation retry budget or create a new
+ProviderTurn. The decision route stays separate from CAPA Control approval;
+RootConversation's zero-executable-tool profile is unchanged. This is an
+additive contract successor, not a reopen of the completed P17 implementation.
+
 ## Scope
 
 P17 replaces P14's overloaded `HumanMessage Pending|Claimed|Answered` retry

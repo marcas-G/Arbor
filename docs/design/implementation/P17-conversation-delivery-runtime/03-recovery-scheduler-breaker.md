@@ -66,6 +66,10 @@ decideConversationRecovery(job, attempts, settlement, failure, policy, now)
   ContextBlocked/ReconciliationRequired/UnknownFailure → Attention.
 - ControlledInterruption → Cancel(ControlledStop).
 - OutcomeUnknown always maps to ReconciliationRequired, never retry.
+- An action-level `ApprovalRequired` is a durable pause of the current
+  Execution, not a Provider/Conversation failure class and not `RetryAt`; the
+  approval decision wakes the same Execution and does not increment or reset
+  a ConversationAttempt budget.
 
 The Attempt settlement and chosen Job transition are committed in one
 Application transaction when both records share the local transaction boundary;

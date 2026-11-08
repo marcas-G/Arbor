@@ -20,6 +20,23 @@ contract under proposal SHA-256
 `E4F1B2935E0397292049BB3FDB1AB5847B02443CCE1B55A9827F823C63F145EB`.
 This does not authorize implementation or claim browser/process qualification.
 
+**Accepted AH10 DeliverReplayFailure qualification story (DID v1.37):** Story M
+is the design acceptance contract for the P9 failure source's consumer
+atomicity, deduplication, rebuild and restart. Runtime qualification remains
+pending; this addition does not close P10 phase acceptance or AH10.
+
+**Accepted storage correction (DID v1.38):** Story M also qualifies the
+source-specific P10 marker and append-only migration ordering under addendum
+SHA-256 `040789D32BE1D92F1BAD28C5E3346439C1E902236452E778CD104AF6AA71EC8B`.
+P36 integration remains a prerequisite; this does not authorize P37 in
+isolation or close runtime qualification.
+
+**Accepted EA-DG-01 owner amendment (DID v1.39):** Story N qualifies the
+read-only Executable approval Inbox target and workspace-scoped projection
+contract under proposal SHA-256
+`E4F1B2935E0397292049BB3FDB1AB5847B02443CCE1B55A9827F823C63F145EB`.
+This does not authorize implementation or claim browser/process qualification.
+
 Deterministic; read-only assertions over canonical fixtures + driven commands.
 
 - **Story A — Tree & Status**: seeded multi-level project (executing/waiting-blocked/idle/attention workspaces) → Tree query returns responsibility chain + per-node status per the frozen label map + subtree attention summaries without per-node drill-in (S2.4.1); no view write occurs (write-count snapshot).

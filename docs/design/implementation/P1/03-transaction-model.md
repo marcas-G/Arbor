@@ -74,6 +74,20 @@ tuple before the final in-transaction authority check. It is the sole receipt
 linearization point. The direct-child AssignWork Command/Work/Event/binding/
 ActionApproval atomic transaction under DID §6A.16/§9.9 is unchanged.
 
+EA-DG-01 `ResolveExecutableApproval` uses this same command transaction for
+its route-specific decision: P12 resolves the authenticated human's exact
+Executable decision authority before Gateway entry; Gateway validates
+`route_kind`, project/workspace/Execution, active lifecycle, Pending state and
+expected revision inside the transaction. The CAS state transition, exact P6
+Inbox consumption, `ExecutableApprovalResolved` event and Command receipt
+commit together. If the exact Pending row has reached `expiresAt`, the
+transaction commits Expired rather than the human decision. Missing/foreign
+targets are rejected by the pre-Gateway resolver with the same safe not-found
+result and no receipt read; stale authorized revisions use typed
+RevisionConflict. StopExecution uses the P2 authority path and composes its
+Executable cancellation/Inbox/event changes with the stop fact in that same
+transaction. Control/CAPA approval transactions are unchanged.
+
 ```text
 transact {
   load commands row by command_id

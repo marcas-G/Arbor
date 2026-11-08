@@ -59,6 +59,19 @@ durable retry eligibility/backoff, explicit status projection, exact turn
 profiles, migration 0021 and removal of legacy retry/write paths. Historical
 P14 completion remains evidence for submit/root/transcript placement only.
 
+## 2C. AH7-DG-02 / P39 service-start acceptance boundary (DID v1.40)
+
+| Seam | Required evidence before release | Must not claim |
+|---|---|---|
+| Migration prefix | P36→P37→P38→P39 applied in order on an equivalent DB; owner contracts are not proof of migration implementation | P39 can run or ship alone |
+| Active P36 NotAdmitted | P39 maintenance preflight emits/readbacks the stable sidecar report, preserves primary committed state/version, exits `P39_LEGACY_DB_ISOLATED` / 78, and never starts service/AgentLoop/provider bytes | Human recovery is closed, binding reconstructed, approval refunded, or row removed |
+| Sidecar platform | Actual Node SQLite VFS/local-volume process-kill, injected I/O, VM hard-power-off/reopen/integrity matrix passes on each supported local FS | `WAL` + `synchronous=FULL` alone qualifies Windows or network storage |
+| Reconciliation | P4/P9/P3/P10 exact selected-fact, same-attempt, event/Attention and retention-horizon matrix passes separately | Unknown/no result is successful reality verification |
+
+Design acceptance here records only the P14 no-service-start boundary. This
+table is a release gate, not completed qualification or a claim that the
+isolated legacy DB has an available operator resolution.
+
 ## 4. 完成定义
 
 ```text

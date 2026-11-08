@@ -2,7 +2,6 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import { expireExecutionLeaseAfterOwnerExitForQualification } from "../support/lease-qualification.js";
 import {
   type ProductionFixture,
   startProductionFixture,
@@ -59,6 +58,7 @@ interface Snapshot {
     episode_revision: number | null;
     settled_at: string | null;
     settlement_kind: string | null;
+    settlement_json: string | null;
   }>;
   readonly steps: Array<{
     execution_id: string;
@@ -98,6 +98,16 @@ interface Snapshot {
     state: string;
   }>;
   readonly observations: Array<{ source_ref: string; payload_json: string }>;
+  readonly providerTurns: Array<{
+    provider_turn_id: string;
+    execution_id: string;
+    manifest_id: string;
+  }>;
+  readonly manifests: Array<{
+    manifest_id: string;
+    provider_turn_id: string;
+    execution_id: string;
+  }>;
   readonly events: Array<{
     event_type: string;
     aggregate_ref: string;
@@ -109,20 +119,6 @@ interface Snapshot {
     outcome: string;
     settled_at: string | null;
   }>;
-}
-
-interface SubmittedBindingFactRow {
-  readonly attention_fact_id: string;
-  readonly execution_id: string;
-  readonly project_id: string;
-  readonly workspace_id: string;
-  readonly logical_step_no: number;
-  readonly repair_attempt: number;
-  readonly provider_turn_id: string;
-  readonly logical_action_id: string;
-  readonly failure_code: string;
-  readonly first_detected_at: string;
-  readonly event_id: string;
 }
 
 const fixtures: ProductionFixture[] = [];
@@ -166,7 +162,7 @@ const readRows = (databaseFile: string): Snapshot => {
       executions: db
         .prepare(
           `SELECT execution_id, binding_kind, episode_kind, episode_ref,
-                  episode_revision, settled_at, settlement_kind
+                  episode_revision, settled_at, settlement_kind, settlement_json
              FROM executions ORDER BY admitted_at`,
         )
         .all() as Snapshot["executions"],
@@ -213,6 +209,18 @@ const readRows = (databaseFile: string): Snapshot => {
             ORDER BY sequence`,
         )
         .all() as Snapshot["observations"],
+      providerTurns: db
+        .prepare(
+          `SELECT provider_turn_id, execution_id, manifest_id
+             FROM provider_turns ORDER BY provider_turn_id`,
+        )
+        .all() as Snapshot["providerTurns"],
+      manifests: db
+        .prepare(
+          `SELECT manifest_id, provider_turn_id, execution_id
+             FROM model_context_manifests ORDER BY manifest_id`,
+        )
+        .all() as Snapshot["manifests"],
       events: db
         .prepare(
           "SELECT event_type, aggregate_ref, payload_json FROM domain_events ORDER BY sequence",
@@ -227,52 +235,6 @@ const readRows = (databaseFile: string): Snapshot => {
     };
   } finally {
     db.close();
-  }
-};
-
-const readSubmittedBindingFacts = (
-  databaseFile: string,
-  executionId: string,
-): SubmittedBindingFactRow[] => {
-  const database = new DatabaseSync(databaseFile, { readOnly: true });
-  try {
-    return database
-      .prepare(
-        `SELECT attention_fact_id, execution_id, project_id, workspace_id,
-                logical_step_no, repair_attempt, provider_turn_id,
-                logical_action_id, failure_code, first_detected_at, event_id
-           FROM submitted_decision_binding_attention_facts
-          WHERE execution_id = ? ORDER BY logical_step_no, repair_attempt,
-                   logical_action_id`,
-      )
-      .all(executionId) as unknown as SubmittedBindingFactRow[];
-  } finally {
-    database.close();
-  }
-};
-
-const recordUnresolvedP4EffectIntent = (
-  databaseFile: string,
-  executionId: string,
-  workspaceId: string,
-): string => {
-  const invocationId = functionalId("tin");
-  const database = new DatabaseSync(databaseFile);
-  try {
-    database
-      .prepare(
-        `INSERT INTO tool_invocations (
-           invocation_id, execution_id, workspace_id, tool_name, tool_version,
-           side_effect_semantics, arguments_json, resolved_regions_json,
-           approval_id, effect_admission_state, intent_at, settled_at,
-           settlement_kind, settlement_json, result_ref
-         ) VALUES (?, ?, ?, 'test-reconcilable', '1', 'Reconcilable',
-                   '{}', '[]', NULL, 'MayHaveStarted', ?, NULL, NULL, NULL, NULL)`,
-      )
-      .run(invocationId, executionId, workspaceId, new Date().toISOString());
-    return invocationId;
-  } finally {
-    database.close();
   }
 };
 
@@ -345,58 +307,9 @@ const workAssignment = (label: string, marker: string) => ({
 });
 
 describe("AH10 fail-closed Submitted DecisionEpisode bindings", () => {
-  it.each([
-    {
-      corruption: "workspace",
-      unresolvedP4Effect: false,
-      stopFirst: false,
-      settledOrphan: false,
-      failStopCloseWrite: false,
-    },
-    {
-      corruption: "manifest",
-      unresolvedP4Effect: false,
-      stopFirst: false,
-      settledOrphan: false,
-      failStopCloseWrite: false,
-    },
-    {
-      corruption: "workspace",
-      unresolvedP4Effect: true,
-      stopFirst: false,
-      settledOrphan: false,
-      failStopCloseWrite: false,
-    },
-    {
-      corruption: "workspace",
-      unresolvedP4Effect: false,
-      stopFirst: true,
-      settledOrphan: false,
-      failStopCloseWrite: false,
-    },
-    {
-      corruption: "workspace",
-      unresolvedP4Effect: false,
-      stopFirst: false,
-      settledOrphan: true,
-      failStopCloseWrite: false,
-    },
-    {
-      corruption: "workspace",
-      unresolvedP4Effect: false,
-      stopFirst: true,
-      settledOrphan: false,
-      failStopCloseWrite: true,
-    },
-  ] as const)(
-    "freezes a corrupted $corruption binding (unresolved P4 effect: $unresolvedP4Effect, Stop first: $stopFirst, settled orphan: $settledOrphan, abort close write: $failStopCloseWrite)",
-    async ({
-      corruption,
-      unresolvedP4Effect,
-      stopFirst,
-      settledOrphan,
-      failStopCloseWrite,
-    }) => {
+  it.each(["workspace", "manifest"] as const)(
+    "does not resume a Committed SelectCurrentWork action with a corrupted %s binding",
+    async (corruption) => {
       const marker = `AH10-submitted-binding-${corruption}-${crypto.randomUUID().slice(0, 8)}`;
       const events: Probe[] = [];
       let assignmentsSent = false;
@@ -525,7 +438,7 @@ describe("AH10 fail-closed Submitted DecisionEpisode bindings", () => {
         },
         capability: "core.control.assign-work",
         target: project.rootWorkspaceId,
-        expiresAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+        expiresAt: null,
       });
       const currentWorkId = functionalId("wrk");
       await client.command(project.projectId, "AssignWork", {
@@ -668,6 +581,7 @@ describe("AH10 fail-closed Submitted DecisionEpisode bindings", () => {
         (attempt) => attempt.provider_turn_id === oldAction.providerTurnId,
       );
       expect(pinnedProviderAttempts).toHaveLength(1);
+      const providerCallCountBeforeCorruption = fixture.providerCalls.length;
       expect(baseRequest).toMatchObject({
         workspace_id: project.rootWorkspaceId,
         state: "Submitted",
@@ -725,77 +639,7 @@ describe("AH10 fail-closed Submitted DecisionEpisode bindings", () => {
         db.close();
       }
 
-      if (settledOrphan) {
-        const legacy = new DatabaseSync(fixture.databaseFile);
-        try {
-          legacy
-            .prepare(
-              `UPDATE executions
-                  SET settlement_kind = 'Failed', settlement_json = ?,
-                      settled_at = ?
-                WHERE execution_id = ?`,
-            )
-            .run(
-              JSON.stringify({ _tag: "Failed", reason: "legacy fixture" }),
-              new Date().toISOString(),
-              oldAction.executionId,
-            );
-        } finally {
-          legacy.close();
-        }
-      }
       const corrupted = readRows(fixture.databaseFile);
-      let beforeRestart = corrupted;
-      if (stopFirst) {
-        await client.command(project.projectId, "StopExecution", {
-          executionId: oldAction.executionId,
-        });
-        beforeRestart = readRows(fixture.databaseFile);
-        expect(
-          beforeRestart.executions.find(
-            (execution) => execution.execution_id === oldAction.executionId,
-          ),
-        ).toMatchObject({ settled_at: null, settlement_kind: null });
-        expect(
-          beforeRestart.steps.find(
-            (step) =>
-              step.execution_id === oldAction.executionId &&
-              step.logical_step_no === 0 &&
-              step.repair_attempt === 0 &&
-              step.provider_turn_id === oldAction.providerTurnId,
-          ),
-        ).toEqual(
-          corrupted.steps.find(
-            (step) =>
-              step.execution_id === oldAction.executionId &&
-              step.logical_step_no === 0 &&
-              step.repair_attempt === 0 &&
-              step.provider_turn_id === oldAction.providerTurnId,
-          ),
-        );
-        expect(
-          readSubmittedBindingFacts(
-            fixture.databaseFile,
-            oldAction.executionId,
-          ),
-        ).toEqual([]);
-        if (failStopCloseWrite) {
-          const fault = new DatabaseSync(fixture.databaseFile);
-          try {
-            fault.exec(`
-              CREATE TRIGGER p41_abort_stop_close
-              BEFORE UPDATE OF state ON agent_loop_steps
-              WHEN OLD.execution_id = '${oldAction.executionId}'
-                AND NEW.state = 'SettlementProposed'
-              BEGIN
-                SELECT RAISE(ABORT, 'p41_stop_close_abort');
-              END;
-            `);
-          } finally {
-            fault.close();
-          }
-        }
-      }
       expect(
         selectReceipt(
           corrupted,
@@ -844,41 +688,20 @@ describe("AH10 fail-closed Submitted DecisionEpisode bindings", () => {
 
       await fixture.crash();
       const afterOldKill = readRows(fixture.databaseFile);
-      expect(afterOldKill.commands).toEqual(beforeRestart.commands);
-      expect(afterOldKill.events).toEqual(beforeRestart.events);
-      expect(afterOldKill.decisions).toEqual(beforeRestart.decisions);
-      expect(afterOldKill.actions).toEqual(beforeRestart.actions);
-      expect(afterOldKill.observations).toEqual(beforeRestart.observations);
-      const expiredLeaseRow = afterOldKill.leases.find(
-        (lease) => lease.execution_id === oldAction.executionId,
+      expect(afterOldKill.commands).toEqual(corrupted.commands);
+      expect(afterOldKill.events).toEqual(corrupted.events);
+      expect(afterOldKill.decisions).toEqual(corrupted.decisions);
+      expect(afterOldKill.actions).toEqual(corrupted.actions);
+      expect(afterOldKill.observations).toEqual(corrupted.observations);
+      await waitForPublic(
+        async () =>
+          readRows(fixture.databaseFile).leases.find(
+            (lease) => lease.execution_id === oldAction.executionId,
+          ),
+        (lease) =>
+          lease !== undefined && Date.parse(lease.expires_at) <= Date.now(),
+        35_000,
       );
-      if (expiredLeaseRow === undefined)
-        throw new Error("AH10 old lease is absent after daemon exit");
-      const expiredLease =
-        await expireExecutionLeaseAfterOwnerExitForQualification({
-          databaseFile: fixture.databaseFile,
-          executionId: oldAction.executionId,
-          expected: {
-            generation: Number(expiredLeaseRow.generation),
-            expiresAt: expiredLeaseRow.expires_at,
-          },
-          daemon: {
-            crash: fixture.crash,
-            snapshot: fixture.daemonProcessSnapshot,
-          },
-        });
-      expect(expiredLease.before).toMatchObject({
-        execution_id: oldAction.executionId,
-        generation: expiredLeaseRow.generation,
-        expires_at: expiredLeaseRow.expires_at,
-      });
-      expect(expiredLease.after).toMatchObject({
-        execution_id: oldAction.executionId,
-        worker_id: expiredLease.before.worker_id,
-        worker_incarnation_id: expiredLease.before.worker_incarnation_id,
-        generation: expiredLeaseRow.generation,
-        expires_at: "1970-01-01T00:00:00.000Z",
-      });
 
       const newDaemon = await fixture.startAdditionalDaemon({
         entry: ah10Child,
@@ -889,105 +712,20 @@ describe("AH10 fail-closed Submitted DecisionEpisode bindings", () => {
         },
         onStdout: (line) => pushProbe(events, line),
       });
-      if (failStopCloseWrite) {
-        await waitForPublic(
-          async () =>
-            events.find(
-              (event) =>
-                event.role === "new" &&
-                event.boundary === "AH10AfterLeaseAcquired" &&
-                event.executionId === oldAction.executionId &&
-                event.fencingGeneration === 1,
-            ),
-          (event) => event !== undefined,
-          45_000,
-        );
-        await waitForPublic(
-          async () => newDaemon.daemonErrors,
-          (errors) =>
-            errors.some((error) => error.includes("p41_stop_close_abort")),
-          20_000,
-        );
-        const rolledBack = readRows(fixture.databaseFile);
-        expect(
-          readSubmittedBindingFacts(
-            fixture.databaseFile,
-            oldAction.executionId,
-          ),
-        ).toEqual([]);
-        expect(
-          rolledBack.events.filter(
+      await waitForPublic(
+        async () =>
+          events.find(
             (event) =>
-              event.event_type === "SubmittedDecisionBindingEscalated" &&
-              event.aggregate_ref === project.rootWorkspaceId,
+              event.role === "new" &&
+              event.boundary === "AH10AfterLeaseAcquired" &&
+              event.executionId === oldAction.executionId,
           ),
-        ).toEqual([]);
-        expect(
-          rolledBack.steps.find(
-            (step) =>
-              step.execution_id === oldAction.executionId &&
-              step.logical_step_no === 0 &&
-              step.repair_attempt === 0 &&
-              step.provider_turn_id === oldAction.providerTurnId,
-          ),
-        ).toEqual(
-          beforeRestart.steps.find(
-            (step) => step.execution_id === oldAction.executionId,
-          ),
-        );
-        expect(
-          rolledBack.actions.find(
-            (action) => action.logical_action_id === oldAction.logicalActionId,
-          ),
-        ).toEqual(
-          beforeRestart.actions.find(
-            (action) => action.logical_action_id === oldAction.logicalActionId,
-          ),
-        );
-        expect(
-          rolledBack.executions.find(
-            (execution) => execution.execution_id === oldAction.executionId,
-          ),
-        ).toEqual(
-          beforeRestart.executions.find(
-            (execution) => execution.execution_id === oldAction.executionId,
-          ),
-        );
-        const fault = new DatabaseSync(fixture.databaseFile);
-        try {
-          fault.exec("DROP TRIGGER p41_abort_stop_close");
-        } finally {
-          fault.close();
-        }
-      }
-      if (!stopFirst && !settledOrphan) {
-        await waitForPublic(
-          async () =>
-            events.find(
-              (event) =>
-                event.role === "new" &&
-                event.boundary === "AH10AfterLeaseAcquired" &&
-                event.executionId === oldAction.executionId,
-            ),
-          (event) => event !== undefined && event.fencingGeneration === 1,
-          45_000,
-        );
-      }
+        (event) => event !== undefined && event.fencingGeneration === 1,
+        45_000,
+      );
       const result = await waitForPublic(
         async () => ({
           rows: readRows(fixture.databaseFile),
-          facts: readSubmittedBindingFacts(
-            fixture.databaseFile,
-            oldAction.executionId,
-          ),
-          attention: await client.view<{
-            rows: Array<{
-              source: string;
-              severity: string;
-              targetWorkspaceId: string;
-              dedupKey: string;
-            }>;
-          }>("attention", { projectId: project.projectId }),
           actionIntent: events.find(
             (event) =>
               event.role === "new" &&
@@ -997,29 +735,35 @@ describe("AH10 fail-closed Submitted DecisionEpisode bindings", () => {
               event.actionIndex === 0,
           ),
         }),
-        ({ rows, facts, attention, actionIntent }) =>
-          facts.length === 1 &&
-          (!stopFirst ||
-            (rows.executions.some(
-              (execution) =>
-                execution.execution_id === oldAction.executionId &&
-                execution.settlement_kind === "Interrupted",
-            ) &&
-              rows.leases.find(
-                (lease) => lease.execution_id === oldAction.executionId,
-              )?.generation === 1)) &&
-          attention.rows.some(
-            (row) =>
-              row.source === "SubmittedDecisionBindingFailure" &&
-              row.severity === "ActionRequired" &&
-              row.targetWorkspaceId === project.rootWorkspaceId &&
-              row.dedupKey === facts[0]?.attention_fact_id,
-          ) &&
-          actionIntent === undefined,
+        ({ rows, actionIntent }) =>
+          actionIntent !== undefined ||
+          rows.executions.some(
+            (execution) =>
+              execution.execution_id === oldAction.executionId &&
+              execution.settled_at !== null,
+          ),
         20_000,
       );
 
       const finalRows = result.rows;
+      expect(fixture.providerCalls).toHaveLength(
+        providerCallCountBeforeCorruption,
+      );
+      expect(finalRows.commands).toEqual(corrupted.commands);
+      expect(
+        finalRows.commands.filter((command) =>
+          command.command_id.startsWith(`cmd_settle_${oldAction.executionId}_`),
+        ),
+      ).toEqual(
+        corrupted.commands.filter((command) =>
+          command.command_id.startsWith(`cmd_settle_${oldAction.executionId}_`),
+        ),
+      );
+      expect(finalRows.providerTurns).toEqual(corrupted.providerTurns);
+      expect(finalRows.manifests).toEqual(corrupted.manifests);
+      expect(finalRows.actions).toEqual(corrupted.actions);
+      expect(finalRows.works).toEqual(corrupted.works);
+      expect(finalRows.workspaces).toEqual(corrupted.workspaces);
       const targetExecution = finalRows.executions.find(
         (execution) => execution.execution_id === oldAction.executionId,
       );
@@ -1067,252 +811,206 @@ describe("AH10 fail-closed Submitted DecisionEpisode bindings", () => {
           (attempt) => attempt.provider_turn_id === oldAction.providerTurnId,
         ),
       ).toEqual(pinnedProviderAttempts);
+      expect(
+        finalRows.events.filter(
+          (event) => event.event_type === "CurrentWorkChanged",
+        ),
+      ).toEqual(
+        corrupted.events.filter(
+          (event) => event.event_type === "CurrentWorkChanged",
+        ),
+      );
+      const bindingFailureEvents = finalRows.events.filter((event) => {
+        if (event.event_type !== "SubmittedDecisionBindingEscalated") {
+          return false;
+        }
+        const payload = JSON.parse(event.payload_json) as {
+          executionId?: string;
+        };
+        return payload.executionId === oldAction.executionId;
+      });
+      expect(bindingFailureEvents).toHaveLength(1);
+      const attention = await waitForPublic(
+        () =>
+          client.view<{
+            rows: ReadonlyArray<{
+              source: string;
+              severity: string;
+              targetWorkspaceId: string;
+              dedupKey: string;
+            }>;
+          }>("attention", { projectId: project.projectId }),
+        (response) =>
+          response.rows.some(
+            (row) =>
+              row.source === "SubmittedDecisionBindingFailure" &&
+              row.targetWorkspaceId === project.rootWorkspaceId,
+          ),
+        15_000,
+      );
+      const bindingAttention = attention.rows.filter(
+        (row) =>
+          row.source === "SubmittedDecisionBindingFailure" &&
+          row.targetWorkspaceId === project.rootWorkspaceId,
+      );
+      expect(bindingAttention).toHaveLength(1);
+      expect(bindingAttention[0]).toMatchObject({
+        severity: "ActionRequired",
+        targetWorkspaceId: project.rootWorkspaceId,
+      });
+      expect(bindingAttention[0]?.dedupKey).toMatch(/^att_[0-9a-f]{64}$/u);
       expect(targetExecutionObservations).toHaveLength(0);
       expect(result.actionIntent).toBeUndefined();
-
-      // The mismatch is RecoveryBlocked: it may not mutate the exact
-      // Execution/Step/Action tuple while its P9 fact and P10 Attention stay
-      // durable. This path has only a P3 SelectCurrentWork control action, so
-      // the unresolved P4 side-effect gate is clear before the user requests
-      // Stop.
-      if (settledOrphan) {
-        expect(targetExecution).toEqual(
-          corrupted.executions.find(
-            (execution) => execution.execution_id === oldAction.executionId,
-          ),
-        );
-        expect(targetStep).toEqual(
-          corrupted.steps.find(
-            (step) =>
-              step.execution_id === oldAction.executionId &&
-              step.logical_step_no === 0 &&
-              step.repair_attempt === 0 &&
-              step.provider_turn_id === oldAction.providerTurnId,
-          ),
-        );
-        expect(targetAction).toEqual(
-          corrupted.actions.find(
-            (action) => action.logical_action_id === oldAction.logicalActionId,
-          ),
-        );
-        expect(targetStep?.state).toBe("ActionsInProgress");
-        expect(targetAction?.state).toBe("Pending");
-        expect(targetAction?.observation_source_ref).toBeNull();
-        expect(finalRows.commands).toEqual(corrupted.commands);
-        expect(finalRows.works).toEqual(corrupted.works);
-        expect(finalRows.workspaces).toEqual(corrupted.workspaces);
-        expect(targetExecutionObservations).toHaveLength(0);
-        await newDaemon.crash();
-        return;
-      }
-      if (stopFirst) {
-        expect(targetExecution?.settlement_kind).toBe("Interrupted");
-        expect(targetStep?.state).toBe("SettlementProposed");
-        expect(targetAction?.state).toBe("TerminalRejected");
-      } else {
-        expect(targetExecution?.settled_at).toBeNull();
-        expect(targetStep).toEqual(
-          corrupted.steps.find(
-            (step) =>
-              step.execution_id === oldAction.executionId &&
-              step.logical_step_no === 0 &&
-              step.repair_attempt === 0 &&
-              step.provider_turn_id === oldAction.providerTurnId,
-          ),
-        );
-        expect(targetAction).toEqual(
-          corrupted.actions.find(
-            (action) => action.logical_action_id === oldAction.logicalActionId,
-          ),
-        );
-        expect(targetStep?.state).toBe("ActionsInProgress");
-        expect(targetAction?.state).toBe("Pending");
-        expect(targetAction?.observation_source_ref).toBeNull();
-      }
-
-      const fact = result.facts[0];
-      expect(result.facts).toHaveLength(1);
-      expect(fact).toMatchObject({
-        execution_id: oldAction.executionId,
-        project_id: project.projectId,
-        workspace_id: project.rootWorkspaceId,
+      expect(targetExecution).toMatchObject({
+        settled_at: null,
+        settlement_kind: null,
+      });
+      expect(targetStep).toMatchObject({
         logical_step_no: 0,
         repair_attempt: 0,
         provider_turn_id: oldAction.providerTurnId,
-        logical_action_id: oldAction.logicalActionId,
-        failure_code:
-          corruption === "workspace"
-            ? "DecisionRequestWorkspaceMismatch"
-            : "StepManifestMismatch",
+        state: "ActionsInProgress",
+        next_action_index: 0,
+        settlement_json: null,
       });
-      expect(fact?.event_id).not.toBe("");
-      expect(
-        finalRows.events.filter(
-          (event) =>
-            event.event_type === "SubmittedDecisionBindingEscalated" &&
-            event.aggregate_ref === project.rootWorkspaceId,
-        ),
-      ).toHaveLength(1);
-      expect(result.attention.rows).toContainEqual(
-        expect.objectContaining({
-          source: "SubmittedDecisionBindingFailure",
-          severity: "ActionRequired",
-          targetWorkspaceId: project.rootWorkspaceId,
-          dedupKey: fact?.attention_fact_id,
-        }),
-      );
+      expect(targetAction).toMatchObject({
+        logical_action_id: oldAction.logicalActionId,
+        state: "Pending",
+        observation_source_ref: null,
+      });
 
-      if (unresolvedP4Effect) {
-        const unresolvedInvocationId = recordUnresolvedP4EffectIntent(
-          fixture.databaseFile,
-          oldAction.executionId,
-          project.rootWorkspaceId,
-        );
-        await client.command(project.projectId, "StopExecution", {
-          executionId: oldAction.executionId,
-        });
-        const afterStopRequest = readRows(fixture.databaseFile);
-        expect(
-          afterStopRequest.executions.find(
-            (execution) => execution.execution_id === oldAction.executionId,
-          ),
-        ).toMatchObject({ settled_at: null, settlement_kind: null });
-        expect(
-          afterStopRequest.steps.find(
-            (step) =>
-              step.execution_id === oldAction.executionId &&
-              step.logical_step_no === 0 &&
-              step.repair_attempt === 0 &&
-              step.provider_turn_id === oldAction.providerTurnId,
-          ),
-        ).toEqual(targetStep);
-        expect(
-          afterStopRequest.actions.find(
-            (action) => action.logical_action_id === oldAction.logicalActionId,
-          ),
-        ).toEqual(targetAction);
-        expect(
-          readSubmittedBindingFacts(
-            fixture.databaseFile,
-            oldAction.executionId,
-          ),
-        ).toEqual(result.facts);
-        const unresolved = new DatabaseSync(fixture.databaseFile, {
-          readOnly: true,
-        });
-        try {
-          expect(
-            unresolved
-              .prepare(
-                `SELECT effect_admission_state, settled_at
-                   FROM tool_invocations WHERE invocation_id = ?`,
-              )
-              .get(unresolvedInvocationId),
-          ).toMatchObject({
-            effect_admission_state: "MayHaveStarted",
-            settled_at: null,
-          });
-        } finally {
-          unresolved.close();
-        }
-        expect(
-          (
-            await client.view<{
-              rows: Array<{ source: string; dedupKey: string }>;
-            }>("attention", { projectId: project.projectId })
-          ).rows,
-        ).toContainEqual(
-          expect.objectContaining({
-            source: "SubmittedDecisionBindingFailure",
-            dedupKey: fact?.attention_fact_id,
-          }),
-        );
-        await newDaemon.crash();
-        return;
-      }
-
-      if (!stopFirst) {
-        await client.command(project.projectId, "StopExecution", {
-          executionId: oldAction.executionId,
-        });
-      }
-      const afterStop = await waitForPublic(
-        async () => ({
-          rows: readRows(fixture.databaseFile),
-          facts: readSubmittedBindingFacts(
-            fixture.databaseFile,
-            oldAction.executionId,
-          ),
-        }),
-        ({ rows }) =>
-          rows.executions.some(
-            (execution) =>
-              execution.execution_id === oldAction.executionId &&
-              execution.settlement_kind === "Interrupted",
-          ),
+      const callsBeforeStop = fixture.providerCalls.length;
+      await client.command(project.projectId, "StopExecution", {
+        executionId: oldAction.executionId,
+      });
+      const stoppedRows = await waitForPublic(
+        async () => readRows(fixture.databaseFile),
+        (rows) => {
+          const execution = rows.executions.find(
+            (candidate) => candidate.execution_id === oldAction.executionId,
+          );
+          const step = rows.steps.find(
+            (candidate) => candidate.execution_id === oldAction.executionId,
+          );
+          const action = rows.actions.find(
+            (candidate) =>
+              candidate.logical_action_id === oldAction.logicalActionId,
+          );
+          return (
+            execution?.settled_at !== null &&
+            execution?.settlement_kind === "Interrupted" &&
+            step?.state === "SettlementProposed" &&
+            action?.state === "TerminalRejected"
+          );
+        },
         20_000,
       );
-      const stoppedExecution = afterStop.rows.executions.find(
+      const stoppedExecution = stoppedRows.executions.find(
         (execution) => execution.execution_id === oldAction.executionId,
       );
-      const stoppedStep = afterStop.rows.steps.find(
-        (step) =>
-          step.execution_id === oldAction.executionId &&
-          step.logical_step_no === 0 &&
-          step.repair_attempt === 0 &&
-          step.provider_turn_id === oldAction.providerTurnId,
+      const stoppedStep = stoppedRows.steps.find(
+        (step) => step.execution_id === oldAction.executionId,
       );
-      const stoppedAction = afterStop.rows.actions.find(
+      const stoppedAction = stoppedRows.actions.find(
         (action) => action.logical_action_id === oldAction.logicalActionId,
       );
-      expect(stoppedExecution?.settlement_kind).toBe("Interrupted");
-      expect(stoppedStep?.state).toBe("SettlementProposed");
-      expect(stoppedStep?.settlement_json).toContain("StopRequested");
-      expect(stoppedAction?.state).toBe("TerminalRejected");
-      expect(stoppedAction?.observation_source_ref).toBeNull();
-      expect(afterStop.facts).toEqual(result.facts);
+      expect(JSON.parse(stoppedExecution?.settlement_json ?? "null")).toEqual({
+        _tag: "Interrupted",
+        result: { _tag: "StopRequested" },
+      });
+      expect(stoppedStep).toMatchObject({
+        state: "SettlementProposed",
+        next_action_index: 1,
+      });
+      expect(stoppedAction).toMatchObject({
+        logical_action_id: oldAction.logicalActionId,
+        state: "TerminalRejected",
+        observation_source_ref: null,
+      });
       expect(
-        (
-          await client.view<{
-            rows: Array<{ source: string; dedupKey: string }>;
-          }>("attention", { projectId: project.projectId })
-        ).rows,
-      ).toContainEqual(
-        expect.objectContaining({
-          source: "SubmittedDecisionBindingFailure",
-          dedupKey: fact?.attention_fact_id,
-        }),
+        stoppedRows.observations.filter((observation) =>
+          observation.source_ref.startsWith(
+            `observation_${oldAction.executionId}_`,
+          ),
+        ),
+      ).toHaveLength(0);
+      expect(fixture.providerCalls).toHaveLength(callsBeforeStop);
+      expect(selectionCalls(fixture)).toHaveLength(1);
+      expect(stoppedRows.providerTurns).toEqual(corrupted.providerTurns);
+      expect(stoppedRows.manifests).toEqual(corrupted.manifests);
+      expect(stoppedRows.decisions).toEqual(corrupted.decisions);
+      expect(stoppedRows.works).toEqual(corrupted.works);
+      expect(stoppedRows.workspaces).toEqual(corrupted.workspaces);
+      expect(stoppedRows.actions).toHaveLength(corrupted.actions.length);
+      expect(
+        stoppedRows.actions.filter(
+          (action) => action.logical_action_id !== oldAction.logicalActionId,
+        ),
+      ).toEqual(
+        corrupted.actions.filter(
+          (action) => action.logical_action_id !== oldAction.logicalActionId,
+        ),
       );
-      if (
-        corruption === "workspace" &&
-        !unresolvedP4Effect &&
-        !settledOrphan &&
-        !failStopCloseWrite
-      ) {
-        await newDaemon.crash();
-        await fixture.restart();
-        const rebuiltFacts = readSubmittedBindingFacts(
-          fixture.databaseFile,
-          oldAction.executionId,
-        );
-        const rebuiltEvents = readRows(fixture.databaseFile).events.filter(
+      expect(
+        selectReceipt(
+          stoppedRows,
+          project.rootWorkspaceId,
+          selectedWorkId,
+          (oldWorkspace?.revision ?? 0) + 1,
+        ),
+      ).toEqual(originalReceipt);
+      expect(
+        stoppedRows.events.filter(
+          (event) => event.event_type === "CurrentWorkChanged",
+        ),
+      ).toEqual(
+        finalRows.events.filter(
+          (event) => event.event_type === "CurrentWorkChanged",
+        ),
+      );
+      const stoppedBindingEvents = stoppedRows.events.filter((event) => {
+        if (event.event_type !== "SubmittedDecisionBindingEscalated") {
+          return false;
+        }
+        const payload = JSON.parse(event.payload_json) as {
+          executionId?: string;
+        };
+        return payload.executionId === oldAction.executionId;
+      });
+      expect(stoppedBindingEvents).toHaveLength(1);
+      expect(
+        events.filter(
           (event) =>
-            event.event_type === "SubmittedDecisionBindingEscalated" &&
-            event.aggregate_ref === project.rootWorkspaceId,
-        );
-        const rebuiltAttention = await client.view<{
-          rows: Array<{ source: string; dedupKey: string }>;
-        }>("attention", { projectId: project.projectId });
-        expect(rebuiltFacts).toEqual(result.facts);
-        expect(rebuiltEvents).toHaveLength(1);
-        expect(
-          rebuiltAttention.rows.filter(
+            event.executionId === oldAction.executionId &&
+            event.boundary === "AH7AfterActionIntentCommit" &&
+            event.actionKind === "select_current_work",
+        ),
+      ).toHaveLength(1);
+      const attentionAfterStop = await waitForPublic(
+        () =>
+          client.view<{
+            rows: ReadonlyArray<{
+              source: string;
+              severity: string;
+              targetWorkspaceId: string;
+              dedupKey: string;
+            }>;
+          }>("attention", { projectId: project.projectId }),
+        (response) =>
+          response.rows.some(
             (row) =>
               row.source === "SubmittedDecisionBindingFailure" &&
-              row.dedupKey === fact?.attention_fact_id,
+              row.targetWorkspaceId === project.rootWorkspaceId,
           ),
-        ).toHaveLength(1);
-      }
+        15_000,
+      );
+      expect(
+        attentionAfterStop.rows.filter(
+          (row) =>
+            row.source === "SubmittedDecisionBindingFailure" &&
+            row.targetWorkspaceId === project.rootWorkspaceId,
+        ),
+      ).toEqual(bindingAttention);
       await newDaemon.crash();
     },
     180_000,

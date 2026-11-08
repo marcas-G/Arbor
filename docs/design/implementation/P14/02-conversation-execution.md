@@ -180,6 +180,21 @@ current path does not write or consult those lifecycle columns. Admission 前
 任何 Blocked/Attention/Cancelled/Answered 都产生零 Provider bytes。完整合同见
 P17 `02`–`04`。
 
+### Accepted AH7-DG-02 P39 service-start refusal (DID v1.40)
+
+P14's conversation/execution trigger is downstream of the P39 migration
+preflight. If an active unbound P36 NotAdmitted invocation is found, the
+maintenance command first commits/reads back the operator-selected sidecar
+report, rolls back the primary snapshot, and exits
+`P39_LEGACY_DB_ISOLATED` / 78. The daemon MUST NOT start P14 conversation
+admission, scheduler/AgentLoop work, Provider bytes or chat response handling
+against that primary DB. This is a database-cohort isolation boundary, not a
+HumanMessage, Inbox, ResponseJob, Attention command or synthetic chat reply.
+The preflight does not settle the old invocation or claim its human recovery
+is complete. P1 `04`/`06` own option/path/sidecar mechanics and crash behavior;
+P14 owns only the no-service-start behavior. Windows/sidecar qualification is
+still a release gate.
+
 
 ## 5. Session / checkpoint 连续性（AH19 accepted; DID v1.51）
 

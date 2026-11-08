@@ -188,15 +188,44 @@ is not replayed; recovery requests portable Summary/frontier rebuild.
 - Projection rebuild (P10).
 - Distributed recovery / multi-host failover (P12).
 
-## Accepted V21 sandbox recovery boundary
+## 10. EA-DG-01 Executable approval pause recovery
 
-P2 recovery recognizes the existing same-Execution HumanIntervention park for
-SandboxPolicyRequiredInterruption. Before reacquiring/dispatching, the normal
-recovery controller checks the durable pending NotAdmitted invocation and its
-strict P4 RecoveryBinding. It does not create a new Execution or Step state.
-If the exact binding is missing/corrupt/mismatched, the owning P9 read-only
-RecoveryBlocked classification prevents lease/P4/Provider/effect calls while
-the invocation remains Pending. A valid binding with missing/stale policy
-stays parked; a committed policy decision wakes the same active Execution.
-Actual persisted P4 provider-unavailable observation is consumed without
-probe/spawn replay. T4 remains read-only.
+An `ExecutionDriveOutcome.ApprovalRequired` is not a Settlement. The exact
+ActionApproval Pending row and `ExecutableApprovalRequested` fact survive the
+lease release; startup/recovery must not admit a new Execution or issue a
+Provider request for that paused action. After an exact Approved/Rejected/
+Expired/Cancelled resolution fact, P2 dispatches `HumanIntervention` for the
+same active Execution and recovers the same AgentLoopStep/action. Repeated or
+lost wake signals are recovered from the durable approval state/event; no
+second ProviderTurn or LogicalAction is created.
+
+## 11. P41 Submitted DecisionEpisode binding failure and authorized Stop
+
+For the exact P9 `SubmittedDecisionBindingEscalated` fact, ordinary recovery
+returns `RecoveryBlocked` before replay and does not submit SettleExecution.
+The Active Execution/Workspace slot remains held until the existing authorized
+`StopExecution` is durable. Stop is the sole v1 release path; it is not a fact
+dismissal or repair.
+
+After Stop, recovery requires the complete current unexpired lease-holder tuple
+and the existing unresolved-P4-side-effect source to report no unresolved
+references. It invokes only P3 stop-only quiescence coordinated with the P9
+Recovery/Application owner. That owner atomically reuses/writes the P9 fact and
+event with the P3 Step/Action close plan when Stop wins before fact creation.
+Recovery then rereads the persisted
+`SettlementProposed(Interrupted(StopRequested))`; only then may
+RecoveryController submit the existing deterministic SettleExecution through
+the normal Gateway. A fact committed before Stop leaves the Execution blocked
+until the user requests Stop. Concurrent Stop/fact writers serialize to one of
+these two orders.
+
+Do not settle an `ActionsInProgress`/Pending Action directly. The close plan
+uses the frozen P3 early-settlement states: current Action
+`TerminalRejected(StopRequestedAfterSubmittedBindingFailure)`, later Pending
+actions `SkippedEarlySettlement`, and the proposal above, with no Observation,
+Applied, Failed or OutcomeUnknown claim. Stop preserves the old Committed
+receipt, canonical Work/selection and P9/P10 ActionRequired Attention; it emits
+no new Provider request, SelectCurrentWork or action Command. A stale/old
+generation cannot write the fact or close plan. P41 migration 0041 is not
+available until P36–P40 are integrated and qualified; no implementation is
+authorized by this owner amendment.

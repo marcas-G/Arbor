@@ -9,6 +9,21 @@
 **Authority:** DID v1.14 §11 P12, §2.1, §6.3, §7.2/§7.5/§7.6/§7.9, §8.4/§8.5/§8.16A, §9.1/§9.7, §10.1/§10.2/§10.4.1/§10.5, §12.3/§12.10, §13; v1.13 G4/G6; v1.14 G1–G8; SD v1.3 §6.1/§6.2/§7.7/§8/§8A/§10.2/§10.7/§12/§13/§14; P0–P11 contracts.
 **Status:** **FROZEN** — four independent review rounds complete; **Blocking = 0**.
 
+## Accepted owner amendment — EA-DG-01 (DID v1.39)
+
+Fixed proposal SHA-256:
+`E4F1B2935E0397292049BB3FDB1AB5847B02443CCE1B55A9827F823C63F145EB`;
+acceptance/landing records:
+`planning/results/EA-DG-01-governance-acceptance.md` and
+`planning/results/EA-DG-01-contract-landing.result.md`.
+P12 `02` keeps approval production pure and adds Runtime-owned
+Step/LogicalAction/callRef/ToolInvocation identity to exact approval facts;
+stable ApprovalId excludes candidate `now`/expiry, while the Application
+looks up first and reuses the committed TTL. `ResolveExecutableApproval`
+decision authority binds an authenticated human and exact route/project/
+workspace/Execution/revision. P12 reads no repository and performs no decision,
+mutation or approval consumption.
+
 ## P12 scope (DID §11 P12)
 
 ```text

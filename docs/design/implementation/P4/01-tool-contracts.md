@@ -154,9 +154,7 @@ type NoEffectDenialCode =
   | "ApprovalConsumedByOtherInvocation"
   | "ResourceResolutionDenied"
   | "ResourceAdmissionDenied"
-  | "ApprovalNoLongerAuthorized"
-  | "ProcessExecutionDisabled"
-  | "NativeOsTupleUnavailable";
+  | "ApprovalNoLongerAuthorized";
 
 /** Historical persisted-row compatibility only; never written by new P4 paths. */
 type LegacyNoEffectDenialCode = "ApprovalRequired";
@@ -176,25 +174,6 @@ error text, determines replay.
   `ApprovalRequired` handoff in `02`; they are not new-write denials.
 - Large raw results live behind `resultRef` (Artifact), never in the observation
   (SD §6.6).
-
-**Accepted Native durable pre-effect Denied supplement V2** (`B9909E31C005FE3546EBA1EA72395BDE3231F68ECFD2ADA14045B0C50E018DEB`):
-the two additional closed codes apply only to an exact already-durable
-process-capable ToolInvocation that remains `NotAdmitted`. Disabled startup
-mode selects `ProcessExecutionDisabled`; `NativeOsSupportedOnly` without the
-exact qualified tuple selects `NativeOsTupleUnavailable`. They are durable
-P4 `Denied` no-effect results, not `ExpectedFailure` or
-`SandboxProviderUnavailable`. A new shell action received while Disabled
-continues to be rejected before P4 intent. Persisted settlement/replay uses
-the exact code; later mode or tuple changes never re-admit that invocation.
-`MayHaveStarted`, `LegacyUnknown`, stale fence, or unprovable identity remains
-on existing recovery/fail-closed behavior and cannot be classified as no-effect.
-Only immutable startup mode and exact tuple-verification result select these
-codes; provider text, local error strings, profile guesses, and fallback
-providers cannot choose or alter them.
-Implementation is conditionally authorized under
-`AUTHORIZE_NATIVE_PROCESS_MODE_DURABLE_NO_EFFECT_V2_IMPLEMENTATION` after the
-required independent post-landing review; migration execution, existing
-database upgrade, deployment, and release remain outside this authorization.
 
 ## 5. ToolInvocationSettlement
 
@@ -258,28 +237,6 @@ produced an external effect and must not be retried blindly.
 `ExpectedFailure` (the tool ran and reported a normal failure) and
 `OutcomeUnknown` (the effect may have happened). `Interrupted` is the existing
 stop/quiescence terminal result; it is not a Denied code.
-
-For the accepted Blocked WorkEpisode evidence contract, a P4-created
-`ToolResult.status=Denied` must retain its exact closed `NoEffectDenialCode`
-and canonical ToolInvocation identity. This is the `P4NoEffectDenied` branch
-of `TerminalActionDenial`. A handler rejection that occurs before P4 intent or
-effect admission is not a P4 Denied result; P3/P9 may preserve only the closed
-`HandlerRejected` category. Any possibly-started external effect remains on
-the existing OutcomeUnknown/ReconciliationRequired path and cannot form
-Blocked no-effect evidence.
-
-In the schema-39 RecoveryBindingV1 storage projection, a P4 `Denied`
-committed before any claim/binding is represented by
-`recovery_binding_state='DeniedUnbound'`. This is storage provenance, not a
-new `ToolInvocationSettlement` variant: it preserves the closed Denied
-reason and exact replay behavior above, asserts that no P38 consumption
-receipt/RecoveryBinding claim exists, remains `NotAdmitted`, and is never a
-P39 recovery/reconciliation candidate. On exact replay, P3's persisted
-Execution/Step/ProviderTurn/LogicalAction/callRef identity and the original
-P4 invocation request tuple are checked before mutable resource/authority
-resolution; the stored Denied is returned without re-admission. A Denied
-after a committed P39 claim retains `recovery_binding_state='Bound'` and
-its exact binding.
 
 `ReconciledNoEffect` is a distinct terminal observation/settlement for a
 `MayHaveStarted` invocation only when its same-attempt immutable fact proves
@@ -345,17 +302,4 @@ Adapter/SDK errors are translated at the adapter boundary (DID §0A.6).
 - No ownership mutation (G4; `05`).
 - No Model Context / prompt semantics (P3).
 - No verification verdict (P8).
-- No environment/git-specific behavior (P11), except the accepted sandbox
-  process-policy boundary below; Worktree lifecycle remains P11-owned.
-
-## Accepted Native OS Sandbox execution boundary
-
-All shell, script, build, test, package-manager and other model/Workspace-
-influenced executable work enters through `SandboxProcessPort`; all child and
-descendant processes inherit one Execution-scoped policy and are tracked for
-stop/cleanup. Executors cannot call native process APIs directly. In-process
-Read/List/Patch continue to use `SandboxPort` mount/target resolution and do
-not claim OS process isolation. Exact-intent approval is evaluated separately
-and never changes the sandbox profile, mounts, network or resource limits.
-P39 fixed trusted host probes remain the only narrowly registered host-side
-spawn exception and are not an executor capability.
+- No environment/git-specific behavior (P11).

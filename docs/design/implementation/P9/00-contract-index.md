@@ -1,17 +1,5 @@
 # P9 — 00 Contract Index
 
-**RAI-DG-01 amendment (DID v1.37 §8.18A.1):** P9 `07` owns the closed
-Deliver replay, direct-child AssignWork binding, and ReconciliationEscalated
-source identities/code unions used by the exact Work-revision gate. Facts and
-events remain immutable and atomic; ephemeral RecoveryBlocked outcomes are
-not promoted into sources.
-
-**Accepted ProviderTurnId V2 codec amendment (DID v1.58):** P9 `07` recovery
-and legacy adoption use P3's strict closed codec. Existing UUIDv7 and
-deterministic V2 identities are matched byte-for-byte across Turn, Manifest,
-Step, Session source refs, Action and P20 links. Unknown formats fail closed;
-P9 writes no replacement identity and changes no settlement semantics.
-
 **Authority:** DID v1.20（含原 DID v1.11 P9 closure 与 AHT-1…AHT-8）；SD v1.3 §6.5/§7.3/§10/§14；P1 `06`/`07`, P2 `03`/`06`, P3 `06`/`08`, P4 `01`/`02`/`03`/`06`, P5 `04`/`05`, P8 `00`/`02`/`03`；GQ1–GQ5 与 2026-09-30 AgentLoopStep 治理裁决。
 **Status:** FROZEN — P9 formally closed; accepted AH7-DG-03 owner amendment
 (2026-10-10). Post-landing consistency review pending.
@@ -29,6 +17,72 @@ intent+approval claim, P4 no-effect Denied/Interrupted records, effect
 admission, lease fencing and Stop/quiescence. They inherit P4/P2/P3 semantics;
 this addition does not change P9's guarantee classes, fault-injection method,
 or recovery ownership.
+
+## AH10 Deliver P10 storage addendum (DID v1.38)
+
+Accepted addendum SHA-256:
+`040789D32BE1D92F1BAD28C5E3346439C1E902236452E778CD104AF6AA71EC8B`.
+P9 `07` remains the owner of the immutable Deliver failure fact/event and
+exposes its project-scoped fact list for P10 rebuild. The fact's identity,
+failure-code set, event payload, transaction and retry semantics are unchanged.
+The source relation is in proposed migration 0037 after accepted AH7/P36
+migration 0036. P36/P37/P38 owner contracts are integrated in the current
+governance baseline, but migration 0036–0038 implementations/registration are
+not. Migration 0037 cannot be implemented or released independently of P36.
+
+## Accepted owner amendment — EA-DG-01 (DID v1.39)
+
+Fixed proposal SHA-256:
+`E4F1B2935E0397292049BB3FDB1AB5847B02443CCE1B55A9827F823C63F145EB`;
+acceptance record `planning/results/EA-DG-01-governance-acceptance.md`.
+P9 `02`/`07` add process-crash boundaries for exact Executable approval
+issuance, human decision, expiry/Stop cancellation, durable wake replay and
+same-Step/action resume while retaining AH7 AP1–AP8 claim/effect contracts.
+Implementation/process qualification remains separately gated. Ordered
+migrations 0036→0037→0038 remain prerequisites; P9 does not rewrite any slot.
+
+## Accepted owner amendment — AH7-DG-02 Reconcilable reality proof / P39 (DID v1.40)
+
+Accepted logical proposal SHA-256:
+`D0A43BCDF3F95424BE7167B49D2170917B7605EE1E498A2601F2FFFB3DD6940B`;
+accepted physical supplement SHA-256:
+`D2FF13087BB7A1BC5C9D422B4D5CEDE56689F83E765F96615FE13561CE5D446C`.
+P9 `01`/`04`/`07` define escalation only for unresolved `StillUnknown` or
+unprofiled legacy evidence, the existing `ReconciliationEscalated` event/ref
+fingerprint path, replay/recovery ordering, and bounded crash/finality/Stop
+qualification. P4 alone proves reality and owns append-only facts/terminal
+settlement; P9 does not treat an absent ref or unknown result as proof and does
+not admit an Executor replay. P39 `0039` follows owner contracts P36→P37→P38;
+the source migrations are not implemented/registered by this design landing.
+Attention visibility remains bounded by the accepted event-retention horizon.
+
+## Accepted AH7-DG-01 / P39-P40 replay-evidence Attention source (DID v1.41)
+
+Accepted hashes: DG01 logical `19EFED54E037D3E2EC6F4D273D917F5249195650E5E41B3DCFF8DEB9784F29CD`;
+P40 physical `5B61E0FF922A10D225FD5DAEA00176BD16C5C0B39484D626B7FEF6340516373A`;
+P39/P40 RNO compatibility addendum `8B8E5D3C5729CF5619605DA8D8DF34BA00E1F817E80A743555029F331690E830`;
+matrix `AD9AB72D0AA51AB84F4194EC2BF4BB90EC957BD062788C480BCBDD39B8E8DD35`.
+P9 `07` owns the current-fence RecoveryBlocked transition and immutable
+`ToolObservationReplayEvidenceEscalated` fact/event keyed by
+`(executionId, invocationId)`. This source reports failure to replay a terminal
+Observation, not uncertain external reality; it is distinct from and does not
+write `ReconciliationEscalated`. P10 owns its dedicated marker/source query and
+shared-offset/rebuild mapping. Tool output/cause/paths/errors never enter the
+fact/event or public summary.
+
+## Accepted AH10 Submitted DecisionEpisode binding failure (DID v1.42)
+
+Fixed proposal SHA-256:
+`10D5A2532810B65DFBD3E397B141F6C0765AD32F4992BDDD0FE17F468975339A`;
+acceptance/landing audit:
+`planning/results/AH10-submitted-decision-binding-P41-governance-acceptance-and-landing.md`.
+P9 `07` owns the exact binding-failure source fact/event, repeatable
+RecoveryBlocked gate, old SettledFailed/AIP/Pending-select-current-work audit,
+and the same-tuple duplicate-writer idempotency. The P9 Recovery/Application
+coordinator owns the cross-store Stop/fact transaction with P3's StepStore;
+P3 itself has no P9 dependency. P10 owns the public ActionRequired source and
+fact-backed rebuild. P41/0041 is conditional on cumulative P36–P40 integration
+and qualification; no implementation is authorized by this landing.
 
 ## Governance decisions recorded (GQ1–GQ5; no DID catalog changes)
 
@@ -51,7 +105,7 @@ or recovery ownership.
 | `04-provider-tool-hardening.md` | Provider disconnect mapping + unsettled-turn recovery (GQ4), tool four-tier assertions, dispatch-failure semantics |
 | `05-consumer-rebuild-hardening.md` | Consumer offset wiring + crash matrix, generic rebuild (GQ2 P9 face), P10 boundary |
 | `06-acceptance.md` | Stories A–G and mechanical assertion list |
-| `07-agent-loop-step-recovery.md` | DID v1.20 Provider success local convergence、AgentLoopStep recovery matrix、legacy adoption、AH1–AH14 |
+| `07-agent-loop-step-recovery.md` | DID v1.20 Provider success local convergence、AgentLoopStep recovery matrix、legacy adoption、AH1–AH14; accepted AH10 DeliverMessage receipt priority, immutable DeliverReplayEscalated fact/event, and source-fact list for P10 rebuild |
 
 ## Scope (DID §11 P9, nine faces)
 
@@ -61,6 +115,12 @@ lease expiration / old worker resurrection / dispatch failure /
 consumer crash / projection rebuild (generic face, GQ2) /
 settled Provider result handoff / AgentLoopStep crash windows / legacy adoption
 ```
+
+Accepted cross-phase AH10 extension: `07` also owns DeliverMessage receipt
+priority, the pre-Gateway exact-proof adoption path, and its immutable
+`DeliverReplayEscalated` fact/event. This adds no tenth generic P9 fault face;
+the existing P1 fence/receipt and P7 message transaction remain the owners of
+their mechanisms.
 
 P9 is hardening over existing semantics: P2 owns the mechanism, P1 owns the
 command-transaction matrix, P5 owns the representative restart proof — P9
@@ -110,29 +170,3 @@ The DID v1.22 SCRC successor adds recovery contracts for Inbox promotion,
 callRef-paired ToolResult, checkpoint/epoch atomicity, bounded overflow recovery
 and native-binding fallback in `04`/`07`. It is design-frozen but implementation
 is not authorized and does not reopen historical P9 completion.
-
-## Accepted Native OS Sandbox recovery owner amendment
-
-P9 `07` owns rehydration of the exact P1 `SandboxPolicyDecision` and its
-provider binding on restart, plus the durable pre-spawn
-`SandboxProviderUnavailable` fact/event that P10 projects. Recovery never
-reconstructs a decision from current config, Worktree or model text. The
-accepted sandbox fact does not reopen P9/AH completion or authorize runtime
-implementation.
-
-## Accepted V5 fact-storage/rebuild amendment
-
-P9 `07` owns the immutable fact relation, bounded opaque reason decoder,
-canonical identity, lease-fenced fact→P10 queue→wake-event transaction,
-exact retry/conflict semantics, and `listSandboxProviderUnavailableFacts`
-snapshot. Event is only wake/audit; P9 fact is source of truth and is
-independent of `domain_events` retention. No runtime implementation is
-authorized by this storage design.
-
-## Accepted Native OS Sandbox RecoveryBinding Attention amendment (V21)
-
-P9 `07` classifies invalid/missing existing RecoveryBindingV1 evidence
-read-only from P4 invocation/binding rows as internal RecoveryBlocked. It
-does not persist a replay fact/event/marker or call P4/Provider/lease/effect;
-P10 derives the non-persisted `SandboxRecoveryBindingFailure` Attention.
-Actual `SandboxProviderUnavailableFactV1` persistence remains unchanged.

@@ -1,6 +1,18 @@
 # P14 — Contract Index — Chat-First 主工作区对话面
 
-**Phase:** P14 · **Baseline:** DID v1.16 (G-A–G-F), successors DID v1.17, v1.24/P17 and v1.28 EGP · **Status:** FROZEN with recorded supersessions
+**Phase:** P14 · **Baseline:** DID v1.16 (G-A–G-F), successors DID v1.17, v1.24/P17, v1.28 EGP and v1.40 AH7-DG-02 · **Status:** FROZEN with recorded supersessions
+
+## Accepted AH7-DG-02 P39 startup boundary (DID v1.40)
+
+Accepted logical proposal SHA-256:
+`D0A43BCDF3F95424BE7167B49D2170917B7605EE1E498A2601F2FFFB3DD6940B`;
+accepted physical supplement SHA-256:
+`D2FF13087BB7A1BC5C9D422B4D5CEDE56689F83E765F96615FE13561CE5D446C`.
+P14 `02` owns the process-startup refusal boundary: a P39-blocked primary DB
+cannot start the conversation/execution runtime or admit new AgentLoop work.
+P14 `05` records the deployment qualification seams. P1 owns the migration
+CLI/sidecar mechanics; P14 adds no new user-facing repair, chat message,
+synthetic response or manual settlement for an isolated legacy database.
 
 ## Doc map
 
