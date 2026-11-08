@@ -41,21 +41,6 @@ Application adds P3 action identity and issues/reads the exact Pending record;
 the action remains Pending. ApprovalRequired is not a CanonicalToolObservation
 or new Denied settlement.
 
-## Accepted pre-intent sandbox CandidateRead bootstrap (2026-10-21)
-
-After this existing nonterminal `ApprovalRequired` path has left a Pending P3
-Executable Action and the Application has admitted its exact Pending
-Executable approval, P4/06 may expose the read-only pre-intent
-`SandboxPolicyRequirementPreIntentV1` source to P10. This is not another
-`ToolRuntimePort.invoke`; it writes no ToolInvocation/RecoveryBinding, does
-not consume approval, and enters neither Resource Admission nor effect
-admission. The user may commit DecideSandboxPolicy before resolving approval.
-Only after the exact approval is Approved may the normal P4 claim transaction
-persist the ToolInvocation intent and consume that Approved revision together.
-P4 then retains the existing current-policy gate before effect admission; a
-missing/stale policy remains the existing same-invocation
-SandboxPolicyRequiredInterruption, and no provider/effect fallback is added.
-
 ## 2. `ToolRuntimePort.invoke`
 
 ```ts
@@ -66,15 +51,6 @@ interface ToolRuntimePortService {
   ) => Effect.Effect<ToolRuntimeOutcome, ToolRuntimeError>;
 }
 ```
-
-**Caller concurrency boundary.** `ToolRuntimePort.invoke` is called by the
-single current P3 AgentLoop action under its current `ExecutionOrigin`. P4 does
-not provide invocation-level arbitration or a wait/owner protocol for
-overlapping calls carrying a copied same-holder tuple; such calls are outside
-the supported production path. This boundary does not change sequential
-recovery: after `MayHaveStarted`, a NonIdempotent ambiguity follows §5 and P4
-`06`—no automatic replay, and the existing `OutcomeUnknown`/reconciliation
-disposition remains authoritative.
 
 Steps:
 
@@ -251,33 +227,3 @@ P39-only `user_version=39` is not Runtime-startable/releasable. The cumulative
 P36→P37→P38→P39→P40 chain must commit 40 before service start; P39 sidecar and
 preflight remain unchanged. The runtime decoder must include the accepted RNO
 branch before opening version 40.
-
-## Accepted Native OS Sandbox pipeline
-
-For executable calls, CommandGateway exact approval and sandbox policy remain
-independent checks. Before spawn, P4 binds the current `SandboxHandle`, exact
-Execution/Episode policy, effective profile/provider digest, admitted mount
-read/write roots, work mount, environment allowlist, network policy and
-walltime/output/process/memory/CPU controls to one `SandboxProcessPort` call.
-Provider capability is probed before execution. Missing or unverifiable
-required enforcement returns typed unavailable/Attention and performs no
-spawn; it never falls back to `TrustedLocal`. The invocation owns the whole
-descendant process tree and close/stop cleans that tree without deleting the
-P11-owned Worktree.
-
-
-## V21 process policy admission order
-
-For any process-capable tool, P4 first resolves the exact canonical
-ExecutionEpisodeBinding and current committed policy/basis. Missing/stale
-policy with unchanged valid source bindings returns internal
-SandboxPolicyRequiredInterruption before effect admission; it creates no
-ExpectedFailure/ToolObservation and leaves the exact invocation NotAdmitted,
-Action Pending, Step ActionsInProgress. Only after durable intent and strict
-existing RecoveryBinding verification may same-invocation resume be parked.
-A valid current OsEnforced or explicit TrustedLocalUnconfined snapshot then
-binds original target refs/mounts, allowlist and limits to SandboxProcessPort.
-The OS provider must probe all exact T2 controls before effect/spawn. Any
-unavailable/unverifiable control becomes terminal no-effect ExpectedFailure,
-with no process spawn. Neither policy-required nor provider-unavailable path
-falls back or widens scope through action approval.

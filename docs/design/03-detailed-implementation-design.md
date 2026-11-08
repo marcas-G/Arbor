@@ -1,560 +1,10 @@
 # Arbor Detailed Implementation Design
 
-**Version:** 1.65\
+**Version:** 1.42\
 **Status:** TOP-LEVEL ARCHITECTURE FROZEN — Minimal Architecture Convergence accepted; MAC-P1 authorized\
-**Supersedes:** v1.64\
-**Date:** 2026-10-26\
-**Depends on:** `Arbor System Design Specification v1.25`
-
-**Governance changes (v1.64 → v1.65): accepted Native durable pre-effect denial supplement V2**
-
-Accepted under `ACCEPT_NATIVE_PROCESS_MODE_DURABLE_NO_EFFECT_V2` on
-2026-10-26; fixed supplement SHA-256
-`B9909E31C005FE3546EBA1EA72395BDE3231F68ECFD2ADA14045B0C50E018DEB`.
-This narrowly supplements the first-release process-mode contract for an
-already durable exact P4 process invocation at `NotAdmitted`: P4 chooses
-`ProcessExecutionDisabled` in startup mode Disabled, or
-`NativeOsTupleUnavailable` in Native mode without the exact qualified tuple,
-and atomically terminalizes that same invocation as `Denied` before any
-`MayHaveStarted` transition. The denial retains `NotAdmitted` and has NULL
-result/P40 evidence; it starts no P39 attempt, provider, Sandbox, executor,
-process, or fallback. Exact current P3/P4/action/lease bindings are rechecked
-in the committing transaction. MayHaveStarted, LegacyUnknown, stale-fence,
-identity-conflict and ambiguous rows remain on existing fail-closed recovery.
-The denied action is terminal and a later mode/tuple change can affect only a
-new action.
-
-P10 derives the sanitized, read-only `ProcessExecutionUnavailable` Attention
-from the exact Denied row joined to its exact Execution/P3 action. The source
-uses the fixed SHA-256 identity and safe summaries in P10 `02`/`05`; it is not
-a provider-unavailable fact, attempt, queue, marker, event, or P40 Observation.
-The first-release rule that newly received shell actions in Disabled mode are
-rejected before P4 intent is unchanged.
-
-This supplement narrowly supersedes the base first-release proposal's
-no-migration statement: P1/P4 migration 0054 changes only the existing P40
-Denied insert/update reason-code allowlists, preserving all predicates and
-existing values while adding these two closed codes. With accepted S3
-migration 0053 first, it requires schema 53; recheck the actual migration head
-and assign the next sequential version if it has changed. It performs no DML,
-row/event rewrite, table/column change, or Attention backfill. Conditional
-implementation authorization was separately provided under
-`AUTHORIZE_NATIVE_PROCESS_MODE_DURABLE_NO_EFFECT_V2_IMPLEMENTATION`; it
-applies only to this accepted scope after required independent post-landing
-review and does not authorize migration execution, database upgrade,
-deployment, Native support claims, or release.
-
-**Governance changes (v1.63 → v1.64): accepted S3 canonical ownership carve-outs**
-
-Accepted under `ACCEPT_S3_CANONICAL_OWNERSHIP_CARVEOUTS_V1` on 2026-10-26;
-fixed supplement SHA-256
-`CEC99E498129189BD166703154A1FFD1E6DDA1CE93BE3C88C8CA9B51C7380B3D`.
-The Parent remainder after delegation is represented as a canonical
-`OwnershipRegion { allow, exclusions[] }`; the effective set is `allow` minus
-the union of its finite canonical exclusions. Exclusions are strict
-descendants in the same resource space/kind, canonical, sorted, unique, and
-prefix-antichain; an active claim must have a nonempty effective set. The
-domain comparator returns typed `Contained | NotContained | Overlap | Disjoint`
-results and rejects malformed, noncanonical, empty, cross-space, or
-non-antichain values. Containment rejects partial exclusion intersections;
-effective claims overlap unless an exclusion completely covers their allow
-intersection. Equality-only kinds permit exact carve-out/reclaim only.
-
-P4 `05` remains validate-only and must prove the whole requested canonical
-effect region lies within the active effective claim and current boundary and
-that all active effective claims are pairwise disjoint. Grants cannot remove
-exclusions or widen `allow`. Delegation atomically adds the exact exclusion to
-the Parent and creates the Child claim, then checks the full post-image. The
-durable `ResourceOwnershipChanged` event must carry the complete Parent/Child
-post-image, exact delegation identity, and provenance. Reuse its current
-version only if that frozen payload can represent the full transfer;
-otherwise introduce a new event version without reinterpreting historical
-events.
-Migration 0053 is the next additive schema change after rechecking the
-schema-52 head: add durable canonical exclusions and exact delegation
-provenance/activation identity, default existing claims to empty exclusions,
-and infer no Child ownership or Parent exclusions. It is restart-safe and
-does not activate ownership. Exact SQL member names and JSON codec remain in
-phase contract. Reclaim and Child retirement match the exact delegated
-canonical region to the Child claim's delegation source identity and claim
-revision, with CAS over Parent/Child Workspace, boundary, and ownership
-revisions. They release only that Child claim and remove only that exact
-Parent exclusion; every unrelated exclusion is preserved in normalized,
-sorted, unique antichain form. The complete Parent/Child post-image and
-version-capable ownership event commit in the same transaction. Missing,
-multiple, stale, or mismatched evidence fails closed without state or event
-mutation.
-
-Implementation is conditionally authorized under
-`AUTHORIZE_S3_CANONICAL_OWNERSHIP_CARVEOUTS_V1_IMPLEMENTATION` after required
-independent post-landing review. This landing does not execute implementation
-or migration; migration execution, existing-database mutation, S3 closure, and
-release remain separately gated.
-
-**Governance changes (v1.62 → v1.63): accepted Native OS Sandbox first-release boundary**
-
-Accepted under `ACCEPT_NATIVE_OS_SANDBOX_FIRST_RELEASE_BOUNDARY_V1` on
-2026-10-26; proposal raw SHA-256
-`8A5FC8FED5DCED9B6E944397675738F94B43591B23F85869A2D5FA96D6CB32E8`.
-P12 composition owns the startup snapshot at
-`arbor.config.json.runtime.processExecutionMode`, with closed object
-`{version: 1, processExecutionMode: Disabled | NativeOsSupportedOnly}`.
-Missing/invalid/unknown/contradictory configuration is Disabled; no CLI or
-environment-variable override exists. The existing `ARBOR_CONFIG` only
-selects the standard config file. Mode is immutable per daemon and requires a
-controlled restart to change. Disabled omits shell from the compiled
-model-facing catalog and P4 independently blocks received, stale, or replayed
-process actions before spawn. For already durable actions, P4 uses the
-existing same-Execution unavailable/blocked path. In-process bounded
-Read/List/Patch are unaffected. No new persistence or authority source is
-added.
-
-P12 may expose Native mode only for the exact qualified provider/version/
-capability revision/Windows build/`ReadOnly × Disabled` tuple and matching
-signed helper, trust, registry and qualification evidence; otherwise status
-is safely unavailable and there is no spawn. There is no TrustedLocal,
-FullAccess, alternate-provider, or weaker-control fallback in the release
-shell path. Rollback disables new admission and uses existing Stop/settlement
-semantics while preserving monotone trust/authority evidence. This adds no
-schema or migration. Release qualification is conditional: either the exact
-fully qualified signed Native path passes, or the Disabled path proves shell
-absence and zero process/provider/fallback effects for stale or forged calls.
-Both retain the proposal's negative-case coverage and full functional,
-package, clean-clone, and applicable exact-host gates.
-
-This acceptance records the release design and conditional plan only. It
-does not create additional implementation, migration, database, deployment,
-or release authority. Any pre-existing Native implementation authorization
-remains subject to the separately required post-landing review and exact T3
-gates.
-
-**Governance changes (v1.61 → v1.62): accepted S3 Child Workspace resource ownership**
-
-Accepted under `ACCEPT_S3_CHILD_WORKSPACE_RESOURCE_OWNERSHIP_DELEGATION_V1`
-on 2026-10-26; proposal raw SHA-256
-`397A56BF13042D32EF0D062146F4A34AF703738A288B4881A5FF48C6DDFE52A2`.
-P1 owns the durable formation decision/receipt boundary and atomic ownership
-change command/event; P6 owns the Parent-approved Child formation intent and
-post-commit activation lifecycle from the persisted ResourceBoundary and
-delegation; P4 continues validate-only resource admission. The formation
-package carries a bounded optional
-`ResourceOwnershipDelegation`; without it the Child is formed without write
-ownership. A dedicated semantic ownership change binds exact Parent/Child
-identity, expected Workspace/boundary/ownership revisions, delegation source,
-canonical resolved post-image and actor/authority provenance. The ownership
-transaction includes the complete Parent/Child post-image, CAS checks,
-canonical no-overlap evaluation, durable state and event; duplicate activation
-converges by durable formation/delegation identity. P4 cannot create, repair,
-or widen claims. Existing `ResourceOwnershipChanged` may be used only if its
-current version represents the complete atomic transfer; otherwise use a
-versioned event without reinterpreting history.
-
-Persistence retains delegator, exact source identity, claim revision,
-canonical region, source-address snapshot/ref and resolved Environment
-revision with existing claim data. Typed results distinguish stale
-Parent/Child revisions, containment failure, canonical overlap conflict,
-resolver mapping drift, missing delegation, and ownership integrity failure;
-rejection preserves the full ownership post-image. The additive migration is
-transactional and restart-safe, performs no ownership activation, and infers
-no Child ownership: Root claims stay unchanged and legacy Child claims
-without exact durable delegation evidence remain unowned. Exact Command/ADT member names,
-wire/event version, physical schema and migration number are left to the
-authorized phase contract after checking the then-current migration head;
-they are not invented by this owner landing. S3-1…S3-11 from the accepted
-proposal are the qualification matrix, including public-process, real SQLite
-transaction, restart, concurrency, migration and no-effect cases.
-
-This acceptance authorizes design landing and planning only. S3
-implementation, migration activation, database access and release claims
-require separate explicit authorization and the accepted matrix evidence.
-
-**Governance changes (v1.60 → v1.61): accepted RAI-DG-02 terminal Provider failure hold**
-
-Accepted under `ACCEPT_RAI_DG_02_TERMINAL_PROVIDER_FAILURE_HOLD_V2` on
-2026-10-25; fixed proposal raw SHA-256
-`FA1AFC6675E040698F69E5EE29C67DE92EA10D54228D476A6DA27E2A98B8FA93`.
-The exact Work-revision readmission gate gains the closed
-`TerminalProviderFailureSettlement` source. P2 derives it from existing
-Execution/Step/Turn/Attempt/Manifest rows; P7 consumes it and Work-bound
-admission rechecks it transactionally. P10 derives bounded valid/integrity
-presentation in the same read snapshot and is never admission authority. No
-DDL, migration, persisted gate/Attention marker, automatic retry, WorkWait or
-Work lifecycle variant is introduced by this design landing. Implementation,
-existing-database use and release qualification remain separately gated.
-
-**Governance changes (v1.59 → v1.60): accepted S2-RDG-01 Work contract revision**
-
-Accepted under `ACCEPT_S2_STEER_WORK_REVISION_CONTRACT_V1` on 2026-10-24;
-fixed proposal SHA-256
-`C878BBF615F92ED43125C79EFDC0F021F062FEE97BF740795889B65B44394088`.
-This owner landing freezes typed `DirectionGuidance` versus explicit
-human-authored `ContractAmendment`, full replacement only, exact WorkRevision
-CAS, immutable revision history, receipt/replay identity, and the existing
-Normal/Critical split. Work contract history is a logical append-only
-WorkId/WorkRevision ledger; its physical table, encoding, Effect signatures,
-wire version number, DDL, DTOs, and UI routes remain owned implementation
-details, not decisions made by this landing. P1 preserves exact old receipt
-tuple behavior; P6 shares the same contract mutation for Normal/Critical; P8
-uses the exact canonical mission for new Verification and preserves old
-revision snapshots/wakes. Design acceptance authorizes owner-document landing
-only: no implementation, migration, test, provider, deployment, or database
-write is authorized here.
-
-**Governance changes (v1.58 → v1.59): S3 AnyProducer producer evidence and settled-wait visibility**
-
-- Accepted token `ACCEPT_S3_ANY_PRODUCER_WAIT_ELIGIBILITY_V1`, package SHA-256
-  `5b558d26b4140631f5c7a14bb743b1e42a9d8992d50feee1a3d2c3c98353b7c8`;
-  proposal SHA-256 (accepted manifest member)
-  `1fb00a66dda47365028ce9c347a49e2e887a7a9faba101296197bc01e95a8ca4`;
-  reviewed manifest SHA-256
-  `3f6183c868f136c6d69e2a2e9963704759e2e5ccf2cc9df9148c137296877fb0`.
-  Acceptance record:
-  `planning/results/S3-any-producer-wait-package-acceptance-20261024.record.md`.
-- P7 `01` §2 owns the accepted model-authored `DeclareDependency(AnyProducer)`
-  evidence gate and exact replay-first order. The P7 canonical Command, matcher,
-  Dependency lifecycle, coordinator, and wake semantics are unchanged.
-- P10 `02` §1 owns the read-only APW-3 Attention derivation for an eligible
-  settled AnyProducer wait. It reuses the existing `WaitingOnVacantProducer`
-  label/target/dedup family, and does not add DDL, a migration, a new public
-  Attention source literal, event, receipt, wake reason, or persistent marker.
-- This acceptance authorizes only the design landing. Source implementation,
-  migrations, and real-provider qualification require separate explicit
-  implementation authorization. S3 remains unqualified until its public
-  end-to-end journey passes.
-
-**Governance changes (v1.57 → v1.58): ProviderTurnId V2 closed encoding**
-
-`ACCEPT_P10_P1_PROVIDER_TURN_ID_CODEC_V1` accepts the versioned closed
-ProviderTurnId codec in §2.2.1. New writes use only the deterministic
-composite V2 families; UUIDv7 ProviderTurnIds remain read/replay-only legacy
-values. Exact existing IDs are preserved in SQLite, Manifests, source refs,
-receipts, public progress frames, P3 Actions, RecoveryBindings and P20 links.
-Unknown formats fail closed. No DDL, migration, backfill, receipt rewrite, P1
-payload/fingerprint change, or P9 terminal-semantics change is introduced.
-Acceptance source SHA-256:
-`5794DD19BA3BF1BDF58C0878863F1F51EA154CBF541E893CFA1CC63758108D2E`.
-
-**Governance changes (v1.57 → v1.58): F18 Verification v2 consumer and read-model convergence**
-
-- The accepted F18 Option A package replaces P1 `05`'s global event-version
-  ceiling with exact `(eventType,eventVersion)` writer/reader capabilities.
-  Only `VerificationConcluded` may be newly written at v2; its v1 is historical
-  reader-only, while all other 56 catalog types remain exact v1. Unknown type
-  v1 and every unsupported pair take the existing atomic CC-3 poison path.
-- P8 v2 conclusions explicitly encode absent reason as JSON null and bind the
-  strict same-Project Committed v2 receipt, exact release and verdict-specific
-  wake signals. The exact pre-activation high-water compatibility tuple is
-  read-only; G5 retains its strict v1 outer RetryVerification receipt.
-- P9 owns durable reconciliation keyed by the exact workflow dead-letter
-  tuple, generation-fenced phases, effect-before-disposition crash semantics,
-  immutable high-water facts, and Root-targeted ActionRequired Attention.
-  P10 owns retained queue projection/rebuild; P13 projects all four canonical
-  criterion snapshot statuses without inference. Parent Acceptance and
-  Unknown aggregation semantics are unchanged.
-- Accepted token
-  `ACCEPT_F18_VERIFICATION_V2_CONSUMER_AND_READMODEL_CONVERGENCE_OPTION_A`,
-  proposal SHA-256
-  `C6C41E96C5A59B46810DB9FA7A998DDBC5887B93D75ADF3606E0CA25E351EC73`;
-  RED evidence SHA-256
-  `0FA66DDC6D4D97932855C11E459A86E2C0365C7228C85FAF5727BE85E638B49B`.
-  Acceptance and exact landing manifest are recorded in
-  `planning/results/F18-verification-v2-consumer-readmodel-acceptance-and-landing.record.md`.
-  Implementation is separately authorized by
-  `AUTHORIZE_F18_VERIFICATION_V2_CONSUMER_AND_READMODEL_CONVERGENCE_IMPLEMENTATION`,
-  but is gated on independent post-landing B0/B1/B2=0/0/0 review.
-
-**Governance changes (v1.51 → v1.52): F23 P6 operator rebuild and v1 route-command qualification**
-
-- The accepted P6 UnboundLegacy package has no v1 canonical Work-owner or
-  Workspace-Parent mutation command. Only the command-level owner/Parent route
-  move, old/new recipient command journey, and its command/process crash
-  qualification are N/A for v1. This does **not** make the same-key
-  same-transaction route helper, current-route human visibility, or future
-  command rejection constraints N/A. Any separately governed future command
-  that changes recipient must update canonical route and Inbox key in one P1
-  transaction, retain old/new current-route authorization, and use the ordinary
-  P1 `TerminalRejected(AuthorityDenied)`/zero-canonical-mutation path if that
-  atomic move cannot commit. P8's frozen old Verification owner snapshot and
-  successor-current-owner behavior are unchanged.
-- Production P6 Inbox rebuild is required, not N/A. The operator-only offline
-  `p6:inbox-rebuild` CLI targets only the exact current schema-48 database while
-  the daemon is stopped and under the existing P39 `MaintenanceExclusive`
-  permit. It invokes the existing `rebuildUnboundLegacyInboxProjections`
-  helper through one `TransactionPort` transaction on the same P39 primary
-  SqlClient connection; no second connection, online service, Agent/Web/model
-  tool or P10 Attention source is added. Its `--p39-sidecar` is the P39
-  blocker-report SQLite and is distinct from its protected JSONL `--manifest`.
-  The bounded P39 `openSync(..., "wx", 0o600)` sidecar-file creation and SQLite
-  schema initialization precede permit acquisition; the `wx` winner/loser
-  operation is not the P39 maintenance lock. If RuntimeShared blocks the
-  permit, P39 infrastructure artifacts may remain, but the primary, JSONL
-  manifest and P6 rows are untouched. Same-connection transaction, idempotent
-  current-route rebuild, manifest audit, and crash/restart reconciliation are
-  required qualifications.
-- Accepted token
-  `ACCEPT_F23_P6_OPERATOR_UNBOUND_LEGACY_REBUILD_AND_V1_ROUTE_MOVE_NA`,
-  proposal raw SHA-256
-  `B6A542973768D1C0D7C8ACB644988D1C957B7020F73206C335D73FF7FE0C833E`,
-  accepted 2026-10-18. Acceptance/landing record:
-  `planning/results/F23-P6-operator-rebuild-and-route-move-na-acceptance-and-landing.record.md`;
-  independent post-landing review is pending. The distinct implementation
-  authorization token
-  `AUTHORIZE_F23_P6_OPERATOR_UNBOUND_LEGACY_REBUILD_IMPLEMENTATION` has **not**
-  been granted; no production implementation, migration, or preserved/online
-  database operation is authorized by this landing.
-
-**Governance changes (v1.52 → v1.53): accepted Native OS Sandbox V1/V3/V5 and schema-48 fixed landing**
-
-**Governance changes (v1.50 → v1.51): AH19 Conversation owner × P17 Job authority reconciliation**
-
-- **Work pre-checkpoint frontier:** before the first typed
-  `CompactionCheckpoint`, select the latest 64 persisted Session Timeline
-  rows by Session-local sequence. The selected row window is the considered
-  `inputFrontier`, not proof of representation or checkpoint coverage. Apply
-  existing P3 projector branches/filters without refilling skipped rows from
-  older history. Current input and canonical C0/C1 facts are pinned outside the
-  row cap. Once a checkpoint exists, the active frontier is that exact
-  checkpoint sequence plus every unsummarized typed entry after it, without
-  the pre-checkpoint cap. Coverage can claim only content actually represented
-  by the existing projector.
-- **Conversation checkpoint owner:** exact `RootWorkspaceId` owns one v1
-  conversation stream across immutable HumanMessages, ResponseJobs, Attempts,
-  Executions and response episodes. HumanMessage contributes only exact
-  identity/owner/order/body; legacy lifecycle, claim and response columns are
-  not runtime or checkpoint truth. Coverage is the contiguous FIFO prefix
-  where the exact Job is `Answered` and its unique Attempt plus terminal
-  ConversationResponseEpisode Execution prove the same `(messageId, attemptNo,
-  executionId)` successful response with
-  `Completed(ConversationResponseProduced(messageId))`. The current raw input
-  is pinned once from immutable HumanMessage body only for the exact
-  `Running` Job, active Attempt, Episode Execution and lease; it remains
-  uncovered until the Job is Answered.
-  Any earlier non-Answered, malformed or other-episode Running Job blocks
-  later coverage. Work Session history/checkpoints are excluded. ProviderNative
-  reuse requires exact complete binding fingerprint; otherwise portable
-  Summary is rebuilt from retained HumanMessage sources paired with their
-  authoritative Answered Job response bodies. Messages and live checkpoint
-  evidence remain durable; restart resumes the same response episode and does
-  not replay settled work.
-- **Physical boundary:** the Conversation owner state/table/port, message
-  ordering-key implementation, migration ID and initialization are TBD for
-  separately authorized implementation. No old Workspace Session checkpoint
-  is backfilled as Conversation ownership. P2 does not select storage shape in
-  this landing; P4 is unaffected.
-- Work package token `ACCEPT_AH19_WORK_PRECHECKPOINT_BOUNDED_FRONTIER_V1`,
-  proposal raw SHA-256
-  `4692895A2C9CF92DB1308507F29ED288FD3149F944AAC4F3D8BAE23635F5D663`;
-  Conversation package token `ACCEPT_AH19_CONVERSATION_CHECKPOINT_OWNER_V1`,
-  proposal raw SHA-256
-  `9B562095B653B84C0518050BC7E6374D1C3710BF464A7BAB556D4F399D604E89`.
-  Both accepted 2026-10-17. Their P17 authority reconciliation is accepted
-  under `RECONCILE_AH19_CONVERSATION_OWNER_WITH_P17_JOB_AUTHORITY`, proposal
-  raw SHA-256
-  `92EF668AFFBE3A5D1C651107C33006C7CB987E7021FFFC02037B3603FD276B75`, on
-  2026-10-18. Acceptance/landing record:
-  `planning/results/AH19-conversation-owner-p17-authority-reconciliation-acceptance-and-landing.record.md`;
-  independent post-landing review remains pending.
-
-**Governance changes (v1.48 → v1.49): AH14 legacy adoption evidence Attention**
-
-- P9 recognizes only the fixed `LegacyActionDispositionUnproven` case: a
-  uniquely bound legacy successful Provider result and decoded action list
-  have at least one action without provable durable disposition. It fails
-  closed before ProviderResultAvailable adoption, action/output replay, or
-  canonical mutation. P9 stores the canonical evidence fingerprint with one
-  immutable `LegacyAdoptionEvidenceEscalated` fact/event under the current
-  lease; a later resolution requires exact evidence for the complete original
-  decoded action set and binds to the original fingerprint.
-- P10 exposes exactly `LegacyAdoptionEvidenceInsufficient` at
-  `ActionRequired`, targeting the exact Execution Workspace, with a bounded
-  safe summary and `attentionFactId` deduplication. It validates failure and
-  resolution event envelopes field-by-field against permanent P9 facts before
-  atomically applying markers and offset. Rebuild recreates unresolved markers
-  from P9 facts after source-event pruning; evidence-proven resolution removes
-  only the matching marker. No manual dismissal or timeout exists.
-- P1 owns shared transaction/storage contracts. P4 `06` is reference-only for
-  existing exact same-action P4 terminal evidence; no P4 semantics change.
-  Migration ID, exact DDL and initialization are not fixed or reserved here;
-  implementation and migration qualification require separate authorization.
-  Accepted token
-  `ACCEPT_AH14_LEGACY_ADOPTION_EVIDENCE_ATTENTION_GOVERNANCE`, proposal raw
-  SHA-256
-  `71F81F8B61375B9828FAB208D517FBF2CE0092C0B71ECCD124353262E23FCFB1`,
-  accepted 2026-10-17. Decision/landing record:
-  `planning/results/AH14-legacy-action-disposition-attention-acceptance-and-landing.record.md`;
-  independent post-landing review:
-  `planning/results/AH14-legacy-action-disposition-attention-landing.review.md`.
-
-**Governance changes (v1.47 → v1.48): P8 stable evidence time and conclusion snapshot**
-
-- `RecordVerificationEvidence.recordedAt` is the Runtime-selected first
-  durable P9 ActionIntent `updatedAt`. Retries and owner-generation takeover
-  reuse it; P9 preserves it while Pending and fails closed if its first-intent
-  meaning cannot be proven. The model cannot author it.
-- New P8 conclusions durably preserve the immutable mission and complete
-  ordered criterion-result snapshot. Ordinary `ConcludeVerification` writes
-  the same canonical snapshot/status/reason/verdict/summary binding to its
-  row, v2 event and v2 result/receipt; v1 history remains strict and
-  read-only. The G5 `RetryVerification` orphan branch retains its outer v1
-  receipt and ID bindings, while its row/event carry the exact
-  `Unknown`/`Orphaned`/`NotApplicableOrphaned`/empty-results exception.
-- Snapshot status is exactly `Pending`, `Available`,
-  `NotApplicableOrphaned`, or `UnavailableLegacy`. Existing open-row migration
-  proof uses only a strictly decoded and identity-associated
-  `verifications.mission_snapshot`; `missionDigest` cannot reconstruct it.
-  Existing concluded rows become `UnavailableLegacy` without inferred
-  criterion results.
-- Migration ID, exact DDL and initialization remain TBD for separately
-  authorized implementation. No migration is reserved, registered or
-  executable under this design landing. Acceptance token
-  `ACCEPT_VCS_STABLE_EVIDENCE_TIME_AND_CRITERIA_SNAPSHOT`, proposal raw
-  SHA-256
-  `B0C532FF66697CE1FB06B93CDE477B1A833FC310D360D48513E341D54F1FAD56`,
-  accepted 2026-10-17. Decision/landing record:
-  `planning/results/VCS-verification-evidence-time-and-criteria-snapshot-acceptance-and-landing.record.md`;
-  independent post-landing review:
-  `planning/results/VCS-verification-evidence-time-and-criteria-snapshot-landing.review.md`.
-
-**Governance changes (v1.46 → v1.47): F23 P6 UnboundLegacy current-route Inbox mechanics**
-
-- The accepted P6 package reuses the existing `Governance` Inbox kind and
-  stable `retry-verification-unbound:<commandId>` key, with typed
-  `RetryVerificationUnboundLegacy` content reconstructed from the immutable
-  P1 disposition (`commandId`, project, source Work/Verification,
-  `UnboundLegacy`, `OriginEvidenceIncomplete`, `created_at`). It adds no Inbox
-  kind, Message, approval, Agent instruction, wake, command or P10 Attention
-  source. Reads are human-only and do not consume/clear the entry.
-- Recipient is current-route derived from canonical Work/Workspace governance
-  facts on every admission/query/rebuild and passes the unchanged P8 current
-  authenticated-human authorization. Root Work uses current Root-local human
-  governance; child Work uses its exact current direct Parent Workspace.
-- A same-key owner/Parent route move is atomic with the canonical owner change
-  in the existing P1 command transaction. It preserves Inbox `created_at`,
-  increments revision and updates `updated_at` once; no-op reconciliation
-  changes neither. If atomic movement is unavailable, the existing Gateway
-  persists its ordinary `TerminalRejected(AuthorityDenied)` receipt/attempt
-  and commits no canonical Work/Workspace/Event/Inbox/disposition mutation.
-  Same-CommandId replay returns that receipt; a different CommandId rejects
-  independently. No pre-Gateway rejection or asynchronous route-reconcile
-  fact/window is introduced.
-- P1 `04` adds source Work/Verification to the disposition contract and owns
-  the physical Inbox row representation. At this v1.47 design landing, the P1
-  database route columns, initial revision seed, and migration ID/name were an
-  implementation package TBD; no DDL, migration registration/execution,
-  online database upgrade, or production implementation was authorized by
-  that landing. Their later separately authorized P45/schema-48 status is
-  recorded in the v1.52 amendment above.
-- Accepted token `ACCEPT_F23_P6_UNBOUND_LEGACY_GOVERNANCE_INBOX_MECHANICS`,
-  proposal raw SHA-256
-  `798C2CB2782E4D8FF1064CE1065E12B09A318565997EF1160460B478CFA48FDF`,
-  accepted 2026-10-17. Decision/landing record:
-  `planning/results/F23-P6-unbound-legacy-inbox-mechanics-acceptance-and-landing.record.md`;
-  post-landing consistency review:
-  `planning/results/F23-P6-unbound-legacy-inbox-mechanics-landing.review.md`.
-
-**Governance changes (v1.45 → v1.46): F23 / P8 permanent RetryVerification replay origin**
-
-- The accepted scope narrows P8 exact replay to a currently authorized exact
-  retry: every replay re-runs P12 actor/project/source visibility and exact
-  current Root-local or direct-Parent human governance. Revoked/changed-owner
-  authorization or different actor/project/source returns the generic Resolver
-  denial before Gateway and reads no receipt. A same-CommandId/same-source
-  changed summary, expected revision or successor ID reaches Gateway, whose
-  existing full tuple compare alone returns `IdempotencyConflict` before JSON
-  decoding. DID §4.1B, P1 `01`/`03`, and the Gateway `BEGIN IMMEDIATE` receipt
-  linearization point remain unchanged.
-- P8 records one immutable `retry_verification_origins` fact for successful
-  handoff, with only CommandId, ProjectId, original actor, source Work and
-  Verification, successor Verification and verifier Execution, and creation
-  time. It stores no payload, summary, fingerprint, schema/algorithm version
-  or receipt. The fact has the same retention lifetime as its permanent
-  Command receipt and is independent of Domain Event pruning. If its
-  replay-only authority reaches Gateway but the receipt is absent, the existing
-  safe `PersistenceCorruption<"CommandStore">` boundary returns with no handler
-  or writes.
-- Historical origins are backfilled only from a strict successful P8 receipt,
-  the exact retained conclusion/start Event pair, and canonical successor /
-  verifier-binding facts. Unprovable recognized successes preserve their
-  receipts, receive immutable `UnboundLegacy` disposition, and admit one
-  human-only, queryable P6 Governance Inbox item; replay is generic-denied.
-  The item-specific P6 key/recipient/query/consumption/rebuild mechanism is
-  separately gated by P6 owner acceptance. This is not a P10 Attention source,
-  not an Agent instruction, and not an automatic retry.
-- At the v1.46 landing, P1 `04` reserved an ordered origin/disposition
-  migration with ID/name **TBD** and no registered or executable migration.
-  Its atomicity, immutable FK/uniqueness, repeat-upgrade, retention and
-  evidence-gated backfill rules are owned by the accepted P1/P8 sections. The
-  later separately authorized implementation assigned migration `0045`
-  (`requiresUserVersion: 44`), now in the schema-48 history; see the F23 P8/P6
-  implementation result. The v1.52 operator-rebuild acceptance adds no new
-  migration and does not reopen P45 DDL/backfill.
-- Acceptance basis: token
-  `ACCEPT_F23_P8_PERMANENT_REPLAY_ORIGIN_AND_LEGACY_DISPOSITION`, fixed
-  proposal SHA-256
-  `6BEEC14ED975D7322003C95D28F63D161C82F4EFA4B584ECAA99D1120BE712CA`;
-  decision record `planning/results/F23-retry-verification-permanent-replay-governance-acceptance-and-landing.md`;
-  post-landing consistency review
-  `planning/results/F23-retry-verification-permanent-replay-design-landing.review.md`.
-
-**Governance changes (v1.44 → v1.45): P41/0041 fact-key nullability amendment**
-
-- P41's accepted physical amendment declares the immutable P9 fact identifier
-  `attention_fact_id` as `TEXT NOT NULL PRIMARY KEY`. This makes SQLite enforce
-  the already-defined fact identity on ordinary rowid tables; P41 logical
-  behavior, keys, event/recovery semantics, and P10 projection remain
-  unchanged. Migration 0041 remains gated on the qualified 0036→0040 prefix,
-  creates empty tables without backfill, and is not registered or activated.
-  Accepted amendment proposal SHA-256:
-  `BE7E9CC9F3528ADBA90EF67615FE1C24E92B5FE751782151882ACAA4531E2BC9`;
-  acceptance record:
-  `planning/results/P41-0041-nullable-primary-key-amendment-acceptance-and-landing.md`;
-  independent post-landing review:
-  `planning/results/P41-0041-nullable-primary-key-amendment-postreview.md`.
-
-**Governance changes (v1.43 → v1.44): combined accepted owner landing**
-
-- RAI-DG-01 holds the exact EGP Work `(WorkId, WorkRevision)` after a
-  Work-bound `Interrupted(RuntimeSafetyStop)`, a closed P9 recovery-blocking
-  source, or `OutcomeUnknown(ReconciliationRequired(nonempty refs))`. Only
-  authorized revision-advancing Steer makes the old revision stale. P2 owns
-  the canonical gate/query and commit-time admission recheck; P7 excludes the
-  exact revision in its single classifier; P9 owns immutable source identity;
-  P10 filters active Attention by the canonical current revision. No gate
-  table, WorkWait, lifecycle state, or projection-ACK authority is added.
-  Accepted package SHA-256:
-  `0CEB2DAA2E6128F86CBD1CAA185B9847EAAB240360011F94425E0856F39AA106`;
-  record `planning/results/RAI-DG-01-governance-acceptance-and-landing.md`.
-- P15 `RenameProject` and `CloseProject` accept only the exact authenticated
-  local-human External route with exact P15 `ProjectGovernanceAuthority`;
-  model/Agent origin is denied even if a grant exists. Creation, selected
-  project resource provenance, lifecycle and closure semantics are unchanged.
-- A WorkEpisode may settle `Completed(Blocked)` only with exact terminal
-  denied-action evidence and an explicit bounded help request. The Work stays
-  Open; the current `WorkBlocker` ledger drives Action Required, Work Detail
-  and (for child Work) one direct-Parent Inbox entry. Exact successful-action
-  resolution or authorized Work revision/terminal transition closes the
-  blocker; ordinary Manual wait and Plan status do not. No automatic retry or
-  Verification/Acceptance implication is introduced.
-- P39 adds only schema-39 `DeniedUnbound` recovery-binding provenance for a
-  terminal no-effect Denied invocation with no proven invocation binding; it
-  cannot gain a binding/effect/replay path or P40 observation. Existing P40
-  evidence-bearing branches remain unchanged.
-- P8 exposes one authenticated-human `RetryVerification` command. It
-  atomically concludes the exact old Open Verification as `Unknown(Orphaned)`
-  and creates one successor plus durable spawn intent; exact replay reuses
-  preallocated IDs. Root Work requires authenticated local-human governance;
-  child Work requires its exact Parent Workspace human. Attention remains
-  derived and only clears after the existing freshness barrier. No automatic
-  retry loop or verifier authority expansion is introduced.
-- The reconciled P13 catalog has 28 required production command descriptors
-  plus the optional `ResolveControlApproval` descriptor (29 total when
-  available), Human-actionable count 15 and Agent-originated count 12.
-  Proposal-specific postimage hashes are not asserted for the combined tree;
-  the combined owner hashes, source package digests, technical rebase proof,
-  and separate postreview are recorded in
-  `planning/results/2026-10-12-combined-governance-landing-manifest.md`.
-- This is a design landing only. It does not register or activate migrations,
-  upgrade an existing database, publish, or claim implementation evidence.
+**Supersedes:** v1.41\
+**Date:** 2026-10-11\
+**Depends on:** `Arbor System Design Specification v1.16`
 
 **Integration reconciliation (2026-10-10):** This version combines two separately
 accepted owner amendments that each landed from DID v1.34 as v1.35 in isolated
@@ -898,39 +348,6 @@ generation fence and legacy replay**
   This is design-only; it does not authorize migration implementation,
   production changes, tests or runtime qualification.
 
-**Accepted owner addendum (DID v1.42 → v1.43): AH10 DeliverReplay durable outbox and attempt-fair Attention poll**
-
-- Accepted fixed package is v5 base SHA-256
-  `5AAA2CD1FC00DFA729730E36FF13BAD7038496985D57500FD841B210E76F8B2F` plus
-  v6 addendum SHA-256
-  `8E6F47EF5933B6241B5E02E43821B6B816F705A9840AAA62FDFD318283004AF4`.
-  Its independent review is Blocking=0 (Nonblocking=2); decision, review and
-  owner hashes are recorded in
-  `planning/results/AH10-deliver-event-pruning-v6-governance-acceptance-and-landing.md`.
-- P9 `DeliverReplayEscalated(v1)` facts keep a unique durable event-ID audit
-  identity without a permanent FK to prunable `domain_events`; P9 writes the
-  fact/event/pending-outbox row atomically. P10 marker creation precedes
-  queue ACK; P1 raw EventId looks up P9 before type/version/payload decode.
-  Deliver source-integrity errors are typed fail-closed, with no ordinary
-  poison DLQ or offset advancement. Ordinary non-Deliver poison behavior is
-  unchanged.
-- One P1/P9/P10 poll `BEGIN IMMEDIATE` owns current offset, raw event batch,
-  P9 witnesses, classification, projection, outbox marker/ACK and offset
-  update; pruning, P9 insertion and P10 rebuild serialize on the same SQLite
-  writer boundary. A valid global dispatcher lease yields non-mutating
-  `NoClaim`; persisted attempt-fair ordering and bounded retry backoff keep
-  healthy due Projects progressing without promising completion for a
-  repeatedly crashing Project.
-- P12 adds a deployment-pinned DeliverReplay capacity artifact/assessor for
-  same-window queue INSERT/ACK rates, backoff/fairness, preflight/full lock
-  duration, SQLite/P9 writer waits and rebuild. Existing four-dimension
-  `assessStorage`, Postgres trigger mapping and HealthPort readiness are
-  unchanged. The two review Nonblockings are preserved in the decision record
-  and are not expanded into new semantics by this landing.
-- This is a design landing only. Migration 0037 implementation/registration,
-  tests, deployment and P37/AH10 qualification remain separately gated after
-  P36; no 0034–0036 migration body or checksum changes.
-
 ### FT-DG-02 current P10/P13 view contract
 
 The current P10 view inventory includes the read-only `work-detail` view in
@@ -1202,9 +619,7 @@ VDC-1…VDC-8）
 - Normal Verifier conclusions carry model-authored summary content. Runtime
   persists the bytes through BlobStore and produces `summaryRef`; the
   concluded Verification and `VerificationConcluded` event durably retain that
-  ref. `Unknown(Orphaned)` summary content is authored by the authorized human:
-  Root-local governance for Root Work or the exact Parent Workspace human for
-  child Work, under the accepted P8 `RetryVerification` contract.
+  ref. `Unknown(Orphaned)` summary content is authored by the authorized Parent.
 - A child `initialWork`, when present, carries a complete explicit
   VerificationMission in its Parent-approved proposal. Runtime does not
   synthesize a placeholder mission from objective text. A proposal without an
@@ -2247,31 +1662,11 @@ no Active Main Execution
 currentWorkId == None
 no Open Work
 no Active Child Workspace
-no active ResourceOwnershipClaim, except an exact Child claim with accepted
-  ResourceOwnershipDelegation provenance consumed by the atomic retirement
-  path below
+no active ResourceOwnershipClaim
 no unresolved incoming Dependency whose ProducerBinding is
   WorkspaceBound(thisWorkspace) or WorkBound(a Work owned by thisWorkspace)
   (unless resolved/replaced in the same governance change)
 ```
-
-The sole ownership exception is a Child claim with exact accepted delegation
-provenance. Before reclaim or retirement, the region must be quiescent with no
-unresolved effect bound to it, or a typed quiescence/recovery path must
-preserve and resolve known in-flight outcomes. Match the Child claim and
-Parent exclusion by exact canonical delegated region, delegation source
-identity, and claim/delegation revision; CAS the Parent/Child Workspace,
-boundary, and ownership revisions. One atomic semantic governance change
-releases only that Child claim, removes only that exact region from the
-Parent's exclusions, preserves every unrelated exclusion in normalized,
-sorted, unique antichain form, and writes the full Parent/Child post-image and
-version-capable ownership event. Retirement also marks the Child Retired in
-that same commit. Missing, duplicate, stale, or mismatched evidence fails
-closed without state/event mutation; no intermediate unowned scope or overlap
-is committed. A RetireWorkspace call without exact accepted provenance,
-including ordinary and legacy no-provenance cases, retains the `no active
-ResourceOwnershipClaim` precondition and fails closed. Boundary edits and
-grant revocation do not remove exclusions or transfer ownership.
 
 Retired Workspace 不得 AssignWork、AdmitExecution、CreateChildWorkspace 或修改 Responsibility。`Work.workspaceId` immutable；未完成事项迁移时在 Successor 创建新的 Work，并通过 Provenance 指向被替代 Work，而不是移动原 Work。Session/Memory/Decision/Artifact 的 ownership 也不改写，只通过 bootstrap/reference 派生新的 successor cognition。
 
@@ -2331,7 +1726,7 @@ ResourceOwnershipClaim[]
 
 ```text
 ResourceBoundary      = 这个责任允许作用到哪里
-ResourceOwnershipClaim= 哪个 Workspace 当前拥有何种 effective canonical write set
+ResourceOwnershipClaim= 哪些 canonical region 当前由它正式拥有 write ownership
 Permission            = 这一次具体动作是否被授权
 ```
 
@@ -2360,35 +1755,7 @@ CanonicalResourceRegion {
 }
 ```
 
-Formal write claims use:
-
-```text
-OwnershipRegion = {
-  allow: CanonicalResourceRegion,
-  exclusions: CanonicalResourceRegion[]
-}
-effective(OwnershipRegion) = allow minus union(exclusions)
-```
-
-An exclusion is a strict canonical descendant of `allow` in the same
-`resourceSpaceId` and canonical region kind. The finite list is normalized,
-sorted by the existing canonical ordering, unique, and prefix-antichain. An
-active claim must have a nonempty effective set. Excluded regions are not
-implicitly owned by any Workspace. Existing claims with no exclusions mean
-the full `allow` region.
-
-The domain comparator returns a typed `Contained | NotContained | Overlap |
-Disjoint` result; consumers do not reproduce set algebra. For canonical
-prefix regions, a requested region is contained only when `allow` contains
-the whole request and no exclusion partially intersects it; an exclusion
-covering the whole request also makes it NotContained. Two effective claims
-overlap when their allow regions overlap and neither claim has an exclusion
-that completely covers the intersection. Partial exclusions do not prove
-disjointness. Cross-resource-space regions do not overlap unless the
-Environment resolver canonicalizes them into the same backing space.
-Malformed/noncanonical/empty/cross-space/non-antichain exclusions fail
-closed. Equality-only canonical region kinds support only exact delegation and
-reclaim, never descendant carve-outs.
+`contains(a,b)` 与 `overlaps(a,b)` 定义在同一 `resourceSpaceId` 下的 `CanonicalResourceRegion` 上；跨 resource space 默认不 overlap，除非 Environment resolver 明确把二者归一到同一 backing space。
 
 核心规则：
 
@@ -2396,8 +1763,7 @@ reclaim, never descendant carve-outs.
 - Responsibility change 可以导致 ResourceBoundary 变化；
 - ResourceBoundary 因目录、worktree、数据库 namespace 等环境映射变化时可以独立更新；
 - Read visibility 可以重叠；
-- effective formal write ownership 默认不重叠；allow envelopes may intersect
-  only when canonical exclusions prove their effective sets disjoint;
+- formal write ownership 默认不重叠；
 - ownership enforcement 比较 canonical backing resource，而不是原始 path/string；
 - Permission 不能扩大 ResourceBoundary，也不能覆盖 write ownership invariant；
 - `ResourceOwnershipClaim` 是 durable record，不升级为新的 Aggregate Root。
@@ -2410,9 +1776,9 @@ resolve/canonicalize ResourceAddress outside write transaction
 
 BEGIN IMMEDIATE
 → verify observedEnvironmentRevision is still current
-→ load potentially conflicting OwnershipRegion claims
-→ deterministic typed effective-set containment/overlap comparison
-→ insert/update normalized allow/exclusion claims with resolvedAtEnvironmentRevision
+→ load potentially conflicting ownership claims
+→ deterministic overlaps()
+→ insert/update claims with resolvedAtEnvironmentRevision
 → COMMIT
 ```
 
@@ -2673,16 +2039,13 @@ runtime semantic identity；它们不替代 `CommandId`。
 
 ## 2.2 ID 规则
 
-- 底层采用 UUIDv7 类可时间排序随机标识；`ProviderTurnId` 按 §2.2.1 的
-  独立闭合编码规则处理；
+- 底层采用 UUIDv7 类可时间排序随机标识；
 - deterministic runtime semantic identities（`LogicalActionId` /
   `LogicalSettlementId`）例外：使用版本化 canonical serialization + SHA-256
   派生，并保留 Appendix A prefix；
 - 增加 `prj_ / ws_ / wrk_ / exe_ / ses_ ...` prefix 便于运行时校验和调试；
 - TypeScript 使用 nominal/branded type，运行时使用 Schema codec；
-- ID 通常不编码名称、父子路径、业务 location 或 sequence；`ProviderTurnId`
-  按 §2.2.1 的显式例外编码 scoped Execution/Step/repair/compaction ordinal，
-  用于唯一标识可恢复的模型操作，不表示 Work/责任位置或业务顺序；
+- ID 不编码名称、父子路径、业务 location 或 sequence；
 - Entity state evolution 不改变 Identity；
 - Human-friendly `W-42` 等仅是 projection/display code。
 
@@ -2691,46 +2054,6 @@ runtime semantic identity；它们不替代 `CommandId`。
 ```text
 Identity != Name != Location != Order
 ```
-
-### 2.2.1 ProviderTurnId V2 codec
-
-`ProviderTurnId` has one strict versioned codec. V2 composite forms are the
-only forms written for new ProviderTurns; the UUIDv7 form is a legacy
-read/replay variant only. V2 has no version marker in its string: the codec
-version is the validation rule, not another identity segment.
-
-Every V2 composite starts with `ptn_<ExecutionId>_<stepNo>`. `<ExecutionId>`
-must satisfy the existing exact `exe_<UUIDv7>` codec. `<stepNo>` is a
-canonical non-negative safe decimal integer (`0` or a non-zero digit followed
-by decimal digits, with no leading zeroes and not above
-`Number.MAX_SAFE_INTEGER`). The only accepted suffixes are:
-
-| V2 family | Exact suffix | Value rule |
-|---|---|---|
-| Inference | none | the Step's inference ProviderTurn |
-| Repair inference | `_r<repairAttempt>` | positive canonical safe decimal integer |
-| Summary compaction | `_compact_<contextEpoch>` | non-negative canonical safe decimal integer |
-| Provider Native compaction | `_native_compact_<contextEpoch>` | non-negative canonical safe decimal integer |
-| Conversation Summary checkpoint compaction | `_conversation_compact_<contextEpoch>` | non-negative canonical safe decimal integer |
-| Conversation Native checkpoint compaction | `_conversation_native_compact_<contextEpoch>` | non-negative canonical safe decimal integer |
-| P20 overflow replacement | `_overflow_0` | ordinal is exactly `0` in v1 |
-
-The existing `OverflowCompaction` P20 link uses the exact Summary or Provider
-Native compaction ProviderTurn for that Step/context epoch; its link role and
-predecessor are separately persisted by migration 0020. It does not add a
-second compaction spelling. No other suffix, free-form string, alternate
-Execution binding, leading-zero ordinal, or non-zero overflow ordinal is a
-ProviderTurnId.
-
-The legacy read/replay variant is exactly `ptn_<UUIDv7>` under the existing
-UUIDv7 validator. It may be decoded only to verify or replay already persisted
-evidence. It is not a new-write form. New ProviderTurn constructors use the
-V2 families above. Decoding preserves the original string byte-for-byte; no
-normalization, re-encoding, or reconstruction from Session text is permitted.
-Blocked result/command references, provider and conversation progress frames,
-P3 Actions, RecoveryBindings, Manifests, SQLite keys and P20 links all use the
-same closed decoder and retain the exact source spelling. Unknown or malformed
-IDs fail at the existing typed decode/recovery boundary.
 
 ## 2.3 Event ordering 与 local ordinal
 
@@ -2748,7 +2071,7 @@ WorkRevision
 DependencyRevision
 ```
 
-`WorkRevision` 是 `Work` identity 内部单调递增的 semantic revision：Work 创建时从初始 revision 开始；每个被接受的 `DirectionGuidance` 或 `ContractAmendment`、以及其他语义 `RefineWork` 都使其恰增一。`Deliverable.sourceWorkRevision`、`Verification.targetWorkRevision`、`Acceptance.targetWorkRevision` 都用它绑定具体 Work version。`DependencyRevision` 同理用于 `Dependency.revision` / `targetDependencyRevision` / `satisfiedAtDependencyRevision`。
+`WorkRevision` 是 `Work` identity 内部单调递增的 semantic revision：Work 创建时从初始 revision 开始，`RefineWork` / semantic `SteerWork` 使其递增；`Deliverable.sourceWorkRevision`、`Verification.targetWorkRevision`、`Acceptance.targetWorkRevision` 都用它绑定具体 Work version。`DependencyRevision` 同理用于 `Dependency.revision` / `targetDependencyRevision` / `satisfiedAtDependencyRevision`。
 
 `WorkRevision` / `DependencyRevision` 是 scoped ordinal / branded value，**不是** Entity Identity：不加入 §2.1 Typed IDs，也不加 prefix。
 
@@ -2843,15 +2166,6 @@ Completed / Cancelled 默认 terminal。
 
 Producer 不得自行削弱 Objective / CompletionExpectation / required VerificationMission。
 
-Work contract 是 `Objective`、`Why`、完整 `Constraints`、
-`CompletionExpectation` 与结构化 `VerificationMission` 的完整组合。
-`DirectionGuidance` 只改变方法，完整规范 contract 保持不变；
-`ContractAmendment` 是 human-authored、针对 exact 当前 WorkRevision 的完整
-replacement snapshot，不支持 patch/merge、省略字段继承、从自由文本推断，
-也不能由 Agent `RefineWork` 或 Claim Completion 冒充。两种已接受 Steer
-操作都在同一 Work identity 内产生新 revision；Work 保持 Open。Revision
-前移不改写较早的 Work contract、Verification、Acceptance 或其事件/receipt。
-
 ## 3.4 Execution
 
 Execution Binding：
@@ -2912,8 +2226,9 @@ ExecutionSettlement
 ├── Completed(CompletedResult)
 │   ├── Yielded(reason, waitSpec)
 │   ├── CompletionClaimed
-│   ├── VerificationConcluded(verificationId, verdict)
-│   └── Blocked(BlockedWorkEpisode)  // exact Work Episode only
+│   ├── CoordinationCompleted
+│   ├── QueryCompleted
+│   └── VerificationConcluded(verificationId, verdict)
 ├── Interrupted(InterruptedResult)
 │   └── StopRequested / other controlled interruption
 ├── Failed(ExecutionFailure)
@@ -2924,8 +2239,6 @@ ExecutionSettlement
 
 - `CompletionClaimed` 必须持久携带足够的 claim/reference 与 target Work revision，使 event replay 可以可靠触发后续 Verification；
 - `VerificationConcluded` 只表示该 Verifier Execution 已提交 canonical conclusion；它不得表达 Parent Acceptance 或 Work Completed，也不得进入 CompletionClaim consumer；
-- `Blocked` 只表示精确 Work Episode 已到达稳定的人类/Parent 输入边界，不改变 Work lifecycle；其 exact denial evidence、wait request 和 WorkBlocker 同事务合同由 P2 `01` 拥有，不蕴含 Verification、Acceptance 或 Work completion；
-- 新写 settlement 必须匹配 exact `ExecutionEpisodeBinding`；历史 `CoordinationCompleted` / `QueryCompleted` 仅供 migration/decoder audit；
 - Worker crash、lease expiry 或旧 Worker resurrection **本身不直接 settle Execution**；Recovery 可以继续同一 durable Execution；
 - `OutcomeUnknown` 表示存在未解决的现实副作用歧义，reconciliation 前禁止盲目 replay；
 - `Completed != Work Completed`，`Failed != Work Cancelled`。
@@ -3295,10 +2608,7 @@ The Application owns `ExternalCommandDecoder` and
 `CommandInputContractRegistry`: the decoder accepts bounded raw JSON plus a
 `commandType` and returns a typed semantic envelope or safe codec issues; the
 registry contains exactly one closed input descriptor and origin policy per
-command in the current 28-required-command production registry, plus the
-optional `ResolveControlApproval` descriptor when its store is composed.
-`RetryVerification` is external only through its exact authenticated-human
-governance route; it carries no client authority or BlobRef. Shells retain raw
+command in the current 27-command production registry. Shells retain raw
 `unknown` only until decoding and do not cast to a trusted envelope or use Web
 form schemas as a server guarantee. The new DeliverMessage descriptor is the
 closed P7 payload at wire codec v1, with External origin denied; typed
@@ -3366,7 +2676,7 @@ fingerprint algorithm mismatch uses the existing exact P1 tuple rule and
 returns `IdempotencyConflict`; no historical comparator or row rewrite is
 added. Only an exact tuple is decoded through the Application-owned strict
 receipt decoder registered for the exact current `(commandType,
-Handler.schemaVersion)`. Every current one of the 28 required registered command
+Handler.schemaVersion)`. Every current one of the 27 registered command
 handlers must have a Committed-result decoder; TerminalRejected uses the
 exhaustive Application `CommandRejection` decoder. Missing version/descriptor,
 invalid JSON, wrong shape or unknown rejection member fails as the existing
@@ -3660,7 +2970,6 @@ WorkRefined
 WorkCompleted
 WorkCancelled
 WorkSteered
-WorkAmended
 
 DependencyDeclared
 DependencySatisfied
@@ -4015,10 +3324,6 @@ Execution 不再只保存四值 outcome，而保存合法 sum type：
 ```text
 ExecutionSettlement
 ├── Completed(CompletedResult)
-│   ├── Yielded
-│   ├── CompletionClaimed
-│   ├── VerificationConcluded
-│   └── Blocked (exact Work Episode only)
 ├── Interrupted(InterruptedResult)
 ├── Failed(ExecutionFailure)
 └── OutcomeUnknown(ReconciliationRequired)
@@ -4026,7 +3331,7 @@ ExecutionSettlement
 
 精确定义：
 
-- `Completed(...)`：episode 正常到达稳定边界；new-write result 必须符合 exact EGP `ExecutionEpisodeBinding`。Work Episode may report `Blocked` only with the exact denial/request contract in P2 `01`; historical `CoordinationCompleted` / `QueryCompleted` are decoder/audit-only；
+- `Completed(...)`：episode 正常到达稳定边界；result 必须说明是 `Yielded`、`CompletionClaimed`、`CoordinationCompleted`、`QueryCompleted`、`VerificationConcluded` 等哪一种语义；
 - `Interrupted(...)`：外部控制明确提前结束，并且不存在 unresolved ambiguous side effect；
 - `Failed(...)`：当前 episode 无法继续，正常恢复策略已耗尽或错误不可恢复；
 - `OutcomeUnknown(...)`：存在外部副作用可能已经发生但系统无法确定，必须先 reconciliation。
@@ -4423,13 +3728,9 @@ atomically appends the dedicated event and immutable P9 fact, and returns an
 existing row only for the exact same identity tuple. The same P9-owned port
 also provides `recordDeliverReplayFailure(fact)`,
 `findDeliverReplayFailure(attentionFactId)`, and
-`findDeliverReplayFailureByEventId(eventId)`,
-`listDeliverReplayFailures(projectId)`, `listPendingDeliverReplayAttention(projectId,limit)`,
-and `acknowledgePendingDeliverReplayAttention(attentionFactId)` for the
-accepted AH10 Deliver route;
+`listDeliverReplayFailures(projectId)` for the accepted AH10 Deliver route;
 these methods use the separate `deliver_replay_attention_facts` relation,
-and `deliver_replay_attention_pending` outbox. They retain the same
-transaction-scoped append/dedup/error guarantees, and do not
+retain the same transaction-scoped append/dedup/error guarantees, and do not
 alter the existing AssignWork fact identity or schema. They return the existing
 `RecoveryAttentionFactStore` repository/journal errors and typed
 `RecoveryAttentionFactInvariantConflict`; no generic Attention port or new
@@ -5157,16 +4458,6 @@ Checkpoint + Recent Frontier
 
 而不是完整 Session History。
 
-Before a Work Session's first typed checkpoint, its active history projection
-selects the latest 64 persisted Session Timeline rows by Session-local
-sequence. The current input and canonical C0/C1 facts are pinned independently
-of this count. P3 applies only its existing projector branches/filters to this
-selected window; skipped rows do not cause older rows to be fetched as
-replacements. A selected row skipped by P3 has no item or contextRef. The
-selected `inputFrontier` is the considered row range, not proof of coverage.
-After a typed checkpoint, use its exact sequence and every unsummarized typed
-entry after it, without the pre-checkpoint 64-row cap.
-
 ## 8.9 Retention Class
 
 Context Fragment 使用：
@@ -5195,11 +4486,6 @@ never silently drop hard control facts
 ```
 
 若 Pinned + Protected 本身无法装入模型窗口，返回 `ContextUnsatisfiable`，不静默 truncate。
-
-The latest 64-row bound applies only before the first Work checkpoint. It
-does not bound the post-checkpoint frontier. Every request still includes the
-current pinned input and independently reconstructed canonical C0/C1 facts,
-regardless of row filtering or the bound.
 
 ## 8.10 Budget / Cache
 
@@ -5308,30 +4594,6 @@ Canonical State restores control.
 ```
 
 Compaction 可以由 token pressure、semantic boundary 或 model/provider boundary 触发，不是简单的“达到 90% 就 summarize”。
-
-Before the first typed Work checkpoint, `inputFrontier` bounds the rows
-considered; the checkpoint's `retainedFrontier` may claim coverage only for
-content actually represented by the existing P3 projector. Skipped or older
-rows remain durable but uncovered. Once a checkpoint exists, its exact
-sequence plus every unsummarized typed Session entry after it form the active
-frontier; budget pressure triggers explicit compaction rather than truncation
-by the pre-checkpoint cap.
-
-Conversation continuity uses the exact RootWorkspaceId as a separate owner.
-HumanMessage is immutable source identity/order/body; its legacy lifecycle,
-claim and response columns are not answer or scheduler truth. Only a
-contiguous FIFO prefix with exact Answered ResponseJobs and matching
-ConversationAttempts/terminal ConversationResponseEpisode Executions may be
-covered when they settle with `Completed(ConversationResponseProduced(messageId))`.
-The current raw message is pinned once only for its exact Running
-Job, active Attempt/Execution and current lease; non-Answered, malformed or
-other-episode Running gaps stop coverage. Work Session history/checkpoints are
-excluded. ProviderNative reuse requires an exact complete ResolvedModelBinding
-fingerprint; otherwise portable Summary is rebuilt from retained HumanMessage
-sources paired with their authoritative Answered Job response bodies.
-Restart retains the same response episode and does not replay settled
-Provider/action work. Owner storage and migration details remain separately
-gated.
 
 规范控制流：
 
@@ -5624,95 +4886,6 @@ Ownership（P2 冻结）：P2 提供 ExecutionScheduler 与 durable wake/timer �
 可在无 Active Main Execution 时被确定性触发；**P7** 拥有完整的 runnable/dependency reevaluation
 与 Wait-for graph。P2 不新增 runnable 语义。
 
-**EGP new-write supersession:** the preceding focus/Coordination table is
-historical. New writes use exact `ExecutionEpisodeBinding`; scheduler
-ambiguity requiring model judgment persists `WorkSelectionDecisionRequest`
-and admits a `DecisionEpisode`. `CoordinationCompleted` / `QueryCompleted` are
-decoder/audit-only and cannot be new settlement results. The accepted RAI gate
-below applies only to Work Episodes; other EGP episode variants are unaffected.
-
-### 8.18A.1 Exact Work-revision readmission hold (RAI-DG-01)
-
-For canonical Work `(projectId, workspaceId, workId, revision)`, hold admission
-when a durable source is bound by exact EGP Work Episode `(workId, workRevision)`
-and is one of:
-
-1. settled `Interrupted(ControlledInterruption(RuntimeSafetyStop))`;
-2. a P9 recovery-blocking source in the closed P9 `07` inventory; or
-3. settled `OutcomeUnknown(ReconciliationRequired(invocationRefs))` with
-   non-empty refs.
-
-The closed P9 sources are `DeliverReplayEscalated` with its matching
-`deliver_replay_attention_facts` row, `AssignWorkTargetBindingEscalated` with
-its matching `assign_work_binding_attention_facts` row, and
-`ReconciliationEscalated`. P9 `07` owns exact failure-code unions, source
-identity, immutability and atomic fact/event commit. Ephemeral
-`RecoveryBlocked` and `ReconciliationSourceError` are not independent sources
-while the Execution remains Active. The settlement source applies even with
-no separate Attention row when its exact `OutcomeUnknown` refs are durable.
-
-P2 `02` owns `WorkReadmissionGateStore`; P7 `03` incorporates its exact-revision
-result into the sole classifier. Work-bound admission rechecks the same gate
-inside the existing `BEGIN IMMEDIATE` transaction. A valid hold returns typed
-`WorkReadmissionHeld`; a missing/scope/revision-mismatched canonical target
-returns `ReadmissionTargetMismatch`; malformed, absent, duplicate,
-unsupported-version or conflicting source evidence returns the closed
-`ReadmissionGateIntegrityFailure` union. Every rejection commits no Execution.
-The query validates canonical Project/Workspace/Work/revision, unique source
-Execution and episode state, exact source/fact/event witnesses, and the exact
-`ExecutionEpisodeBinding`. It never infers identity from Session text,
-`currentWorkId`, Message, Attention target, or Parent Workspace. A valid
-non-Work Episode is outside this rule.
-
-The gate is derived from canonical settlement/P9 source records, adds no gate
-table or migration, changes no Work lifecycle/WorkWait/Dependency/approval,
-and does not read P10 projections. Restart, queue ACK or same-revision
-polling cannot release it. Only authorized `SteerWork` that atomically
-advances canonical Work revision makes the old source stale; immutable source
-facts remain audit evidence. P10 removes old-revision active Attention using a
-same-snapshot canonical Work revision check, independent of consumer lag or
-rebuild state. Accepted proposal SHA-256
-`0CEB2DAA2E6128F86CBD1CAA185B9847EAAB240360011F94425E0856F39AA106`;
-acceptance and prior landing review evidence are in
-`planning/results/RAI-DG-01-governance-acceptance-and-landing.md`.
-
-#### RAI-DG-02 TerminalProviderFailureSettlement addendum
-
-Extend `ReadmissionSourceKind` with
-`TerminalProviderFailureSettlement`. For exact Open Work tuple
-`(projectId, workspaceId, workId, revision)`, enumerate zero or more candidate
-WorkEpisode Executions. Each candidate identity and its settlement-producing
-`(logicalStepNo, repairAttempt)` Step, failed ProviderTurn, final settled
-ProviderAttempt and Manifest must be individually unique and exact. A source
-exists only for `AuthenticationFailed | RequestRejected | ProtocolViolation`
-with final `TerminalFailure`, recognized taxonomy and durable retry decision
-`Stop`; one valid candidate is sufficient. Historical repeated Executions do
-not create ambiguity and P10 deduplicates equivalent fingerprints.
-
-The bounded source carries `executionId`, `logicalStepNo`, `repairAttempt`,
-`providerTurnId`, `attemptNo`, closed `failureKind`, and
-`failureFingerprint = SHA-256(canonical terminal-provider-failure-v1 tuple)`.
-The tuple contains failure kind/taxonomy, resolved model binding fingerprint,
-compiled request hash and output-contract ref; it excludes timestamps, raw
-provider/request/response text, credentials and transport diagnostics.
-
-Missing, duplicate or conflicting facts inside one candidate chain, future
-revision, unsupported taxonomy, or invalid final-Attempt occurrence time
-returns `ReadmissionGateIntegrityFailure` and admits nothing. Partial chain,
-retryable kind (including budget/deadline exhaustion), cross-scope source,
-non-Work Episode and lower stale revision create no current hold. P2 and P10
-read the same canonical proof contract; P10 exposes query-derived
-`TerminalProviderFailure` or bounded `TerminalProviderFailureIntegrity`
-without event/queue/ACK/offset/marker. `occurredAt` is the validated final
-Attempt `settledAt`.
-
-The hold is active only while canonical Work is Open at the exact revision.
-Authorized `SteerWork r→r+1` is the sole v1 resumption path. An authorized
-Completed/Cancelled transition makes retry-oriented presentation inactive but
-does not erase evidence. Attempt, failed-Turn, Step and Execution commit
-prefixes never justify a guessed hold; final settlement/admission/Steer races
-linearize at the existing `BEGIN IMMEDIATE` admission recheck.
-
 ## 8.19 ModelContext Manifest
 
 每个 Provider Turn 都持久记录一份 Manifest：
@@ -5747,33 +4920,6 @@ ControlBasis {
   environmentRevision
 }
 ```
-
-`providerTurnId` is validated by the closed codec in §2.2.1. A Manifest,
-ProviderTurn intent/result, and every sourced Session item retain the same exact
-string; recovery never rewrites a legacy UUIDv7 or V2 composite spelling.
-
-For a Work ProviderTurn before its first typed checkpoint,
-`InputFrontier(firstSequence,lastSequence)` identifies the latest-64 considered
-Session-local row range; it does not assert that every selected row became a
-typed input. `TypedInputItemRefs[]` and context refs identify actual emitted
-content. A compaction `retainedFrontier` covers only content included under the
-existing P3 projector. For a ConversationResponseEpisode, manifest source
-identity binds the RootWorkspaceId owner, exact inclusive
-`coveredThroughMessageId`, and each ordered paired turn's exact immutable
-HumanMessage identity (`messageId`, `createdAt`, `bodyRef`, body digest) plus
-Answered Job identity (exact Answered Job revision, `responseExecutionId`,
-`attemptNo`, and bounded Job `responseBody` digest). It binds the unique
-ConversationAttempt identity/Completed settlement and the terminal
-ConversationResponseEpisode Execution, including its exact admission-time Job
-revision and `Completed(ConversationResponseProduced(messageId))` result. The
-current raw input binds the exact Running Job revision, messageId, attemptNo,
-executionId, Episode admission revision and current lease fence. HumanMessage
-legacy lifecycle, claim and response columns are not source or scheduler
-authority. A ProviderNative checkpoint also binds the complete
-ResolvedModelBinding fingerprint. Recovery proves these identities from
-canonical owner/response facts rather than Session text or ProviderTurn ID
-spelling. These are semantic bindings, not a choice of physical storage
-encoding.
 
 Prompt/Context change 是行为代码 change，必须可追踪和可回归。
 
@@ -5977,19 +5123,6 @@ CREATE INDEX assign_work_binding_attention_target
   ON assign_work_binding_attention_facts(project_id, target_workspace_id, first_detected_at);
 ```
 
-Work Revision History is a required logical persistence capability: every
-WorkRevision has one complete immutable Work contract snapshot keyed by exact
-`(WorkId, WorkRevision)`, with author/provenance, source command, time, and
-canonical digest sufficient for exact read and audit. AssignWork creates the
-initial snapshot; every semantic Work revision writer, including RefineWork,
-DirectionGuidance and ContractAmendment, retains its corresponding full
-snapshot. Migration may backfill only the exact current Work row as
-`LegacyCurrentSnapshot` / history unavailable; earlier revisions that cannot
-be proven remain unavailable and are never reconstructed from Inbox, Session,
-events, summaries, model text, or Verification tasks. This is a semantic
-storage guarantee only: no table name, column set, encoding, DDL, or migration
-number is frozen by S2-RDG-01.
-
 `authority_evidence_json` is the versioned full typed union snapshot. Its
 variant check and composite foreign keys enforce project consistency and the
 same-project direct-child target→Parent edge. Transactional validation checks
@@ -6020,10 +5153,9 @@ P38 source contracts and, by the global `user_version` prefix, must follow
 P37; its preflight runs before any pending P37/P38/P39 DDL on a v36–v38 DB.
 The target path after qualification is v33→…→39, v35→…→39, v36→…→39,
 v37→…→39, or v38→39, but none may skip a pending predecessor. The integrated
-owner contracts do not imply migration implementation/registration. The P39
-amendment above changes no body, checksum, numbering, or contract of migrations
-0032–0038; the later P37 v1.43 amendment below changes only the proposed
-0037 contract. No installed migration body or checksum is changed.
+owner contracts do not imply migration implementation/registration. No body,
+checksum, numbering, or contract of migrations 0032–0038 is changed by this
+amendment.
 
 Migration `0037_ah10_deliver_replay_attention_rows` (`PRAGMA user_version = 37`)
 is additive and forward-only. It creates no fact rows for historical
@@ -6034,7 +5166,7 @@ P10 source-specific marker relation after the P9 fact relation:
 ```sql
 CREATE TABLE deliver_replay_attention_facts (
   attention_fact_id       TEXT PRIMARY KEY,
-  event_id                TEXT NOT NULL UNIQUE,
+  event_id                TEXT NOT NULL UNIQUE REFERENCES domain_events(event_id),
   project_id              TEXT NOT NULL,
   execution_id            TEXT NOT NULL,
   target_workspace_id     TEXT NOT NULL,
@@ -6048,80 +5180,18 @@ CREATE TABLE deliver_replay_attention_facts (
   )),
   first_detected_at       TEXT NOT NULL,
   UNIQUE (execution_id, logical_action_id, message_id),
-  UNIQUE (attention_fact_id, project_id),
   FOREIGN KEY (execution_id, project_id, target_workspace_id)
     REFERENCES executions(execution_id, project_id, workspace_id)
 );
 
 CREATE INDEX deliver_replay_attention_target
   ON deliver_replay_attention_facts(project_id, target_workspace_id, first_detected_at);
-CREATE INDEX deliver_replay_attention_project_fact
-  ON deliver_replay_attention_facts(project_id, attention_fact_id);
-
-CREATE TABLE deliver_replay_attention_pending (
-  queue_sequence     INTEGER PRIMARY KEY AUTOINCREMENT,
-  project_id         TEXT NOT NULL,
-  attention_fact_id  TEXT NOT NULL UNIQUE,
-  enqueued_at        TEXT NOT NULL,
-  FOREIGN KEY (attention_fact_id, project_id)
-    REFERENCES deliver_replay_attention_facts(attention_fact_id, project_id)
-);
-CREATE INDEX deliver_replay_attention_pending_project_order
-  ON deliver_replay_attention_pending(project_id, queue_sequence);
 
 CREATE TABLE deliver_replay_attention_rows (
   attention_fact_id TEXT PRIMARY KEY
     REFERENCES deliver_replay_attention_facts(attention_fact_id)
 );
-
-CREATE TRIGGER deliver_replay_pending_delete_requires_marker
-BEFORE DELETE ON deliver_replay_attention_pending
-FOR EACH ROW
-WHEN NOT EXISTS (
-  SELECT 1 FROM deliver_replay_attention_rows
-   WHERE attention_fact_id = OLD.attention_fact_id
-)
-BEGIN
-  SELECT RAISE(ABORT, 'DeliverReplay pending item requires a P10 marker');
-END;
-
-CREATE TABLE p10_attention_project_poll_state (
-  project_id                    TEXT PRIMARY KEY,
-  last_attempt_sequence          INTEGER NOT NULL DEFAULT 0 CHECK (last_attempt_sequence >= 0),
-  consecutive_failed_attempts   INTEGER NOT NULL DEFAULT 0 CHECK (consecutive_failed_attempts >= 0),
-  next_eligible_at               TEXT NOT NULL,
-  last_failure_code              TEXT CHECK (last_failure_code IS NULL OR last_failure_code IN (
-    'PollLeaseExpired','JournalIdentityUnprovable','MissingP9Fact',
-    'FactTupleMismatch','FactProjectMismatch','EventBindingMismatch',
-    'QueueFactMismatch','MarkerBindingMismatch','QueueDeleteWithoutMarker'
-  )),
-  last_failure_at                 TEXT
-);
-CREATE INDEX p10_attention_project_due
-  ON p10_attention_project_poll_state(next_eligible_at,last_attempt_sequence,project_id);
-CREATE TABLE p10_attention_dispatch_state (
-  singleton                INTEGER PRIMARY KEY CHECK (singleton = 1),
-  next_attempt_sequence    INTEGER NOT NULL CHECK (next_attempt_sequence >= 1),
-  active_project_id        TEXT,
-  lease_owner              TEXT,
-  lease_generation         INTEGER NOT NULL DEFAULT 0 CHECK (lease_generation >= 0),
-  claim_started_at         TEXT,
-  lease_expires_at         TEXT,
-  CHECK ((active_project_id IS NULL) = (lease_owner IS NULL)),
-  CHECK ((lease_owner IS NULL) = (claim_started_at IS NULL)),
-  CHECK ((lease_owner IS NULL) = (lease_expires_at IS NULL))
-);
-INSERT INTO p10_attention_dispatch_state(singleton,next_attempt_sequence)
-VALUES (1,1);
 ```
-
-`event_id` is a unique P9 audit identity and intentionally has no permanent
-FK to prunable `domain_events`. The `deliver_replay_attention_pending` row
-has no event FK or expiration/drop path; its exact fact/project FK ensures
-queue provenance. P9 inserts the fact/event/queue in one transaction; P10
-creates/verifies the marker before deleting/ACKing the queue row. P10 full
-rebuild seeds markers from all durable P9 facts and ACKs seeded pending rows
-inside its same reset/snapshot/offset-rewind transaction.
 
 There is deliberately no Message/Event/Command FK from `message_id` or
 `logical_action_id`: the fact must represent proof failures where those
@@ -6135,37 +5205,6 @@ for display and can seed the marker after journal pruning. Ordinary
 `MessageSent(v1)` and `SendMessage` remain unchanged. Binaries whose schema
 ceiling is v33 refuse `user_version > 33`; P37 must follow the ordered P36
 upgrade and no P37-only v35 release is valid.
-
-### P37 v1.43 raw-event classification, poll and dispatcher contract
-
-P1 `05` supplies the raw journal-candidate read. Within one poll
-`BEGIN IMMEDIATE`, P1 reads the current Attention offset, reads the raw event
-batch, and for each usable raw EventId queries the P9 fact before decoding
-event type, version or payload. A matching fact requires strict
-`DeliverReplayEscalated(v1)` decoding and exact witness comparison. Exact
-Deliver type without a fact, or a fact with malformed/mismatched event, is a
-typed source-integrity failure: roll back poll projections, marker, queue ACK,
-dead letter and offset. It is never ordinary poison. Ordinary non-Deliver
-decode poison and pure event-local projection defects retain P1's existing
-dead-letter-and-advance behavior. P1 prune, P9 fact/outbox writes, P10 poll
-and rebuild/reset serialize on the same SQLite writer transaction boundary.
-
-A valid singleton global Attention lease returns `NoClaim` without mutating
-owner, generation, expiry, Project or schedule state. Claims use
-`BEGIN IMMEDIATE` plus compare-and-swap against the observed generation and
-empty/expired lease predicate. Due eligible Projects are selected by
-`(last_attempt_sequence, project_id)`; claim increments that sequence exactly
-once. Success commits projection, offset and claim release together. Typed
-integrity failure rolls back poll data then persists failure/backoff and
-rotation. An expired claim finalizes the already-sequenced attempt once as
-`PollLeaseExpired`; it does not receive immediate retry priority. Backoff is
-the P12-pinned saturating rule
-`min(baseBackoffMs * 2^(min(n-1, backoffExponentCap)), maxBackoffMs)`.
-Repeated-crash Projects remain pending and are not promised completion; the
-fairness guarantee is bounded selection among continuously due healthy
-Projects, not wall-clock progress during unbounded writer lock or repeated
-crash conditions. P12 `05` owns profile/evidence and measured lock-capacity
-gates.
 
 Migration `0038_executable_approval_handoff` (`PRAGMA user_version = 38`)
 is forward-only after 0037. It rebuilds the 0032 `action_approvals` table
@@ -6630,11 +5669,6 @@ Inference | CompactionSummary | CompactionNative
 Artifact 或等价耐久 carrier；ProviderTurn/Session 只保存 ref + binding fingerprint，
 raw credential 不得进入 opaque item metadata。
 
-New inference, repair and compaction IDs use only the ProviderTurnId V2
-constructors in §2.2.1. The provider adapter and public progress projections
-echo the exact ID; the adapter does not generate, normalize or re-encode it.
-UUIDv7 IDs remain available only to read/replay already persisted Turns.
-
 ## 9.11 ProviderTurn / ProviderAttempt
 
 `ProviderTurn` 表示一次逻辑模型决策，绑定唯一 `ModelContextManifest`；transport 层的 safe retry 记录为该 Turn 下的 `provider_attempts`：
@@ -6708,13 +5742,6 @@ The existing `agent_loop_steps.provider_turn_id` remains the original Inference
 Turn for compatibility. Chain ensure is idempotent; binding mismatch is an
 invariant conflict/Attention. Ordinary transport attempts and output repair do
 not enter this chain.
-
-Every Step and P20 link uses the exact closed ProviderTurnId V2 codec from
-§2.2.1. The Inference, OverflowCompaction, and OverflowReplacement roles keep
-their existing deterministic IDs and predecessor bindings; recovery retains
-the stored strings byte-for-byte. UUIDv7 ProviderTurnIds are accepted only in
-legacy read/replay evidence. This contract adds no schema constraint,
-migration, or backfill.
 
 Exact DDL/check constraints and forward-only legacy adoption are frozen in P2
 `04`, P3 `08`, and P9 `07`. Every AgentLoopStep/action transition is a short
@@ -7298,17 +6325,6 @@ UI：`/p/:projectId` Root Workbench（Tree + Root Conversation）+ root deep-lin
 合同：docs/design/implementation/P14/**
 ```
 
-AH19 v1 adds a separate RootWorkspaceId-owned Conversation checkpoint
-frontier, distinct from the Workspace Work Session. Immutable HumanMessage
-identity/order/body is paired with exact Answered ResponseJob, Attempt and
-terminal ConversationResponseEpisode Execution evidence for a contiguous FIFO
-prefix. The current raw HumanMessage is pinned once only for its exact Running
-Job, active Attempt/Execution and lease; other-episode Running and all earlier
-non-Answered or malformed Job/Attempt evidence block the frontier. The exact
-ordering, binding, restart, retention and Work-isolation semantics are in SD
-v1.19 and P14 `02`. The owner-state physical design and migration remain
-separately authorized.
-
 ---
 
 # 12. Pre-implementation Closure v1.2
@@ -7350,7 +6366,7 @@ Failed(ExecutionFailure)
 OutcomeUnknown(ReconciliationRequired)
 ```
 
-`CompletedResult` new writes 区分 `Yielded / CompletionClaimed / VerificationConcluded / Blocked`；历史 `CoordinationCompleted` / `QueryCompleted` 仅供 migration/decoder audit。`Blocked` 绑定精确 Work Episode 且不得改 Work 生命周期；完整拒绝证据与原子持久化由 P2 `01` / P3 `03` 拥有。Crash recovery 不能从裸 `Completed` 猜下一步。`VerificationConcluded { verificationId, verdict }` 仅由 exact-bound Verifier 在结论命令提交、wake 幂等交付后产生；它不触发 CompletionClaim consumer，且不蕴含 Acceptance 或 Work Completed。
+`CompletedResult` 至少区分 `Yielded / CompletionClaimed / CoordinationCompleted / QueryCompleted / VerificationConcluded`。Crash recovery 不能从一个裸 `Completed` 猜测下一步。`VerificationConcluded { verificationId, verdict }` 仅由 exact-bound Verifier 在结论命令提交、wake 幂等交付后产生；它不触发 CompletionClaim consumer，且不蕴含 Acceptance 或 Work Completed。
 
 `CompletionClaimed` 的 durable settlement + `ExecutionSettled` event 足以在 daemon crash 后通过 deterministic `StartVerification` Command replay 恢复后续动作。
 
@@ -7539,14 +6555,6 @@ normalizedRegion
 
 并定义确定性 `contains / overlaps`。
 
-Formal claims use the finite canonical `OwnershipRegion { allow, exclusions[] }`
-from §1.5; overlap and containment are defined over its effective set, not
-the allow envelope alone. Exclusions are strict canonical descendants in the
-same space/kind, normalized/sorted/unique and prefix-antichain. The typed
-comparator returns `Contained | NotContained | Overlap | Disjoint`. Parent
-delegation atomically adds one exact exclusion and creates the Child's exact
-claim; unprovable partial exclusion, alias, or set relation fails closed.
-
 ## 12.10 C9 — Semantic capability ownership audit
 
 以下矩阵是结构审计的最小权威集；具体 payload/signature 仍在对应 Phase 前冻结。
@@ -7557,11 +6565,11 @@ claim; unprovable partial exclusion, alias, or set relation fails closed.
 | Project directory | — (local read) | — | ProjectDirectoryPort / SQLite adapter | read boundary (P15) | local single-user, no pagination; transport owns no SQL |
 | Child Workspace | CreateChildWorkspace | WorkspaceCreated | WorkspaceRepository | application | same Project; parent immutable |
 | Responsibility | ChangeResponsibility | ResponsibilityChanged | WorkspaceRepository | application | authority + revision |
-| Resource boundary / ownership | UpdateResourceBoundary / accepted child carve-out governance change | ResourceBoundaryChanged / version-capable ResourceOwnershipChanged | Workspace + ResourceOwnershipRepository | application | effective canonical write sets do not overlap; canonical exclusions prove any shared allow-envelope disjointness |
+| Resource boundary / ownership | UpdateResourceBoundary | ResourceBoundaryChanged / ResourceOwnershipChanged | Workspace + ResourceOwnershipRepository | application | canonical write regions do not overlap |
 | Primary Session | ReplacePrimarySession | PrimarySessionReplaced | Workspace + SessionRepository | application | no Active Main Execution |
 | Work assignment | AssignWork | WorkAssigned | WorkRepository | application | Work belongs to target Workspace |
 | Current Work | SelectCurrentWork | CurrentWorkChanged | Workspace + WorkRepository | application | ≤1 current; target Open |
-| Work semantic revision | RefineWork / SteerWork(DirectionGuidance or ContractAmendment) | WorkRefined / versioned WorkSteered or WorkAmended | WorkRepository + logical Work Revision History | application | exact authority + current WorkRevision CAS; complete immutable snapshot; direction guidance cannot change contract; amendment is explicit human complete replacement |
+| Work semantic revision | RefineWork / SteerWork | WorkRefined / WorkSteered | WorkRepository | application | canonical requirement change increments revision |
 | Work completion | CompleteWork | WorkCompleted | Work + Acceptance + Verification repositories | application | PASS + Acceptance bind current Work revision |
 | Work cancellation | CancelWork | WorkCancelled | WorkRepository | application | only Open → Cancelled |
 | Dependency | DeclareDependency / SatisfyDependency | DependencyDeclared / DependencySatisfied | DependencyRepository | application | satisfaction binds current dependency revision |
@@ -7642,7 +6650,7 @@ Workspace 没有 `Running/Waiting/...` lifecycle。合法 canonical structural m
 | UpdateWorkspacePolicy | authority + expected revision | revision++ + workspacePolicyRevision++ |
 | SelectCurrentWork | target Work belongs Workspace + Open; switching cannot conflict with Active Main Execution | change `currentWorkId` only |
 | ReplacePrimarySession | target `WorkspacePrimary`; no Active Main Execution | change `primarySessionId`; existing Execution bindings unchanged |
-| RetireWorkspace | non-Root + no Active Main Execution/Open Work/Active Child/no unresolved incoming Dependency with ProducerBinding = WorkspaceBound(this) or WorkBound(a Work owned by this) (unless resolved/replaced in same governance change); normally no active write ownership. Sole exception: exact accepted Child delegation claim, quiescence/typed recovery, exact canonical region + provenance/revision match and Parent/Child CAS; same transaction releases only that Child claim, removes only its Parent exclusion, preserves all other normalized exclusions, writes complete ownership post-image/event, and sets lifecycle Retired | lifecycle = Retired atomically with exact ownership post-image |
+| RetireWorkspace | non-Root + no Active Main Execution/Open Work/Active Child/write ownership/no unresolved incoming Dependency with ProducerBinding = WorkspaceBound(this) or WorkBound(a Work owned by this) (unless resolved/replaced in same governance change) | lifecycle = Retired |
 
 Forbidden ordinary transitions:
 
@@ -7657,30 +6665,13 @@ ReactivateRetiredWorkspace
 | Current | Operation | Preconditions | Next |
 |---|---|---|---|
 | absent | AssignWork | valid Workspace + authority | Open |
-| Open | RefineWork | producer authority; producer cannot weaken protected upstream requirements | Open, revision++; retain complete immutable contract snapshot |
-| Open | SteerWork(DirectionGuidance) | authenticated HumanInput; exact Work/Workspace authority; current expected WorkRevision | Open, revision++; canonical contract unchanged; retain complete snapshot for the new revision |
-| Open | SteerWork(ContractAmendment) | authenticated HumanInput; exact Work/Workspace authority; current expected WorkRevision; complete replacement valid | Open, revision++; replace complete canonical contract and retain its immutable snapshot |
+| Open | RefineWork / semantic SteerWork | authority; producer cannot weaken protected upstream requirements | Open, revision++ |
 | Open | CompleteWork | current-revision PASS Verification + current-revision Acceptance | Completed; if current, clear `workspace.currentWorkId` atomically |
 | Open | CancelWork | governance authority | Cancelled; if current, clear `workspace.currentWorkId` atomically; request quiescence of focused active Execution |
 | Completed | any lifecycle mutation | — | **illegal** |
 | Cancelled | any lifecycle mutation | — | **illegal** |
 
 `Current/Pending/Blocked/Verifying/Running` 都是 relation/projection，不进入 Work lifecycle。
-
-Legacy SteerWork schema-v1 inputs, including `scope="Constraint"`, are
-DirectionGuidance only. ContractAmendment requires a new SteerWork schema
-version and an explicit discriminator; its V1 authoring form is a complete
-replacement, not patch/merge or omitted-field inheritance. P1 owns the exact
-versioned receipt compatibility; no existing receipt, event, or Work snapshot
-is relabeled or rewritten.
-
-StartVerification uses the canonical VerificationMission for the exact
-observed current WorkRevision. Caller/model/Inbox text cannot replace that
-mission. An old Open Verification remains immutable and may conclude on its
-old mission/revision; its wake remains exact to the old `(WorkId,
-targetWorkRevision)`, and its PASS/FAIL/UNKNOWN cannot satisfy current-revision
-Acceptance or CompleteWork. Work revision advance does not cancel or relabel
-the old Verification.
 
 ### Execution
 
@@ -8220,200 +7211,3 @@ P12 completion                            COMPLETE — FORMALLY CLOSED
 2. 失败证据是什么；
 3. 为什么不能通过现有对象/接口的局部细化解决；
 4. 对 Domain、Persistence、Model Context、Runtime、Package DAG 和 Recovery 的影响。
-
-## Accepted Native OS Sandbox convergence (DID v1.53)
-
-Accepted governance chain:
-
-- `ACCEPT_NATIVE_OS_SANDBOX_CONVERGENCE_V1`, proposal raw SHA-256
-  `ACAE6656234C50856FEC7B4B8AEF829E9A10C2EBDC1142862E35EAE3CF5C9341`;
-- `ACCEPT_NATIVE_OS_SANDBOX_COMMAND_AUTHORITY_AMENDMENT_V3`, raw SHA-256
-  `CCF6874FACF846FB9A9A32C861A29D17CC82F641139C6E8A18ACD69F8D04418D`;
-- `ACCEPT_NATIVE_OS_SANDBOX_PROVIDER_UNAVAILABLE_FACT_STORAGE_V5`, raw SHA-256
-  `B62294818B14347DB0B40278C115B5BD8397C3C05F2FBE1B00D7949481BE07BD`;
-- fixed schema-48 rebase plan accepted as
-  `ACCEPT_NATIVE_OS_SANDBOX_SCHEMA48_REBASE_FIXED_IMPLEMENTATION_PLAN`,
-  raw SHA-256
-  `3EAD84A15267DD00AF754C2FC2B5DCE98FDBDBC7C5CB305A99055646571A8F62`.
-
-The Native OS sandbox is distinct from the logical Workspace mount and Git
-Worktree. Executable Work is bound to a strict, execution-scoped
-`SandboxProcessPolicy`; the provider enforces profile, exact admitted mount
-access, process-tree, network, environment and resource limits. The profiles
-are `ReadOnly`, `WorkspaceWrite` and explicit `FullAccess`; FullAccess is
-never fallback. A weaker TrustedLocal path is available only as an explicit,
-accurately disclosed choice. Missing required enforcement means no process
-starts; the same Execution remains unavailable/blocked and Attention-visible.
-Action approval does not widen policy; policy choice does not grant approval.
-
-Only the authenticated human command `DecideSandboxPolicy`, through existing
-auth→Application→P1 Gateway, may commit the exact Execution/Episode policy.
-P12 resolves exact CAPA-v2 Grant authority, issuer provenance, target and
-finite lifetime before receipt access. P1 persists committed policy decision,
-event and receipt atomically; rejected commands persist none. P5 loads the
-strict operator-config snapshot. P9 consumes only the exact durable
-Execution/Episode decision and records unavailable capability as immutable
-`SandboxProviderUnavailableFactV1`; P10 derives safe ActionRequired Attention
-from that fact and retained queue, never from the wake event alone. Restart
-does not infer policy from model text, current defaults, events or Worktree
-state.
-
-On schema-48 baseline, P1 specifies forward-only migrations
-`0049_sandbox_policy_and_grant_provenance` (`requiresUserVersion=48`) and
-`0050_sandbox_provider_unavailable_fact` (`requiresUserVersion=49`). 0049
-adds immutable exact Grant issuer provenance and committed-only
-`SandboxPolicyDecision` storage; 0050 adds the V5 immutable unavailable fact,
-retained P10 admission queue/marker, and exact FK to the decision identity.
-These are owner contracts only: no migration is registered or activated and
-no database is upgraded. No historic authority, decision or fact is inferred
-or backfilled.
-
-The independent post-landing consistency review is a separate gate. The
-distinct implementation authorization
-`AUTHORIZE_NATIVE_OS_SANDBOX_CONVERGENCE_IMPLEMENTATION` was NOT GRANTED
-at the V1.53 checkpoint. This historical status is corrected by the
-V21 authorization corrigendum below; this V21 design landing itself authorizes
-no code, tests, migration execution, database upgrade, deployment or release.
-
-## Accepted Native OS Sandbox RecoveryBinding Attention closure (DID v1.54)
-
-Accepted token `ACCEPT_NATIVE_OS_SANDBOX_REMAINING_RUNTIME_CONTRACT_CLOSURE_V21`,
-proposal raw SHA-256
-`5CF4E41F1940F7ABB6C61D5B963A9E9D687D967AC4C72EE7A31E18424873486A`.
-This owner amendment is applied to the schema-48 current-main baseline at
-`8cd0a94653f1278a194cf23e63503bf154885373`; the exact user decision and
-authorization context are recorded in the V21 acceptance record.
-
-P4's existing immutable RecoveryBindingV1 remains the only binding authority.
-On missing/corrupt/mismatched proof, P9 performs read-only classification
-from durable `tool_invocations` and
-`tool_invocation_recovery_bindings`; it creates no P9 failure-code enum,
-persisted event enum, DB table/column, marker, or P40 ToolObservationReplay
-fact. The invocation remains NotAdmitted and Pending, its Step remains
-ActionsInProgress, and there is no lease renewal/acquisition, P4 call, Provider
-dispatch, effect, ToolObservation, or settlement. Current resource/authority/
-control drift remains on existing P4 Denied or policy-required paths.
-
-P10 exposes the non-persisted API AttentionSource literal
-`SandboxRecoveryBindingFailure` by strict per-query derivation from those
-existing P4 rows. The exact safe summary is
-“Sandbox recovery binding evidence is missing or invalid; execution is paused.”
-`attentionFactId` is lowercase SHA-256 over canonical UTF-8 JSON with fixed
-keys `version,executionId,invocationId,bindingShaOr`; SQL NULL is JSON null,
-and a syntactically valid lowercase 64-hex stored SHA is used byte-for-byte
-even if it does not match the binding content. Malformed non-NULL hash format
-is a Persistence/ProjectionIntegrityFailure: fail closed, use the existing
-corruption Problem/operational path, and emit no derived Attention. The
-Attention `occurredAt` is the immutable `tool_invocations.intent_at`, decoded
-as canonical UTC; absent/invalid time is also projection-integrity failure
-with no fabricated timestamp. The source never exposes raw binding or
-resource evidence and never materializes a marker, event, queue, or rebuild
-state. It disappears only on exact invocation terminality or Execution Stop;
-v1 has no repair/rebind path. A verified backup or new Execution is outside
-this contract. Event pruning is immaterial to this read-only projection.
-
-The complete accepted V1–V21 contract chain is forward-ported from this
-schema-48 current-main baseline to Scenarios 1.6 / System Design 1.21 / DID
-1.54. Owner contracts are substantive and ownership-aligned: P1/01/03/04/05/06
-specify the exact human wire/CAS/fingerprint/rejections, atomic receipt/result/
-decision/event join, unchanged schema and recovery; P2/04/05/06 use the
-already-existing executions.episode_revision and same-Execution park/wake;
-P3/03/08 define Pending/NotAdmitted Step progression; P4/01/02/04/05/06 own
-process policy, network/provider controls, target/basis digests and recovery;
-P5/01 owns closed authority/issuer/provider-registry configuration; P9/07
-owns typed no-reprobe provider-failure facts and read-only RecoveryBinding
-classification; P10/02/03/04/05/07 own exact freshness, queue/rebuild,
-derived Attention, preconditions and status/Problem DTOs; P11/04/12 own current
-region resolution and logical handoff; P12/02/09/10/13/14 own authority,
-mapping, transport and T2/T3 qualification; P13/02/03/06 render the human-only
-choice, NeedsDecision/Unavailable states and safe receipts. V21 binding
-Attention is an API/source literal only, not a persisted enum. P1/07 command-
-identity owner is not amended; no write-once envelope/sidecar is introduced.
-P11/03/05
-EnvironmentRevision/drift does not become sandbox policy freshness.
-
-No 0051 is added or reserved. Existing migrations 0049/requires48 and
-0050/requires49, schema 50, and inherited 0043/0044 state remain unchanged;
-none is registered/activated or executed here. No existing database is
-upgraded, and this owner landing performs no implementation, test, deployment
-or release action.
-
-### V21 authorization corrigendum
-
-The historical V1.53 “NOT GRANTED” statement is superseded by the user's
-direct authorization in thread `01a0ec9b-9a9f-7242-9d1e-973451238d05` on
-2026-10-18: `AUTHORIZE_NATIVE_OS_SANDBOX_CONVERGENCE_IMPLEMENTATION`, scope
-T0–T4. This corrigendum records that pre-existing grant; V21 does not mint a
-new implementation token. Implementation may resume only after this accepted
-design landing receives independent post-review. No migration is activated,
-no existing database is upgraded, and no release is authorized by this
-landing or corrigendum.
-
-## Accepted Native Sandbox producer mapping closure (DID v1.55)
-
-Accepted token `ACCEPT_NATIVE_OS_SANDBOX_V21_PRODUCER_MAPPING_CLOSURE_V3`,
-proposal raw SHA-256
-`3944B1E8BBA9A7A0EBB47988B4B67965718C94EB4EE05D9605E9711AC1FF8A8A`.
-This owner-level closure adds no new user-visible scenario and does not change
-Problem & Goals, System Design, Scenarios, authority permission, schema, or
-migration activation. It closes the producer mapping across existing owners:
-P11/04 resolves the complete current ResourceBoundary and digest; P4/04/05
-derive the existing object-valued SandboxTargetRef and deterministic logical
-filesystem mounts/access; P5/01 publishes versioned SandboxAuthorityBundleV2
-with fixed `builtin-v1` TrustedLocal identity and preserved monotone
-high-water/audit compatibility; P12/13/14 own exact broker controls and T3
-limit/evidence binding; P1/01/03 preserve existing CAS, receipt replay, and
-decision transaction. P12/09 is a cross-reference only and its region codec
-is unchanged.
-
-The exact Pref64 control literal for Restricted/Enabled is
-`FreshPerResolutionAndConnection`; each new DNS resolution, connection, and
-redirect hop performs fresh discovery. Existing V21 P4 snapshot/basis codec
-and golden vectors remain unchanged. The acceptance/landing record and
-manifest pin all owner postimages. Existing implementation authorization
-continues only after independent post-landing review; this design change
-does not activate 0049/0050, upgrade a database, or authorize release.
-
-## Accepted Sandbox Policy Candidate Read Model V5 (DID v1.56)
-
-Accepted token `ACCEPT_SANDBOX_POLICY_CANDIDATE_READMODEL_V5`, proposal
-raw SHA-256
-`26B4BDAA4F79DCF2A0EA7C601A1037372A9C5308AB761663A921235076CE8D13`.
-This is an owner-contract/read-model closure and adds no DID-wide vocabulary,
-domain state, new scenario class, command, route, schema, or migration. It
-closes the dependency among P4/05/06 requirement/currentness reads, P5/01's
-verified bundle/current-host tuple supply, P1/01's unchanged full-bundle CAS,
-P10/03/05 candidate projection and freshness barrier, and P13/03/06 deliberate
-human choice. All committed variants now compare the full V2 authority-bundle
-pair; registry-only bundle drift also stales TrustedLocal, which remains
-Unconfined and does not gain a provider tuple. P4 reads existing P3 Pending /
-NotAdmitted / RecoveryBinding evidence through a read-only port; P10 does not
-read P3/P4 private stores. P10 candidate IDs are presentation-only and never
-enter the existing P1 command. Scenarios 1.6 and System Design 1.21 remain
-unchanged; no provider qualification, implementation, migration activation,
-database upgrade, or release follows from this design landing.
-
-## Accepted Sandbox Policy Candidate Profile Binding Digest V6 (DID v1.57)
-
-Accepted token `ACCEPT_SANDBOX_POLICY_CANDIDATE_PROFILE_BINDING_DIGEST_V6`,
-proposal raw SHA-256
-`90300163BA7F2EE31314E63A028A3D67F9DD87D79895796F6DB81304D846DCB2`.
-This fixes only the V5 candidate-read placement of the existing
-`sandboxHandleBindingDigest`: P10/05 removes it from common preconditions and
-puts an exact profile-specific digest immediately after `candidateId` in each
-closed candidate variant. One coherent P11 full-boundary and exact active
-Workspace ownership snapshot feeds the unchanged P4/05 canonical producer
-for every offered profile at initial and refreshed reads. Missing or
-unprovable source projection fails the read as a whole. A shared digest is
-allowed when exact projections coincide.
-
-P13/03/06 copy only the selected digest to P1/01's unchanged
-`expectedSandboxHandleBindingDigest`; P1 continues its submitted-profile
-CAS. `candidateId` remains the V5 tuple presentation identity without the
-digest in its preimage. After the existing stale receipt, P13 discards the
-whole read and requires fresh human selection even when an ID is unchanged.
-The singular V21 `sandboxPolicyPreconditions` union, P4/P9 execution gates,
-V2 authority currentness, P5 host tuple proof, TrustedLocal safety
-presentation, P1 command/receipt/snapshot and all persistence contracts
-remain unchanged. Scenarios 1.6 and System Design 1.21 remain unchanged; this
-landing grants no implementation, migration, database or release authority.

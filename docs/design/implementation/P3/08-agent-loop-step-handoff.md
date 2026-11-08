@@ -40,29 +40,6 @@ hashes, disposition and result references. Pending action input is reconstructed
 by replaying the pinned Provider result through the pinned decoder, then must
 match the stored hashes before execution.
 
-For an accepted Blocked WorkEpisode, P3/P9 action evidence additionally
-preserves a closed `TerminalActionDenial` with the exact denied action refs:
-P4-created invocations carry the matching durable `NoEffectDenialCode`, while
-a pre-P4 executable handler rejection carries only
-`{ _tag: "HandlerRejected", routeKind: "Executable" }`. Native causes,
-implementation error strings and free-form interruption reasons are not
-accepted evidence. This type is stored with the existing exact
-`AgentLoopStepActionRecord` identity and is replay-validated before a Blocked
-settlement.
-
-```ts
-type TerminalActionDenial =
-  | { readonly _tag: "P4NoEffectDenied";
-      readonly reasonCode: Exclude<NoEffectDenialCode, "ApprovalRequired"> }
-  | { readonly _tag: "HandlerRejected";
-      readonly routeKind: "Executable" };
-```
-
-`P4NoEffectDenied` requires the exact paired canonical ToolInvocation row and
-matching closed P4 reason. `HandlerRejected` is valid only before P4 intent or
-effect admission. `ApprovalRequired` is nonterminal and cannot support a
-Blocked result; MayHaveStarted remains on the existing reconciliation path.
-
 ## 2. Identity
 
 ```ts
@@ -88,13 +65,6 @@ normal successor: logicalStepNo + 1, repairAttempt = 0
 Both successor forms persist their complete identity, including
 `providerTurnId`, before the predecessor transition commits. `manifestId` is
 bound once Provider Runtime creates the Manifest and can never change.
-
-`providerTurnId` uses the closed DID §2.2.1 ProviderTurnId V2 codec. New Step
-identities use only the deterministic V2 inference/repair constructors;
-recognized UUIDv7 values are read/replay-only historical evidence. Step
-creation, successor recovery, source refs and action binding preserve the
-exact stored string. Unknown or malformed values fail the existing typed
-identity/recovery validation and are never reconstructed from Session text.
 
 ## 3. Durable state
 
@@ -131,23 +101,6 @@ interface AgentLoopStepRecord {
   readonly updatedAt: string;
 }
 ```
-
-### RAI-DG-02 terminal Provider evidence chain
-
-For a WorkEpisode terminal Provider source, P3 identifies the one
-settlement-producing Step and preserves its exact `(logicalStepNo,
-repairAttempt)`, ProviderTurn and Manifest binding. The Turn must be durably
-`finish_reason=Failed`; its final settled Attempt must be `TerminalFailure`,
-carry the same closed terminal kind and recognized taxonomy, and record retry
-decision `Stop`. Earlier successful Steps/Turns in the Execution remain valid
-history and are not mistaken for the terminal source.
-
-This addendum does not change Provider failure classification or retry policy.
-`RateLimited`, `ProviderUnavailable` and `StreamInterrupted` remain outside
-the terminal-hold source even when their budget/deadline exhausts. Before the
-Attempt, failed Turn, Step settlement proposal and Execution settlement are
-each durable, partial prefixes do not authorize a hold or a new Provider
-request. Raw provider/request/response content never enters the bounded source.
 
 `decoderVersion` is fixed before `ProviderResultAvailable → OutputAccepted`.
 If the pinned decoder is unavailable, recovery produces durable Attention; it
@@ -243,26 +196,6 @@ the unique `ModelOutput`, verifies `contentHash`, and advances
 `decodedOutputHash`. Same source + same hash returns the existing sequence;
 same source + different hash is an invariant conflict and produces Attention.
 
-### Accepted S4-CONTEXT-DG-01 output projection binding (2026-10-24)
-
-For an accepted typed `AssistantMessage`, P3 context projection validates the
-exact existing output identity: `entryKind=ModelOutput`, payload
-`providerTurnId=T`, `contentRef="provider:T:assistant"`, source kind
-`ProviderTurn`, source ref `T:assistant`, string `text` and `finishReason`,
-and source content hash equal to the accepted-output writer's SHA-256 over
-`{ text, finishReason }`. The projector cannot attach a message to another
-ProviderTurn or reconstruct it from Session text. The projected content is
-DataOnly C3 context for the same Responsibility-bound Workspace Session; it
-does not alter the durable AgentLoopStep state machine or action ledger.
-
-Recovery of a completed ProviderTurn continues to decode its pinned canonical
-result with its pinned decoder and converge the same idempotent Session output
-once. Projection does not duplicate or reinterpret the accepted output. An
-already prepared ProviderTurn/Manifest remains immutable and is replayed from
-its stored request/result; it is never recompiled with the new projection.
-Only a newly prepared ProviderTurn can bind the newly projected context.
-ConversationResponse history remains on its independent P14/P17 owner.
-
 ## 7. Action ledger and unresolved-side-effect gate
 
 ```ts
@@ -282,12 +215,6 @@ stores the process-local `AgentAction` object.
 
 - `nextActionIndex` advances atomically with the action disposition, or after
   reading a stable existing result.
-- **Serial action dispatch.** For one `AgentLoopStep`, the production AgentLoop
-  invokes only the action at `nextActionIndex`. It waits for that P4 invocation
-  to return, then commits the action disposition, sourced Observation and cursor
-  advance before it invokes the next action. It does not issue overlapping P4
-  invocations for one pinned action. Recovery resumes the same pinned action
-  sequentially under the currently acquired `ExecutionOrigin`.
 - Each successful action appends its Observation immediately with stable source
   `(providerTurnId, callRef, resultRef)`; observations do not wait for the whole
   action batch.
@@ -327,29 +254,6 @@ stores the process-local `AgentAction` object.
 - Historical terminal `Denied(ApprovalRequired)` rows remain terminal on
   replay. Recovery never promotes them to a Pending request. A new
   approval-required call uses the nonterminal pause above.
-
-### Accepted P10/P1 pre-intent CandidateRead source (2026-10-21)
-
-Under `ACCEPT_P10_P1_PREINTENT_CANDIDATE_READ_BOOTSTRAP_V1`, after the
-Application has admitted the exact Pending Executable approval for the P3
-Action paused by `ApprovalRequired`, P4/06 may expose a read-only pre-intent
-sandbox-policy requirement. It is bound to the current active Execution/
-Episode, ProviderTurn/Step/LogicalAction/actionIndex/callRef, exact Pending P3
-Action revision/input hash/tool identity, and exact Pending, unconsumed P4
-approval identity/revision/expiry. P10 exposes only the existing safe
-CandidateRead DTO; neither the Action nor approval identifiers/bindings become
-public or caller-supplied.
-
-This read creates no P4 ToolInvocation or RecoveryBinding, changes no P3
-action/cursor/Step, does not consume approval, and calls no provider or
-executor. The human may commit DecideSandboxPolicy first and then resolve the
-existing approval. After approval, the ordinary P4 claim atomically persists
-the first ToolInvocation intent and consumes the exact Approved revision. A
-stale/missing source before that P1 commit follows the P1/01 receipt binding;
-P3 does not synthesize a replacement Action or approval. This does not change
-the V21 NotAdmitted policy-interruption path once an intent exists or the P9
-terminal provider-unavailable path.
-
 - A P4 no-effect `Denied` ToolResult is terminal for that `LogicalActionId`:
   persist ToolResult status `Denied`, disposition `AuthorizationDenied`,
   action state `TerminalRejected`, Observation source and cursor advance
@@ -498,19 +402,6 @@ execution-runtime → ports + agent-runtime
 9. Each repair/next-turn predecessor identifies exactly one successor.
 10. Process-local `AgentAction` is never persisted.
 
-### Accepted P12-DG-01 D2/D4 progress interaction
-
-The P3 producer follows the shared D2/D4 `durableProgress` rule in P12 `08`:
-only a newly committed successful terminal sourced AgentAction outcome or an
-attributable authoritative application/canonical mutation sets the signal.
-Provider-result replay, ModelOutput/AssistantMessage, AgentLoopStep/cursor
-progression and recovery/handoff bookkeeping do not count by themselves. A
-P9 settled-result replay is not a new ProviderTurn boundary and makes no new
-Provider call or D2/D4 admission. It can contribute progress to the next new
-ProviderTurn only if replay processing commits a qualifying new action/effect;
-otherwise `durableProgress=false`. ReconciliationPending and OutcomeUnknown
-remain governed by the existing unresolved-side-effect gate.
-
 ### SCRC v1.22 Compaction identity rule
 
 Compaction does not add a `Compacting` business/AgentLoopStep state. It is a
@@ -536,13 +427,6 @@ Inference(failed) → OverflowCompaction → OverflowReplacement
 Every link has a stable role/identity and immutable ProviderTurn/Manifest.
 Replacement success resumes the existing action phase; replacement overflow is
 terminal. `repairAttempt` is unchanged.
-
-P20 links use the exact V2 Step-bound ProviderTurnIds in DID §2.2.1: their
-Inference link is the Step's current inference ID, their OverflowCompaction
-link uses its exact Summary/Native compaction ID, and their
-OverflowReplacement ID uses ordinal `0`. Predecessor, role and context epoch
-remain separately checked link fields. Chain recovery is exact-string replay;
-it does not normalize or reallocate a link ID.
 
 ### Accepted AH10 Submitted DecisionEpisode binding failure (DID v1.42)
 
@@ -587,14 +471,3 @@ authorization.
 - No new Execution settlement variants.
 - No implementation beyond separately authorized contracts; P41 landing does
   not authorize P41 code/migration implementation or qualification.
-
-## Accepted V21 SandboxPolicyRequired step state
-
-Policy-required interruption adds no Step/action state and does not settle
-Execution: existing Step remains ActionsInProgress, exact action is Pending,
-ToolInvocation is NotAdmitted with settled_at NULL, and active Execution is
-unchanged. Recovery resumes only after strict existing RecoveryBinding
-verification and exact original arguments/regions/target/mount admission.
-Invalid proof does not synthesize P3/P4 truth; P10 derives safe Attention
-from immutable P4 rows. Real provider failure follows the existing terminal
-no-effect observation and P9 fact path without a second Provider call.

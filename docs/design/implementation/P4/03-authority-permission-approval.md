@@ -211,12 +211,6 @@ Denial and approval reuse:
 - `ApprovalRequired` is not in the new-write denial set. Historical persisted
   `Denied(ApprovalRequired)` remains a terminal decoder/replay case only.
 
-**Accepted P38/P39 RecoveryBindingV1 projection:** `targetResourceSpaceIds`
-uses the exact trusted receipt array; order and duplicate occurrences remain
-significant. `approvalTargetDigest` is derived from that array without sorting
-or deduplication. This records the existing P38 matching behavior and does not
-change approval target equality.
-
 ### Control ActionApproval consumption for AssignWork (DID v1.33)
 
 For the AssignWork Control route, the P4-owned `ControlApprovalStore` exposes
@@ -262,29 +256,6 @@ CommandId-bound approval consumption, replay evidence, or transaction boundary.
   result; it does not release approval for another invocation.
 - `ExecutionStopping` and P4 `Interrupted` are separate stop/quiescence results,
   not permission-denial projections.
-
-## Accepted pre-intent policy candidate approval source (2026-10-21)
-
-Under `ACCEPT_P10_P1_PREINTENT_CANDIDATE_READ_BOOTSTRAP_V1`, the read-only P4
-sandbox requirement may bind the exact P4 Executable approval created by the
-existing `ApprovalRequired` handoff. For this pre-intent branch the approval
-must be the exact `Pending` row bound to the current Pending P3 Executable
-Action, with its exact ApprovalId, revision, immutable `expiresAt` and
-unconsumed state. A pre-intent requirement is unavailable once the approval
-is Approved, Rejected, Expired, Cancelled, or consumed; the existing
-NotAdmitted-invocation requirement remains available after the ordinary P4
-claim path when appropriate.
-
-The pre-intent P4/P10 read does not create/renew/resolve approval and does not
-consume it. The human may commit P1's sandbox decision first, then Resolve
-the same approval via its current authenticated command. P4's existing claim
-transaction remains the only operation that atomically creates ToolInvocation
-intent and consumes the exact Approved revision. P1's current-source CAS
-re-reads approval identity/state/revision/expiry under the same
-`BEGIN IMMEDIATE` transaction, requires `expiresAt > trusted GatewayNow`, and
-returns the accepted P1/01 stale field mapping without decision/event when
-the source changed. Approval state/revision and expiry have no new wire field,
-approval state, persistence table or consumption path.
 
 ## 6. Must Not Decide
 

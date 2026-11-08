@@ -26,6 +26,59 @@ the current action; `ExecutionStopping` closes the action batch as
 `Interrupted(StopRequested)`. This amendment does not change the AgentLoopStep
 identity or provider-result authority.
 
+## Accepted owner amendment — EA-DG-01 (2026-10-11)
+
+Decision `ACCEPT_EXECUTABLE_APPROVAL_ISSUANCE_DECISION_RESUME`, fixed proposal
+SHA-256 `E4F1B2935E0397292049BB3FDB1AB5847B02443CCE1B55A9827F823C63F145EB`.
+P3 `08` freezes the Executable `ApprovalRequired` pause: same active
+Execution/AgentLoopStep/LogicalAction remains Pending, cursor does not advance,
+lease is released, and the pinned Provider result is replayed locally after
+Approve/Reject/Expire/Cancel. It does not create a new ProviderTurn. Acceptance
+and landing audit are
+`planning/results/EA-DG-01-governance-acceptance.md` and
+`planning/results/EA-DG-01-contract-landing.result.md`.
+
+## Accepted owner amendment — AH7-DG-02 (DID v1.40)
+
+Accepted logical proposal SHA-256:
+`D0A43BCDF3F95424BE7167B49D2170917B7605EE1E498A2601F2FFFB3DD6940B`;
+accepted P39 physical supplement SHA-256:
+`D2FF13087BB7A1BC5C9D422B4D5CEDE56689F83E765F96615FE13561CE5D446C`.
+P3 `08` owns Runtime production and forwarding of
+ProviderTurn/AgentLoopStep/LogicalAction/actionIndex/callRef source binding,
+and the exact P4 `ReconciledNoEffect`/StillUnknown → ToolResult/Observation/
+Action/cursor mapping. P4 remains owner of approval facts, external reality
+proof, attempts, facts and settlement; P3 identity and cursor ownership do not
+move. Implementation and crash qualification remain separately gated.
+
+## Accepted owner amendment — AH7-DG-01 / P39-P40 terminal RNO replay (DID v1.41)
+
+Accepted hashes: DG01 logical `19EFED54E037D3E2EC6F4D273D917F5249195650E5E41B3DCFF8DEB9784F29CD`;
+P40 physical `5B61E0FF922A10D225FD5DAEA00176BD16C5C0B39484D626B7FEF6340516373A`;
+P39/P40 compatibility addendum `8B8E5D3C5729CF5619605DA8D8DF34BA00E1F817E80A743555029F331690E830`;
+matrix `AD9AB72D0AA51AB84F4194EC2BF4BB90EC957BD062788C480BCBDD39B8E8DD35`.
+P3 `08` owns unchanged ProviderTurn/AgentLoopStep/action/callRef source
+identity and atomic ToolResult/Observation/Action/cursor convergence. P4's
+P40 envelope is the only replay authority for P39 `ReconciledNoEffect`;
+`ReconciliationFactRef`, P4 ArtifactRef and P3 content hash/source ref remain
+distinct. P39 selected-fact identity does not move. Missing valid-fence RNO
+evidence blocks P3 projection; stale generations remain ownership loss only.
+
+## Accepted owner amendment — AH10 Submitted DecisionEpisode binding failure (DID v1.42)
+
+Fixed proposal SHA-256:
+`10D5A2532810B65DFBD3E397B141F6C0765AD32F4992BDDD0FE17F468975339A`;
+acceptance/landing audit:
+`planning/results/AH10-submitted-decision-binding-P41-governance-acceptance-and-landing.md`.
+P3 `08` classifies only the exact submitted DecisionRequest Workspace and
+settled Provider-result Manifest mismatches before any new Provider, action,
+Command, Observation or ordinary transition. For an authorized Stop it returns
+only the pure close plan expressed with existing `TerminalRejected`,
+`SkippedEarlySettlement`, and `SettlementProposed(Interrupted(StopRequested))`
+states. P3 never reads/writes the P9 fact store; Recovery/Application
+composition owns the cross-store transaction. No new P3 state, event,
+settlement variant, package edge, or implementation authorization is added.
+
 ```text
 Detailed Implementation Design v1.22 (frozen)
         ↓ delegates phase-scoped closure
@@ -56,6 +109,9 @@ mode. TurnProfile/Context/settlement are derived from exact EpisodeBinding.
 `WorkspaceCoordination`, `workspace-coordination-context-v1`, and any branch
 that infers conversation or tools from missing WorkId are historical. Plan is
 optional tool-maintained progress state and never an output/authority contract.
+P41 does not change EGP DecisionEpisode creation or settlement; it only adds
+the downstream exact binding-integrity recovery disposition owned by P3 `08`,
+P9 `07`, and P2 `06`.
 
 ## Documents
 
@@ -89,7 +145,6 @@ Output Contract, Prompt provenance, real model multi-turn continuity.
 | C5 | Prompt Program **actual text** is **not** implementation choice. The Programs P3 uses (Base Agent Protocol, Responsibility-bound Protocol, Work Execution Program, Compaction, …) are versioned phase-scoped **contract artifacts** with regression eval. Only wording iteration that does not change the contract, and numeric defaults, are empirical. |
 | C6 | DID v1.20 `AgentLoopStep` is the durable handoff state. It persists no process-local `AgentAction`; pinned Provider events + decoder reconstruct invocations and the action ledger verifies identity/hash (`08`). |
 | C7 | DID v1.22 freezes typed Session Timeline, safe-boundary promotion, AgentStepContext/ContextProjector, Summary/ProviderNative compaction and provider-aware budget evidence. Migration 0019 and implementation remain unauthorized. |
-| C8 | DID v1.58 freezes the closed ProviderTurnId V2 codec: P3 `01` owns the typed codec/Provider boundary propagation; `02` binds the exact ID in Manifest; `08` owns deterministic Step/P20 identity and exact replay. UUIDv7 is read/replay-only; P2 owns unchanged TEXT storage (`04`). |
 
 ## Inherited from P2
 
@@ -105,7 +160,7 @@ Output Contract, Prompt provenance, real model multi-turn continuity.
 
 | # | Finding | Classification | Resolution |
 |---|---|---|---|
-| F1 | `SecretRef` / `CancellationRef` / `CacheHint` ownership ambiguous | P3 phase-scoped | `SecretRef` is a P3 `ports` type; `ProviderTurnId` is a domain ID using the closed DID §2.2.1 codec; `CancellationRef`/`CacheHint` are P3 port types (`01` §2) |
+| F1 | `SecretRef` / `CancellationRef` / `CacheHint` ownership ambiguous | P3 phase-scoped | `SecretRef` is a P3 `ports` type; `ProviderTurnId` is a domain ID; `CancellationRef`/`CacheHint` are P3 port types (`01` §2) |
 | F2 | `SkillRegistry.available` used an undefined `ResponsibilityId` | P3 phase-scoped | keyed by `AgentBinding + WorkspaceId` (`02` §7) |
 | F3 | `PromptProgramFamily` referenced but undefined | P3 phase-scoped | defined as the DID §8.4 P1–P14 family union (`05` §1) |
 | F4 | `SkillRegistry` service tag vs type naming | implementation choice | Context.Service tag `SkillRegistry`; `R` lists tags (`02` §1) |
@@ -126,18 +181,3 @@ The v1.22 SCRC successor is design-frozen but implementation is **not
 authorized**. It supersedes only the representations and delivery/compaction
 mechanisms named above; historical P3 completion remains an audit fact, not
 SCRC implementation evidence.
-
-## V21 RecoveryBinding Attention compatibility note
-
-P3/03 and P3/08 keep SandboxPolicyRequired on the same pending NotAdmitted
-invocation and ActionsInProgress step without ToolResult/Observation/cursor
-advance; recovery uses the existing HumanIntervention wake and strict P4
-RecoveryBinding. No new P3 codec/state exists. P10 binding Attention derives
-from existing P4 rows.
-
-Accepted pre-intent CandidateRead bootstrap adds a read-only source when the
-exact P3 Executable Action is Pending and the exact P4 Executable approval is
-Pending/unconsumed after P4's nonterminal ApprovalRequired path. It does not
-change that P3 Action or Step. P4/06 and P10/05 own the requirement/read
-projection; P1 owns source CAS and receipt. See P3/03/08 and the bootstrap
-governance decision/manifest.

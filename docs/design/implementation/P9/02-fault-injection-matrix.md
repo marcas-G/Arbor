@@ -165,10 +165,54 @@ and after each commit, restart on the same DB, and label the evidence
 | AH7-AP7 | after `MayHaveStarted`, then stop/crash | No new Executor call or replay. Cancel/confirm/reconcile by `SideEffectSemantics`; persist known result once, otherwise retain reconciliation or `OutcomeUnknown(ReconciliationRequired)`. | crash-injected |
 | AH7-AP8 | stale generation at intent/claim, no-effect denial/interruption, effect-admission or settlement | Full trusted lease tuple + expiry rejects the write in the same transaction; old generation causes no post-rejection effect. A previously committed `MayHaveStarted` effect is recovered as possibly occurred, never inferred absent. | crash-injected |
 
+### EA-DG-01 Executable approval issuance / decision / wake boundaries
+
+These additions qualify the production issuer, not a test-seeded approval.
+Each process case uses the exact ActionApproval/Step/LogicalAction binding and
+restarts on the same database. P2 supplies the lease predicate; P6 owns the
+Inbox key; P17/P3 resume the same Execution and action.
+
+| ID | Boundary / interruption | Required recovery assertion | Guarantee |
+|---|---|---|---|
+| EA-AP1 | Worker issuance transaction before/after COMMIT | Pre-COMMIT leaves no Pending row, Inbox entry, request fact or wake source; retry creates one. Post-COMMIT leaves one exact row/Inbox/fact; scheduler does not repoll the action. Full lease tuple, expiry and `stop_requested_at IS NULL` are checked in the write transaction. | crash-injected |
+| EA-AP2 | two first issuers with different `now` values | Winner commits first; unique-key loser reads back and compares stable binding fields only. Both observe identical ApprovalId, first-commit expiry and revision; candidate TTL does not conflict or refresh. A changed stable field fails closed. | crash-injected + store race |
+| EA-AP3 | Approve/Reject command before/after COMMIT | Human authority/route/exact revision is checked; before-COMMIT leaves state/Inbox/event/receipt unchanged; after-COMMIT exactly one state revision, Inbox consumption, resolution event and Command receipt exist. Replay returns the same receipt and wake. | crash-injected |
+| EA-AP4 | expiry commit before/after wake publication | `Pending | Approved → Expired`, exact Inbox consumption if pending, resolution fact and durable P2 wake commit atomically; restart discovers one same-Execution wake. Repeated expiry cannot increment twice. | crash-injected |
+| EA-AP5 | Stop races issuance or pending/approved cancellation | Commit order: Stop first → no issuance; issuance first → same Stop transaction sets stop, `Cancelled`, exact Inbox consumption, resolution fact/wake. Control rows do not change. A stale Worker cannot issue/cancel/action-write. | crash-injected |
+| EA-AP6 | approval resolution wake before/after same-Step re-entry | Pending leaves the same action/cursor fixed; Approved reuses the pinned Provider result and same ToolInvocationId. With current authority still valid, Reject/Expire records one P4 no-effect Denied and one terminal action/cursor result; Cancelled follows Interrupted. No new Provider request. | crash-injected |
+| EA-AP7 | authority revocation and external effect after approval | Revoke before claim → no consume/effect; revoke after claim before `MayHaveStarted` → `ApprovalNoLongerAuthorized`; after `MayHaveStarted` apply AP7 and side-effect reconciliation. Cover effect-completed/settlement-missing for every SideEffectSemantics; no unsafe duplicate or no-effect inference. | crash-injected |
+
 For `ResourceResolutionDenied`, the terminal no-effect record uses empty
 resolved regions and cannot satisfy an approval match. Historical rows migrate
 to `LegacyUnknown`, never `NotAdmitted`; they are excluded from AP3's no-effect
 conclusion and remain under the §5 side-effect recovery rules.
+
+### AH7-DG-02 exact-reality qualification rows (DID v1.40)
+
+P9's injected recovery must honor P4's durable state and external proof; it
+does not turn `ReconciliationSource.pending` into evidence.
+
+| P4 state / injected seam | P9 recovery assertion |
+|---|---|
+| `NotAdmitted`; kill before claim/admission commit | No Executor/effect; exact P4 Denied or Stop Interrupted only under the accepted P4 transaction; converge one P3 result/Action/cursor |
+| `MayHaveStarted`; kill after admission before visible Executor result | Reconcile exact attempt first; a negative query without finality is StillUnknown, no Executor replay |
+| Effect occurred, P4 settlement absent | `Occurred` plus reconstructable canonical result selects one same-attempt fact/settlement; no second effect |
+| P4 settlement/fact committed, P3 handoff absent | Receipt-first source from selected fact/result; no reconciliation or Executor; one ToolResult/Observation/Action/cursor |
+| P3 handoff before/after COMMIT | Before: no partial ToolResult/Action/cursor; after: replay same observation source and result without duplication |
+| authoritative `NotOccurred`, binding/authority/approval/resource unchanged, no Stop, attempt 0 | At most one same-invocation attempt 1; proof and effectKey are exact and approval is not consumed twice |
+| `Occurred` but result/output cannot be reconstructed | `StillUnknown(ResultEvidenceUnavailable)`; no invented Success or model-visible result |
+| Stale/negative source, profile/effect/binding mismatch, old attempt can finish late | `StillUnknown` with the exact P4 reason; no replay |
+| Grant/policy/verifier/resource/approval revision changes before attempt 1 | No replay; selected P4 `ReconciledNoEffect` reason or StillUnknown if proof itself is not authoritative |
+| Stop before attempt 1 | No new admission; exact StopRequested projection. Stop after MayHaveStarted does not suppress known fact/settlement under current fence |
+| Lease expiry / generation takeover during reconcile | Old generation cannot append fact/settle; current generation may continue same invocation after full lease validation |
+| attempt 1 also proves NotOccurred | `ReplayLimitReached`; no further attempt and no retry loop |
+| distinct late/contradictory fact after terminal | Append only PostTerminalEvidence; terminal selected fact/P4 settlement/P3 ToolResult/Action/cursor unchanged |
+
+Every row binds the exact ToolInvocation, ProviderTurn, LogicalAction, callRef,
+attempt/profile/effect key and selected fact. Stop blocks new attempt admission,
+not current-fence accounting. `shell@3` is NonIdempotent and has no reality
+adapter. Historical shell@2 is never reclassified; an active P36 NotAdmitted
+row without binding is refused by the P39 preflight, not reconstructed here.
 
 ## 6. Provider disconnect (PD) — GQ4 mapping (zero-DID-change)
 
@@ -272,51 +316,6 @@ evidence protocol (per daemon restart / suite run):
   SD §10.7): storage-media loss / region loss are outside the envelope and
   are reported truthfully (P2 `06` §7).
 
-## Accepted AH14 legacy adoption evidence Attention fault matrix (DID v1.49)
-
-Accepted token `ACCEPT_AH14_LEGACY_ADOPTION_EVIDENCE_ATTENTION_GOVERNANCE`,
-proposal raw SHA-256
-`71F81F8B61375B9828FAB208D517FBF2CE0092C0B71ECCD124353262E23FCFB1`,
-accepted 2026-10-17. P9 `07` owns the exact trigger and evidence contract.
-
-| Boundary | Injected failure | Required durable state and recovery |
-|---|---|---|
-| Before `LegacyAdoptionEvidenceEscalated` fact/event COMMIT | Kill/restart or transaction failure | Neither fact nor event exists; Step/action/Session/settlement remain unchanged; no Provider/action/output work; retry recomputes the same tuple |
-| After failure fact/event COMMIT | Kill/restart | Exactly one immutable fact/event pair exists; recovery returns blocked without Provider request, action replay, sourced output or duplicate event |
-| Stale/expired Execution lease | Attempt failure-fact read/write | Lease fencing rejects before this path can read/write; no fact/event, adoption, Provider/action work, or Attention claim |
-| Before atomic resolution + normal Step progression COMMIT | Kill/restart or transaction failure | Neither resolution fact/event nor Step adoption/progression commits; original failure fact remains and P10 marker stays active |
-| After atomic resolution + normal Step progression COMMIT | Kill/restart | One exact resolution fact/event and normal adoption/progression exist; replay returns them without duplicates; matching P10 marker is removed only through its consumer transaction |
-| Resolution tuple/evidence conflict | Mismatched or incomplete action, P4, hash, summary or derived code | Typed corruption; no resolution fact/event or Step progression; Attention stays active |
-
-The resolution case requires the complete non-empty decoded action set and the
-same-action P4 terminal evidence described in P9 `07`. A may-have-started
-effect uses the existing P4 reconciliation/OutcomeUnknown gate before
-resolution. P10 marker and offset crash sides are specified in P10 `02`/`04`;
-they are not inferred from these P9 boundaries.
-
-## Accepted AH19 Work and Conversation checkpoint recovery matrix (DID v1.50)
-
-Accepted tokens:
-`ACCEPT_AH19_WORK_PRECHECKPOINT_BOUNDED_FRONTIER_V1` (proposal raw SHA-256
-`4692895A2C9CF92DB1308507F29ED288FD3149F944AAC4F3D8BAE23635F5D663`) and
-`ACCEPT_AH19_CONVERSATION_CHECKPOINT_OWNER_V1` (proposal raw SHA-256
-`9B562095B653B84C0518050BC7E6374D1C3710BF464A7BAB556D4F399D604E89`), both
-accepted 2026-10-17.
-
-| Recovery boundary | Required result |
-|---|---|
-| Restart with >64 durable Work Timeline rows before first checkpoint | Reconstruct the same latest-64 row window; current pinned input occurs exactly once independent of the cap; P3 skipped rows do not cause older-row refill; Timeline remains unchanged and no checkpoint coverage is inferred |
-| Valid P3-filtered `UserMessage(source.kind=HumanConversation)` at lower edge of selected window, then real checkpoint commit and kill/restart | Filtered row has no contextRef/PortableInput item and is absent from compaction content/retainedFrontier, but remains durable; `inputFrontier` still records the considered window; restart reuses committed checkpoint without Provider/action replay |
-| Typed Work checkpoint followed by >64 unsummarized entries | Active frontier retains the exact checkpoint plus every subsequent typed entry; numeric pre-checkpoint cap is not applied |
-| Conversation checkpoint committed before current ResponseJob becomes Answered, then kill/restart | Resume same ResponseJob/Attempt/episode and owner state idempotently; current message is not appended twice and settled Provider/action work is not replayed |
-| Complete model binding changes between Conversation episodes | Old ProviderNative opaque reference is not sent; rebuild portable Summary from exact owned HumanMessage prefix and pin current message once |
-| Earlier non-Answered HumanMessage (Pending/Claimed) or RetryScheduled ResponseJob before a later Answered message | Frontier refuses to cover the later Answered message across the gap and remains stopped after restart; exact Claimed body remains pinned once for its existing episode |
-| Interleaved Work Session and Conversation history under one Root Workspace | Neither owner reads, advances or satisfies the other's checkpoint; HumanMessages and live checkpoint refs remain readable after restart |
-
-These recovery contracts do not define new storage tables or migration
-behavior. The physical Conversation owner choice and its migration require a
-separately authorized implementation package.
-
 ## 13. Must Not Decide
 
 The full DID v1.20 AgentLoopStep handoff matrix AH1–AH14 is owned by `07`; it is
@@ -332,3 +331,17 @@ additive to this historical ten-face matrix and authorized by DID v1.21 ALS-I1.
 - No per-dispatch full recovery (GQ3; restated in 03 §2).
 - Injection infrastructure shape, crash-simulation mechanism, retry counts,
   TTL/sweep/batch numeric values: empirical, task-level (scope-extraction §C (planning/proposals/P9/00-scope-extraction.md)).
+
+## Accepted AH7-DG-01 / P39-P40 RNO evidence-recovery boundaries (DID v1.41)
+
+Accepted compatibility matrix SHA-256:
+`AD9AB72D0AA51AB84F4194EC2BF4BB90EC957BD062788C480BCBDD39B8E8DD35`.
+These are future owner qualification cases; no test or process qualification
+is claimed by this design landing.
+
+| Boundary | Before-commit kill | After-commit/restart | Required oracle |
+|---|---|---|---|
+| P4 P39 RNO terminal + P40 Observation envelope | Neither P39 terminal selection nor P40 version/body/hash/P4 Artifact linkage commits; old P39 selected fact remains eligible for same valid reconciliation path | One immutable P39 `selected_fact_id`/P4 RNO settlement and exact P40 Observation body/hash/ref survive; restart does not reconcile or execute again | `MayHaveStarted`, same-attempt selected `NotOccurred` fact, unchanged reason/fact/Artifact identities |
+| P3 RNO ToolResult handoff | ToolResult, Session source Observation, AgentLoopStepAction disposition and cursor all roll back in the existing one transaction; P4/P39 terminal winner remains | All four P3 facts persist exactly once; restart reads source winner and does not append/advance again | Original P4 `text`/`truncated`, same P3 bounded-payload result hash/source formula, no second Provider/P4 reconcile/Executor |
+| Legacy P39 RNO with P40 evidence absent | P9 replay-evidence fact/event neither commits if its transaction is killed before COMMIT | Retry under same valid current identity yields one `Missing` fact/event; P10 marker/offset is handled by the P10 matrix | No ToolResult/Action/cursor write; P39 selected fact/settlement/ref untouched |
+| Stale lease on missing/corrupt RNO row | No observation/fact read or P9/P10 write | Later current generation revalidates; stale generation remains ownership-lost | `LeaseFencingRejected` only, no replay-evidence Attention from stale holder |
