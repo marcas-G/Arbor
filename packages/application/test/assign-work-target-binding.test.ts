@@ -1,10 +1,4 @@
-import type {
-  CommandSubmissionContext,
-  Execution,
-  PermissionGrant,
-  Work,
-  Workspace,
-} from "@arbor/domain";
+import type { CommandSubmissionContext, PermissionGrant } from "@arbor/domain";
 import {
   type AssignWorkCommandEvidence,
   type AssignWorkControlAuthorizationEvidence,
@@ -18,17 +12,21 @@ import {
 import { Effect, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import {
+  makeWorkFixture,
+  makeWorkspaceFixture,
+} from "../../testkit/dist/index.js";
+import {
   type AssignWorkPayload,
   makeAssignWorkHandler,
 } from "../src/commands/assign-work.js";
 
 const NOW = "2026-10-09T12:00:00.000Z";
-const PROJECT = "prj_target_binding" as never;
-const PARENT = "ws_target_parent" as never;
-const TARGET = "ws_target_child" as never;
-const PARENT_WORK = "wrk_target_parent" as never;
-const WORK = "wrk_target_child" as never;
-const EXECUTION = "exe_target_parent" as never;
+const PROJECT = "prj_00000000-0000-7000-8000-0000000000b1" as never;
+const PARENT = "ws_00000000-0000-7000-8000-0000000000b1" as never;
+const TARGET = "ws_00000000-0000-7000-8000-0000000000b2" as never;
+const PARENT_WORK = "wrk_00000000-0000-7000-8000-0000000000b1" as never;
+const WORK = "wrk_00000000-0000-7000-8000-0000000000b2" as never;
+const EXECUTION = "exe_00000000-0000-7000-8000-0000000000b1" as never;
 const COMMAND = "cmd_target_binding" as never;
 const REF = `wref_${"a".repeat(64)}`;
 const MISSION = {
@@ -66,35 +64,29 @@ const executeAssign = async (input: {
   let approvalConsumedBy: string | undefined;
   let approvalConsumedAt: string | undefined;
   let clockValue = input.commitTime ?? NOW;
-  const parentWork = {
-    workId: PARENT_WORK,
-    projectId: PROJECT,
-    workspaceId: PARENT,
+  const parentWork = makeWorkFixture({
+    workId: String(PARENT_WORK),
+    projectId: String(PROJECT),
+    workspaceId: String(PARENT),
     objective: "parent",
-    why: "parent",
-    constraints: [],
-    completionExpectation: "parent",
-    verificationMission: MISSION,
-    provenance: { predecessorWorkId: null, reason: "root" },
-    lifecycle: "Open",
-    revision: 0,
-  } as unknown as Work;
-  const parent = {
-    workspaceId: PARENT,
-    projectId: PROJECT,
-    parentWorkspaceId: null,
-    currentWorkId: PARENT_WORK,
-    lifecycle: "Active",
+  });
+  const parent = makeWorkspaceFixture({
+    workspaceId: String(PARENT),
+    projectId: String(PROJECT),
+    sessionId: "ses_00000000-0000-7000-8000-0000000000b1",
+    resourcePath: ".",
+    currentWorkId: String(PARENT_WORK),
     revision: 4,
-  } as unknown as Workspace;
-  const child = {
-    workspaceId: TARGET,
-    projectId: PROJECT,
-    parentWorkspaceId: PARENT,
-    currentWorkId: null,
+  });
+  const child = makeWorkspaceFixture({
+    workspaceId: String(TARGET),
+    projectId: String(PROJECT),
+    sessionId: "ses_00000000-0000-7000-8000-0000000000b2",
+    resourcePath: ".",
+    parentWorkspaceId: String(PARENT),
     lifecycle: input.targetLifecycle ?? "Active",
     revision: 3,
-  } as unknown as Workspace;
+  });
   const workspaces = {
     findById: (id: string) =>
       Effect.succeed(Option.some(id === TARGET ? child : parent)),
@@ -125,17 +117,18 @@ const executeAssign = async (input: {
             workspaceId: PARENT,
             binding: {
               _tag: "WorkspaceExecution",
+              workspaceId: PARENT,
               episode: {
                 _tag: "WorkEpisode",
                 workId: PARENT_WORK,
-                targetWorkRevision: 0,
+                targetWorkRevision: 0 as never,
               },
             },
-            sessionId: "ses_parent",
+            sessionId: "ses_00000000-0000-7000-8000-0000000000b1" as never,
             admittedAt: NOW,
             stopRequestedAt: null,
             state: { status: "Active", settlement: null },
-          } as unknown as Execution),
+          }),
         ),
     },
     bindings: { insert: () => Effect.void },

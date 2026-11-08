@@ -9,7 +9,6 @@ import { type Resolver, useForm } from "react-hook-form";
 import { Button } from "../../components/Button.js";
 import { Card } from "../../components/Card.js";
 import { Field } from "../../components/Field.js";
-import { Mono } from "../../views/shared.js";
 import { recordDecisionSchema, zodResolver } from "../schemas.js";
 import type { CommandReceiptView } from "../submitCommand.js";
 import { useCommandSubmission } from "../useCommandSubmission.js";
@@ -66,32 +65,31 @@ export function RecordDecisionForm({
     )();
   };
   return (
-    <Card title="记录治理决策">
+    <Card title="处理待决事项">
       <form className="arbor-command-form" onSubmit={doSubmit}>
-        <p>
-          <Mono>{target.proposalId}</Mono>{" "}
-          <span className="arbor-command-static">
-            revision {target.proposalRevision}
-          </span>
-        </p>
         <p>{target.summary}</p>
         <Field
           control="select"
           label="决策"
+          disabled={
+            state.phase === "submitting" || state.phase === "transport-failed"
+          }
           value={outcome}
           onChange={(next) => {
             setValue("outcome", next as DecisionValues["outcome"]);
           }}
           options={[
-            { value: "Approve", label: "Approve（批准）" },
-            { value: "Reject", label: "Reject（驳回）" },
+            { value: "Approve", label: "批准" },
+            { value: "Reject", label: "驳回" },
           ]}
         />
         <FormFeedback state={state} onRetry={() => doSubmit()} />
         <Button
           variant="primary"
           type="submit"
-          disabled={state.phase === "submitting"}
+          disabled={
+            state.phase === "submitting" || state.phase === "transport-failed"
+          }
         >
           提交决策
         </Button>

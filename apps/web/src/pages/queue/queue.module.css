@@ -211,33 +211,6 @@
   overflow-wrap: anywhere;
 }
 
-.targetList {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--arbor-space-2);
-  width: 100%;
-  margin: 0;
-}
-
-.targetList > div {
-  min-width: 0;
-  padding: var(--arbor-space-2);
-  border: 1px solid var(--arbor-line);
-  border-radius: var(--arbor-radius-small);
-  background: var(--arbor-paper-2);
-}
-
-.targetList dt {
-  margin-bottom: var(--arbor-space-1);
-  color: var(--arbor-ink-soft);
-  font-size: var(--arbor-text-caption);
-}
-
-.targetList dd {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
 .receiptCommitted,
 .receiptRejected {
   margin: 0;
@@ -264,11 +237,5 @@
 
   .detailPanel {
     display: none;
-  }
-}
-
-@media (max-width: 40rem) {
-  .targetList {
-    grid-template-columns: minmax(0, 1fr);
   }
 }

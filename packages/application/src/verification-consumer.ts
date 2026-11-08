@@ -47,6 +47,7 @@ export interface VerificationConsumerEvent {
   readonly eventType: string;
   readonly payload: unknown;
   readonly eventId: string;
+  readonly occurredAt: string;
 }
 
 export interface VerificationConsumerDependencies<R> {
@@ -369,7 +370,7 @@ export const runVerificationConsumer = <R>(
         commandId: ids.commandId,
         projectId,
         actor,
-        issuedAt: new Date().toISOString(),
+        issuedAt: event.occurredAt,
         causationRef: event.eventId,
         payload,
       };

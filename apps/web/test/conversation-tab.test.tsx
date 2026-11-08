@@ -448,11 +448,15 @@ describe("P14-005 conversation tab", () => {
     typeAndSend("重试内容");
     await waitFor(() => expect(screen.getByText("服务不可用")).toBeTruthy());
     expect(harness.commandCalls.length).toBe(1);
-    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    expect(
+      (screen.getByLabelText("消息") as HTMLTextAreaElement).disabled,
+    ).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
     await waitFor(() => expect(harness.commandCalls.length).toBe(2));
     const first = harness.commandCalls[0]?.payload as Record<string, unknown>;
     const second = harness.commandCalls[1]?.payload as Record<string, unknown>;
     expect(second.messageId).toBe(first.messageId);
+    expect(second.bodyRef).toBe(first.bodyRef);
   });
 
   it("shows no optimistic turn, then renders the authoritative correlated pair after refetch", async () => {
@@ -524,7 +528,7 @@ describe("P14-005 conversation tab", () => {
     });
     renderConversation();
     await waitFor(() => expect(screen.getByText("请执行长任务")).toBeTruthy());
-    expect(screen.getByText("正在处理（第 1 次执行）")).toBeTruthy();
+    expect(screen.getByText("正在处理（第 1 次尝试）")).toBeTruthy();
     expect(screen.getByText("紧急停止执行")).toBeTruthy();
   });
 
@@ -568,5 +572,93 @@ describe("P14-005 conversation tab", () => {
         expectedJobRevision: 4,
       },
     });
+  });
+
+  it("presents retry timing and cancellation reasons without raw status values", async () => {
+    installFetch({
+      tree: rootTree,
+      transcriptResponses: [
+        () =>
+          okValue({
+            entries: [
+              {
+                kind: "HumanConversationTurn",
+                messageId: "msg_retry_scheduled",
+                body: "请稍后继续",
+                occurredAt: "2026-09-23T10:00:00.000Z",
+                responseStatus: {
+                  state: "RetryScheduled",
+                  revision: 2,
+                  nextEligibleAt: "2026-09-23T10:05:00.000Z",
+                  safeReason: "模型服务暂时繁忙",
+                },
+              },
+              {
+                kind: "HumanConversationTurn",
+                messageId: "msg_cancelled",
+                body: "停止这次回复",
+                occurredAt: "2026-09-23T10:01:00.000Z",
+                responseStatus: {
+                  state: "Cancelled",
+                  revision: 3,
+                  reason: "HumanCancelled",
+                },
+              },
+            ],
+          } satisfies TranscriptRes),
+      ],
+    });
+    renderConversation();
+    expect(await screen.findByText("等待自动重试")).toBeTruthy();
+    expect(screen.getByTitle("2026-09-23T10:05:00.000Z")).toBeTruthy();
+    expect(screen.getByText("已按你的要求停止")).toBeTruthy();
+    expect(screen.queryByText("HumanCancelled")).toBeNull();
+  });
+
+  it("retries the same interrupted resume request after a network failure", async () => {
+    const harness = installFetch({
+      tree: rootTree,
+      transcriptResponses: [
+        () =>
+          okValue({
+            entries: [
+              {
+                kind: "HumanConversationTurn",
+                messageId: "msg_retry",
+                body: "继续",
+                occurredAt: "2026-09-23T10:00:00.000Z",
+                responseStatus: {
+                  state: "NeedsAttention",
+                  revision: 4,
+                  reason: "DeterministicModelFailure",
+                  canResume: true,
+                },
+              },
+            ],
+          } satisfies TranscriptRes),
+      ],
+      commandResponses: [() => Promise.reject(new Error("offline")), committed],
+    });
+    renderConversation();
+    fireEvent.click(await screen.findByRole("button", { name: "再次尝试" }));
+    const retry = await screen.findByRole("button", { name: "重试" });
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "停止本次回复",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    fireEvent.click(retry);
+    await waitFor(() => expect(harness.commandCalls).toHaveLength(2));
+    expect(harness.commandCalls[1]?.commandId).toBe(
+      harness.commandCalls[0]?.commandId,
+    );
+    expect(harness.commandCalls[1]?.payload).toEqual(
+      harness.commandCalls[0]?.payload,
+    );
+    expect(harness.commandCalls[1]?.commandType).toBe(
+      "ResumeConversationResponse",
+    );
   });
 });

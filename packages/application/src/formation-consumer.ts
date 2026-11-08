@@ -133,7 +133,7 @@ export const runFormationConsumer = (
     readonly eventType: string;
     readonly payload: unknown;
     readonly eventId: string;
-    readonly occurredAt?: string;
+    readonly occurredAt: string;
   }>,
   dependencies: FormationConsumerDependencies,
   projectId: ProjectId,
@@ -274,7 +274,7 @@ export const runFormationConsumer = (
       }
       const principal = decision.decidedBy as unknown as Principal;
       const ids = deriveFormationIds(snapshot.proposalId, snapshot.revision);
-      const attemptedAt = event.occurredAt ?? new Date().toISOString();
+      const attemptedAt = event.occurredAt;
       const fulfillment = (
         state: FormationFulfillmentRecord["state"],
         revision: number,
@@ -311,7 +311,7 @@ export const runFormationConsumer = (
           commandId: ids.createCommandId,
           projectId,
           actor: decision.decidedBy,
-          issuedAt: new Date().toISOString(),
+          issuedAt: event.occurredAt,
           causationRef: event.eventId,
           payload: create.payload,
         },
@@ -398,7 +398,7 @@ export const runFormationConsumer = (
             commandId: ids.assignCommandId,
             projectId,
             actor: decision.decidedBy,
-            issuedAt: new Date().toISOString(),
+            issuedAt: event.occurredAt,
             causationRef: event.eventId,
             payload: assign.payload,
           },

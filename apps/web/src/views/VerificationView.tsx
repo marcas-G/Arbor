@@ -6,47 +6,49 @@ import type { VerificationRes } from "@arbor/api-contracts";
 import { Badge } from "../components/Badge.js";
 import { Empty } from "../components/Empty.js";
 import { useCompactLayout } from "../components/useCompactLayout.js";
-import { EnumBadge, Mono, TimeText } from "./shared.js";
+import { EnumBadge, TimeText } from "./shared.js";
+
+const verdictLabel = (verdict: string): string =>
+  ({ Pass: "通过", Fail: "未通过", Unknown: "无法判断" })[verdict] ?? verdict;
+
+const criterionVerdictLabel = (verdict: string): string =>
+  verdict === "Unknown" ? "未单独记录" : verdictLabel(verdict);
 
 export function VerificationView({ view }: { readonly view: VerificationRes }) {
   const compact = useCompactLayout();
   return (
     <div className="arbor-view-stack">
       <div className="arbor-badge-row">
-        {view.verificationId == null ? null : (
-          <Mono>{view.verificationId}</Mono>
+        <span>总体结果</span>
+        {view.verdict == null ? (
+          <Badge tone="attention">尚无结论</Badge>
+        ) : (
+          <EnumBadge label={verdictLabel(view.verdict)} />
         )}
-        {view.verdict == null ? null : <EnumBadge label={view.verdict} />}
       </div>
       {view.criteriaResults.length === 0 ? (
-        <Empty>无判定结果</Empty>
+        <Empty>尚未设置验证条件</Empty>
       ) : compact ? (
         <ul className="arbor-verification-cards" aria-label="验证条件">
           {view.criteriaResults.map((result) => (
             <li key={result.criterionId} className="arbor-verification-card">
               <dl>
                 <div>
-                  <dt>criterionId</dt>
-                  <dd>
-                    <Mono>{result.criterionId}</Mono>
-                  </dd>
-                </div>
-                <div>
-                  <dt>requirement</dt>
+                  <dt>要求</dt>
                   <dd>{result.requirement}</dd>
                 </div>
                 <div>
-                  <dt>required</dt>
+                  <dt>是否必须</dt>
                   <dd>
                     <Badge tone={result.required ? "branch" : "muted"}>
-                      {result.required ? "required" : "optional"}
+                      {result.required ? "必须" : "可选"}
                     </Badge>
                   </dd>
                 </div>
                 <div>
-                  <dt>verdict</dt>
+                  <dt>单项记录</dt>
                   <dd>
-                    <EnumBadge label={result.verdict} />
+                    <EnumBadge label={criterionVerdictLabel(result.verdict)} />
                   </dd>
                 </div>
               </dl>
@@ -57,26 +59,22 @@ export function VerificationView({ view }: { readonly view: VerificationRes }) {
         <table className="arbor-table">
           <thead>
             <tr>
-              <th scope="col">criterionId</th>
-              <th scope="col">requirement</th>
-              <th scope="col">required</th>
-              <th scope="col">verdict</th>
+              <th scope="col">要求</th>
+              <th scope="col">是否必须</th>
+              <th scope="col">单项记录</th>
             </tr>
           </thead>
           <tbody>
             {view.criteriaResults.map((result) => (
               <tr key={result.criterionId}>
-                <td>
-                  <Mono>{result.criterionId}</Mono>
-                </td>
                 <td>{result.requirement}</td>
                 <td>
                   <Badge tone={result.required ? "branch" : "muted"}>
-                    {result.required ? "required" : "optional"}
+                    {result.required ? "必须" : "可选"}
                   </Badge>
                 </td>
                 <td>
-                  <EnumBadge label={result.verdict} />
+                  <EnumBadge label={criterionVerdictLabel(result.verdict)} />
                 </td>
               </tr>
             ))}
@@ -84,25 +82,18 @@ export function VerificationView({ view }: { readonly view: VerificationRes }) {
         </table>
       )}
       <div className="arbor-kv">
-        <span className="arbor-kv-label">evidenceRefs</span>
+        <span className="arbor-kv-label">依据</span>
         {view.evidenceRefs.length === 0 ? (
-          <Empty>无证据</Empty>
+          <Empty>尚未记录依据</Empty>
         ) : (
-          <ul className="arbor-row-list">
-            {view.evidenceRefs.map((evidenceId) => (
-              <li key={evidenceId}>
-                <Mono>{evidenceId}</Mono>
-              </li>
-            ))}
-          </ul>
+          <span>已记录 {view.evidenceRefs.length} 条依据</span>
         )}
       </div>
       {view.acceptance == null ? null : (
         <div className="arbor-kv">
-          <span className="arbor-kv-label">acceptance</span>
+          <span className="arbor-kv-label">验收</span>
           <span>
-            <Mono>{view.acceptance.acceptanceId}</Mono> {view.acceptance.actor}{" "}
-            <TimeText at={view.acceptance.acceptedAt} />
+            已由用户确认于 <TimeText at={view.acceptance.acceptedAt} />
           </span>
         </div>
       )}

@@ -30,20 +30,27 @@ export function LoginCard() {
     <div className="arbor-session-login">
       <Card title="连接 Arbor">
         <form className="arbor-command-form" onSubmit={connect}>
+          <p>输入工作环境提供的连接信息。信息只在当前页面中使用。</p>
           <Field
             control="input"
-            label="访问令牌（token）"
-            placeholder="仅保存在内存，刷新页面即失效"
+            label="访问凭据"
+            placeholder="粘贴访问凭据"
             value={token}
             onChange={setToken}
           />
           <Field
             control="input"
-            label="执行者（actor）"
-            placeholder="例如：human:root"
+            label="用户标识"
+            placeholder="输入工作环境提供的用户标识"
             value={actor}
             onChange={setActor}
           />
+          <details>
+            <summary>连接信息说明</summary>
+            <p>
+              访问凭据对应 token，用户标识对应 actor。请向工作环境管理员获取。
+            </p>
+          </details>
           <Button
             variant="primary"
             type="submit"

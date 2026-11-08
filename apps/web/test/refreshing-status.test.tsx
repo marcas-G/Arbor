@@ -35,7 +35,7 @@ describe("global cached-query refresh status", () => {
     await act(async () => {
       void client.invalidateQueries({ queryKey: key });
     });
-    expect(await screen.findByText("正在刷新服务器数据")).toBeTruthy();
+    expect(await screen.findByText("正在更新")).toBeTruthy();
     expect(client.getQueryData(key)).toEqual({ rows: ["server row"] });
     expect(client.getQueryState(key)?.fetchStatus).toBe("fetching");
     client.clear();

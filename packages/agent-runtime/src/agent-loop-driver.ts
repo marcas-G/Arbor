@@ -80,6 +80,7 @@ import { recordAcceptedModelOutput } from "./model-output-journal.js";
 import { providerTurnSafetyFingerprint } from "./p12-safety-identity.js";
 import type { AgentLoopQualificationProbe } from "./qualification-probe.js";
 import { selectPendingInputPromotions } from "./safe-input-drain.js";
+import { settlementProposal } from "./settlement-proposal.js";
 
 export interface AgentLoopStepCursor {
   readonly logicalStepNo: number;
@@ -375,6 +376,9 @@ export const AgentLoopDriverLive = (
         readonly safetyGate: RuntimeSafetyGateService;
       }): Effect.Effect<ExecutionDriveOutcome, ExecutionDriverError> =>
         Effect.gen(function* () {
+          const commitSettlementProposal = (
+            settlement: import("@arbor/domain").ExecutionSettlement,
+          ) => settlementProposal(settlement).settlement;
           if (
             input.execution.binding._tag === "WorkspaceExecution" &&
             executionEpisode(input.execution) === undefined
@@ -1044,7 +1048,11 @@ export const AgentLoopDriverLive = (
           ): Effect.Effect<ModelDecisionOutcome, ExecutionDriverError> =>
             runModelDecision(
               {
-                input,
+                input: {
+                  execution: input.execution,
+                  agentExecutionState: input.agentExecutionState,
+                  context: input.context,
+                },
                 agentBinding,
                 capability,
                 currentControlBasis,
@@ -1119,9 +1127,24 @@ export const AgentLoopDriverLive = (
                   inboxOption.value.listUnconsumed(input.execution.workspaceId),
                 )
                 .pipe(Effect.mapError(failure));
-              for (const selected of selectPendingInputPromotions(pending, {
-                freshDrain: turn === 0,
-              })) {
+              const workExecution =
+                input.execution.binding._tag === "WorkspaceExecution" &&
+                executionEpisode(input.execution)?._tag === "WorkEpisode";
+              // Child PASS notifications are addressed to the owning Parent
+              // Work. A RootConversation must not consume them before that
+              // Work is admitted; doing so loses the ready result from the
+              // Work's durable frontier.
+              const eligiblePending = workExecution
+                ? pending
+                : pending.filter(
+                    (entry) => !entry.entryKey.startsWith("child-result:"),
+                  );
+              for (const selected of selectPendingInputPromotions(
+                eligiblePending,
+                {
+                  freshDrain: turn === 0,
+                },
+              )) {
                 yield* inputPromotionOption.value
                   .promoteInbox({
                     workspaceId: input.execution.workspaceId,
@@ -1143,7 +1166,7 @@ export const AgentLoopDriverLive = (
                 : undefined,
             );
             if (modelDecision._tag === "Settle") {
-              return modelDecision.settlement;
+              return commitSettlementProposal(modelDecision.settlement);
             }
             if (modelDecision._tag === "SubmittedDecisionBindingMismatch") {
               return modelDecision;
@@ -1220,7 +1243,7 @@ export const AgentLoopDriverLive = (
                 : { qualificationProbe: options.qualificationProbe }),
             });
             if (actionProgression._tag === "Settle") {
-              return actionProgression.settlement;
+              return commitSettlementProposal(actionProgression.settlement);
             }
             if (actionProgression._tag === "SandboxProviderUnavailable") {
               return actionProgression;
@@ -1261,7 +1284,7 @@ export const AgentLoopDriverLive = (
                 : { qualificationProbe: options.qualificationProbe }),
             });
             if (finalization._tag === "Settle") {
-              return finalization.settlement;
+              return commitSettlementProposal(finalization.settlement);
             }
           }
           return {

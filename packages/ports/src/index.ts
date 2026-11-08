@@ -43,6 +43,7 @@ export * from "./sandbox-policy-requirement.js";
 export * from "./sandbox-process.js";
 export * from "./sandbox-provider-unavailable.js";
 export * from "./session.js";
+export * from "./session-provenance.js";
 export * from "./session-timeline.js";
 export * from "./snapshot-fingerprint.js";
 export * from "./tool.js";

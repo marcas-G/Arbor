@@ -33,7 +33,7 @@ test("a user creates a project, chats, and sees the answer after restart", async
   await expect(conversationOnly).toBeVisible();
   await expect(conversationOnly).not.toBeChecked();
   await expect(
-    page.getByText(/不能使用文件工具，也不能完成需要文件证据的 Work/u),
+    page.getByText(/不能使用文件工具，也不能完成需要文件证据的工作/u),
   ).toBeVisible();
   await page.getByLabel("项目名称").fill("功能测试项目");
   await conversationOnly.click();

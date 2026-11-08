@@ -97,6 +97,27 @@ export interface GatewayEnvelope<C> {
   ) => Effect.Effect<CriticalSteerPreparation, CommandHandlerError>;
 }
 
+/**
+ * Explicitly erases a typed handler at the registry boundary. The gateway
+ * decodes and validates the payload before invoking this handler; keeping the
+ * unavoidable variance cast here prevents individual registries from hiding
+ * ad-hoc `as unknown as` conversions in business wiring.
+ */
+export const eraseCommandHandler = <C, R>(
+  handler: CommandHandler<C, R>,
+): CommandHandler<unknown, unknown> => ({
+  commandType: handler.commandType,
+  schemaVersion: handler.schemaVersion,
+  authority: handler.authority as CommandAuthorityRule<unknown>,
+  stopAdmission: handler.stopAdmission,
+  execute: (envelope, context) =>
+    handler.execute(envelope as GatewayEnvelope<C>, context) as Effect.Effect<
+      CommandResult<CommandOutcome<unknown>>,
+      CommandHandlerError,
+      TransactionScope
+    >,
+});
+
 export interface CommandOutcome<R> {
   readonly result: R;
   readonly events: ReadonlyArray<PendingDomainEvent>;

@@ -35,6 +35,7 @@ export interface CoordinatorEvent {
   readonly eventType: string;
   readonly payload: unknown;
   readonly eventId: string;
+  readonly occurredAt: string;
 }
 
 /** Deliverable-side candidate snapshot for the dependency-side re-check.
@@ -179,6 +180,7 @@ export const runDependencyCoordinator = <R>(
       dependency: Dependency,
       view: DeliverableMatchView,
       eventId: string,
+      occurredAt: string,
     ): Effect.Effect<string, never, R> =>
       Effect.gen(function* () {
         const targetWorkspaceId = yield* workspaceOf(dependency.consumerWorkId);
@@ -202,7 +204,7 @@ export const runDependencyCoordinator = <R>(
           commandId,
           projectId,
           actor,
-          issuedAt: new Date().toISOString(),
+          issuedAt: occurredAt,
           causationRef: eventId,
           payload,
         };
@@ -282,7 +284,9 @@ export const runDependencyCoordinator = <R>(
             );
             continue;
           }
-          records.push(yield* submit(dependency, view, event.eventId));
+          records.push(
+            yield* submit(dependency, view, event.eventId, event.occurredAt),
+          );
         }
       } else if (DEPENDENCY_SIDE_TRIGGERS.has(event.eventType)) {
         const trigger = asDependencyTrigger(event.payload);
@@ -322,7 +326,9 @@ export const runDependencyCoordinator = <R>(
           ) {
             continue;
           }
-          records.push(yield* submit(dependency, view, event.eventId));
+          records.push(
+            yield* submit(dependency, view, event.eventId, event.occurredAt),
+          );
         }
       }
     }

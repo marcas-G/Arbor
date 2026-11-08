@@ -11,7 +11,11 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { UsagePage } from "../src/pages/usage/UsagePage.js";
 import { SessionContext } from "../src/session/SessionContext.js";
-import { usageMinimal, usageTypical } from "../src/views/fixtures.js";
+import {
+  treeTypical,
+  usageMinimal,
+  usageTypical,
+} from "../src/views/fixtures.js";
 
 type Thunk = () => unknown | Promise<unknown>;
 
@@ -34,6 +38,15 @@ const makeFetch = (responses: ReadonlyArray<Thunk>) => {
       seenUrls.push(url);
       if (!url.startsWith("/views/")) {
         throw new Error(`non-view fetch blocked: ${url}`);
+      }
+      if (url === "/views/responsibility-tree") {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            body: { value: treeTypical, watermark: 1 },
+          }),
+          { status: 200 },
+        );
       }
       const thunk = responses[Math.min(calls, responses.length - 1)];
       calls += 1;
@@ -106,13 +119,13 @@ describe("W-07 UsagePage (frozen §2.9)", () => {
     expect(fetchMock.bodies).toEqual([
       { projectId: "prj_1", groupBy: "workspace" },
     ]);
-    fireEvent.click(screen.getByRole("button", { name: "subtree" }));
+    fireEvent.click(screen.getByRole("button", { name: "含下级责任" }));
     await waitFor(() => expect(fetchMock.bodies.length).toBe(2));
     expect(fetchMock.bodies[1]).toEqual({
       projectId: "prj_1",
       groupBy: "subtree",
     });
-    fireEvent.click(screen.getByRole("button", { name: "project" }));
+    fireEvent.click(screen.getByRole("button", { name: "整个项目" }));
     await waitFor(() => expect(fetchMock.bodies.length).toBe(3));
     expect(fetchMock.bodies[2]).toEqual({
       projectId: "prj_1",
@@ -131,13 +144,13 @@ describe("W-07 UsagePage (frozen §2.9)", () => {
         (cell) => cell.textContent,
       ),
     ).toEqual([
-      "ws_018f6a2e-0000-7000-8000-000000000001",
+      "平台根工作区",
       "1200",
       "0.42 USD",
       "7",
-      "ws_018f6a2e-0000-7000-8000-000000000002",
+      "前端渲染",
       "300",
-      "unknown",
+      "暂不可用",
       "2",
     ]);
     expect(container.querySelectorAll("tbody tr").length).toBe(2);
@@ -158,14 +171,14 @@ describe("W-07 UsagePage (frozen §2.9)", () => {
     expect(screen.getByRole("list", { name: "用量明细" })).toBeTruthy();
     expect(screen.queryByRole("table")).toBeNull();
     expect(screen.getByText("1200")).toBeTruthy();
-    expect(screen.getByText("unknown")).toBeTruthy();
+    expect(screen.getByText("暂不可用")).toBeTruthy();
     expect(screen.queryByText(/合计/)).toBeNull();
   });
 
-  it("cost Unknown 原样渲染 unknown，绝不为 0", async () => {
+  it("cost Unknown 显示为暂不可用，绝不为 0", async () => {
     vi.stubGlobal("fetch", makeFetch([okBody(usageTypical)]).fn);
     renderUsage();
-    expect((await screen.findAllByText("unknown")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("暂不可用")).length).toBeGreaterThan(0);
     expect(screen.queryByText(/^0(\.0+)?\sUSD$/)).toBeNull();
   });
 

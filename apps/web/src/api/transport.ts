@@ -43,6 +43,10 @@ const isProblem = (value: unknown): value is Problem => {
   );
 };
 
+/** Normalize a query-library rejection after transport validation. */
+export const problemFromUnknown = (value: unknown): Problem =>
+  isProblem(value) ? value : localProblem("view/unexpected-error");
+
 export interface ViewFetchOptions {
   readonly token: string | null;
   readonly signal?: AbortSignal | undefined;

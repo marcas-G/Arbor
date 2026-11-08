@@ -8,12 +8,7 @@ import type {
   WorkDetailRes,
   WorkspaceDetailRes,
 } from "../packages/api-contracts/src/index.js";
-import {
-  parse,
-  type Verification,
-  WorkId,
-  WorkRevision,
-} from "../packages/domain/dist/index.js";
+import { parse, WorkId, WorkRevision } from "../packages/domain/dist/index.js";
 import {
   AUDIT_TIMELINE_EVENT_TYPES,
   deriveAuditTimeline,
@@ -24,6 +19,7 @@ import {
   deriveWorkspaceDetail,
   makeProjectionQueryService,
 } from "../packages/projection-runtime/src/index.js";
+import { makeVerificationFixture } from "../packages/testkit/dist/index.js";
 import {
   insertAcceptanceRow,
   insertDependencyRow,
@@ -829,7 +825,7 @@ describe("P10-006 Verification view (01 §1 ⑤)", () => {
         yield* seedCanonical(
           Effect.gen(function* () {
             yield* insertVerificationRow({
-              verificationId: "ver_d2",
+              verificationId: "ver_00000000-0000-7000-8000-0000000000d2",
               workId: W_PEND,
               targetWorkRevision: 3,
               ownerWorkspaceId: p10Root,
@@ -1199,7 +1195,7 @@ describe("P10-006 ProjectionQueryPort bindings (05 §1: envelope + typed errors)
           },
         });
         yield* insertVerificationRow({
-          verificationId: "ver_d2",
+          verificationId: "ver_00000000-0000-7000-8000-0000000000d2",
           workId: W_DONE,
           targetWorkRevision: 0,
           ownerWorkspaceId: p10Root,
@@ -1211,7 +1207,7 @@ describe("P10-006 ProjectionQueryPort bindings (05 §1: envelope + typed errors)
           acceptanceId: "acc_00000000-0000-7000-8000-0000000000d2",
           workId: W_DONE,
           targetWorkRevision: 0,
-          verificationId: "ver_d2",
+          verificationId: "ver_00000000-0000-7000-8000-0000000000d2",
           actor: "user:gov",
           acceptedAt: "t5",
         });
@@ -1259,7 +1255,7 @@ describe("P10-006 ProjectionQueryPort bindings (05 §1: envelope + typed errors)
           lifecycle: "Completed",
           revision: 0,
           acceptedResult: {
-            verificationId: "ver_d2",
+            verificationId: "ver_00000000-0000-7000-8000-0000000000d2",
             targetWorkRevision: 0,
             verdict: "Pass",
           },
@@ -1268,16 +1264,15 @@ describe("P10-006 ProjectionQueryPort bindings (05 §1: envelope + typed errors)
           acceptanceId: "acc_00000000-0000-7000-8000-0000000000d2" as never,
           workId: W_DONE,
           targetWorkRevision: 0 as never,
-          verificationId: "ver_d2" as never,
+          verificationId: "ver_00000000-0000-7000-8000-0000000000d2" as never,
           actor: "user:gov" as never,
           acceptedAt: "t5",
         };
-        const validVerification = {
-          verificationId: "ver_d2" as never,
-          workId: W_DONE,
-          targetWorkRevision: 0 as never,
-          state: { status: "Concluded", verdict: "Pass" },
-        } as unknown as Verification;
+        const validVerification = makeVerificationFixture({
+          verificationId: "ver_00000000-0000-7000-8000-0000000000d2",
+          workId: String(W_DONE),
+          verdict: "Pass",
+        });
         const badBindings = [
           {
             acceptance: { ...validAcceptance, workId: W_PEND },

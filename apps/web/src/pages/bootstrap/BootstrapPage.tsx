@@ -23,10 +23,10 @@ export function BootstrapPage({
         <span className="arbor-bootstrap-mark">
           <Icon name="leaf" size={28} />
         </span>
-        <p className="arbor-bootstrap-eyebrow">ARBOR WORKSPACE</p>
+        <p className="arbor-bootstrap-eyebrow">开始使用 Arbor</p>
         <h1>把复杂目标，变成持续推进的工作</h1>
         <p>
-          创建一个项目。Arbor 会用长期责任组织工作，并在对话中与你协作推进。
+          创建一个项目。Arbor 会用清晰分工组织工作，并在对话中与你协作推进。
         </p>
       </section>
       <div className="arbor-session-login">
@@ -34,6 +34,7 @@ export function BootstrapPage({
           actor={session.actor ?? "user:root"}
           token={session.token ?? undefined}
           onSubmitted={onSubmitted}
+          quickStart
         />
       </div>
     </div>

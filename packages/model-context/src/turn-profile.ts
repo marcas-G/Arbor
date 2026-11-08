@@ -1,5 +1,5 @@
 import type { Execution, ExecutionId } from "@arbor/domain";
-import { executionEpisode } from "@arbor/domain";
+import { executionEpisode, workEpisode } from "@arbor/domain";
 import {
   ControlToolCatalogPort,
   type ControlToolCatalogPortService,
@@ -64,7 +64,7 @@ const purposeOf = (
         ? "WorkspaceInput"
         : executionEpisode(execution)?._tag === "DecisionEpisode"
           ? "WorkspaceDecision"
-          : executionEpisode(execution)?._tag === "WorkEpisode"
+          : workEpisode(execution) !== null
             ? "WorkspaceWork"
             : "LegacyAmbiguous";
 

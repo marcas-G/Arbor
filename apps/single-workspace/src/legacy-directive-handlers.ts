@@ -30,6 +30,7 @@ import {
   Clock,
   type ExecutionDriverError,
   FormationProposalStore,
+  IdGenerator,
   InboxProjectionStore,
   MessageStore,
   SkillRegistry,
@@ -133,6 +134,7 @@ export interface ProposeChildWorkspaceDependencies {
   readonly proposals: import("@arbor/ports").FormationProposalStoreService;
   readonly tx: import("@arbor/ports").TransactionPortService;
   readonly clock: import("@arbor/ports").ClockService;
+  readonly ids?: import("@arbor/ports").IdGeneratorService;
 }
 
 /** P6 `01` §4: first-layer proposals go to the governance gate (D1);
@@ -158,7 +160,11 @@ export const makeProposeChildWorkspaceHandler = (
         );
       }
       const spec = directive.spec;
-      const proposalId = newFormationProposalId();
+      const proposalSeed =
+        dependencies.ids === undefined
+          ? `${execution.executionId}:${JSON.stringify(spec)}`
+          : yield* dependencies.ids.generate<string>("FormationProposalId");
+      const proposalId = newFormationProposalId(proposalSeed);
       const record = admitFormationProposal({
         proposalId,
         parentWorkspaceId: execution.workspaceId,
@@ -356,6 +362,7 @@ export const LegacyLegacyDirectiveHandlersLive: Layer.Layer<
   | CommandGateway
   | WorkspaceRepository
   | FormationProposalStore
+  | IdGenerator
   | InboxProjectionStore
   | MessageStore
 > = Layer.effect(
@@ -369,6 +376,7 @@ export const LegacyLegacyDirectiveHandlersLive: Layer.Layer<
     const gateway = yield* CommandGateway;
     const workspaces = yield* WorkspaceRepository;
     const proposals = yield* FormationProposalStore;
+    const ids = yield* IdGenerator;
 
     const invokeTool: LegacyDirectiveHandler = {
       kind: "InvokeTool",
@@ -508,6 +516,7 @@ export const LegacyLegacyDirectiveHandlersLive: Layer.Layer<
         proposals,
         tx,
         clock,
+        ids,
       }),
       makeSpawnSpecialistHandler({
         gateway,
@@ -515,6 +524,7 @@ export const LegacyLegacyDirectiveHandlersLive: Layer.Layer<
         proposals,
         tx,
         clock,
+        ids,
       }),
     ]);
   }),
