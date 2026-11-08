@@ -20,6 +20,7 @@ import {
   P52_WORK_CONTRACT_REVISION_MIGRATION,
   P53_CANONICAL_OWNERSHIP_CARVEOUTS_MIGRATION,
   P54_NATIVE_PROCESS_MODE_NO_EFFECT_DENIAL_MIGRATION,
+  P55_SESSION_CAUSAL_PROVENANCE_MIGRATION,
   preflightVerificationEvidenceSnapshot,
   runMigrations,
   runP39SqliteMaintenance,
@@ -81,7 +82,8 @@ export interface Schema42TestDatabaseOptions {
     | 51
     | 52
     | 53
-    | 54;
+    | 54
+    | 55;
 }
 
 export interface Schema42TestDatabaseFactory {
@@ -219,6 +221,7 @@ export const upgradeSchema44ToCurrentTestDatabase = async (input: {
   await upgradeSchema52Suffix(input.databaseFilename);
   await upgradeSchema53Suffix(input.databaseFilename);
   await upgradeSchema54Suffix(input.databaseFilename);
+  await upgradeSchema55Suffix(input.databaseFilename);
 
   const database = new DatabaseSync(input.databaseFilename, { readOnly: true });
   try {
@@ -500,6 +503,28 @@ const upgradeSchema54Suffix = async (
     throw new Schema42TestDatabaseSetupError(
       "SCHEMA42_SETUP_FAILED",
       `Schema-54 disposable fixture upgrade ended at user_version ${version}, expected 54.`,
+      version,
+    );
+  }
+  await checkpointSqlite(databaseFilename);
+};
+
+const upgradeSchema55Suffix = async (
+  databaseFilename: string,
+): Promise<void> => {
+  await runPrimary(
+    databaseFilename,
+    Effect.gen(function* () {
+      yield* runMigrations([P55_SESSION_CAUSAL_PROVENANCE_MIGRATION], {
+        allowOfflineOnly: true,
+      });
+    }),
+  );
+  const version = await readUserVersion(databaseFilename);
+  if (version !== 55) {
+    throw new Schema42TestDatabaseSetupError(
+      "SCHEMA42_SETUP_FAILED",
+      `Schema-55 disposable fixture upgrade ended at user_version ${version}, expected 55.`,
       version,
     );
   }
@@ -925,7 +950,8 @@ export const createSchema42TestDatabase = async (
       options.targetSchemaVersion === 51 ||
       options.targetSchemaVersion === 52 ||
       options.targetSchemaVersion === 53 ||
-      options.targetSchemaVersion === 54
+      options.targetSchemaVersion === 54 ||
+      options.targetSchemaVersion === 55
         ? `arbor-schema${options.targetSchemaVersion}-test-`
         : options.targetSchemaVersion === 44
           ? "arbor-schema44-test-"
@@ -948,14 +974,15 @@ export const createSchema42TestDatabase = async (
     }
 
     const target = options.targetSchemaVersion;
-    if (target !== undefined && target >= 45 && target <= 54) {
+    if (target !== undefined && target >= 45 && target <= 55) {
       await upgradeSchema44TestDatabase({
         databaseFilename,
         p39ReportFilename,
         beforeP39Maintenance: options.beforeP39Maintenance,
       });
-      if (target === 54) {
+      if (target === 55) {
         await upgradeSchema44ToCurrentTestDatabase({ databaseFilename });
+      } else if (target === 54) {
       } else {
         await upgradeSchema45Suffix(databaseFilename);
         if (target >= 46) await upgradeSchema46Suffix(databaseFilename);
@@ -1080,7 +1107,8 @@ export const createSchema42TestDatabaseFactory = async (
       options.targetSchemaVersion === 51 ||
       options.targetSchemaVersion === 52 ||
       options.targetSchemaVersion === 53 ||
-      options.targetSchemaVersion === 54
+      options.targetSchemaVersion === 54 ||
+      options.targetSchemaVersion === 55
         ? `arbor-schema${options.targetSchemaVersion}-template-`
         : options.targetSchemaVersion === 44
           ? "arbor-schema44-template-"
@@ -1106,7 +1134,8 @@ export const createSchema42TestDatabaseFactory = async (
           options.targetSchemaVersion === 51 ||
           options.targetSchemaVersion === 52 ||
           options.targetSchemaVersion === 53 ||
-          options.targetSchemaVersion === 54
+          options.targetSchemaVersion === 54 ||
+          options.targetSchemaVersion === 55
           ? `arbor-schema${options.targetSchemaVersion}-clone-`
           : options.targetSchemaVersion === 44
             ? "arbor-schema44-clone-"

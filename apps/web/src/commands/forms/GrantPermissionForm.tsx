@@ -23,6 +23,23 @@ import "./forms.css";
 
 const CUSTOM = "__custom__";
 
+export const capabilityLabel = (capability: string): string =>
+  ({
+    CreateProject: "创建项目",
+    RenameProject: "重命名项目",
+    CloseProject: "归档项目",
+    RecordDecision: "确认项目决策",
+    ResolveControlApproval: "批准敏感操作",
+    SteerWork: "调整工作方向",
+    AcceptWorkOutcome: "验收工作成果",
+    StopExecution: "停止当前运行",
+    GrantPermission: "授予权限",
+    RevokePermission: "撤销权限",
+    SubmitHumanMessage: "发送消息",
+    ResumeConversationResponse: "继续生成回复",
+    CancelConversationResponse: "取消生成回复",
+  })[capability] ?? capability;
+
 type GrantValues = {
   subjectKind: "HumanPrincipal" | "WorkspaceAgent" | "Execution";
   subjectRef: string;

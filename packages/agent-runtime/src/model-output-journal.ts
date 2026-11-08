@@ -1,5 +1,5 @@
 import type { CommandSubmissionContext, Execution } from "@arbor/domain";
-import { executionEpisode } from "@arbor/domain";
+import { executionEpisode, workEpisode } from "@arbor/domain";
 import type { ModelOutput, PreparedModelTurn } from "@arbor/model-context";
 import type {
   AgentLoopStepFence,
@@ -15,6 +15,7 @@ import type {
 import {
   encodeReasoningAttachment,
   PROVIDER_REASONING_ATTACHMENT_MEDIA_TYPE,
+  sessionCausalBindingForWork,
   sha256Hex,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
@@ -84,6 +85,17 @@ export const recordAcceptedModelOutput = (
   } = dependencies;
 
   return Effect.gen(function* () {
+    const workBinding = workEpisode(input.execution);
+    const causalBinding =
+      workBinding === null
+        ? undefined
+        : sessionCausalBindingForWork({
+            projectId: input.execution.projectId,
+            workspaceId: input.execution.workspaceId,
+            workId: workBinding.workId,
+            executionId: input.execution.executionId,
+            causedByRef: String(preparedTurn.manifest.providerTurnId),
+          });
     const modelOutputPayload = {
       providerTurnId: preparedTurn.manifest.providerTurnId,
       outputContractRef: preparedTurn.manifest.outputContractRef,
@@ -185,6 +197,7 @@ export const recordAcceptedModelOutput = (
                           finishReason: decodedOutput.finishReason,
                         }),
                       ),
+                      ...(causalBinding === undefined ? {} : { causalBinding }),
                     },
                     loopStepFence,
                   )
@@ -197,6 +210,7 @@ export const recordAcceptedModelOutput = (
                     { entryKind: "ModelOutput", payload: modelOutputPayload },
                     sha256Hex(JSON.stringify(modelOutputPayload)),
                     loopStepFence,
+                    causalBinding,
                   );
               if (reasoningAttachmentItem !== undefined) {
                 if (!typed) {
@@ -216,6 +230,7 @@ export const recordAcceptedModelOutput = (
                     contentHash: sha256Hex(
                       JSON.stringify(reasoningAttachmentItem),
                     ),
+                    ...(causalBinding === undefined ? {} : { causalBinding }),
                   },
                   loopStepFence,
                 );
@@ -240,6 +255,7 @@ export const recordAcceptedModelOutput = (
                         ref: `${preparedTurn.manifest.providerTurnId}:${invocation.callRef}`,
                       },
                       contentHash: sha256Hex(JSON.stringify(item)),
+                      ...(causalBinding === undefined ? {} : { causalBinding }),
                     },
                     loopStepFence,
                   );
@@ -290,6 +306,7 @@ export const recordAcceptedModelOutput = (
             input.context._tag === "ExecutionOrigin"
               ? sessionFence(input.execution.executionId, input.context)
               : undefined,
+            causalBinding,
           ),
         )
         .pipe(Effect.mapError(failure));

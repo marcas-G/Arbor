@@ -17,6 +17,7 @@ import {
   workEpisode as exactWorkEpisode,
   executionEpisode,
   providerTurnInferenceId,
+  workEpisode,
 } from "@arbor/domain";
 import {
   type ControlBasis,
@@ -48,6 +49,7 @@ import type {
 import {
   SandboxPolicyDecisionStore,
   SandboxProviderUnavailableStore,
+  sessionCausalBindingForWork,
   sha256Hex,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
@@ -623,6 +625,17 @@ export const executeAgentLoopActions = (
       SandboxPolicyDecisionStore,
     );
     let currentLoopStep = dependencies.currentLoopStep;
+    const workBinding = workEpisode(input.execution);
+    const causalBinding =
+      workBinding === null
+        ? undefined
+        : sessionCausalBindingForWork({
+            projectId: input.execution.projectId,
+            workspaceId: input.execution.workspaceId,
+            workId: workBinding.workId,
+            executionId: input.execution.executionId,
+            causedByRef: String(preparedTurn.manifest.providerTurnId),
+          });
     const observations: Array<{
       readonly source: "Runtime" | "Tool";
       readonly observation: BoundedObservation;
@@ -1058,6 +1071,7 @@ export const executeAgentLoopActions = (
                   ref: observationSourceRef,
                 },
                 contentHash: sha256Hex(JSON.stringify(item)),
+                ...(causalBinding === undefined ? {} : { causalBinding }),
               },
               fence,
             );
@@ -1084,6 +1098,7 @@ export const executeAgentLoopActions = (
               { entryKind: "Observation", payload },
               sha256Hex(JSON.stringify(payload)),
               fence,
+              causalBinding,
             );
           }
           return { resultRef, observationSourceRef };
@@ -1575,6 +1590,7 @@ export const executeAgentLoopActions = (
                         ref: observationSourceRef,
                       },
                       contentHash: sha256Hex(JSON.stringify(item)),
+                      ...(causalBinding === undefined ? {} : { causalBinding }),
                     },
                     loopStepFence,
                   );
@@ -1594,6 +1610,7 @@ export const executeAgentLoopActions = (
                     { entryKind: "Observation", payload: durablePayload },
                     sha256Hex(JSON.stringify(durablePayload)),
                     loopStepFence,
+                    causalBinding,
                   );
                 }
                 yield* loopSteps.transitionAction(

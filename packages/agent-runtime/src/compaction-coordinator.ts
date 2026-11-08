@@ -5,6 +5,7 @@ import {
   parse,
   providerTurnNativeCompactionId,
   providerTurnSummaryCompactionId,
+  workEpisode,
 } from "@arbor/domain";
 import type {
   ExecutionActivity,
@@ -19,7 +20,7 @@ import type {
   SessionWriteFence,
   TransactionPortService,
 } from "@arbor/ports";
-import { sha256Hex } from "@arbor/ports";
+import { sessionCausalBindingForWork, sha256Hex } from "@arbor/ports";
 import { Effect } from "effect";
 import type { AgentLoopQualificationProbe } from "./qualification-probe.js";
 
@@ -107,6 +108,17 @@ const commitCheckpointEpoch = (
   deps: Pick<CompactionDependencies, "sessions" | "tx" | "qualificationProbe">,
 ) =>
   Effect.gen(function* () {
+    const workBinding = workEpisode(input.execution);
+    const causalBinding =
+      workBinding === null
+        ? undefined
+        : sessionCausalBindingForWork({
+            projectId: input.execution.projectId,
+            workspaceId: input.execution.workspaceId,
+            workId: workBinding.workId,
+            executionId: input.execution.executionId,
+            causedByRef: String(input.providerTurnId),
+          });
     const probe = deps.qualificationProbe;
     const probeIdentity = {
       executionId: String(input.execution.executionId),
@@ -129,6 +141,7 @@ const commitCheckpointEpoch = (
           checkpoint: input.checkpoint,
           source: { kind: "CompactionTurn", ref: input.providerTurnId },
           contentHash: sha256Hex(JSON.stringify(input.checkpoint)),
+          ...(causalBinding === undefined ? {} : { causalBinding }),
         },
         input.fence,
       ),

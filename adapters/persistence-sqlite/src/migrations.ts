@@ -2594,6 +2594,15 @@ ${p40InvocationObservationGuardsForP54}
 `,
 } satisfies MigrationFile & { readonly requiresUserVersion: 53 };
 
+/** PP-W401 additive Session provenance migration. Historical rows remain NULL
+ * and are never inferred into a Work frontier. */
+export const P55_SESSION_CAUSAL_PROVENANCE_MIGRATION: MigrationFile = {
+  id: 55,
+  name: "session_causal_provenance",
+  sql: `ALTER TABLE session_entries ADD COLUMN causal_binding_json TEXT;`,
+  requiresUserVersion: 54,
+} satisfies MigrationFile & { readonly requiresUserVersion: 54 };
+
 /**
  * Schema 44 is the current runtime target. P39 remains an exact privileged
  * maintenance-only step and is deliberately absent from this registry; the
@@ -2606,7 +2615,7 @@ export const P43_MIGRATION = {
   sql: P43_BLOCKED_WORKEPISODE_MIGRATION.sql,
 } satisfies MigrationFile & { readonly requiresUserVersion: 42 };
 
-export const CURRENT_SCHEMA_VERSION = 54 as const;
+export const CURRENT_SCHEMA_VERSION = 55 as const;
 export const CURRENT_MIGRATIONS: ReadonlyArray<MigrationFile> = Object.freeze([
   ...P38_MIGRATIONS,
   P40_TOOL_OBSERVATION_REPLAY_MIGRATION,
@@ -2624,5 +2633,6 @@ export const CURRENT_MIGRATIONS: ReadonlyArray<MigrationFile> = Object.freeze([
   P52_WORK_CONTRACT_REVISION_MIGRATION,
   P53_CANONICAL_OWNERSHIP_CARVEOUTS_MIGRATION,
   P54_NATIVE_PROCESS_MODE_NO_EFFECT_DENIAL_MIGRATION,
+  P55_SESSION_CAUSAL_PROVENANCE_MIGRATION,
 ]);
 export const CURRENT_MIGRATION_BASELINE = CURRENT_SCHEMA_VERSION;

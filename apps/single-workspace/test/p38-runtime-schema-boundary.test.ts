@@ -106,7 +106,7 @@ const readReadiness = (filename: string) => {
   );
 };
 
-describe("schema 54 runtime startup boundary", () => {
+describe("schema 55 runtime startup boundary", () => {
   it.each([38, 48, 51, 52, 53])(
     "refuses schema %i during composition before exposing runtime services",
     async (version) => {
@@ -130,7 +130,7 @@ describe("schema 54 runtime startup boundary", () => {
       }
 
       expect(JSON.stringify(failure)).toContain(
-        `database user_version ${version} requires an offline upgrade to schema 54`,
+        `database user_version ${version} requires an offline upgrade to schema 55`,
       );
       expect(await readVersion(filename)).toBe(version);
     },
@@ -167,7 +167,7 @@ describe("schema 54 runtime startup boundary", () => {
       }
 
       expect(JSON.stringify(failure)).toContain(
-        `database user_version ${version} requires an offline upgrade to schema 54`,
+        `database user_version ${version} requires an offline upgrade to schema 55`,
       );
       expect(webListening).toBe(false);
       expect(await readVersion(filename)).toBe(version);
@@ -175,7 +175,7 @@ describe("schema 54 runtime startup boundary", () => {
     60_000,
   );
 
-  it("admits exactly schema 54 and makes the production migration hook a no-op", async () => {
+  it("admits exactly schema 55 and makes the production migration hook a no-op", async () => {
     const fixture = await createSchema48TestDatabase();
     const filename = fixture.databaseFilename;
     try {
@@ -195,13 +195,13 @@ describe("schema 54 runtime startup boundary", () => {
       );
 
       expect(result).toBe(0);
-      expect(await readVersion(filename)).toBe(54);
+      expect(await readVersion(filename)).toBe(55);
     } finally {
       fixture.cleanup();
     }
   }, 120_000);
 
-  it("completes a real --once daemon startup and Web bind from the schema-54 fixture", async () => {
+  it("completes a real --once daemon startup and Web bind from the schema-55 fixture", async () => {
     const fixture = await createSchema48TestDatabase({
       prefix: ".schema-48-runtime-once-",
     });
@@ -232,7 +232,7 @@ describe("schema 54 runtime startup boundary", () => {
         ),
       );
       expect(listeningPort).toBeGreaterThan(0);
-      expect(await readVersion(fixture.databaseFilename)).toBe(54);
+      expect(await readVersion(fixture.databaseFilename)).toBe(55);
     } finally {
       fixture.cleanup();
     }
@@ -240,7 +240,7 @@ describe("schema 54 runtime startup boundary", () => {
 
   it("rejects schemas newer than the explicit runtime target", async () => {
     const filename = databaseFile();
-    await seedVersion(filename, 55);
+    await seedVersion(filename, 56);
 
     let failure: unknown;
     try {
@@ -259,12 +259,12 @@ describe("schema 54 runtime startup boundary", () => {
     }
 
     expect(JSON.stringify(failure)).toContain(
-      "database user_version 55 is newer than latest migration 54",
+      "database user_version 56 is newer than latest migration 55",
     );
-    expect(await readVersion(filename)).toBe(55);
+    expect(await readVersion(filename)).toBe(56);
   });
 
-  it("marks readiness only when user_version exactly matches schema 54", async () => {
+  it("marks readiness only when user_version exactly matches schema 55", async () => {
     const filename = databaseFile();
     await seedVersion(filename, 41);
     expect(await readReadiness(filename)).toEqual({
@@ -330,7 +330,7 @@ describe("schema 54 runtime startup boundary", () => {
       migrationBaseline: false,
       t1RecoveryComplete: false,
     });
-    await seedVersion(filename, 54);
+    await seedVersion(filename, 55);
     expect(await readReadiness(filename)).toEqual({
       dbOpen: true,
       migrationBaseline: true,
@@ -339,8 +339,8 @@ describe("schema 54 runtime startup boundary", () => {
   });
 
   it("keeps P39 maintenance outside the ordinary 40–54 schema suffix", () => {
-    expect(PersistenceSqlite.CURRENT_SCHEMA_VERSION).toBe(54);
-    expect(PersistenceSqlite.CURRENT_MIGRATION_BASELINE).toBe(54);
+    expect(PersistenceSqlite.CURRENT_SCHEMA_VERSION).toBe(55);
+    expect(PersistenceSqlite.CURRENT_MIGRATION_BASELINE).toBe(55);
     expect(PersistenceSqlite.P38_MIGRATIONS.at(-1)?.id).toBe(38);
     expect(PersistenceSqlite.CURRENT_MIGRATIONS.map(({ id }) => id)).toEqual([
       ...PersistenceSqlite.P38_MIGRATIONS.map(({ id }) => id),

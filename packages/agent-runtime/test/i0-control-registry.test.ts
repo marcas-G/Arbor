@@ -224,11 +224,30 @@ describe("I0 ControlToolRegistry", () => {
 
   it("registers a durable wait before yielding when a wait registrar is provided", async () => {
     let registered = 0;
-    const registry = makeControlToolRegistry([], ({ action }) => {
-      registered += 1;
-      expect(action.waitSpec.conditions).toHaveLength(1);
-      return Effect.void;
-    });
+    const registry = makeControlToolRegistry([
+      {
+        action: "Wait",
+        handle: ({ action }) => {
+          registered += 1;
+          expect(action._tag).toBe("Wait");
+          if (action._tag !== "Wait" || action.disposition !== "Yielded") {
+            return Effect.die("unexpected action");
+          }
+          expect(action.waitSpec.conditions).toHaveLength(1);
+          return Effect.succeed({
+            _tag: "Settle",
+            settlement: {
+              _tag: "Completed",
+              result: {
+                _tag: "Yielded",
+                reason: action.reason,
+                waitSpec: action.waitSpec,
+              },
+            },
+          });
+        },
+      },
+    ]);
     const decoded = Effect.runSync(
       registry.decode(
         invocation("wait", {

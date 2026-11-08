@@ -21,6 +21,7 @@ import {
   type ControlBasis,
   decideSessionProjection,
   decodeTurn,
+  filterEntriesForWork,
   GENERIC_COGNITION_PROGRAM,
   type InstructionFragment,
   latestSessionInputIndex,
@@ -3123,6 +3124,10 @@ export const runModelDecision = (
       const recentTimeline = yield* tx
         .transact(readExecutionTimeline())
         .pipe(Effect.mapError(failure));
+      const typedTimeline = yield* tx
+        .transact(sessions.supportsTypedTimeline())
+        .pipe(Effect.mapError(failure));
+      const workBinding = workEpisode(input.execution);
       const conversationTimeline = (
         entries: ReadonlyArray<SessionEntryRecord>,
       ) =>
@@ -3137,7 +3142,12 @@ export const runModelDecision = (
         );
       let recentSessionEntries = conversationExecution
         ? conversationTimeline(recentTimeline)
-        : recentTimeline;
+        : workBinding !== null && typedTimeline
+          ? filterEntriesForWork(recentTimeline, {
+              executionId: input.execution.executionId,
+              workId: workBinding.workId,
+            })
+          : recentTimeline;
       let reasoningAttachmentBlobs =
         yield* loadReasoningAttachmentBlobs(recentSessionEntries);
       let projectionDecision = decideSessionProjection(

@@ -668,6 +668,7 @@ export const ProductionDaemonServiceLive = (
                     eventType: event.eventType,
                     payload: event.payload,
                     eventId: String(event.eventId),
+                    occurredAt: event.occurredAt,
                   })),
                   verificationDeps,
                   projectId,
