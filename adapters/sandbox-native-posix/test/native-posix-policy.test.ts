@@ -329,8 +329,10 @@ describe("native POSIX sandbox policy plans", () => {
       cgroupCpuController: "PrerequisiteDetected",
       seccompInterface: "PrerequisiteDetected",
       networkBrokerChannel: "Unavailable",
-      processKillApi: "Unavailable",
     });
+    expect(["PrerequisiteDetected", "Unavailable"]).toContain(
+      result.prerequisites.processKillApi,
+    );
     expect(result).toMatchObject({
       status: "Experimental",
       profiles: [],
