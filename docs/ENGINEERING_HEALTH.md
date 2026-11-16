@@ -38,14 +38,19 @@ artifact:
 | P1 | Change Coupling | Git co-change history | Reported per PR |
 | P1 | PR Cycle Time | GitHub pull-request event | Reported while the PR is open |
 
-Every pull request and merge queue entry computes all twelve metrics. The
-repeatable snapshot is produced by:
+Every pull request and merge queue entry runs the same quality job and computes
+all twelve metrics. The quality job includes the launcher and manifest checks,
+the core suite, coverage, Web checks and the complete functional release
+journey. The snapshot is produced by:
 
 ```bash
 node scripts/ci/health-metrics.mjs > health-metrics.json
 ```
 
-The PR gate uses `node scripts/ci/health-metrics.mjs --enforce`. In that mode,
+The PR and merge-queue gate uses `node scripts/ci/health-metrics.mjs --enforce`.
+The health step runs even when an earlier quality step fails, so the uploaded
+artifact records missing or failed checks instead of making a failed run look
+complete. In enforce mode,
 a new P0 in `docs/KNOWN_PROBLEMS.md`, a high/critical dependency vulnerability,
 a missing coverage report, a package dependency cycle, a duplication ratio over
 5%, whitespace errors, or a missing audit report returns a nonzero status and
@@ -78,10 +83,12 @@ queues report it as unavailable because a merge-group event has no single PR.
 
 The `quality` job must be configured as a required status check on the protected
 default branch, together with the `analyze` CodeQL job. GitHub branch protection
-is repository administration and is deliberately not silently changed by a
-workflow file. Direct pushes to the protected branch are disabled; all changes
-enter through a PR and its required CI results. The same workflows also run on
-the default branch after a merge so a bad merge is visible immediately.
+is repository administration and cannot be changed by a workflow file. Direct
+pushes to the protected branch must be disabled; all changes enter through a PR
+and its required CI results. The same workflows also run on the default branch
+after a merge so a bad merge is visible immediately. The repository settings
+must also require the `merge_group` event when merge queue is enabled; otherwise
+the required checks are not re-run on the temporary merge ref.
 
 Complexity and duplication are trend metrics. A reduction is not allowed to
 weaken behavior, remove required tests or move logic into a less visible file.
