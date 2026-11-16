@@ -79,6 +79,7 @@ const upgradeSchema48FixtureToCurrent = (filename: string) =>
         PersistenceSqlite.P52_WORK_CONTRACT_REVISION_MIGRATION,
         PersistenceSqlite.P53_CANONICAL_OWNERSHIP_CARVEOUTS_MIGRATION,
         PersistenceSqlite.P54_NATIVE_PROCESS_MODE_NO_EFFECT_DENIAL_MIGRATION,
+        PersistenceSqlite.P55_SESSION_CAUSAL_PROVENANCE_MIGRATION,
       ],
       { allowOfflineOnly: true },
     ),
@@ -338,7 +339,7 @@ describe("schema 55 runtime startup boundary", () => {
     });
   });
 
-  it("keeps P39 maintenance outside the ordinary 40–54 schema suffix", () => {
+  it("keeps P39 maintenance outside the ordinary 40–55 schema suffix", () => {
     expect(PersistenceSqlite.CURRENT_SCHEMA_VERSION).toBe(55);
     expect(PersistenceSqlite.CURRENT_MIGRATION_BASELINE).toBe(55);
     expect(PersistenceSqlite.P38_MIGRATIONS.at(-1)?.id).toBe(38);
@@ -359,6 +360,7 @@ describe("schema 55 runtime startup boundary", () => {
       52,
       53,
       54,
+      55,
     ]);
     expect(
       PersistenceSqlite.CURRENT_MIGRATIONS.some(({ id }) => id === 39),
