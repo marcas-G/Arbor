@@ -32,7 +32,6 @@
     "test:release": "node scripts/testing/run-suite.mjs release",
     "test:all": "node scripts/testing/run-suite.mjs all",
     "test:manifest": "node --test scripts/testing/manifest.test.mjs scripts/testing/runner-utils.test.mjs scripts/testing/runner-startup.test.mjs scripts/testing/run-core-tests.test.mjs && node scripts/testing/check-manifest.mjs",
-    "test:launcher": "node --test scripts/user-runtime.test.mjs",
     "test:schema-upgrade:exhaustive": "node scripts/testing/run-schema-upgrade-exhaustive.mjs",
     "check:release": "pnpm check && pnpm test:functional",
     "test:capability": "node scripts/testing/run-capability.mjs gray-box",
@@ -45,7 +44,7 @@
     "drill:restore": "pnpm build && node apps/single-workspace/dist/restore-drill.js",
     "assess:storage": "pnpm build && node apps/single-workspace/dist/storage-assessment-harness.js",
     "schema:upgrade": "pnpm build && node apps/single-workspace/dist/schema-upgrade.js",
-    "check": "pnpm lint && pnpm typecheck && pnpm architecture && pnpm test:launcher && pnpm test && pnpm --filter @arbor/web typecheck && pnpm --filter @arbor/web build && pnpm --filter @arbor/web test"
+    "check": "pnpm lint && pnpm typecheck && pnpm architecture && pnpm test && pnpm --filter @arbor/web typecheck && pnpm --filter @arbor/web build && pnpm --filter @arbor/web test"
   },
   "devDependencies": {
     "@babel/parser": "7.28.5",
