@@ -39,9 +39,9 @@ artifact:
 | P1 | PR Cycle Time | GitHub pull-request event | Reported while the PR is open |
 
 Every pull request and merge queue entry runs the same quality job and computes
-all twelve metrics. The quality job includes the launcher and manifest checks,
-the core suite, coverage, Web checks and the complete functional release
-journey. The snapshot is produced by:
+all twelve metrics. The quality job includes the manifest checks, the core
+suite, coverage, Web checks and the complete functional release journey. The
+snapshot is produced by:
 
 ```bash
 node scripts/ci/health-metrics.mjs > health-metrics.json
