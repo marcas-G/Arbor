@@ -311,11 +311,11 @@ describe("P6 Inbox operator rebuild CLI contract", () => {
     expect(
       parseP6InboxRebuildArguments([
         "--database",
-        "C:\\tmp\\primary.sqlite",
+        resolve("p6-cli-contract", "primary.sqlite"),
         "--p39-sidecar",
-        "C:\\tmp\\p39.sqlite",
+        resolve("p6-cli-contract", "p39.sqlite"),
         "--manifest",
-        "C:\\tmp\\manifest.jsonl",
+        resolve("p6-cli-contract", "manifest.jsonl"),
       ]),
     ).toMatchObject({ resume: false });
   });
