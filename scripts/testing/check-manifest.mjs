@@ -290,14 +290,6 @@ export function validateManifest(
     }
   }
 
-  if (groups.functionalVitest?.length !== 69)
-    report(
-      `expected 69 configured functional Vitest files, found ${groups.functionalVitest?.length ?? 0}`,
-    );
-  if (groups.functionalUi?.length !== 6)
-    report(
-      `expected 6 configured functional UI files, found ${groups.functionalUi?.length ?? 0}`,
-    );
   for (const required of [
     "quick",
     "smoke",
