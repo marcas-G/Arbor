@@ -395,7 +395,7 @@ describe("I0 executable/control vertical slice", () => {
                 commandType: "GrantPermission",
                 projectId,
                 actor,
-                schemaVersion: "1",
+                schemaVersion: "2",
                 payload: shellGrantPayload,
               }),
               projectId,
@@ -509,7 +509,7 @@ describe("I0 executable/control vertical slice", () => {
             commandType: "GrantPermission",
             projectId,
             actor,
-            schemaVersion: "1",
+            schemaVersion: "2",
             payload: grantPayload,
           });
           const grantReceipt = yield* gateway.execute(
