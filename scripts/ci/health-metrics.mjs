@@ -131,18 +131,6 @@ const visitPackage = (name, path = []) => {
 };
 for (const name of packageGraph.keys()) visitPackage(name);
 
-const problemText = readFileSync(join(root, "docs/KNOWN_PROBLEMS.md"), "utf8");
-const problemBlocks = problemText
-  .split(/(?=^## KP-)/m)
-  .filter((block) => /^## KP-/.test(block));
-const problems = problemBlocks.map((block) => ({
-  id: block.match(/^## (KP-\d+)/)?.[1] ?? "unknown",
-  priority: block.match(/\*\*优先级\*\*\s*\n([^\n]+)/)?.[1] ?? "UNSET",
-}));
-const p0ProblemCount = problems.filter((problem) =>
-  problem.priority.startsWith("P0"),
-).length;
-
 const git = (args) => {
   try {
     return execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
@@ -150,6 +138,47 @@ const git = (args) => {
     return "";
   }
 };
+
+const baseSha =
+  process.env.ARBOR_BASE_SHA ||
+  git(["merge-base", "HEAD", "origin/master"]) ||
+  "";
+
+const parseKnownProblems = (text) => {
+  const problemBlocks = text
+    .split(/(?=^## KP-)/m)
+    .filter((block) => /^## KP-/.test(block));
+  return problemBlocks.map((block) => ({
+    id: block.match(/^## (KP-\d+)/)?.[1] ?? "unknown",
+    priority: block.match(/\*\*优先级\*\*\s*\n([^\n]+)/)?.[1] ?? "UNSET",
+  }));
+};
+
+const problemText = readFileSync(join(root, "docs/KNOWN_PROBLEMS.md"), "utf8");
+const problems = parseKnownProblems(problemText);
+const baseProblemText = (() => {
+  if (!baseSha) return null;
+  try {
+    return execFileSync("git", ["show", `${baseSha}:docs/KNOWN_PROBLEMS.md`], {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch {
+    return null;
+  }
+})();
+const baseProblems = baseProblemText ? parseKnownProblems(baseProblemText) : [];
+const baseProblemsById = new Map(
+  baseProblems.map((problem) => [problem.id, problem]),
+);
+const baselineInitialized = baseProblemText === null;
+const newP0Problems = baselineInitialized
+  ? []
+  : problems.filter((problem) => {
+      if (!problem.priority.startsWith("P0")) return false;
+      return !baseProblemsById.get(problem.id)?.priority.startsWith("P0");
+    });
 
 const readJsonFile = (file) => {
   if (!file) return null;
@@ -159,11 +188,6 @@ const readJsonFile = (file) => {
     return null;
   }
 };
-
-const baseSha =
-  process.env.ARBOR_BASE_SHA ||
-  git(["merge-base", "HEAD", "origin/master"]) ||
-  "";
 
 const changedFiles = baseSha
   ? git(["diff", "--name-only", `${baseSha}...HEAD`])
@@ -430,6 +454,9 @@ const summary = {
   knownProblems: {
     p0: problems.filter((problem) => problem.priority.startsWith("P0")).length,
     p1: problems.filter((problem) => problem.priority.startsWith("P1")).length,
+    newP0: newP0Problems.length,
+    newP0Ids: newP0Problems.map((problem) => problem.id),
+    baselineInitialized,
     ids: problems,
   },
   security,
@@ -444,8 +471,10 @@ const summary = {
     status: "requires-ci-results",
     blockers: [
       ...(cycles.length > 0 ? [`package cycles: ${cycles.length}`] : []),
-      ...(problems.some((problem) => problem.priority.startsWith("P0"))
-        ? [`known P0 problems: ${p0ProblemCount}`]
+      ...(newP0Problems.length > 0
+        ? [
+            `new P0 problems: ${newP0Problems.map((problem) => problem.id).join(", ")}`,
+          ]
         : []),
       ...(whitespaceErrors.length > 0
         ? [`diff check errors: ${whitespaceErrors.length}`]

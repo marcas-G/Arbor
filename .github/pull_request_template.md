@@ -13,7 +13,8 @@ Describe the user-visible behavior or engineering contract changed by this PR.
 - [ ] `pnpm audit --prod`
 - [ ] `pnpm health:metrics -- --enforce`
 - [ ] The health artifact was reviewed: coverage, churn, complexity, duplication,
-      hotspot risk, change coupling, security and known P0/P1 problems.
+      hotspot risk, change coupling, security, new severe defects and known
+      P0/P1 problems.
 - [ ] If this PR changes a high-complexity hotspot, focused tests are included.
 - [ ] If SonarQube is configured, the technical-debt ratio is recorded; otherwise
       the PR states why the metric remains `not-configured`.
