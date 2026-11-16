@@ -80,6 +80,47 @@ const probeFileTree = (
     },
   );
 
+const readGitWorktreeHead = (
+  path: string,
+): Effect.Effect<string | undefined, EnvironmentResolverError> =>
+  Effect.gen(function* () {
+    const metadataPath = resolvePath(path, ".git");
+    const metadata = yield* attemptIo(() => statSync(metadataPath));
+    if (metadata._tag === "Absent") return undefined;
+
+    let headPath: string;
+    if (metadata.value.isDirectory()) {
+      headPath = resolvePath(metadataPath, "HEAD");
+    } else if (metadata.value.isFile()) {
+      const pointer = yield* attemptIo(() =>
+        readFileSync(metadataPath, "utf8"),
+      );
+      if (pointer._tag === "Absent") return undefined;
+      const match = /^gitdir:\s*(.+?)\s*$/u.exec(pointer.value);
+      if (match?.[1] === undefined || match[1].trim() === "") {
+        return yield* Effect.fail<EnvironmentResolverError>({
+          _tag: "ProbeFailed",
+          cause: new Error(
+            "Git worktree .git file has no valid gitdir pointer",
+          ),
+        });
+      }
+      headPath = resolvePath(path, match[1].trim(), "HEAD");
+    } else {
+      return yield* Effect.fail<EnvironmentResolverError>({
+        _tag: "ProbeFailed",
+        cause: new Error(
+          "Git worktree .git metadata is not a file or directory",
+        ),
+      });
+    }
+
+    const head = yield* attemptIo(() => readFileSync(headPath, "utf8"));
+    return head._tag === "Ok" && head.value.trim() !== ""
+      ? head.value.trim()
+      : undefined;
+  });
+
 const probeGitWorktree = (
   path: string,
 ): Effect.Effect<SnapshotProbe, EnvironmentResolverError> =>
@@ -92,25 +133,13 @@ const probeGitWorktree = (
           exists: false,
         });
       }
-      // .git/HEAD missing => worktree exists without git metadata (head
-      // undefined — an observation, not a failure). Unreadable for other
-      // reasons (EACCES, ...) => typed ProbeFailed.
-      return Effect.map(
-        attemptIo(() =>
-          readFileSync(resolvePath(path, ".git", "HEAD"), "utf8"),
-        ),
-        (headIo): SnapshotProbe => {
-          // dirty: conservatively false (empirical — real dirty detection via
-          // `git status --porcelain` is deferred; a false "clean" can only
-          // miss semantic change at THIS probe granularity, and any content
-          // change under the worktree still moves mtime/HEAD facts).
-          const head =
-            headIo._tag === "Ok" && headIo.value.trim() !== ""
-              ? headIo.value.trim()
-              : undefined;
-          return { kind: "GitWorktree", exists: true, head, dirty: false };
-        },
-      );
+      return Effect.map(readGitWorktreeHead(path), (head): SnapshotProbe => {
+        // dirty: conservatively false (empirical — real dirty detection via
+        // `git status --porcelain` is deferred; a false "clean" can only
+        // miss semantic change at THIS probe granularity, and any content
+        // change under the worktree still moves mtime/HEAD facts).
+        return { kind: "GitWorktree", exists: true, head, dirty: false };
+      });
     },
   );
 
