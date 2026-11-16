@@ -90,6 +90,13 @@ after a merge so a bad merge is visible immediately. The repository settings
 must also require the `merge_group` event when merge queue is enabled; otherwise
 the required checks are not re-run on the temporary merge ref.
 
+The quality job runs on an authorized Linux self-hosted runner because the P39
+SQLite qualification needs the checkout on a canonical, runner-owned local
+filesystem. The runner preflight accepts ext2/3/4, XFS, Btrfs, F2FS, exFAT and
+FAT and rejects overlayfs, tmpfs, symlinked workspaces, and group/world-writable
+workspaces. Configure the runner's workspace on a supported local disk; a
+preflight failure is an environment failure and must be fixed before merge.
+
 Complexity and duplication are trend metrics. A reduction is not allowed to
 weaken behavior, remove required tests or move logic into a less visible file.
 Changes to the four highest-complexity files require focused tests and a full
