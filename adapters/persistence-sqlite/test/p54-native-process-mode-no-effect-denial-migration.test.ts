@@ -65,7 +65,7 @@ describe("P54 Native process-mode no-effect Denied migration", () => {
         ]),
       ).toBe(1);
       expect(CURRENT_SCHEMA_VERSION).toBe(55);
-      expect(CURRENT_MIGRATIONS.at(-1)?.id).toBe(54);
+      expect(CURRENT_MIGRATIONS.at(-1)?.id).toBe(55);
       const db = new DatabaseSync(fixture.databaseFilename, { readOnly: true });
       try {
         expect(
