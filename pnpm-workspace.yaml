@@ -4,3 +4,6 @@ packages:
   - "apps/*"
 minimumReleaseAgeExclude:
   - jsdom@30.1.1
+
+overrides:
+  source-map-js: 1.2.2

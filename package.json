@@ -41,7 +41,9 @@
     "drill:restore": "pnpm build && node apps/single-workspace/dist/restore-drill.js",
     "assess:storage": "pnpm build && node apps/single-workspace/dist/storage-assessment-harness.js",
     "schema:upgrade": "pnpm build && node apps/single-workspace/dist/schema-upgrade.js",
-    "check": "pnpm lint && pnpm typecheck && pnpm architecture && pnpm test && pnpm --filter @arbor/web typecheck && pnpm --filter @arbor/web build && pnpm --filter @arbor/web test"
+    "check": "pnpm lint && pnpm typecheck && pnpm architecture && pnpm test && pnpm --filter @arbor/web typecheck && pnpm --filter @arbor/web build && pnpm --filter @arbor/web test",
+    "test:coverage": "vitest run --coverage --config vitest.config.ts",
+    "health:metrics": "node scripts/ci/health-metrics.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
@@ -49,7 +51,10 @@
     "@types/node": "^24.13.5",
     "effect": "4.0.0-rc.115",
     "typescript": "7.0.2",
-    "vitest": "5.0.1"
+    "vitest": "5.0.1",
+    "@babel/parser": "7.28.5",
+    "@vitest/coverage-v8": "5.0.1",
+    "jscpd": "5.4.3"
   },
   "dependencies": {
     "react-virtuoso": "^4.18.15"
