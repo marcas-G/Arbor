@@ -6,11 +6,12 @@ Describe the user-visible behavior or engineering contract changed by this PR.
 
 - [ ] `pnpm lint`
 - [ ] `pnpm typecheck`
+- [ ] `pnpm build`
 - [ ] `pnpm architecture`
 - [ ] `pnpm test`
 - [ ] `pnpm test:coverage`
 - [ ] Web typecheck, build and tests
-- [ ] `pnpm audit --prod`
+- [ ] `pnpm audit --prod --audit-level high`
 - [ ] `pnpm health:metrics -- --enforce`
 - [ ] The health artifact was reviewed: coverage, churn, complexity, duplication,
       hotspot risk, change coupling, security, new severe defects and known

@@ -329,9 +329,11 @@ const auditVulnerabilities =
 const auditFailed =
   process.env.ARBOR_AUDIT_STATUS &&
   process.env.ARBOR_AUDIT_STATUS !== "success";
+const auditReportMissing =
+  Boolean(process.env.ARBOR_AUDIT_JSON) && !auditReport;
 const security = auditVulnerabilities
   ? {
-      source: "pnpm audit --prod",
+      source: "pnpm audit --prod --audit-level high",
       status: "collected",
       critical: Number(auditVulnerabilities.critical ?? 0),
       high: Number(auditVulnerabilities.high ?? 0),
@@ -484,8 +486,14 @@ const summary = {
             `security vulnerabilities: critical=${security.critical}, high=${security.high}`,
           ]
         : []),
-      ...(auditFailed || (process.env.ARBOR_AUDIT_JSON && !auditReport)
+      ...(auditReportMissing
         ? ["dependency audit did not produce a report"]
+        : []),
+      ...(auditFailed &&
+      auditReport &&
+      security.critical === 0 &&
+      security.high === 0
+        ? ["dependency audit failed without high/critical findings"]
         : []),
       ...(duplication.duplicatedLineRatio > 5
         ? [`duplication ratio above 5%: ${duplication.duplicatedLineRatio}`]
@@ -494,6 +502,85 @@ const summary = {
         ? ["coverage report missing"]
         : []),
     ],
+  },
+};
+
+summary.metricChecks = {
+  buildAndTests: {
+    source: "CI quality steps",
+    status: "required",
+    note: "Build, lint, typecheck, architecture, core, coverage and Web checks run before this snapshot.",
+  },
+  newSevereDefects: {
+    source: "docs/KNOWN_PROBLEMS.md delta",
+    status:
+      newP0Problems.length > 0
+        ? "fail"
+        : baselineInitialized
+          ? "baseline-required"
+          : "pass",
+    newP0: newP0Problems.length,
+    newP0Ids: newP0Problems.map((problem) => problem.id),
+  },
+  security: {
+    source: "CodeQL + pnpm audit --prod --audit-level high",
+    ...security,
+    status:
+      auditFailed || (process.env.ARBOR_AUDIT_JSON && !auditReport)
+        ? "fail"
+        : security.source === "not-collected"
+          ? "required"
+          : security.critical > 0 || security.high > 0
+            ? "fail"
+            : "pass",
+  },
+  complexity: {
+    source: "TypeScript AST",
+    status: "reported",
+    files: complexity.length,
+    top: summary.source.topComplexity,
+  },
+  duplication: {
+    source: "jscpd",
+    status: duplication.duplicatedLineRatio > 5 ? "fail" : "pass",
+    ratio: duplication.duplicatedLineRatio,
+  },
+  coverage: {
+    source: summary.coverage.source,
+    status: summary.coverage.source === "not-collected" ? "fail" : "pass",
+    report: summary.coverage,
+  },
+  technicalDebtRatio: {
+    source: process.env.ARBOR_SONAR_REPORT
+      ? "SonarQube report"
+      : "SonarQube not configured",
+    status: process.env.ARBOR_SONAR_REPORT ? "reported" : "not-configured",
+    ratio: summary.technicalDebt.ratio,
+  },
+  codeChurn: {
+    source: "git diff",
+    status: "reported",
+    ...summary.change,
+  },
+  hotspotRisk: {
+    source: "git history + TypeScript AST",
+    status: "reported",
+    files: summary.hotspotRisk,
+  },
+  circularDependencies: {
+    source: "package dependency graph",
+    status: cycles.length > 0 ? "fail" : "pass",
+    cycles,
+  },
+  changeCoupling: {
+    source: "git co-change history",
+    status: "reported",
+    pairs: summary.changeCoupling,
+  },
+  prCycleTime: {
+    source: "GitHub pull_request.created_at",
+    status: prCycleTimeHours === null ? "unavailable" : "reported",
+    cycleTimeHours: prCycleTimeHours,
   },
 };
 
