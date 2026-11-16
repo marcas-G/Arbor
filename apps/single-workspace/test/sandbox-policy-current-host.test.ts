@@ -18,5 +18,6 @@ describe("P5 trusted current-host tuple identity", () => {
       return;
     }
     expect(host).toEqual({ osFamily, osBuild: release() });
+    expect(host?.osBuild).toMatch(/^[A-Za-z0-9][A-Za-z0-9._:+-]*$/u);
   });
 });

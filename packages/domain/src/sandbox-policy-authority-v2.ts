@@ -95,7 +95,7 @@ export interface SandboxAuthorityAuditRecordV2 {
 }
 
 const digestPattern = /^[0-9a-f]{64}$/u;
-const canonicalIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+const canonicalIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:+-]{0,127}$/u;
 const envNamePattern = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 const profiles = ["ReadOnly", "WorkspaceWrite", "FullAccess"] as const;
 const osFamilies = ["Linux", "macOS", "Windows"] as const;
