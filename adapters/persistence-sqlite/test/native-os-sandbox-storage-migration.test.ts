@@ -130,8 +130,8 @@ describe("Native OS Sandbox schema 0049/0050 storage", () => {
       ).toBe(1);
       expect(
         CURRENT_MIGRATIONS.filter(({ id }) => id > 50).map(({ id }) => id),
-      ).toEqual([51, 52, 53, 54]);
-      expect(await run(fixture.databaseFilename)).toBe(4);
+      ).toEqual([51, 52, 53, 54, 55]);
+      expect(await run(fixture.databaseFilename)).toBe(5);
       const db = new DatabaseSync(fixture.databaseFilename, { readOnly: true });
       try {
         expect(
@@ -140,7 +140,7 @@ describe("Native OS Sandbox schema 0049/0050 storage", () => {
               user_version: number;
             }
           ).user_version,
-        ).toBe(54);
+        ).toBe(55);
         expect(
           db
             .prepare(
