@@ -26,5 +26,9 @@ export default defineConfig({
       "tests/capability/black-box/s1-s4-public-api.test.ts",
       "tests/functional/**",
     ],
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "json-summary"],
+    },
   },
 });

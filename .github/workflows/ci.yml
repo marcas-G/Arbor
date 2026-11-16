@@ -1,0 +1,78 @@
+name: Arbor CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  merge_group:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  quality:
+    # The project requires Linux-native SQLite and sandbox checks. Register
+    # the local machine as a GitHub self-hosted runner with these labels.
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 120
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.21.0
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.4.2
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Architecture
+        run: pnpm architecture
+
+      - name: Core tests
+        run: pnpm test
+
+      - name: Coverage
+        run: pnpm test:coverage
+
+      - name: Web checks
+        run: pnpm --filter @arbor/web typecheck && pnpm --filter @arbor/web build && pnpm --filter @arbor/web test
+
+      - name: Dependency audit
+        id: audit
+        continue-on-error: true
+        run: pnpm audit --prod --json > audit.json
+
+      - name: Health snapshot
+        env:
+          ARBOR_AUDIT_JSON: ${{ github.workspace }}/audit.json
+          ARBOR_AUDIT_STATUS: ${{ steps.audit.outcome }}
+          ARBOR_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || '' }}
+        run: node scripts/ci/health-metrics.mjs --enforce > health-metrics.json
+
+      - name: Upload health snapshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: arbor-health-${{ github.sha }}
+          path: |
+            health-metrics.json
+            audit.json
+            coverage/
