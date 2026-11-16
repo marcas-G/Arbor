@@ -7,10 +7,11 @@ The hard gate is red when any of these fail:
 
 - `pnpm lint`
 - `pnpm typecheck`
+- `pnpm build`
 - `pnpm architecture`
 - `pnpm test`
 - Web typecheck, build or tests
-- `pnpm audit --prod` reports a high or critical vulnerability
+- `pnpm audit --prod --audit-level high` reports a high or critical vulnerability
 - the package dependency graph contains a cycle
 - the PR adds a new P0 problem or upgrades an existing problem to P0
 - the PR diff contains whitespace errors
@@ -26,7 +27,7 @@ artifact:
 |---|---|---|---|
 | P0 | Build and test status | CI commands | Required check |
 | P0 | New severe defects | Known-problem delta plus static checks | A new/upgraded P0 blocks |
-| P0 | Severe security vulnerabilities | CodeQL and `pnpm audit --prod` | Required check; high/critical SCA blocks |
+| P0 | Severe security vulnerabilities | CodeQL and `pnpm audit --prod --audit-level high` | Required check; high/critical SCA blocks |
 | P0 | Complexity distribution | TypeScript AST | Reported; hotspot changes require focused tests |
 | P0 | Duplication | jscpd | More than 5% blocks |
 | P0 | Coverage | Vitest V8 | Missing report blocks; percentage is reported |
@@ -37,20 +38,26 @@ artifact:
 | P1 | Change Coupling | Git co-change history | Reported per PR |
 | P1 | PR Cycle Time | GitHub pull-request event | Reported while the PR is open |
 
-The repeatable snapshot is produced by:
+Every pull request and merge queue entry computes all twelve metrics. The
+repeatable snapshot is produced by:
 
 ```bash
 node scripts/ci/health-metrics.mjs > health-metrics.json
 ```
 
 The PR gate uses `node scripts/ci/health-metrics.mjs --enforce`. In that mode,
-a new P0 in `docs/KNOWN_PROBLEMS.md` or a package dependency cycle returns a
-nonzero status and blocks merge. The total P0/P1 inventory remains visible in
-the report so existing release blockers cannot be mistaken for resolved work,
-but historical backlog does not make every unrelated PR permanently
-unmergeable. The repository settings must require the
-`quality` job for the protected default branch; the workflow alone cannot
-change GitHub branch protection settings.
+a new P0 in `docs/KNOWN_PROBLEMS.md`, a high/critical dependency vulnerability,
+a missing coverage report, a package dependency cycle, a duplication ratio over
+5%, whitespace errors, or a missing audit report returns a nonzero status and
+blocks merge. The total P0/P1 inventory remains visible in the report so
+existing release blockers cannot be mistaken as resolved work, but historical
+backlog does not make every unrelated PR permanently unmergeable. Complexity,
+churn, hotspot risk, change coupling, PR cycle time and SonarQube debt ratio
+are always recorded; their current policy is review evidence because the
+project has not adopted numeric limits for them. The repository settings must
+require the `quality` job and the `analyze` CodeQL job for the protected
+default branch; the workflow alone cannot change GitHub branch protection
+settings.
 
 It records the commit, dirty-tree state, PR base, changed lines/churn, AST
 branch complexity, large-file count, production-code duplication, coverage,
