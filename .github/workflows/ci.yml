@@ -56,6 +56,9 @@ jobs:
       - name: Manifest checks
         run: pnpm test:manifest
 
+      - name: Launcher checks
+        run: pnpm test:launcher
+
       - name: Core tests
         run: pnpm test
 
