@@ -53,6 +53,9 @@ jobs:
       - name: Architecture
         run: pnpm architecture
 
+      - name: Launcher and manifest checks
+        run: pnpm test:launcher && pnpm test:manifest
+
       - name: Core tests
         run: pnpm test
 
@@ -62,12 +65,17 @@ jobs:
       - name: Web checks
         run: pnpm --filter @arbor/web typecheck && pnpm --filter @arbor/web build && pnpm --filter @arbor/web test
 
+      - name: Functional release journey
+        run: pnpm test:functional
+
       - name: Dependency audit
         id: audit
+        if: always()
         continue-on-error: true
         run: pnpm audit --prod --audit-level high --json > audit.json
 
       - name: Health snapshot
+        if: always()
         env:
           ARBOR_AUDIT_JSON: ${{ github.workspace }}/audit.json
           ARBOR_AUDIT_STATUS: ${{ steps.audit.outcome }}
