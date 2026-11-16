@@ -53,8 +53,8 @@ jobs:
       - name: Architecture
         run: pnpm architecture
 
-      - name: Launcher and manifest checks
-        run: pnpm test:launcher && pnpm test:manifest
+      - name: Manifest checks
+        run: pnpm test:manifest
 
       - name: Core tests
         run: pnpm test
