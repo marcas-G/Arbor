@@ -322,6 +322,7 @@ const seedActionAndApproval = (
       52,
       53,
       54,
+      55,
     ]);
     expect(CURRENT_MIGRATIONS.some(({ id }) => id === 39)).toBe(false);
     const binding = immutableApprovalBinding(
