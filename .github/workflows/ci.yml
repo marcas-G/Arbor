@@ -36,6 +36,16 @@ jobs:
       - name: Verify Linux runner storage
         run: node scripts/ci/verify-runner-storage.mjs
 
+      - name: Prepare isolated local temp directory
+        shell: bash
+        run: |
+          ci_tmp="$GITHUB_WORKSPACE/.ci-tmp"
+          mkdir -p "$ci_tmp"
+          chmod 700 "$ci_tmp"
+          echo "TMPDIR=$ci_tmp" >> "$GITHUB_ENV"
+          echo "TMP=$ci_tmp" >> "$GITHUB_ENV"
+          echo "TEMP=$ci_tmp" >> "$GITHUB_ENV"
+
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
