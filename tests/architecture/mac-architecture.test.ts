@@ -11,13 +11,17 @@ describe("DID v1.31 MAC architecture", () => {
       "apps/single-workspace/src/control-actions/work-lifecycle.ts",
     );
     const driver = source("packages/agent-runtime/src/agent-loop-driver.ts");
+    const modelDecisionService = source(
+      "packages/agent-runtime/src/model-decision-service.ts",
+    );
     const decision = source("packages/agent-runtime/src/model-decision.ts");
     const adapter = source("adapters/persistence-sqlite/src/work-plan.ts");
 
     expect(controls).toContain("reviseLocalPlan");
     expect(controls).toContain("LocalPlanStore");
     expect(controls).not.toContain("reviseWorkPlan");
-    expect(driver).toContain("LocalPlanStore");
+    expect(driver).not.toContain("LocalPlanStore");
+    expect(modelDecisionService).toContain("LocalPlanStore");
     const workspaceContext = source(
       "packages/agent-runtime/src/decision/context/workspace.ts",
     );

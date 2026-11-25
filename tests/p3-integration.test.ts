@@ -26,6 +26,7 @@ import {
   P39RecoveryEvidenceStoreLive,
   ProjectRepositoryLive,
   ProviderTurnStoreLive,
+  RecoveryAttentionFactStoreLive,
   RuntimeClockLive,
   runMigrations,
   SessionRepositoryLive,
@@ -43,6 +44,7 @@ import { WorkspacePlacementPortLive } from "../apps/single-workspace/src/workspa
 import {
   AgentLoopDriverLive,
   ControlBasisResolverLive,
+  ModelDecisionServiceLive,
   makeControlToolRegistry,
 } from "../packages/agent-runtime/src/index.js";
 import {
@@ -70,7 +72,10 @@ import {
   RuntimeSafetyGateLive,
   runExecution,
 } from "../packages/execution-runtime/src/index.js";
-import { ModelContextLive } from "../packages/model-context/src/index.js";
+import {
+  ModelContextLive,
+  TurnProfileResolverLive,
+} from "../packages/model-context/src/index.js";
 import {
   ControlToolCatalogPort,
   ModelCapabilityPort,
@@ -174,32 +179,62 @@ const makeApp = () => {
     Layer.provide(ProjectRepositoryLive, infra),
     Layer.provide(WorkspaceRepositoryLive, infra),
     Layer.provide(WorkRepositoryLive, infra),
+    Layer.provide(VerificationRepositoryLive, infra),
+    Layer.provide(AcceptanceRepositoryLive, infra),
+    Layer.provide(FormationProposalStoreLive, infra),
+    Layer.provide(FormationFulfillmentStoreLive, infra),
     Layer.provide(WorkWaitStoreLive, infra),
     Layer.provide(AgentExecutionStateStoreLive, infra),
     Layer.provide(ProviderTurnStoreLive, infra),
     repo,
     Layer.provide(LeaseServiceLive, Layer.merge(infra, repo)),
   );
-  const driver = Layer.provide(
-    AgentLoopDriverLive({ controlRegistry }),
+  const controlBasisResolver = Layer.provide(
+    ControlBasisResolverLive,
+    Layer.mergeAll(
+      infra,
+      Layer.provide(TransactionPortLive, infra),
+      Layer.provide(ProjectRepositoryLive, infra),
+      Layer.provide(WorkspaceRepositoryLive, infra),
+      Layer.provide(WorkRepositoryLive, infra),
+      Layer.provide(EnvironmentRevisionStoreLive, infra),
+    ),
+  );
+  const turnProfiles = Layer.provide(
+    TurnProfileResolverLive,
+    Layer.mergeAll(tools, controlToolCatalog, repos, infra),
+  );
+  const modelDecision = Layer.provide(
+    ModelDecisionServiceLive(),
     Layer.mergeAll(
       modelContext,
       providerRuntime,
       capability,
+      controlBasisResolver,
+      turnProfiles,
       repos,
       infra,
-      Layer.provide(EnvironmentRevisionStoreLive, infra),
+      Layer.provide(ConversationCheckpointStoreLive, infra),
+      BlobStorePortLive,
+      Layer.provide(ConversationResponseJobStoreLive, infra),
+      Layer.provide(ConversationAttemptStoreLive, infra),
+      Layer.provide(ExecutionRepositoryLive, infra),
       Layer.provide(
-        ControlBasisResolverLive,
-        Layer.mergeAll(
-          infra,
-          Layer.provide(TransactionPortLive, infra),
-          Layer.provide(ProjectRepositoryLive, infra),
-          Layer.provide(WorkspaceRepositoryLive, infra),
-          Layer.provide(WorkRepositoryLive, infra),
-          Layer.provide(EnvironmentRevisionStoreLive, infra),
-        ),
+        RecoveryAttentionFactStoreLive,
+        Layer.mergeAll(infra, journal),
       ),
+      Layer.provide(LocalPlanStoreLive, infra),
+      Layer.provide(DecisionRequestStoreLive, infra),
+      Layer.provide(WorkspaceKnowledgePortLive, Layer.mergeAll(infra, repos)),
+      Layer.provide(WorkspacePlacementPortLive, Layer.mergeAll(infra, repos)),
+    ),
+  );
+  const driver = Layer.provide(
+    AgentLoopDriverLive({ controlRegistry }),
+    Layer.mergeAll(
+      modelDecision,
+      repos,
+      infra,
       // E06: the driver Layer now requires these typed services.
       Layer.provide(InboxProjectionStoreLive, infra),
       Layer.provide(

@@ -1,59 +1,32 @@
 import { InputPromotionService } from "@arbor/application";
-import type {
-  AgentBinding,
-  AgentExecutionState,
-  Execution,
-  WakeReason,
-} from "@arbor/domain";
+import type { AgentExecutionState, Execution, WakeReason } from "@arbor/domain";
 import { executionEpisode } from "@arbor/domain";
-import {
-  ModelContext,
-  makeTurnProfileResolver,
-  type TurnProfileResolverService,
-} from "@arbor/model-context";
 import {
   type AgentLoopStepFence,
   AgentLoopStepStore,
-  BlobStorePort,
   Clock,
-  ConversationAttemptStore,
   ConversationCheckpointStore,
-  ConversationResponseJobStore,
   DecisionRequestStore,
-  EnvironmentRevisionStore,
   type ExecutionActivity,
   type ExecutionDriveOutcome,
   type ExecutionDriverError,
   ExecutionDriverPort,
-  ExecutionRepository,
-  HumanMessageStore,
   InboxProjectionStore,
-  LocalPlanStore,
-  ModelCapabilityPort,
   P39RecoveryEvidenceStore,
   type PortableOperationKind,
-  ProjectRepository,
   type ProviderCancellationSignal,
-  type ProviderExecutionPolicyOverrides,
-  ProviderRuntime,
   ProviderTurnStore,
-  RecoveryAttentionFactStore,
   type RuntimeSafetyGateService,
   type RuntimeSafetyObservation,
-  type SecretRef,
   SessionRepository,
   ToolInvocationStore,
   TransactionPort,
-  WorkRepository,
-  WorkspaceKnowledgePort,
-  WorkspacePlacementPort,
-  WorkspaceRepository,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import type { ReconciliationEscalationRecorderError } from "./agent-loop-actions/types.js";
 import { executeAgentLoopActions } from "./agent-loop-actions.js";
 import { recoverAgentLoopFrontier } from "./agent-loop-driver/recovery.js";
-import { MAX_TURNS, type ModelDecisionOutcome } from "./agent-loop-policy.js";
+import { MAX_TURNS } from "./agent-loop-policy.js";
 import { completeAgentLoopStep } from "./agent-loop-step-completion.js";
 import {
   type ControlToolRegistryService,
@@ -61,10 +34,8 @@ import {
   makeControlToolRegistry,
 } from "./control.js";
 import type { ControlActionAuthorizerService } from "./control-authorization.js";
-import { ControlBasisResolver } from "./control-basis-resolver.js";
 import { toExecutionDriverError } from "./execution-driver-failure.js";
-import { runModelDecision } from "./model-decision.js";
-import { recordAcceptedModelOutput } from "./model-output-journal.js";
+import { ModelDecisionService } from "./model-decision-service.js";
 import { providerTurnSafetyFingerprint } from "./p12-safety-identity.js";
 import type { AgentLoopQualificationProbe } from "./qualification-probe.js";
 import { selectPendingInputPromotions } from "./safe-input-drain.js";
@@ -78,22 +49,10 @@ export {
 } from "./agent-loop-driver/cursor.js";
 
 export interface AgentLoopDriverOptions {
-  /** Durable StopExecution is relayed to the active Provider transport through
-   * the standard AbortSignal contract. */
-  readonly cancellationSignal?: ProviderCancellationSignal;
-  /** P12 `03` §3: the credential reference the driver binds to a ProviderTurn.
-   * Comes from Composition-Root config; the driver never hardcodes a raw ref.
-   * The raw credential is resolved by ProviderRuntime at the execution
-   * boundary and never reaches the Agent. */
-  readonly secretRef?: SecretRef;
-  /** Deployment-level execution limits resolved at the composition root.
-   * Provider Runtime owns their final merge with system/provider defaults. */
-  readonly executionPolicyOverrides?: ProviderExecutionPolicyOverrides;
   /** The typed control-tool registry. Composition supplies the live registry;
    * the default keeps Wait available for focused runtime tests. */
   readonly controlRegistry?: ControlToolRegistryService;
   readonly controlAuthorizer?: ControlActionAuthorizerService;
-  readonly turnProfileResolver?: TurnProfileResolverService;
   readonly executableInvocationHandler?: ExecutableInvocationHandler;
   /** P9 durable recovery escalation for unknown external effects. */
   readonly recordReconciliationEscalation?: (input: {
@@ -102,20 +61,6 @@ export interface AgentLoopDriverOptions {
     readonly principal: import("@arbor/domain").Principal;
     readonly invocationRefs: ReadonlyArray<string>;
   }) => Effect.Effect<void, ReconciliationEscalationRecorderError>;
-  /** Adapter identity recorded on manifests (P14 conversation audit). */
-  readonly providerRef?: string;
-  /** Exact protocol family used to bind P16 reasoning attachments. */
-  readonly protocolFamily?: string;
-  /** Presentation-only progress tap (conversation streaming): receives every
-   * ProviderRuntimeProgress event tagged with the driving executionId. It
-   * must never affect model/execution semantics (the provider runtime
-   * already isolates observer throws). */
-  readonly onProviderProgress?:
-    | ((
-        executionId: string,
-        event: import("@arbor/ports").ProviderRuntimeProgress,
-      ) => void)
-    | undefined;
   readonly qualificationProbe?: AgentLoopQualificationProbe;
 }
 export const AgentLoopDriverLive = (
@@ -123,51 +68,28 @@ export const AgentLoopDriverLive = (
 ): Layer.Layer<
   ExecutionDriverPort,
   never,
-  | ModelContext
-  | ProviderRuntime
-  | ModelCapabilityPort
+  | ModelDecisionService
   | SessionRepository
   | TransactionPort
-  | EnvironmentRevisionStore
-  | HumanMessageStore
-  | ProjectRepository
-  | WorkRepository
-  | WorkspaceRepository
   | InboxProjectionStore
   | InputPromotionService
   | ConversationCheckpointStore
-  | BlobStorePort
-  | ConversationResponseJobStore
-  | ConversationAttemptStore
-  | ExecutionRepository
-  | RecoveryAttentionFactStore
-  | WorkspaceKnowledgePort
-  | WorkspacePlacementPort
-  | LocalPlanStore
   | DecisionRequestStore
   | ToolInvocationStore
   | P39RecoveryEvidenceStore
-  | ControlBasisResolver
   | Clock
 > =>
   Layer.effect(
     ExecutionDriverPort,
     Effect.gen(function* () {
-      const modelContext = yield* ModelContext;
-      const providerRuntime = yield* ProviderRuntime;
-      const capabilityPort = yield* ModelCapabilityPort;
+      const modelDecisionService = yield* ModelDecisionService;
       const sessions = yield* SessionRepository;
-      const humanMessages = yield* HumanMessageStore;
       // E06 normalization (object 1, batch two): every service the
       // production composition always provides becomes a typed Layer
       // requirement. Only AgentLoopStepStore/ProviderTurnStore keep their
       // optionality — their absence carries schema-migration gating that
       // must stay fail-closed rather than become a type-level demand.
       const conversationCheckpointStore = yield* ConversationCheckpointStore;
-      const blobStore = yield* BlobStorePort;
-      const responseJobs = yield* ConversationResponseJobStore;
-      const responseAttempts = yield* ConversationAttemptStore;
-      const executions = yield* ExecutionRepository;
       // E06 normalization (architecture-evolution object 1, first seam):
       // inbox draining is production-required — the composition root
       // always provides both services — and a missing pair previously
@@ -178,69 +100,20 @@ export const AgentLoopDriverLive = (
       const tx = yield* TransactionPort;
       const invocationStore = yield* ToolInvocationStore;
       const p39Recovery = yield* P39RecoveryEvidenceStore;
-      const makeControlBasis = yield* ControlBasisResolver;
       const loopStepStoreOption =
         yield* Effect.serviceOption(AgentLoopStepStore);
       const providerTurnStoreOption =
         yield* Effect.serviceOption(ProviderTurnStore);
-      const recoveryAttentionFacts = yield* RecoveryAttentionFactStore;
       const configuredLoopSteps = Option.isSome(loopStepStoreOption)
         ? loopStepStoreOption.value
         : undefined;
       const providerTurns = Option.isSome(providerTurnStoreOption)
         ? providerTurnStoreOption.value
         : undefined;
-      const _environmentRevisions = yield* EnvironmentRevisionStore;
-      const _projects = yield* ProjectRepository;
-      const workspaces = yield* WorkspaceRepository;
-      const works = yield* WorkRepository;
-      const _workspaceKnowledge = yield* WorkspaceKnowledgePort;
-      const _workspacePlacement = yield* WorkspacePlacementPort;
-      const localPlans = yield* LocalPlanStore;
-      // E05 sink: decision submodules declare these capabilities in their R
-      // channel; the port contract keeps drive at R = never, so the driver
-      // provides them here at the boundary.
-      const provideDecisionCapabilities = <A, E>(
-        effect: Effect.Effect<
-          A,
-          E,
-          | LocalPlanStore
-          | WorkspaceKnowledgePort
-          | WorkspacePlacementPort
-          | RecoveryAttentionFactStore
-          | HumanMessageStore
-          | ConversationResponseJobStore
-          | ConversationAttemptStore
-          | ExecutionRepository
-        >,
-      ): Effect.Effect<A, E> =>
-        effect.pipe(
-          Effect.provideService(WorkspaceKnowledgePort, _workspaceKnowledge),
-          Effect.provideService(WorkspacePlacementPort, _workspacePlacement),
-          Effect.provideService(LocalPlanStore, localPlans),
-          Effect.provideService(
-            RecoveryAttentionFactStore,
-            recoveryAttentionFacts,
-          ),
-          Effect.provideService(HumanMessageStore, humanMessages),
-          Effect.provideService(ConversationResponseJobStore, responseJobs),
-          Effect.provideService(ConversationAttemptStore, responseAttempts),
-          Effect.provideService(ExecutionRepository, executions),
-        );
       const decisionRequests = yield* DecisionRequestStore;
       const clock = yield* Clock;
       const controlRegistry =
         options.controlRegistry ?? makeControlToolRegistry();
-      const turnProfileResolver =
-        options.turnProfileResolver ??
-        makeTurnProfileResolver({
-          toolCatalog: {
-            visibleRefs: () => Effect.succeed([]),
-            resolveForModel: (ref) =>
-              Effect.fail({ _tag: "ToolNotRegistered", ref }),
-          },
-          controlCatalog: controlRegistry,
-        });
       const failure = toExecutionDriverError;
 
       const drive = (input: {
@@ -293,25 +166,6 @@ export const AgentLoopDriverLive = (
             firstRepairAttempt,
             exactNotAdmittedRecovery,
           } = frontier;
-          const agentBinding: AgentBinding =
-            input.execution.binding._tag === "WorkspaceExecution"
-              ? {
-                  _tag: "ResponsibilityBoundAgentBinding",
-                  workspaceId: input.execution.binding.workspaceId,
-                }
-              : input.execution.binding;
-          const capability = yield* capabilityPort
-            .resolve({
-              binding: agentBinding,
-              cognitiveMode: input.agentExecutionState.currentMode ?? "execute",
-              requiredCapabilities: [],
-            })
-            .pipe(Effect.mapError(failure));
-          // DID §8.19 / P3 `06` §4: capture and re-read the full trusted
-          // control basis at every effectful action admission. E03: the
-          // assembly is owned by the ControlBasisResolver capability.
-          const currentControlBasis = makeControlBasis(input);
-
           // P12 `08` §7: the driver reports the D1/D3/D4/D5/D6 observation
           // signals at the ProviderTurn / ToolInvocation / Specialist
           // boundaries. The gate never reads durable state (R = never).
@@ -386,67 +240,21 @@ export const AgentLoopDriverLive = (
               });
             });
 
-          // P3 `06` §3: bounded `ModelOutputContractViolation` repair. A
-          // violated output is NOT a provider transport failure: re-invoke
-          // prepareTurn with an A4 repair instruction fragment (a fresh
-          // ProviderTurn) and re-validate, up to the bounded attempt count.
-          // On exhaustion the frozen settle rule applies (Failed, or
-          // Interrupted for a safety/looping signal).
-          const decideModelOutput = (
-            turn: number,
-            repairAttempt: number,
-            resumeExactActionStepIdentity?: {
-              readonly executionId: import("@arbor/domain").ExecutionId;
-              readonly logicalStepNo: number;
-              readonly repairAttempt: number;
-            },
-          ): Effect.Effect<ModelDecisionOutcome, ExecutionDriverError> =>
-            provideDecisionCapabilities(
-              runModelDecision(
-                {
-                  input: {
-                    execution: input.execution,
-                    agentExecutionState: input.agentExecutionState,
-                  },
-                  agentBinding,
-                  capability,
-                  currentControlBasis,
-                  modelContext,
-                  providerRuntime,
-                  tx,
-                  sessions,
-                  conversationCheckpoints: conversationCheckpointStore,
-                  blobs: blobStore,
-                  turnProfileResolver,
-                  works,
-                  decisionRequests,
-                  workspaces,
-                  options: {
-                    ...options,
-                    ...((input.cancellationSignal ??
-                      options.cancellationSignal) === undefined
-                      ? {}
-                      : {
-                          cancellationSignal:
-                            input.cancellationSignal ??
-                            options.cancellationSignal,
-                        }),
-                    ...(resumeExactActionStepIdentity === undefined
-                      ? {}
-                      : { resumeExactActionStepIdentity }),
-                  },
-                  admitProviderTurn,
-                  completeProviderTurn,
-                  failure,
-                  now,
-                  ...(loopSteps === undefined ? {} : { loopSteps }),
-                  ...(loopStepFence === undefined ? {} : { loopStepFence }),
-                  ...(providerTurns === undefined ? {} : { providerTurns }),
-                },
-                turn,
-                repairAttempt,
-              ),
-            );
+          const boundModelDecision = yield* modelDecisionService.forExecution({
+            execution: input.execution,
+            agentExecutionState: input.agentExecutionState,
+            context: input.context,
+            ...(loopSteps === undefined ? {} : { loopSteps }),
+            ...(loopStepFence === undefined ? {} : { loopStepFence }),
+            ...(providerTurns === undefined ? {} : { providerTurns }),
+            ...(input.cancellationSignal === undefined
+              ? {}
+              : { cancellationSignal: input.cancellationSignal }),
+            admitProviderTurn,
+            completeProviderTurn,
+            now,
+          });
+          const currentControlBasis = boundModelDecision.currentControlBasis;
 
           for (
             let turn = firstLogicalStepNo, repairAttempt = firstRepairAttempt;
@@ -490,15 +298,17 @@ export const AgentLoopDriverLive = (
                   .pipe(Effect.mapError(failure));
               }
             }
-            const modelDecision = yield* decideModelOutput(
+            const modelDecision = yield* boundModelDecision.decide({
               turn,
               repairAttempt,
-              exactNotAdmittedRecovery !== undefined &&
-                exactNotAdmittedRecovery.logicalStepNo === turn &&
-                exactNotAdmittedRecovery.repairAttempt === repairAttempt
-                ? exactNotAdmittedRecovery
-                : undefined,
-            );
+              ...(exactNotAdmittedRecovery !== undefined &&
+              exactNotAdmittedRecovery.logicalStepNo === turn &&
+              exactNotAdmittedRecovery.repairAttempt === repairAttempt
+                ? {
+                    resumeExactActionStepIdentity: exactNotAdmittedRecovery,
+                  }
+                : {}),
+            });
             if (modelDecision._tag === "Settle") {
               return commitSettlementProposal(modelDecision.settlement);
             }
@@ -510,25 +320,7 @@ export const AgentLoopDriverLive = (
             }
             const preparedTurn = modelDecision.turn;
             const decodedOutput = modelDecision.output;
-            let currentLoopStep = yield* recordAcceptedModelOutput({
-              input,
-              preparedTurn,
-              decodedOutput,
-              ...(modelDecision.loopStep === undefined
-                ? {}
-                : { currentLoopStep: modelDecision.loopStep }),
-              ...(loopSteps === undefined ? {} : { loopSteps }),
-              ...(providerTurns === undefined ? {} : { providerTurns }),
-
-              ...(loopStepFence === undefined ? {} : { loopStepFence }),
-              tx,
-              sessions,
-              failure,
-              now,
-              ...(options.qualificationProbe === undefined
-                ? {}
-                : { qualificationProbe: options.qualificationProbe }),
-            });
+            let currentLoopStep = modelDecision.loopStep;
             const actionProgression = yield* executeAgentLoopActions({
               input,
               preparedTurn,

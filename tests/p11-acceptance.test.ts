@@ -65,6 +65,7 @@ import {
   AgentLoopDriverLive,
   ControlBasisResolverLive,
   checkFreshness,
+  ModelDecisionServiceLive,
   makeControlToolRegistry,
 } from "../packages/agent-runtime/src/index.js";
 import {
@@ -149,6 +150,7 @@ import {
 } from "../packages/ports/src/index.js";
 import { ProviderRuntimeLive } from "../packages/provider-runtime/src/index.js";
 import { FixedSecretStoreLive } from "../packages/testkit/src/index.js";
+import { makeControlTurnProfileLayer } from "./support/control-turn-profile-layer.js";
 import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-project-resource-source.js";
 
 // P11-012 acceptance: one story per closure invariant CI-1..CI-5 (P11 `00`
@@ -554,93 +556,91 @@ const cbMakeApp = () => {
   const revisions = Layer.provide(EnvironmentRevisionStoreLive, infra);
   const advancement = Layer.provide(EnvironmentRevisionAdvancementLive, infra);
   const tx = Layer.provide(TransactionPortLive, infra);
+  const turnProfiles = makeControlTurnProfileLayer(cbControlRegistry);
+  const driverDependencies = Layer.mergeAll(
+    infra,
+    cbRecordingModelContext(recorded),
+    providerRuntime,
+    cbCapability,
+    Layer.provide(SessionRepositoryLive, infra),
+    Layer.provide(HumanMessageStoreLive, infra),
+    Layer.provide(ProjectRepositoryLive, infra),
+    Layer.provide(WorkspaceRepositoryLive, infra),
+    Layer.provide(WorkRepositoryLive, infra),
+    Layer.provide(InboxProjectionStoreLive, infra),
+    Layer.provide(
+      InputPromotionServiceLive,
+      Layer.mergeAll(
+        infra,
+        tx,
+        sessions,
+        Layer.provide(InboxProjectionStoreLive, infra),
+        Layer.provide(ExecutionRepositoryLive, infra),
+      ),
+    ),
+    Layer.provide(ConversationResponseJobStoreLive, infra),
+    Layer.provide(ConversationAttemptStoreLive, infra),
+    Layer.provide(ConversationCheckpointStoreLive, infra),
+    Layer.provide(
+      ControlBasisResolverLive,
+      Layer.mergeAll(
+        infra,
+        Layer.provide(TransactionPortLive, infra),
+        Layer.provide(ProjectRepositoryLive, infra),
+        Layer.provide(WorkspaceRepositoryLive, infra),
+        Layer.provide(WorkRepositoryLive, infra),
+        revisions,
+      ),
+    ),
+    Layer.provide(ExecutionRepositoryLive, infra),
+    Layer.provide(
+      RecoveryAttentionFactStoreLive,
+      Layer.mergeAll(infra, Layer.provide(DomainEventJournalLive, infra)),
+    ),
+    Layer.provide(ToolInvocationStoreLive, infra),
+    Layer.provide(P39RecoveryEvidenceStoreLive, infra),
+    Layer.provide(LocalPlanStoreLive, infra),
+    Layer.provide(DecisionRequestStoreLive, infra),
+    Layer.provide(
+      WorkspaceKnowledgePortLive,
+      Layer.mergeAll(
+        infra,
+        tx,
+        Layer.provide(WorkRepositoryLive, infra),
+        Layer.provide(VerificationRepositoryLive, infra),
+        Layer.provide(AcceptanceRepositoryLive, infra),
+        Layer.provide(FormationProposalStoreLive, infra),
+        Layer.provide(FormationFulfillmentStoreLive, infra),
+        Layer.provide(WorkspaceRepositoryLive, infra),
+      ),
+    ),
+    Layer.provide(
+      WorkspacePlacementPortLive,
+      Layer.mergeAll(
+        infra,
+        tx,
+        Layer.provide(WorkRepositoryLive, infra),
+        Layer.provide(VerificationRepositoryLive, infra),
+        Layer.provide(AcceptanceRepositoryLive, infra),
+        Layer.provide(FormationProposalStoreLive, infra),
+        Layer.provide(FormationFulfillmentStoreLive, infra),
+        Layer.provide(WorkspaceRepositoryLive, infra),
+      ),
+    ),
+    makeBlobStorePortLive(cbBlobRoot),
+    tx,
+    revisions,
+  );
+  const modelDecision = Layer.provide(
+    ModelDecisionServiceLive(),
+    Layer.merge(driverDependencies, turnProfiles),
+  );
   const driver = Layer.provide(
     AgentLoopDriverLive({ controlRegistry: cbControlRegistry }),
-    Layer.mergeAll(
-      infra,
-      cbRecordingModelContext(recorded),
-      providerRuntime,
-      cbCapability,
-      Layer.provide(SessionRepositoryLive, infra),
-      Layer.provide(HumanMessageStoreLive, infra),
-      Layer.provide(ProjectRepositoryLive, infra),
-      Layer.provide(WorkspaceRepositoryLive, infra),
-      Layer.provide(WorkRepositoryLive, infra),
-      Layer.provide(InboxProjectionStoreLive, infra),
-      Layer.provide(
-        InputPromotionServiceLive,
-        Layer.mergeAll(
-          infra,
-          tx,
-          sessions,
-          Layer.provide(InboxProjectionStoreLive, infra),
-          Layer.provide(ExecutionRepositoryLive, infra),
-        ),
-      ),
-      Layer.provide(ConversationResponseJobStoreLive, infra),
-      Layer.provide(ConversationAttemptStoreLive, infra),
-      Layer.provide(ConversationCheckpointStoreLive, infra),
-      Layer.provide(
-        ControlBasisResolverLive,
-        Layer.mergeAll(
-          infra,
-          Layer.provide(TransactionPortLive, infra),
-          Layer.provide(ProjectRepositoryLive, infra),
-          Layer.provide(WorkspaceRepositoryLive, infra),
-          Layer.provide(WorkRepositoryLive, infra),
-          revisions,
-        ),
-      ),
-      Layer.provide(ExecutionRepositoryLive, infra),
-      Layer.provide(
-        RecoveryAttentionFactStoreLive,
-        Layer.mergeAll(infra, Layer.provide(DomainEventJournalLive, infra)),
-      ),
-      Layer.provide(ToolInvocationStoreLive, infra),
-      Layer.provide(P39RecoveryEvidenceStoreLive, infra),
-      Layer.provide(LocalPlanStoreLive, infra),
-      Layer.provide(DecisionRequestStoreLive, infra),
-      Layer.provide(
-        WorkspaceKnowledgePortLive,
-        Layer.mergeAll(
-          infra,
-          tx,
-          Layer.provide(WorkRepositoryLive, infra),
-          Layer.provide(VerificationRepositoryLive, infra),
-          Layer.provide(AcceptanceRepositoryLive, infra),
-          Layer.provide(FormationProposalStoreLive, infra),
-          Layer.provide(FormationFulfillmentStoreLive, infra),
-          Layer.provide(WorkspaceRepositoryLive, infra),
-        ),
-      ),
-      Layer.provide(
-        WorkspacePlacementPortLive,
-        Layer.mergeAll(
-          infra,
-          tx,
-          Layer.provide(WorkRepositoryLive, infra),
-          Layer.provide(VerificationRepositoryLive, infra),
-          Layer.provide(AcceptanceRepositoryLive, infra),
-          Layer.provide(FormationProposalStoreLive, infra),
-          Layer.provide(FormationFulfillmentStoreLive, infra),
-          Layer.provide(WorkspaceRepositoryLive, infra),
-        ),
-      ),
-      makeBlobStorePortLive(cbBlobRoot),
-      tx,
-      revisions,
-    ),
+    Layer.merge(driverDependencies, modelDecision),
   );
   return {
-    app: Layer.mergeAll(
-      infra,
-      driver,
-      providerRuntime,
-      cbCapability,
-      revisions,
-      advancement,
-      tx,
-    ),
+    app: Layer.mergeAll(driverDependencies, driver, advancement),
     recorded,
   };
 };

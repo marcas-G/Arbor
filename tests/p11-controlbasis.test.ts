@@ -47,6 +47,7 @@ import {
   AgentLoopDriverLive,
   ControlBasisResolverLive,
   checkFreshness,
+  ModelDecisionServiceLive,
   makeControlToolRegistry,
 } from "../packages/agent-runtime/src/index.js";
 import { InputPromotionServiceLive } from "../packages/application/src/index.js";
@@ -64,7 +65,9 @@ import {
 import {
   type ControlBasis,
   ModelContext,
+  makeTurnProfileResolver,
   type PrepareTurnInput,
+  TurnProfileResolver,
 } from "../packages/model-context/src/index.js";
 import {
   EnvironmentRevisionStore,
@@ -244,82 +247,98 @@ const makeApp = () => {
   const revisions = Layer.provide(EnvironmentRevisionStoreLive, infra);
   const advancement = Layer.provide(EnvironmentRevisionAdvancementLive, infra);
   const tx = Layer.provide(TransactionPortLive, infra);
+  const turnProfiles = Layer.succeed(
+    TurnProfileResolver,
+    makeTurnProfileResolver({
+      toolCatalog: {
+        visibleRefs: () => Effect.succeed([]),
+        resolveForModel: (ref) =>
+          Effect.fail({ _tag: "ToolNotRegistered", ref }),
+      },
+      controlCatalog: controlRegistry,
+    }),
+  );
+  const driverDependencies = Layer.mergeAll(
+    infra,
+    recordingModelContext(recorded),
+    providerRuntime,
+    capability,
+    Layer.provide(SessionRepositoryLive, infra),
+    Layer.provide(HumanMessageStoreLive, infra),
+    Layer.provide(ProjectRepositoryLive, infra),
+    Layer.provide(WorkspaceRepositoryLive, infra),
+    Layer.provide(WorkRepositoryLive, infra),
+    Layer.provide(InboxProjectionStoreLive, infra),
+    Layer.provide(
+      InputPromotionServiceLive,
+      Layer.mergeAll(
+        infra,
+        tx,
+        Layer.provide(SessionRepositoryLive, infra),
+        Layer.provide(InboxProjectionStoreLive, infra),
+        Layer.provide(ExecutionRepositoryLive, infra),
+      ),
+    ),
+    Layer.provide(ConversationCheckpointStoreLive, infra),
+    Layer.provide(
+      ControlBasisResolverLive,
+      Layer.mergeAll(
+        infra,
+        Layer.provide(TransactionPortLive, infra),
+        Layer.provide(ProjectRepositoryLive, infra),
+        Layer.provide(WorkspaceRepositoryLive, infra),
+        Layer.provide(WorkRepositoryLive, infra),
+        revisions,
+      ),
+    ),
+    BlobStorePortLive,
+    Layer.provide(ConversationResponseJobStoreLive, infra),
+    Layer.provide(ConversationAttemptStoreLive, infra),
+    Layer.provide(ExecutionRepositoryLive, infra),
+    Layer.provide(
+      RecoveryAttentionFactStoreLive,
+      Layer.mergeAll(infra, Layer.provide(DomainEventJournalLive, infra)),
+    ),
+    Layer.provide(ToolInvocationStoreLive, infra),
+    Layer.provide(P39RecoveryEvidenceStoreLive, infra),
+    Layer.provide(LocalPlanStoreLive, infra),
+    Layer.provide(DecisionRequestStoreLive, infra),
+    Layer.provide(
+      WorkspaceKnowledgePortLive,
+      Layer.mergeAll(
+        infra,
+        tx,
+        Layer.provide(WorkRepositoryLive, infra),
+        Layer.provide(VerificationRepositoryLive, infra),
+        Layer.provide(AcceptanceRepositoryLive, infra),
+        Layer.provide(FormationProposalStoreLive, infra),
+        Layer.provide(FormationFulfillmentStoreLive, infra),
+        Layer.provide(WorkspaceRepositoryLive, infra),
+      ),
+    ),
+    Layer.provide(
+      WorkspacePlacementPortLive,
+      Layer.mergeAll(
+        infra,
+        tx,
+        Layer.provide(WorkRepositoryLive, infra),
+        Layer.provide(VerificationRepositoryLive, infra),
+        Layer.provide(AcceptanceRepositoryLive, infra),
+        Layer.provide(FormationProposalStoreLive, infra),
+        Layer.provide(FormationFulfillmentStoreLive, infra),
+        Layer.provide(WorkspaceRepositoryLive, infra),
+      ),
+    ),
+    tx,
+    revisions,
+  );
+  const modelDecision = Layer.provide(
+    ModelDecisionServiceLive(),
+    Layer.merge(driverDependencies, turnProfiles),
+  );
   const driver = Layer.provide(
     AgentLoopDriverLive({ controlRegistry }),
-    Layer.mergeAll(
-      infra,
-      recordingModelContext(recorded),
-      providerRuntime,
-      capability,
-      Layer.provide(SessionRepositoryLive, infra),
-      Layer.provide(HumanMessageStoreLive, infra),
-      Layer.provide(ProjectRepositoryLive, infra),
-      Layer.provide(WorkspaceRepositoryLive, infra),
-      Layer.provide(WorkRepositoryLive, infra),
-      Layer.provide(InboxProjectionStoreLive, infra),
-      Layer.provide(
-        InputPromotionServiceLive,
-        Layer.mergeAll(
-          infra,
-          tx,
-          Layer.provide(SessionRepositoryLive, infra),
-          Layer.provide(InboxProjectionStoreLive, infra),
-          Layer.provide(ExecutionRepositoryLive, infra),
-        ),
-      ),
-      Layer.provide(ConversationCheckpointStoreLive, infra),
-      Layer.provide(
-        ControlBasisResolverLive,
-        Layer.mergeAll(
-          infra,
-          Layer.provide(TransactionPortLive, infra),
-          Layer.provide(ProjectRepositoryLive, infra),
-          Layer.provide(WorkspaceRepositoryLive, infra),
-          Layer.provide(WorkRepositoryLive, infra),
-          revisions,
-        ),
-      ),
-      BlobStorePortLive,
-      Layer.provide(ConversationResponseJobStoreLive, infra),
-      Layer.provide(ConversationAttemptStoreLive, infra),
-      Layer.provide(ExecutionRepositoryLive, infra),
-      Layer.provide(
-        RecoveryAttentionFactStoreLive,
-        Layer.mergeAll(infra, Layer.provide(DomainEventJournalLive, infra)),
-      ),
-      Layer.provide(ToolInvocationStoreLive, infra),
-      Layer.provide(P39RecoveryEvidenceStoreLive, infra),
-      Layer.provide(LocalPlanStoreLive, infra),
-      Layer.provide(DecisionRequestStoreLive, infra),
-      Layer.provide(
-        WorkspaceKnowledgePortLive,
-        Layer.mergeAll(
-          infra,
-          tx,
-          Layer.provide(WorkRepositoryLive, infra),
-          Layer.provide(VerificationRepositoryLive, infra),
-          Layer.provide(AcceptanceRepositoryLive, infra),
-          Layer.provide(FormationProposalStoreLive, infra),
-          Layer.provide(FormationFulfillmentStoreLive, infra),
-          Layer.provide(WorkspaceRepositoryLive, infra),
-        ),
-      ),
-      Layer.provide(
-        WorkspacePlacementPortLive,
-        Layer.mergeAll(
-          infra,
-          tx,
-          Layer.provide(WorkRepositoryLive, infra),
-          Layer.provide(VerificationRepositoryLive, infra),
-          Layer.provide(AcceptanceRepositoryLive, infra),
-          Layer.provide(FormationProposalStoreLive, infra),
-          Layer.provide(FormationFulfillmentStoreLive, infra),
-          Layer.provide(WorkspaceRepositoryLive, infra),
-        ),
-      ),
-      tx,
-      revisions,
-    ),
+    Layer.merge(driverDependencies, modelDecision),
   );
   return {
     app: Layer.mergeAll(

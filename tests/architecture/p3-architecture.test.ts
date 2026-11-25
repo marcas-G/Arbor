@@ -49,6 +49,10 @@ describe("P3 package DAG", () => {
       join(repoRoot, "packages/agent-runtime/src/agent-loop-driver.ts"),
       "utf8",
     );
+    const modelDecisionService = readFileSync(
+      join(repoRoot, "packages/agent-runtime/src/model-decision-service.ts"),
+      "utf8",
+    );
     const projector = readFileSync(
       join(repoRoot, "packages/model-context/src/projector.ts"),
       "utf8",
@@ -91,7 +95,19 @@ describe("P3 package DAG", () => {
     expect(projector).toContain('case "ToolCall"');
     expect(projector).toContain('case "ToolResult"');
     expect(projector).toContain("instructionFragments: []");
-    expect(driver).toContain("makeControlBasisResolver");
+    expect(driver).toContain("ModelDecisionService");
+    expect(driver).not.toContain("runModelDecision");
+    expect(driver).not.toContain("recordAcceptedModelOutput");
+    expect(driver).not.toContain("ModelContext");
+    expect(driver).not.toContain("ProviderRuntime");
+    expect(driver).not.toContain("ModelCapabilityPort");
+    expect(driver).not.toContain("ControlBasisResolver");
+    expect(driver).not.toContain("@arbor/model-context");
+    expect(driver).not.toContain('from "./model-decision.js"');
+    expect(driver).not.toContain('from "./model-output-journal.js"');
+    expect(modelDecisionService).toContain("ControlBasisResolver");
+    expect(modelDecisionService).toContain("runModelDecision");
+    expect(modelDecisionService).toContain("recordAcceptedModelOutput");
     expect(driver).not.toContain("staticControlBasis");
     expect(driver).not.toContain('authorizationDigest: "digest"');
   });
