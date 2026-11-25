@@ -17,7 +17,7 @@ import {
   ProviderTurnId,
   parse,
   resolveWorkspaceSandboxAuthorization,
-  ToolInvocationId,
+  type ToolInvocationId,
 } from "@arbor/domain";
 import type { TrustedHostConfigurationSourceService } from "@arbor/ports";
 import {
@@ -26,6 +26,8 @@ import {
   type CanonicalToolObservation,
   Clock,
   CurrentSandboxAuthoritySnapshotPort,
+  deriveLegacyToolInvocationId,
+  deriveToolInvocationId,
   EnvironmentResolverPort,
   type ExecutableApprovalBinding,
   ExecutableApprovalStore,
@@ -271,24 +273,12 @@ export const toExecutableOutcome = (
   }
 };
 
-const toolInvocationIdFor = (executionId: string, callRef: string) =>
-  parse(ToolInvocationId)(
-    `tin_018f2b3c-4d5e-7abc-8def-${createHash("sha256")
-      .update(JSON.stringify({ executionId, callRef }))
-      .digest("hex")
-      .slice(0, 12)}`,
-  );
-
-/** Pre-AH7 identities were derived from callRef alone. Read the exact old
- * record before choosing it for an in-flight replay; never assign that ID to
- * a different Execution that happens to reuse the provider callRef. */
-const legacyToolInvocationIdFor = (callRef: string) =>
-  parse(ToolInvocationId)(
-    `tin_018f2b3c-4d5e-7abc-8def-${createHash("sha256")
-      .update(callRef)
-      .digest("hex")
-      .slice(0, 12)}`,
-  );
+// Object 3: the deterministic invocation-ID scheme is owned by the
+// ToolInvocationId contract in @arbor/ports (deriveToolInvocationId /
+// deriveLegacyToolInvocationId); the pre-AH7 legacy derivation is for
+// in-flight replay lookups only.
+const toolInvocationIdFor = deriveToolInvocationId;
+const legacyToolInvocationIdFor = deriveLegacyToolInvocationId;
 
 export const makeExecutableToolHandler = (
   tools: import("@arbor/ports").ToolRuntimePortService,
