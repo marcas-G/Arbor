@@ -44,7 +44,7 @@ import { WorkspaceKnowledgePortLive } from "../apps/single-workspace/src/workspa
 import { WorkspacePlacementPortLive } from "../apps/single-workspace/src/workspace-placement.js";
 import {
   type AgentActionHandler,
-  AgentLoopDriverLive,
+  AgentLoopRuntimeLive,
   ControlBasisResolverLive,
   checkFreshness,
   ModelDecisionServiceLive,
@@ -337,7 +337,7 @@ const makeApp = () => {
     Layer.merge(driverDependencies, turnProfiles),
   );
   const driver = Layer.provide(
-    AgentLoopDriverLive({ controlRegistry }),
+    AgentLoopRuntimeLive({ controlRegistry }),
     Layer.merge(driverDependencies, modelDecision),
   );
   return {

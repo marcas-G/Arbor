@@ -97,7 +97,8 @@ invalid.
 | #5 | 2 | AgentLoopActionDependencies 21-field flat → three layers (TurnInput/DurableStores/Orchestration) + intersection alias; zero behavior change | agent-runtime 254; p2/p3 65 |
 | #6 | 3 | Invocation-ID scheme: composition-root private helper → ports contract (deriveToolInvocationId/deriveLegacyToolInvocationId), byte-identity verified; PR #4 composition gap repaired (43 runtime failures → 0) | ports 24; single-workspace 585 |
 | #7 | tool ownership | bounded() 4 unlinked copies → executor-side authority imported by the app copies | tool-runtime 191; single-workspace 585 |
-| pending | 1 (E02/E03/E05/E11) | Model Decision became an execution-bound capability Service: driver-local Context acquisition 26 required + 2 optional → 10 required + 2 optional; `agent-loop-driver.ts` 630 → 422 lines while the extracted Driver + Service boundary is 722 lines; Driver options 12 → 5; accepted model output persistence moved behind the capability boundary; `composition.ts` 1597 → 1594 lines while its new option helper makes the two-file composition source 1637 lines | typecheck; 47 agent-runtime/P3/P11 files with 320 tests; focused architecture 15; source-line transition gate |
+| #8 | 1 (E02/E03/E05/E11) | Model Decision became an execution-bound capability Service: driver-local Context acquisition 26 required + 2 optional → 10 required + 2 optional; `agent-loop-driver.ts` 630 → 422 lines while the extracted Driver + Service boundary is 722 lines; Driver options 12 → 5; accepted model output persistence moved behind the capability boundary; `composition.ts` 1597 → 1594 lines while its new option helper makes the two-file composition source 1637 lines | typecheck; 47 agent-runtime/P3/P11 files with 320 tests; focused architecture 15; source-line transition gate |
+| pending | 1–3 (E02/E03/E05/E11) | Agent Loop Action Progression now owns route/ledger recovery, action admission and dispatch, observation handoff, `StepEffectsCommitted`, successor creation and settlement proposal. Driver options 5 → 1 and `agent-loop-driver.ts` 422 → 358 lines; its required Context surface is honestly 10 → 11 because one coarse progression capability replaces leaked option-level knowledge. The new Service + Layer/runtime composition is 267 lines, so this is an information-hiding and ownership change, not a total-code-size reduction. `composition.ts` and its option helper remain 1594 + 43 lines. | typecheck; 47 agent-runtime/P3/P11 files with 320 tests; architecture 41 files with 270 tests; independent progression recovery test 3; source-line transition gate |
 
 Cumulative against the driver baseline audit: E06 hidden-required
 services 18 → 0; ModelDecisionDependencies 30 → 22 fields; the two
@@ -109,7 +110,7 @@ durable accepted-output handoff. Provider admission and action admission
 still share the Driver's per-drive safety state, and Provider network calls
 remain outside long database transactions.
 
-The seam does not claim that Model Decision internals are fully decomposed:
+The Model Decision seam does not claim that its internals are fully decomposed:
 `ModelDecisionDependencies` remains a 22-field internal contract and the
 Service Live layer currently acquires 20 required capabilities. The giant
 dependency contract is direct E05 debt; the Layer surface is a separate
@@ -117,3 +118,13 @@ cohesion/ownership review, including four capabilities still acquired by
 both Driver and Service. The completed change is that decision-internal
 knowledge no longer leaks into the Agent Loop orchestrator or its public
 options.
+
+The Action Progression seam keeps the existing P3/P4/P9 ownership split:
+Agent Runtime owns route verification, action-ledger convergence and the
+model-visible result handoff; P4 still owns executable effect admission and
+settlement; application handlers still own canonical domain mutation. The
+Service deliberately composes the existing action executor and step
+completion functions rather than duplicating them. Its public result no
+longer exposes observations, action-ledger records or step states to the
+Driver. The Driver retains only the per-drive `progressedSinceBoundary`
+safety signal shared by Provider and Action admission.

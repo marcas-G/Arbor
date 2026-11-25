@@ -53,6 +53,21 @@ describe("P3 package DAG", () => {
       join(repoRoot, "packages/agent-runtime/src/model-decision-service.ts"),
       "utf8",
     );
+    const actionProgressionService = readFileSync(
+      join(
+        repoRoot,
+        "packages/agent-runtime/src/agent-loop-action-progression-service.ts",
+      ),
+      "utf8",
+    );
+    const agentLoopRuntime = readFileSync(
+      join(repoRoot, "packages/agent-runtime/src/agent-loop-runtime.ts"),
+      "utf8",
+    );
+    const productionComposition = readFileSync(
+      join(repoRoot, "apps/single-workspace/src/composition.ts"),
+      "utf8",
+    );
     const projector = readFileSync(
       join(repoRoot, "packages/model-context/src/projector.ts"),
       "utf8",
@@ -96,8 +111,15 @@ describe("P3 package DAG", () => {
     expect(projector).toContain('case "ToolResult"');
     expect(projector).toContain("instructionFragments: []");
     expect(driver).toContain("ModelDecisionService");
+    expect(driver).toContain("AgentLoopActionProgressionService");
     expect(driver).not.toContain("runModelDecision");
     expect(driver).not.toContain("recordAcceptedModelOutput");
+    expect(driver).not.toContain("executeAgentLoopActions");
+    expect(driver).not.toContain("completeAgentLoopStep");
+    expect(driver).not.toContain("ControlActionAuthorizer");
+    expect(driver).not.toContain("ExecutableInvocationHandler");
+    expect(driver).not.toContain("StepEffectsCommitted");
+    expect(driver).not.toContain("observations");
     expect(driver).not.toContain("ModelContext");
     expect(driver).not.toContain("ProviderRuntime");
     expect(driver).not.toContain("ModelCapabilityPort");
@@ -108,6 +130,16 @@ describe("P3 package DAG", () => {
     expect(modelDecisionService).toContain("ControlBasisResolver");
     expect(modelDecisionService).toContain("runModelDecision");
     expect(modelDecisionService).toContain("recordAcceptedModelOutput");
+    expect(actionProgressionService).toContain("executeAgentLoopActions");
+    expect(actionProgressionService).toContain("completeAgentLoopStep");
+    expect(actionProgressionService).not.toContain("@arbor/tool-runtime");
+    expect(actionProgressionService).not.toContain("@arbor/application");
+    expect(actionProgressionService).not.toContain("@arbor/execution-runtime");
+    expect(actionProgressionService).not.toContain("persistence-sqlite");
+    expect(agentLoopRuntime).toContain("AgentLoopDriverLive");
+    expect(agentLoopRuntime).toContain("AgentLoopActionProgressionServiceLive");
+    expect(productionComposition).toContain("AgentLoopRuntimeLive");
+    expect(productionComposition).not.toContain("AgentLoopDriverLive");
     expect(driver).not.toContain("staticControlBasis");
     expect(driver).not.toContain('authorizationDigest: "digest"');
   });

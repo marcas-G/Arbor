@@ -1,5 +1,7 @@
+export * from "./agent-loop-action-progression-service.js";
 export * from "./agent-loop-actions/types.js";
 export * from "./agent-loop-driver.js";
+export * from "./agent-loop-runtime.js";
 export * from "./checkpoint/conversation/compaction.js";
 export * from "./checkpoint/conversation/projection.js";
 export * from "./compaction-coordinator.js";

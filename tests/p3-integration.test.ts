@@ -42,7 +42,7 @@ import { WorkerDispatchPortLive } from "../adapters/worker-local/src/index.js";
 import { WorkspaceKnowledgePortLive } from "../apps/single-workspace/src/workspace-knowledge.js";
 import { WorkspacePlacementPortLive } from "../apps/single-workspace/src/workspace-placement.js";
 import {
-  AgentLoopDriverLive,
+  AgentLoopRuntimeLive,
   ControlBasisResolverLive,
   ModelDecisionServiceLive,
   makeControlToolRegistry,
@@ -230,7 +230,7 @@ const makeApp = () => {
     ),
   );
   const driver = Layer.provide(
-    AgentLoopDriverLive({ controlRegistry }),
+    AgentLoopRuntimeLive({ controlRegistry }),
     Layer.mergeAll(
       modelDecision,
       repos,

@@ -1,6 +1,6 @@
 import type {
-  AgentLoopDriverOptions,
   AgentLoopQualificationProbe,
+  AgentLoopRuntimeOptions,
   ModelDecisionServiceOptions,
 } from "@arbor/agent-runtime";
 
@@ -34,10 +34,10 @@ export const makeModelDecisionServiceOptions = (
     : { qualificationProbe: input.qualificationProbe }),
 });
 
-export const makeAgentLoopDriverOptions = (
-  input: Omit<AgentLoopDriverOptions, "qualificationProbe">,
+export const makeAgentLoopRuntimeOptions = (
+  input: Omit<AgentLoopRuntimeOptions, "qualificationProbe">,
   qualificationProbe?: AgentLoopQualificationProbe,
-): AgentLoopDriverOptions => ({
+): AgentLoopRuntimeOptions => ({
   ...input,
   ...(qualificationProbe === undefined ? {} : { qualificationProbe }),
 });

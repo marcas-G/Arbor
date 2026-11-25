@@ -4,13 +4,8 @@ import type {
   BoundedObservation,
   ExecutionDriverError,
 } from "@arbor/ports";
-import {
-  SandboxPolicyDecisionStore,
-  SandboxProviderUnavailableStore,
-  sessionCausalBindingForWork,
-  sha256Hex,
-} from "@arbor/ports";
-import { Effect } from "effect";
+import { sessionCausalBindingForWork, sha256Hex } from "@arbor/ports";
+import { Effect, Option } from "effect";
 import { actionRejectionObservation } from "./agent-loop-actions/action-errors.js";
 import { makeBlockedSettlement } from "./agent-loop-actions/blocked-settlement.js";
 import { verifyCommittedStep } from "./agent-loop-actions/committed-step.js";
@@ -74,11 +69,11 @@ export const executeAgentLoopActions = (
   } = dependencies;
 
   return Effect.gen(function* () {
-    const sandboxUnavailableFacts = yield* Effect.serviceOption(
-      SandboxProviderUnavailableStore,
+    const sandboxUnavailableFacts = Option.fromUndefinedOr(
+      dependencies.sandboxUnavailableFacts,
     );
-    const sandboxPolicyDecisions = yield* Effect.serviceOption(
-      SandboxPolicyDecisionStore,
+    const sandboxPolicyDecisions = Option.fromUndefinedOr(
+      dependencies.sandboxPolicyDecisions,
     );
     let currentLoopStep = dependencies.currentLoopStep;
     const workBinding = workEpisode(input.execution);

@@ -18,7 +18,9 @@ import type {
   InboxProjectionStoreService,
   ProviderTurnStoreService,
   RuntimeSafetyObservation,
+  SandboxPolicyDecisionStoreService,
   SandboxProviderUnavailableOutcome,
+  SandboxProviderUnavailableStoreService,
   SessionRepositoryService,
   TransactionPortService,
 } from "@arbor/ports";
@@ -84,6 +86,8 @@ export interface AgentActionDurableStores {
   readonly inboxSequence?: Pick<InboxProjectionStoreService, "currentSequence">;
   readonly tx: TransactionPortService;
   readonly sessions: SessionRepositoryService;
+  readonly sandboxUnavailableFacts?: SandboxProviderUnavailableStoreService;
+  readonly sandboxPolicyDecisions?: SandboxPolicyDecisionStoreService;
 }
 
 export interface AgentActionOrchestration {

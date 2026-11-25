@@ -42,9 +42,9 @@ import { WorkspaceKnowledgePortLive } from "../apps/single-workspace/src/workspa
 import { WorkspacePlacementPortLive } from "../apps/single-workspace/src/workspace-placement.js";
 import {
   type AgentActionHandler,
-  AgentLoopDriverLive,
-  type AgentLoopDriverOptions,
   type AgentLoopQualificationProbe,
+  AgentLoopRuntimeLive,
+  type AgentLoopRuntimeOptions,
   type ControlActionAuthorizerService,
   ControlBasisResolverLive,
   type ExecutableInvocationHandler,
@@ -210,7 +210,7 @@ const makeApp = (
     readonly providerFailures?: ReadonlyArray<ProviderFailureKind>;
     readonly controlAuthorizer?: ControlActionAuthorizerService;
     readonly qualificationProbe?: AgentLoopQualificationProbe;
-    readonly recordReconciliationEscalation?: AgentLoopDriverOptions["recordReconciliationEscalation"];
+    readonly recordReconciliationEscalation?: AgentLoopRuntimeOptions["recordReconciliationEscalation"];
     readonly databaseFilename?: string;
   } = {},
 ) => {
@@ -454,11 +454,11 @@ const makeApp = (
     driverDependencies,
   );
   const driver = Layer.provide(
-    AgentLoopDriverLive({
+    AgentLoopRuntimeLive({
       controlRegistry,
-      ...(options.executableHandler !== undefined
-        ? { executableInvocationHandler: options.executableHandler }
-        : {}),
+      ...(options.executableHandler === undefined
+        ? {}
+        : { executableInvocationHandler: options.executableHandler }),
       ...(options.recordReconciliationEscalation === undefined
         ? {}
         : {

@@ -1,8 +1,8 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  AgentLoopDriverLive,
   type AgentLoopQualificationProbe,
+  AgentLoopRuntimeLive,
   ControlActionAuthorizer,
   ControlBasisResolverLive,
   ControlToolRegistry,
@@ -255,7 +255,7 @@ import {
   type SqlClient as SqlClientService,
 } from "effect/unstable/sql/SqlClient";
 import {
-  makeAgentLoopDriverOptions,
+  makeAgentLoopRuntimeOptions,
   makeModelDecisionServiceOptions,
 } from "./agent-loop-composition.js";
 import { ControlActionAuthorizerLive } from "./control-action-authorizer.js";
@@ -1267,7 +1267,7 @@ const buildSingleWorkspaceLayerInternal = (
           onProviderProgress: publishConversationProgress,
           qualificationProbe: config.qualificationProbe,
         });
-        const driverOptions = makeAgentLoopDriverOptions(
+        const runtimeOptions = makeAgentLoopRuntimeOptions(
           {
             controlRegistry: registryService,
             controlAuthorizer: authorizer,
@@ -1291,7 +1291,7 @@ const buildSingleWorkspaceLayerInternal = (
           ),
         );
         return Layer.provide(
-          AgentLoopDriverLive(driverOptions),
+          AgentLoopRuntimeLive(runtimeOptions),
           Layer.mergeAll(modelDecision, repos, inputPromotion, infra),
         );
       }),

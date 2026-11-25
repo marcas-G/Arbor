@@ -23,17 +23,9 @@ import {
   TransactionPort,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
-import type { ReconciliationEscalationRecorderError } from "./agent-loop-actions/types.js";
-import { executeAgentLoopActions } from "./agent-loop-actions.js";
+import { AgentLoopActionProgressionService } from "./agent-loop-action-progression-service.js";
 import { recoverAgentLoopFrontier } from "./agent-loop-driver/recovery.js";
 import { MAX_TURNS } from "./agent-loop-policy.js";
-import { completeAgentLoopStep } from "./agent-loop-step-completion.js";
-import {
-  type ControlToolRegistryService,
-  type ExecutableInvocationHandler,
-  makeControlToolRegistry,
-} from "./control.js";
-import type { ControlActionAuthorizerService } from "./control-authorization.js";
 import { toExecutionDriverError } from "./execution-driver-failure.js";
 import { ModelDecisionService } from "./model-decision-service.js";
 import { providerTurnSafetyFingerprint } from "./p12-safety-identity.js";
@@ -49,18 +41,6 @@ export {
 } from "./agent-loop-driver/cursor.js";
 
 export interface AgentLoopDriverOptions {
-  /** The typed control-tool registry. Composition supplies the live registry;
-   * the default keeps Wait available for focused runtime tests. */
-  readonly controlRegistry?: ControlToolRegistryService;
-  readonly controlAuthorizer?: ControlActionAuthorizerService;
-  readonly executableInvocationHandler?: ExecutableInvocationHandler;
-  /** P9 durable recovery escalation for unknown external effects. */
-  readonly recordReconciliationEscalation?: (input: {
-    readonly execution: Execution;
-    readonly fence: AgentLoopStepFence;
-    readonly principal: import("@arbor/domain").Principal;
-    readonly invocationRefs: ReadonlyArray<string>;
-  }) => Effect.Effect<void, ReconciliationEscalationRecorderError>;
   readonly qualificationProbe?: AgentLoopQualificationProbe;
 }
 export const AgentLoopDriverLive = (
@@ -69,6 +49,7 @@ export const AgentLoopDriverLive = (
   ExecutionDriverPort,
   never,
   | ModelDecisionService
+  | AgentLoopActionProgressionService
   | SessionRepository
   | TransactionPort
   | InboxProjectionStore
@@ -83,6 +64,7 @@ export const AgentLoopDriverLive = (
     ExecutionDriverPort,
     Effect.gen(function* () {
       const modelDecisionService = yield* ModelDecisionService;
+      const actionProgressionService = yield* AgentLoopActionProgressionService;
       const sessions = yield* SessionRepository;
       // E06 normalization (object 1, batch two): every service the
       // production composition always provides becomes a typed Layer
@@ -112,8 +94,6 @@ export const AgentLoopDriverLive = (
         : undefined;
       const decisionRequests = yield* DecisionRequestStore;
       const clock = yield* Clock;
-      const controlRegistry =
-        options.controlRegistry ?? makeControlToolRegistry();
       const failure = toExecutionDriverError;
 
       const drive = (input: {
@@ -255,6 +235,19 @@ export const AgentLoopDriverLive = (
             now,
           });
           const currentControlBasis = boundModelDecision.currentControlBasis;
+          const boundActionProgression =
+            yield* actionProgressionService.forExecution({
+              execution: input.execution,
+              context: input.context,
+              ...(loopSteps === undefined ? {} : { loopSteps }),
+              ...(providerTurns === undefined ? {} : { providerTurns }),
+              inboxSequence: inbox,
+              ...(loopStepFence === undefined ? {} : { loopStepFence }),
+              currentControlBasis,
+              admit,
+              failure,
+              now,
+            });
 
           for (
             let turn = firstLogicalStepNo, repairAttempt = firstRepairAttempt;
@@ -318,31 +311,9 @@ export const AgentLoopDriverLive = (
             if (modelDecision._tag === "RecoveryBlocked") {
               return { _tag: "RecoveryBlocked" } as const;
             }
-            const preparedTurn = modelDecision.turn;
-            const decodedOutput = modelDecision.output;
-            let currentLoopStep = modelDecision.loopStep;
-            const actionProgression = yield* executeAgentLoopActions({
-              input,
-              preparedTurn,
-              decodedOutput,
+            const actionProgression = yield* boundActionProgression.progress({
+              decision: modelDecision,
               turn,
-              ...(currentLoopStep === undefined ? {} : { currentLoopStep }),
-              ...(loopSteps === undefined ? {} : { loopSteps }),
-              ...(providerTurns === undefined ? {} : { providerTurns }),
-              inboxSequence: inbox,
-              ...(loopStepFence === undefined ? {} : { loopStepFence }),
-              tx,
-              sessions,
-              controlRegistry,
-              ...(options.controlAuthorizer === undefined
-                ? {}
-                : { controlAuthorizer: options.controlAuthorizer }),
-              ...(options.executableInvocationHandler === undefined
-                ? {}
-                : {
-                    executableInvocationHandler:
-                      options.executableInvocationHandler,
-                  }),
               ...(exactNotAdmittedRecovery === undefined ||
               exactNotAdmittedRecovery.logicalStepNo !== turn ||
               exactNotAdmittedRecovery.repairAttempt !== repairAttempt
@@ -350,19 +321,6 @@ export const AgentLoopDriverLive = (
                 : {
                     recoverExactNotAdmittedAction: exactNotAdmittedRecovery,
                   }),
-              ...(options.recordReconciliationEscalation === undefined
-                ? {}
-                : {
-                    recordReconciliationEscalation:
-                      options.recordReconciliationEscalation,
-                  }),
-              currentControlBasis,
-              admit,
-              failure,
-              now,
-              ...(options.qualificationProbe === undefined
-                ? {}
-                : { qualificationProbe: options.qualificationProbe }),
             });
             if (actionProgression._tag === "Settle") {
               return commitSettlementProposal(actionProgression.settlement);
@@ -384,30 +342,8 @@ export const AgentLoopDriverLive = (
             if (actionProgression._tag === "ApprovalRequired") {
               return actionProgression;
             }
-            currentLoopStep = actionProgression.loopStep;
             progressedSinceBoundary =
               progressedSinceBoundary || actionProgression.durableProgress;
-            const observations = actionProgression.observations;
-            const finalization = yield* completeAgentLoopStep({
-              input,
-              decodedOutput,
-              observations,
-              conversation: modelDecision.conversation === true,
-              turn,
-              ...(currentLoopStep === undefined ? {} : { currentLoopStep }),
-              ...(loopSteps === undefined ? {} : { loopSteps }),
-              ...(loopStepFence === undefined ? {} : { loopStepFence }),
-              tx,
-              sessions,
-              failure,
-              now,
-              ...(options.qualificationProbe === undefined
-                ? {}
-                : { qualificationProbe: options.qualificationProbe }),
-            });
-            if (finalization._tag === "Settle") {
-              return commitSettlementProposal(finalization.settlement);
-            }
           }
           return {
             _tag: "Failed",
