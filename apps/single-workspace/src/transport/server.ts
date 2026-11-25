@@ -106,9 +106,14 @@ const sendBytes = (
   response.end(headOnly ? undefined : bytes);
 };
 
+/** Default body ceiling for command/view/JSON routes. A command payload is
+ * bounded typed JSON; anything larger is a client defect or abuse, and the
+ * previous unbounded default let a single request buffer without limit. */
+const DEFAULT_MAX_BODY_BYTES = 10 * 1024 * 1024;
+
 const readBody = (
   request: IncomingMessage,
-  maxBytes = Number.POSITIVE_INFINITY,
+  maxBytes = DEFAULT_MAX_BODY_BYTES,
 ): Promise<unknown> =>
   new Promise((resolveBody) => {
     const chunks: Buffer[] = [];

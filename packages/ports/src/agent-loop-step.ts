@@ -28,6 +28,36 @@ export type AgentLoopStepState =
   | "NextStepReady"
   | "SettlementProposed";
 
+/** Owned state predicates (code-organization Rule 3): every state-set
+ * decision goes through these instead of a hand-written comparison chain,
+ * so adding a state means touching this module, not every consumer. */
+const RECOVERABLE_STEP_STATES: ReadonlySet<AgentLoopStepState> = new Set([
+  "Prepared",
+  "ProviderResultAvailable",
+  "OutputRejected",
+  "OutputAccepted",
+  "ActionsInProgress",
+  "StepEffectsCommitted",
+  "NextStepReady",
+]);
+/** A step the runtime can re-enter for recovery/replay: everything that has
+ * not yet proposed settlement. */
+export const isRecoverableStepState = (state: AgentLoopStepState): boolean =>
+  RECOVERABLE_STEP_STATES.has(state);
+
+/** Output/effects not yet committed: a resume continues this same step. */
+export const isPreEffectsStepState = (state: AgentLoopStepState): boolean =>
+  state === "Prepared" ||
+  state === "ProviderResultAvailable" ||
+  state === "OutputRejected" ||
+  state === "OutputAccepted" ||
+  state === "ActionsInProgress";
+
+/** Effects committed: progression moves to the successor step. */
+export const isEffectsCommittedStepState = (
+  state: AgentLoopStepState,
+): boolean => state === "StepEffectsCommitted" || state === "NextStepReady";
+
 export interface AgentLoopStepRecord {
   readonly identity: AgentLoopStepIdentity;
   readonly predecessor?: AgentLoopStepIdentity;

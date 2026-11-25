@@ -1,6 +1,11 @@
 import type { Execution } from "@arbor/domain";
 import type { SessionTimelineProjection } from "@arbor/model-context";
-import { sha256Hex } from "@arbor/ports";
+import {
+  isEffectsCommittedStepState,
+  isPreEffectsStepState,
+  isRecoverableStepState,
+  sha256Hex,
+} from "@arbor/ports";
 import { Effect, Option } from "effect";
 import {
   decodeUniqueNativePortableFrontier,
@@ -269,15 +274,7 @@ export const validateNativeCheckpointSource = (
         failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
       );
     }
-    const checkpointSourceStateValid =
-      checkpointSourceStep.state === "Prepared" ||
-      checkpointSourceStep.state === "ProviderResultAvailable" ||
-      checkpointSourceStep.state === "OutputRejected" ||
-      checkpointSourceStep.state === "OutputAccepted" ||
-      checkpointSourceStep.state === "ActionsInProgress" ||
-      checkpointSourceStep.state === "StepEffectsCommitted" ||
-      checkpointSourceStep.state === "NextStepReady";
-    if (!checkpointSourceStateValid) {
+    if (!isRecoverableStepState(checkpointSourceStep.state)) {
       return yield* Effect.fail(
         failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
       );
@@ -286,19 +283,10 @@ export const validateNativeCheckpointSource = (
     // Session context, but its source step is not this execution's cursor.
     // The current execution creates its own Prepared step below.
     if (!nativeCheckpointIsInherited) {
-      if (
-        checkpointSourceStep.state === "Prepared" ||
-        checkpointSourceStep.state === "ProviderResultAvailable" ||
-        checkpointSourceStep.state === "OutputRejected" ||
-        checkpointSourceStep.state === "OutputAccepted" ||
-        checkpointSourceStep.state === "ActionsInProgress"
-      ) {
+      if (isPreEffectsStepState(checkpointSourceStep.state)) {
         turn = checkpointSourceIdentity.logicalStepNo;
         repairAttempt = checkpointSourceIdentity.repairAttempt;
-      } else if (
-        checkpointSourceStep.state === "StepEffectsCommitted" ||
-        checkpointSourceStep.state === "NextStepReady"
-      ) {
+      } else if (isEffectsCommittedStepState(checkpointSourceStep.state)) {
         if (
           !nativeCheckpoint.bindingMatches ||
           checkpointSourceStep.successor === undefined
