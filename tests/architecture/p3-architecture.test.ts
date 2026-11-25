@@ -263,7 +263,9 @@ describe("durable step recovery responsibility", () => {
     expect(work).toContain("recoverSettledSummaryOverflow(");
     expect(summary).toContain("commitRecoveredSummaryCompaction(");
     for (const source of [driver, conversation, work, summary]) {
-      expect(source.split(/\r?\n/u).length).toBeLessThanOrEqual(801);
+      const lines = source.split(/\r\n|\n|\r/u);
+      const physicalLines = lines.length - (lines.at(-1) === "" ? 1 : 0);
+      expect(physicalLines).toBeLessThanOrEqual(800);
     }
   });
 });
