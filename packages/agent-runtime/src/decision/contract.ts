@@ -20,7 +20,6 @@ import type {
   ExecutionDriverError,
   ExecutionRepositoryService,
   HumanMessageStoreService,
-  LocalPlanStoreService,
   ModelCapability,
   ProviderCancellationSignal,
   ProviderExecutionPolicyOverrides,
@@ -32,8 +31,6 @@ import type {
   SessionRepositoryService,
   TransactionPortService,
   WorkRepositoryService,
-  WorkspaceKnowledgePortService,
-  WorkspacePlacementPortService,
   WorkspaceRepositoryService,
 } from "@arbor/ports";
 import type { Effect } from "effect";
@@ -88,11 +85,8 @@ export interface ModelDecisionDependencies {
   readonly responseAttempts?: Pick<ConversationAttemptStoreService, "list">;
   readonly executions?: Pick<ExecutionRepositoryService, "findById">;
   readonly works: WorkRepositoryService;
-  readonly localPlans?: Pick<LocalPlanStoreService, "findByWork">;
   readonly decisionRequests?: Pick<DecisionRequestStoreService, "findById">;
   readonly workspaces: WorkspaceRepositoryService;
-  readonly workspaceKnowledge?: WorkspaceKnowledgePortService;
-  readonly workspacePlacement?: WorkspacePlacementPortService;
   readonly options: ModelDecisionOptions;
   readonly admitProviderTurn: (
     operationKind: import("@arbor/ports").PortableOperationKind,

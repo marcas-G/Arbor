@@ -194,6 +194,21 @@ export const AgentLoopDriverLive = (
       const _workspaceKnowledge = yield* WorkspaceKnowledgePort;
       const _workspacePlacement = yield* WorkspacePlacementPort;
       const localPlans = yield* LocalPlanStore;
+      // E05 sink: decision submodules declare these capabilities in their R
+      // channel; the port contract keeps drive at R = never, so the driver
+      // provides them here at the boundary.
+      const provideDecisionCapabilities = <A, E>(
+        effect: Effect.Effect<
+          A,
+          E,
+          LocalPlanStore | WorkspaceKnowledgePort | WorkspacePlacementPort
+        >,
+      ): Effect.Effect<A, E> =>
+        effect.pipe(
+          Effect.provideService(WorkspaceKnowledgePort, _workspaceKnowledge),
+          Effect.provideService(WorkspacePlacementPort, _workspacePlacement),
+          Effect.provideService(LocalPlanStore, localPlans),
+        );
       const decisionRequests = yield* DecisionRequestStore;
       const clock = yield* Clock;
       const controlRegistry =
@@ -377,55 +392,56 @@ export const AgentLoopDriverLive = (
               readonly repairAttempt: number;
             },
           ): Effect.Effect<ModelDecisionOutcome, ExecutionDriverError> =>
-            runModelDecision(
-              {
-                input: {
-                  execution: input.execution,
-                  agentExecutionState: input.agentExecutionState,
+            provideDecisionCapabilities(
+              runModelDecision(
+                {
+                  input: {
+                    execution: input.execution,
+                    agentExecutionState: input.agentExecutionState,
+                  },
+                  agentBinding,
+                  capability,
+                  currentControlBasis,
+                  modelContext,
+                  providerRuntime,
+                  tx,
+                  sessions,
+                  humanMessages,
+                  conversationCheckpoints: conversationCheckpointStore,
+                  blobs: blobStore,
+                  turnProfileResolver,
+                  responseJobs,
+                  responseAttempts,
+                  executions,
+                  works,
+                  decisionRequests,
+                  workspaces,
+                  options: {
+                    ...options,
+                    ...((input.cancellationSignal ??
+                      options.cancellationSignal) === undefined
+                      ? {}
+                      : {
+                          cancellationSignal:
+                            input.cancellationSignal ??
+                            options.cancellationSignal,
+                        }),
+                    ...(resumeExactActionStepIdentity === undefined
+                      ? {}
+                      : { resumeExactActionStepIdentity }),
+                  },
+                  admitProviderTurn,
+                  completeProviderTurn,
+                  failure,
+                  now,
+                  ...(loopSteps === undefined ? {} : { loopSteps }),
+                  ...(loopStepFence === undefined ? {} : { loopStepFence }),
+                  ...(providerTurns === undefined ? {} : { providerTurns }),
+                  recoveryAttentionFacts,
                 },
-                agentBinding,
-                capability,
-                currentControlBasis,
-                modelContext,
-                providerRuntime,
-                tx,
-                sessions,
-                humanMessages,
-                conversationCheckpoints: conversationCheckpointStore,
-                blobs: blobStore,
-                turnProfileResolver,
-                responseJobs,
-                responseAttempts,
-                executions,
-                works,
-                localPlans,
-                decisionRequests,
-                workspaces,
-                options: {
-                  ...options,
-                  ...((input.cancellationSignal ??
-                    options.cancellationSignal) === undefined
-                    ? {}
-                    : {
-                        cancellationSignal:
-                          input.cancellationSignal ??
-                          options.cancellationSignal,
-                      }),
-                  ...(resumeExactActionStepIdentity === undefined
-                    ? {}
-                    : { resumeExactActionStepIdentity }),
-                },
-                admitProviderTurn,
-                completeProviderTurn,
-                failure,
-                now,
-                ...(loopSteps === undefined ? {} : { loopSteps }),
-                ...(loopStepFence === undefined ? {} : { loopStepFence }),
-                ...(providerTurns === undefined ? {} : { providerTurns }),
-                recoveryAttentionFacts,
-              },
-              turn,
-              repairAttempt,
+                turn,
+                repairAttempt,
+              ),
             );
 
           for (

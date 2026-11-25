@@ -1,18 +1,16 @@
 import { executionEpisode, type Work, workEpisode } from "@arbor/domain";
-import type { PortableInputItem } from "@arbor/ports";
+import {
+  LocalPlanStore,
+  type PortableInputItem,
+  WorkspaceKnowledgePort,
+  WorkspacePlacementPort,
+} from "@arbor/ports";
 import { Effect, Option } from "effect";
 import type { ModelDecisionDependencies } from "../contract.js";
 
 type WorkspaceContextDependencies = Pick<
   ModelDecisionDependencies,
-  | "input"
-  | "tx"
-  | "workspaces"
-  | "workspaceKnowledge"
-  | "workspacePlacement"
-  | "works"
-  | "localPlans"
-  | "failure"
+  "input" | "tx" | "workspaces" | "works" | "failure"
 >;
 
 /** Read the bound workspace, accepted knowledge, placement and work plan.
@@ -21,17 +19,14 @@ export const loadDecisionWorkspaceContext = (
   dependencies: WorkspaceContextDependencies,
   placementExecution: boolean,
 ) => {
-  const {
-    input,
-    tx,
-    workspaces,
-    workspaceKnowledge,
-    workspacePlacement,
-    works,
-    localPlans,
-    failure,
-  } = dependencies;
+  const { input, tx, workspaces, works, failure } = dependencies;
   return Effect.gen(function* () {
+    // E05 sink: these capabilities belong to this module alone; they are
+    // acquired from the environment instead of travelling through the
+    // giant Dependencies object.
+    const workspaceKnowledge = yield* WorkspaceKnowledgePort;
+    const workspacePlacement = yield* WorkspacePlacementPort;
+    const localPlans = yield* LocalPlanStore;
     const inputItems: PortableInputItem[] = [];
     const messageContextRefs: string[] = [];
     let localPlanScope = false;
@@ -46,7 +41,7 @@ export const loadDecisionWorkspaceContext = (
         }),
       );
     }
-    if (workspaceKnowledge !== undefined) {
+    {
       const knowledge = yield* workspaceKnowledge
         .load(input.execution.workspaceId)
         .pipe(Effect.mapError(failure));
@@ -67,7 +62,7 @@ export const loadDecisionWorkspaceContext = (
         );
       }
     }
-    if (placementExecution && workspacePlacement !== undefined) {
+    if (placementExecution) {
       const placement = yield* workspacePlacement
         .list({ rootWorkspaceId: input.execution.workspaceId })
         .pipe(Effect.mapError(failure));
@@ -103,10 +98,7 @@ export const loadDecisionWorkspaceContext = (
         );
       }
       currentWork = work.value;
-      if (
-        localPlans !== undefined &&
-        executionEpisode(input.execution)?._tag === "WorkEpisode"
-      ) {
+      if (executionEpisode(input.execution)?._tag === "WorkEpisode") {
         localPlanScope = true;
         const plan = yield* tx
           .transact(localPlans.findByWork(boundWork.workId))

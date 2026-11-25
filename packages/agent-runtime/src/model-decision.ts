@@ -12,7 +12,13 @@ import {
   type InstructionFragment,
   SESSION_TIMELINE_ENTRY_LIMIT,
 } from "@arbor/model-context";
-import type { ExecutionDriverError, SessionEntryRecord } from "@arbor/ports";
+import type {
+  ExecutionDriverError,
+  LocalPlanStore,
+  SessionEntryRecord,
+  WorkspaceKnowledgePort,
+  WorkspacePlacementPort,
+} from "@arbor/ports";
 import { PROVIDER_REASONING_ATTACHMENT_MEDIA_TYPE } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import type { ModelDecisionOutcome } from "./agent-loop-policy.js";
@@ -55,7 +61,12 @@ export const runModelDecision = (
   dependencies: ModelDecisionDependencies,
   turn: number,
   initialRepairAttempt = 0,
-): Effect.Effect<ModelDecisionOutcome, ExecutionDriverError> => {
+): Effect.Effect<
+  ModelDecisionOutcome,
+  ExecutionDriverError,
+  // E05 sink: capabilities acquired directly by decision submodules.
+  LocalPlanStore | WorkspaceKnowledgePort | WorkspacePlacementPort
+> => {
   const {
     input,
     capability,
