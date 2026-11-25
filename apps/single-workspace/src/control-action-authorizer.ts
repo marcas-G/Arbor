@@ -31,6 +31,7 @@ import { Effect, Layer, Option } from "effect";
 const stableIdOf = (action: AgentAction): string =>
   ({
     AssignWork: "core.control.assign-work",
+    AllocateWorkspaceSandbox: "core.control.allocate-workspace-sandbox",
     ListWorkspaces: "core.control.list-workspaces",
     ReadWorkspace: "core.control.read-workspace",
     AcceptResult: "core.control.accept-result",
@@ -57,6 +58,8 @@ const targetOf = (action: AgentAction, workspaceId: string): string => {
       );
     case "ReadWorkspace":
       return action.workspaceRef;
+    case "AllocateWorkspaceSandbox":
+      return action.targetWorkspaceRef;
     case "AcceptResult":
       return action.resultRef;
     default:
@@ -89,6 +92,7 @@ const summaryOf = (action: AgentAction, targetRef: string): string => {
 };
 
 const intrinsic = new Set<AgentAction["_tag"]>([
+  "AllocateWorkspaceSandbox",
   "SelectCurrentWork",
   "ListWorkspaces",
   "ReadWorkspace",

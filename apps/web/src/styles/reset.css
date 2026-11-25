@@ -1,9 +1,11 @@
 /* W-01 minimal reset (margins + box-sizing). Paper globals (body font /
- * background) stay in tokens.css; component visuals live in CSS Modules. */
+ * background) stay in tokens.css; component visuals use Tailwind utilities. */
 *,
 *::before,
 *::after {
   box-sizing: border-box;
+  border-width: 0;
+  border-style: solid;
 }
 
 body,
@@ -38,4 +40,15 @@ select,
 textarea {
   font: inherit;
   color: inherit;
+}
+
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--arbor-focus);
+  outline-offset: 2px;
+}
+html,
+body,
+#root {
+  max-width: 100%;
+  min-width: 0;
 }

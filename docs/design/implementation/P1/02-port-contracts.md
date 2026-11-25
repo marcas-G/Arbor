@@ -296,6 +296,17 @@ failure (re-resolve + re-evaluate), never an authoritative rejection.
 
 ### ProjectResourceProfilePort (FT-DG-01 CreateProject v2)
 
+**Accepted runtime selection amendment (2026-11-11; DID §4.1D):** Startup
+Profiles retain the immutable snapshot below. A separately persisted,
+append-only host registry also resolves explicitly human-selected directory
+references at runtime and reloads them after restart. Registration/probing
+happens outside Application; `list()` stays path-free and `resolve()` remains
+pure in-memory access. A reference cannot change its canonical address.
+`ProjectRepository.isDirectoryLinked(path)` checks persisted Project-root
+FileTree bindings under TransactionScope; CreateProject uses it for dynamic
+`directory-` references after receipt lookup and before writes, failing closed
+if that check is unavailable. It reads SQLite only and performs no host I/O.
+
 The P12 host composition loads and validates the local host Profile registry at
 startup, then supplies this immutable, read-only snapshot to Application. The
 Port itself performs no filesystem I/O; its Profile lookup is deterministic
@@ -391,3 +402,85 @@ inside CommandGateway. Resolver composition may read the exact Grant and
 provenance facts; the pure P12 Resolver itself remains `R = never`. P1 also
 owns transactional `SandboxPolicyDecisionStore` exact-key read/write. No
 generic authorization port is added.
+
+## Linux workspace networking V2 governance supplement
+
+Accepted under `ACCEPT_LINUX_WORKSPACE_NETWORK_V2`; proposal SHA-256 `9801a907a540a7ea2ec5a68e2ac197105c4bf5a1b00191c3801e888dded59111`.
+
+This supplement owns only the Linux V2 changes assigned to this document. For V2 it supersedes the conflicting first-release Windows-only, blanket loopback-denial, V1 broker and discovery clauses; V1/Windows/historical evidence retain their original meaning. It creates no Supported result, migration execution, preserved-database upgrade or release claim. Service registration, cross-command service reuse and preview still require their separate exact contract and acceptance; the full product goal is not reduced. DID 1.66 owns the closed technical definitions.
+
+##### 8.2 Command、snapshot、receipt 与内部 process policy
+
+- 新 `OsEnforcedPolicySummaryV2` 等于当前 `OsEnforcedPolicySummaryV1` 的**全部现有
+  字段、类型和键序**，仅 version 改为 2，networkBrokerControls 改为上述 V2；kind
+  仍为 `OsEnforced`。必须绑定 Linux、linux-bwrap 和精确 V2 registry rule digest。
+  旧 `TrustedLocalUnconfinedV1` 不变，不获得 version 2。
+- 新 `SandboxPolicyDecisionCommittedInternalV2` 等于 V1 的完整字段和键序，仅
+  version=2、effectivePolicySnapshot=上述 V2。原 receipt 的命令身份、指纹、
+  时间和单次消费不变；旧命令重放只返回它原来的 V1 结果，不能被重新物化成 V2。
+- `DecideSandboxPolicy` schema 2 复用 schema 1 的全部输入字段、精确 authority/
+  revision/CAS/选择合同，只允许上述 V2 Linux OsEnforced 分支。schema 1 只能物化
+  原 V1；schema 2 不能生成 TrustedLocal。模型不能提交受信规则、控制或资格结果。
+  新候选使用显式 policySchemaVersion=2，UI 转发该版本；缺失/未知版本拒绝，
+  不从字符串 providerId 猜测版本。
+- `SandboxEnvironmentBasisV1` 及其字节保持不变：相同 mounts/authority/registry
+  输入仍得到原摘要。完整 effective-policy 摘要含 version 和 V2 controls，结合
+  registry 内 V2 rules digest 绑定不同语义；不得用旧 policyDigest 验收新策略。
+- 新内部 `OsEnforcedSandboxProcessPolicyV2` 与现有 process policy 具有相同现有
+  字段和约束，kind 为 `OsEnforcedProcessPolicyV2`，另含唯一新增字段
+  `networkBrokerControls: SandboxNetworkBrokerControlsV2`。它是进程内类型，不是
+  新 wire 协议或 durable record。现有 SandboxProcessPort.run 的 request.policy
+  扩展为 V1/V2 closed union；V2 adapter 不接受 V1 假冒 V2，反向亦然。
+- V2 broker binding 不含 certificatePath，不产生 CA 文件；提供私有 socket、
+  固定 relay artifact、端口及 close 生命周期。绑定只在精确隔离执行中使用，
+  不从模型输入解析主机路径。旧 V1 binding 与执行分支保持原义。
+
+
+## 2026-11-16 Durable Workspace sandbox authorization storage supplement
+
+Engineering landing of the already accepted Workspace permission lifetime and
+bounded Parent allocation decisions; package
+`docs/proposals/2026-11-16-workspace-sandbox-authorization-storage.md`,
+SHA-256 `3beeec1c67f3b4013431f9971d5dee562294a218a9a00032c62e77de9129d21c`. Runtime integration and installed qualification remain open.
+
+WorkspaceSandboxAuthorizationStore exposes findCurrent(Project, Workspace) and
+appendCommitted(record), both TransactionScope-bound. appendCommitted is a
+Gateway-only writer. The adapter proves each read against the exact committed
+Authorization command receipt and fails corruption closed. Identity is Project +
+Workspace + authorizationRevision, with immutable canonical JSON and exact cause.
+
+
+## 2026-11-16 supplement: Workspace authorization commands and human revocation
+
+Product authority: explicit project-owner answers on persistent Workspace
+authorization, bounded direct-Parent allocation and user-only reversal of
+human revocation. Engineering landing package: `docs/proposals/2026-11-16-workspace-authorization-commands-and-revocation.md`; SHA-256
+`07e2552d26ff41a1b23df398260cda6752c81f4fe0fe5f275eda54f291e65e7c`.
+
+WorkspaceSandboxAuthorizationStore returns the current immutable head only
+when its full canonical fact matches the exact committed schema1 command result
+{ authorization }. Unknown/malformed/mismatched facts or receipts are corruption,
+not absence. appendCommitted is Gateway-only, TransactionScope-bound and requires
+the exact successor; a stale append returns a typed store revision conflict.
+The same transaction reads all Parent source heads, target Workspace facts and
+trusted time before appending. Neither cached snapshots nor a historical head
+can replace this validation.
+
+## 2026-11-20 Workspace default execution capability supplement
+
+Accepted under `ACCEPT_WORKSPACE_DEFAULT_EXECUTION_CAPABILITY`; fixed proposal
+`docs/proposals/2026-11-20-workspace-default-execution-capability.md`, SHA-256
+`8503d5c2663d3098171c57646b78a8408d5f1a28dc7f3cf3a37f2181fddaed66`.
+
+The Workspace authorization store and initialization port must support a
+system-created baseline head for a newly admitted Project/Workspace after the
+exact qualified Linux provider is confirmed. Its record is Workspace-scoped,
+uses the current boundary/policy revisions, selects `WorkspaceWrite` and the
+qualified controlled network mode, and is distinct from a human Grant or a
+Parent allocation. Replaying initialization is idempotent; it cannot overwrite
+a current user Revoked head or silently widen a changed boundary.
+
+The port contract must expose enough typed state for the composition to
+distinguish `NotInitialized`, `Granted`, `Revoked`, `Expired` and
+`Unavailable` before admitting an executable Work. Existing exact
+per-Execution policy binding remains downstream of this persistent fact.

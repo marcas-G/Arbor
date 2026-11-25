@@ -8,10 +8,13 @@ import { bounded, type ToolExecutionResult } from "../runtime.js";
  */
 export const executeFilesystemTool = (
   operation: () => ToolExecutionResult,
+  onFailure?: () => ToolExecutionResult | undefined,
 ): ToolExecutionResult => {
   try {
     return operation();
   } catch {
+    const outcome = onFailure?.();
+    if (outcome !== undefined) return outcome;
     return {
       settlement: { _tag: "ExpectedFailure" },
       observation: bounded(

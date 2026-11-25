@@ -45,11 +45,12 @@ not reconstruct lifecycle from `workspace-detail.currentWork/pendingWorks`.
 | EC-12 | 前端依赖 exact pin、无未批准依赖 | 依赖清单测试：pin 集合与 `05` §4 一致；无额外 runtime 依赖 |
 | EC-13 | TR-W1/TR-W2 落地且传输语义未漂移 | WS 帧测试（invalidation 帧形状、无 payload）；static 服务测试（无 API 语义）；P12 `10` 既有测试不动绿 |
 | EC-14 | 无 open P13 Design Gap | gap gate（planning 复核） |
+| EC-15 | 首次模型配置只允许真实连接成功后保存并进入工作台；失败不保存、不泄露 key、不放行 `/commands` 或 WS；成功后自动重载并可继续普通工作流 | 独立安装包 + 真实 Chromium：配置前门禁、失败保留表单、成功保存/重载/运行时实例变化、重载后普通视图与命令恢复；架构测试只允许精确 `/model-setup` host 例外 |
 
 ## 3. 完成定义
 
 ```text
-P13 COMPLETE = EC-1..EC-14 全 PASS
+P13 COMPLETE = EC-1..EC-15 全 PASS
 P13 FORMALLY CLOSED = result record（planning/results/P13.result.md）
                       + AGENTS.md / 合同索引状态同步 + 工作区 clean
 ```
@@ -137,6 +138,28 @@ ReadOnly and WorkspaceWrite may share a digest. The selected digest alone maps
 to the unchanged P1 expected field. Missing or inconsistent source projection
 returns a typed failure with no partial list. Candidate IDs, order, safe
 presentation and separate TrustedLocal confirmation remain V5.
+
+## Accepted first-run model setup browser acceptance (2026-11-14)
+
+Using a fresh install/data directory, the browser first sees the model setup
+gate and no business Workbench. Before configuration, HTTP business views,
+`/commands` and WebSocket business frames are rejected before core dispatch.
+The user enters an HTTPS OpenAI-compatible endpoint, model name and key; the
+server performs one real Chat Completions connection check. A rejected or
+malformed response leaves no configuration or secret file and renders only a
+fixed safe error. The key is absent from DOM responses, logs, runtime status
+and saved JSON configuration.
+
+After a successful check, the private secret and configuration are atomically
+saved, the daemon finishes its current resource scope and re-executes the same
+entrypoint, and the browser observes readiness for a new runtime instance. The
+normal Workbench, project selection, `/commands`, WebSocket views and a real
+model response then become usable without a terminal command. Reopening the
+same installation shows the configured state and does not show the setup gate.
+
+The acceptance uses no fake provider, direct database write, pre-authorized
+command or test-only process path. It does not qualify shell/build execution;
+that remains a separate Linux Native OS Sandbox gate.
 
 ## Accepted Option A selector qualification (2026-10-20)
 

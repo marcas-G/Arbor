@@ -316,6 +316,51 @@ evidence protocol (per daemon restart / suite run):
   SD §10.7): storage-media loss / region loss are outside the envelope and
   are reported truthfully (P2 `06` §7).
 
+## Accepted AH14 legacy adoption evidence Attention fault matrix (DID v1.49)
+
+Accepted token `ACCEPT_AH14_LEGACY_ADOPTION_EVIDENCE_ATTENTION_GOVERNANCE`,
+proposal raw SHA-256
+`71F81F8B61375B9828FAB208D517FBF2CE0092C0B71ECCD124353262E23FCFB1`,
+accepted 2026-10-17. P9 `07` owns the exact trigger and evidence contract.
+
+| Boundary | Injected failure | Required durable state and recovery |
+|---|---|---|
+| Before `LegacyAdoptionEvidenceEscalated` fact/event COMMIT | Kill/restart or transaction failure | Neither fact nor event exists; Step/action/Session/settlement remain unchanged; no Provider/action/output work; retry recomputes the same tuple |
+| After failure fact/event COMMIT | Kill/restart | Exactly one immutable fact/event pair exists; recovery returns blocked without Provider request, action replay, sourced output or duplicate event |
+| Stale/expired Execution lease | Attempt failure-fact read/write | Lease fencing rejects before this path can read/write; no fact/event, adoption, Provider/action work, or Attention claim |
+| Before atomic resolution + normal Step progression COMMIT | Kill/restart or transaction failure | Neither resolution fact/event nor Step adoption/progression commits; original failure fact remains and P10 marker stays active |
+| After atomic resolution + normal Step progression COMMIT | Kill/restart | One exact resolution fact/event and normal adoption/progression exist; replay returns them without duplicates; matching P10 marker is removed only through its consumer transaction |
+| Resolution tuple/evidence conflict | Mismatched or incomplete action, P4, hash, summary or derived code | Typed corruption; no resolution fact/event or Step progression; Attention stays active |
+
+The resolution case requires the complete non-empty decoded action set and the
+same-action P4 terminal evidence described in P9 `07`. A may-have-started
+effect uses the existing P4 reconciliation/OutcomeUnknown gate before
+resolution. P10 marker and offset crash sides are specified in P10 `02`/`04`;
+they are not inferred from these P9 boundaries.
+
+## Accepted AH19 Work and Conversation checkpoint recovery matrix (DID v1.50)
+
+Accepted tokens:
+`ACCEPT_AH19_WORK_PRECHECKPOINT_BOUNDED_FRONTIER_V1` (proposal raw SHA-256
+`4692895A2C9CF92DB1308507F29ED288FD3149F944AAC4F3D8BAE23635F5D663`) and
+`ACCEPT_AH19_CONVERSATION_CHECKPOINT_OWNER_V1` (proposal raw SHA-256
+`9B562095B653B84C0518050BC7E6374D1C3710BF464A7BAB556D4F399D604E89`), both
+accepted 2026-10-17.
+
+| Recovery boundary | Required result |
+|---|---|
+| Restart with >64 durable Work Timeline rows before first checkpoint | Reconstruct the same latest-64 row window; current pinned input occurs exactly once independent of the cap; P3 skipped rows do not cause older-row refill; Timeline remains unchanged and no checkpoint coverage is inferred |
+| Valid P3-filtered `UserMessage(source.kind=HumanConversation)` at lower edge of selected window, then real checkpoint commit and kill/restart | Filtered row has no contextRef/PortableInput item and is absent from compaction content/retainedFrontier, but remains durable; `inputFrontier` still records the considered window; restart reuses committed checkpoint without Provider/action replay |
+| Typed Work checkpoint followed by >64 unsummarized entries | Active frontier retains the exact checkpoint plus every subsequent typed entry; numeric pre-checkpoint cap is not applied |
+| Conversation checkpoint committed before current ResponseJob becomes Answered, then kill/restart | Resume same ResponseJob/Attempt/episode and owner state idempotently; current message is not appended twice and settled Provider/action work is not replayed |
+| Complete model binding changes between Conversation episodes | Old ProviderNative opaque reference is not sent; rebuild portable Summary from exact owned HumanMessage prefix and pin current message once |
+| Earlier non-Answered HumanMessage (Pending/Claimed) or RetryScheduled ResponseJob before a later Answered message | Frontier refuses to cover the later Answered message across the gap and remains stopped after restart; exact Claimed body remains pinned once for its existing episode |
+| Interleaved Work Session and Conversation history under one Root Workspace | Neither owner reads, advances or satisfies the other's checkpoint; HumanMessages and live checkpoint refs remain readable after restart |
+
+These recovery contracts do not define new storage tables or migration
+behavior. The physical Conversation owner choice and its migration require a
+separately authorized implementation package.
+
 ## 13. Must Not Decide
 
 The full DID v1.20 AgentLoopStep handoff matrix AH1–AH14 is owned by `07`; it is

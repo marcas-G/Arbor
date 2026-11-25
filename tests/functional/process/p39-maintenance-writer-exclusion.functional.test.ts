@@ -1,5 +1,4 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
-import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Duration, Effect } from "effect";
@@ -14,6 +13,7 @@ import {
 import {
   isP39PathQualificationEnabled,
   makeP39PrivateTestDirectory,
+  p39TestTempRoot,
   p39WindowsAclQualificationAvailable,
   p39WindowsTestEnvironment,
   removeP39PrivateTestDirectory,
@@ -390,7 +390,7 @@ const competeAcrossProcess = async (input: {
   readonly competingMode: "shared" | "exclusive";
 }) => {
   const directory = makeP39PrivateTestDirectory(
-    tmpdir(),
+    p39TestTempRoot(),
     "arbor-p39-writer-lock-",
   );
   const lockFilename = join(directory, "maintenance.sqlite");
@@ -458,7 +458,7 @@ describe.skipIf(!p39PathQualificationAvailable)(
 
     it("starts the acquire deadline when the Effect runs and can run the same Effect twice", async () => {
       const directory = makeP39PrivateTestDirectory(
-        tmpdir(),
+        p39TestTempRoot(),
         "arbor-p39-lock-deferred-acquire-",
       );
       const lockFilename = join(directory, "maintenance.sqlite");
@@ -483,7 +483,7 @@ describe.skipIf(!p39PathQualificationAvailable)(
 
     it("tries a free lock once when the configured wait budget is zero", async () => {
       const directory = makeP39PrivateTestDirectory(
-        tmpdir(),
+        p39TestTempRoot(),
         "arbor-p39-lock-zero-budget-free-",
       );
       const lockFilename = join(directory, "maintenance.sqlite");
@@ -504,7 +504,7 @@ describe.skipIf(!p39PathQualificationAvailable)(
 
     it("refuses a contended zero-budget lock without retrying", async () => {
       const directory = makeP39PrivateTestDirectory(
-        tmpdir(),
+        p39TestTempRoot(),
         "arbor-p39-lock-zero-budget-busy-",
       );
       const lockFilename = join(directory, "maintenance.sqlite");
@@ -538,7 +538,7 @@ describe.skipIf(!p39PathQualificationAvailable)(
 
     it("keeps a constructed-but-unrun release tracked for layer shutdown", async () => {
       const directory = makeP39PrivateTestDirectory(
-        tmpdir(),
+        p39TestTempRoot(),
         "arbor-p39-release-effect-construction-",
       );
       const lockFilename = join(directory, "maintenance.sqlite");
@@ -580,49 +580,66 @@ describe.skipIf(!p39PathQualificationAvailable)(
 
     it("retains same-layer shared permits until each matching release", async () => {
       const directory = makeP39PrivateTestDirectory(
-        tmpdir(),
+        p39TestTempRoot(),
         "arbor-p39-same-layer-permits-",
       );
       const lockFilename = join(directory, "maintenance.sqlite");
+      let phase = "before layer execution";
       try {
-        await Effect.runPromise(
-          Effect.scoped(
-            Effect.gen(function* () {
-              const client = yield* P39WriterLockClient;
-              const first = yield* client.acquire("RuntimeShared");
-              const second = yield* client.acquire("RuntimeShared");
+        try {
+          await Effect.runPromise(
+            Effect.scoped(
+              Effect.gen(function* () {
+                const client = yield* P39WriterLockClient;
+                phase = "first RuntimeShared acquire";
+                const first = yield* client.acquire("RuntimeShared");
+                phase = "second RuntimeShared acquire";
+                const second = yield* client.acquire("RuntimeShared");
 
-              let timerFired = false;
-              const timer = setTimeout(() => {
-                timerFired = true;
-              }, 25);
-              const blockedByBoth = yield* Effect.result(
-                client.acquire("MaintenanceExclusive"),
-              );
-              clearTimeout(timer);
-              expect(blockedByBoth._tag).toBe("Failure");
-              if (blockedByBoth._tag === "Failure") {
-                expect(blockedByBoth.failure._tag).toBe("P39WriterLockFailure");
-                if (blockedByBoth.failure._tag === "P39WriterLockFailure") {
-                  expect(blockedByBoth.failure.code).toBe(
-                    "P39_WRITER_LOCK_ACQUIRE_FAILED",
+                let timerFired = false;
+                const timer = setTimeout(() => {
+                  timerFired = true;
+                }, 25);
+                phase = "first MaintenanceExclusive acquire";
+                const blockedByBoth = yield* Effect.result(
+                  client.acquire("MaintenanceExclusive"),
+                );
+                clearTimeout(timer);
+                expect(blockedByBoth._tag).toBe("Failure");
+                if (blockedByBoth._tag === "Failure") {
+                  expect(blockedByBoth.failure._tag).toBe(
+                    "P39WriterLockFailure",
                   );
+                  if (blockedByBoth.failure._tag === "P39WriterLockFailure") {
+                    expect(blockedByBoth.failure.code).toBe(
+                      "P39_WRITER_LOCK_ACQUIRE_FAILED",
+                    );
+                  }
                 }
-              }
-              expect(timerFired).toBe(true);
+                expect(timerFired).toBe(true);
 
-              yield* client.release(first);
-              const blockedBySecond = yield* Effect.result(
-                client.acquire("MaintenanceExclusive"),
-              );
-              expect(blockedBySecond._tag).toBe("Failure");
-              yield* client.release(second);
+                phase = "release first RuntimeShared permit";
+                yield* client.release(first);
+                phase = "second MaintenanceExclusive acquire";
+                const blockedBySecond = yield* Effect.result(
+                  client.acquire("MaintenanceExclusive"),
+                );
+                expect(blockedBySecond._tag).toBe("Failure");
+                phase = "release second RuntimeShared permit";
+                yield* client.release(second);
 
-              const exclusive = yield* client.acquire("MaintenanceExclusive");
-              yield* client.release(exclusive);
-            }).pipe(Effect.provide(p39WriterLockLayer(lockFilename, 150))),
-          ),
-        );
+                phase = "final MaintenanceExclusive acquire";
+                const exclusive = yield* client.acquire("MaintenanceExclusive");
+                phase = "release final MaintenanceExclusive permit";
+                yield* client.release(exclusive);
+              }).pipe(Effect.provide(p39WriterLockLayer(lockFilename, 1_000))),
+            ),
+          );
+        } catch (cause) {
+          throw new Error(
+            `P39 same-layer permit failure during ${phase}; lock=${lockFilename}; cause=${String(cause)}`,
+          );
+        }
       } finally {
         removeP39PrivateTestDirectory(directory);
       }
@@ -630,7 +647,7 @@ describe.skipIf(!p39PathQualificationAvailable)(
 
     it("keeps the event loop responsive and acquires when maintenance releases before the deadline", async () => {
       const directory = makeP39PrivateTestDirectory(
-        tmpdir(),
+        p39TestTempRoot(),
         "arbor-p39-lock-early-release-",
       );
       const lockFilename = join(directory, "maintenance.sqlite");
@@ -678,7 +695,7 @@ describe.skipIf(!p39PathQualificationAvailable)(
 
     it("cancels a pending retry, closes its connection, then permits a fresh acquisition", async () => {
       const directory = makeP39PrivateTestDirectory(
-        tmpdir(),
+        p39TestTempRoot(),
         "arbor-p39-lock-cancel-",
       );
       const lockFilename = join(directory, "maintenance.sqlite");
@@ -721,7 +738,7 @@ describe.skipIf(!p39PathQualificationAvailable)(
 
     it("does not retry a non-busy invalid lock database", async () => {
       const directory = makeP39PrivateTestDirectory(
-        tmpdir(),
+        p39TestTempRoot(),
         "arbor-p39-lock-invalid-schema-",
       );
       const lockFilename = join(directory, "maintenance.sqlite");
@@ -759,7 +776,7 @@ describe.skipIf(!p39PathQualificationAvailable)(
 
     it("releases a crashed daemon's shared permit through the SQLite VFS handle", async () => {
       const directory = makeP39PrivateTestDirectory(
-        tmpdir(),
+        p39TestTempRoot(),
         "arbor-p39-lock-crash-",
       );
       const lockFilename = join(directory, "maintenance.sqlite");

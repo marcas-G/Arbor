@@ -9,12 +9,12 @@ import { useRef } from "react";
 import { type Resolver, useForm } from "react-hook-form";
 import { Button } from "../../components/Button.js";
 import { Card } from "../../components/Card.js";
+import { cn } from "../../lib/utils.js";
 import { acceptWorkOutcomeSchema, zodResolver } from "../schemas.js";
 import type { CommandReceiptView } from "../submitCommand.js";
 import { useCommandSubmission } from "../useCommandSubmission.js";
 import { uuidv7 } from "../uuid7.js";
 import { FormFeedback } from "./FormFeedback.js";
-import "./forms.css";
 
 type AcceptValues = {
   workId: string;
@@ -68,15 +68,16 @@ export function AcceptWorkOutcomeForm({
   };
   return (
     <Card title="验收工作成果">
-      <form className="arbor-command-form" onSubmit={doSubmit}>
+      <form
+        className={cn("arbor-command-form", "flex flex-col gap-ui-3")}
+        onSubmit={doSubmit}
+      >
         <p>确认后，这项工作的当前成果将被标记为已验收。</p>
         <FormFeedback state={state} onRetry={() => doSubmit()} />
         <Button
           variant="primary"
           type="submit"
-          disabled={
-            state.phase === "submitting" || state.phase === "transport-failed"
-          }
+          disabled={state.phase === "submitting"}
         >
           记录验收
         </Button>

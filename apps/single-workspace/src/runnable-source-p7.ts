@@ -1,10 +1,12 @@
 import type { WorkId, WorkspaceId } from "@arbor/domain";
 import {
+  AcceptanceRepository,
   DependencyRepository,
   RunnableWorkSource,
   type RunnableWorkSourceError,
   TransactionPort,
   TransactionScope,
+  VerificationRepository,
   WorkReadmissionGateStore,
   WorkRepository,
   WorkspaceRepository,
@@ -12,6 +14,36 @@ import {
   WorkWaitStore,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
+import { SqlClient } from "effect/unstable/sql/SqlClient";
+
+interface CompletionSettlementRow {
+  readonly settlement_json: string;
+}
+
+const isCompletionClaimedSettlement = (
+  settlementJson: string,
+  workRevision: number,
+): boolean => {
+  try {
+    const settlement = JSON.parse(settlementJson) as {
+      readonly _tag?: unknown;
+      readonly result?: {
+        readonly _tag?: unknown;
+        readonly workRevision?: unknown;
+        readonly claimRef?: unknown;
+      };
+    };
+    return (
+      settlement._tag === "Completed" &&
+      settlement.result?._tag === "CompletionClaimed" &&
+      settlement.result.workRevision === workRevision &&
+      typeof settlement.result.claimRef === "string" &&
+      settlement.result.claimRef.length > 0
+    );
+  } catch {
+    return false;
+  }
+};
 
 /**
  * Dependency-aware single-workspace `RunnableWorkSource` (P7 `03`; DID v1.10
@@ -42,6 +74,9 @@ export const DependencyAwareRunnableWorkSourceLive: Layer.Layer<
     const workspaces = yield* WorkspaceRepository;
     const works = yield* WorkRepository;
     const dependencies = yield* DependencyRepository;
+    const verifications = yield* Effect.serviceOption(VerificationRepository);
+    const acceptances = yield* Effect.serviceOption(AcceptanceRepository);
+    const sql = yield* Effect.serviceOption(SqlClient);
     const waits = yield* WorkWaitStore;
     const readmissionGate = yield* Effect.serviceOption(
       WorkReadmissionGateStore,
@@ -73,6 +108,111 @@ export const DependencyAwareRunnableWorkSourceLive: Layer.Layer<
           const open = yield* works.listByWorkspace(workspaceId, "Open");
           const openIds = open.map((work) => work.workId);
           const held = new Set<WorkId>();
+          if (Option.isSome(sql)) {
+            const executionColumns = new Set(
+              yield* sql.value
+                .unsafe<{ readonly name: string }>(
+                  "PRAGMA table_info(executions)",
+                )
+                .pipe(Effect.map((rows) => rows.map((row) => row.name))),
+            );
+            const usesEpisodeBinding =
+              executionColumns.has("episode_kind") &&
+              executionColumns.has("episode_ref") &&
+              executionColumns.has("episode_revision");
+            const episodeBinding = usesEpisodeBinding
+              ? "episode_kind = 'WorkEpisode' AND episode_ref = ? AND episode_revision = ?"
+              : "focus_kind = 'work' AND focus_work_id = ?";
+            for (const work of open) {
+              if (!usesEpisodeBinding && work.revision !== 0) continue;
+              const completionClaims =
+                yield* sql.value.unsafe<CompletionSettlementRow>(
+                  `SELECT settlement_json
+                   FROM executions
+                  WHERE project_id = ?
+                    AND workspace_id = ?
+                    AND binding_kind = 'workspace'
+                    AND ${episodeBinding}
+                    AND settlement_kind = 'Completed'
+                    AND settlement_json IS NOT NULL`,
+                  usesEpisodeBinding
+                    ? [
+                        Option.isSome(workspace)
+                          ? workspace.value.projectId
+                          : "",
+                        workspaceId,
+                        work.workId,
+                        work.revision,
+                      ]
+                    : [
+                        Option.isSome(workspace)
+                          ? workspace.value.projectId
+                          : "",
+                        workspaceId,
+                        work.workId,
+                      ],
+                );
+              if (
+                completionClaims.some((row) =>
+                  isCompletionClaimedSettlement(
+                    row.settlement_json,
+                    work.revision,
+                  ),
+                )
+              ) {
+                held.add(work.workId);
+              }
+            }
+          }
+          // A PASS Verification is intentionally distinct from Acceptance,
+          // but it is also not a request to run the same producer Work again.
+          // Between VerificationConcluded(Pass), human/Parent Acceptance and
+          // the deterministic CompleteWork consumer, the Work remains Open.
+          // Hold that exact revision so scheduler ticks cannot repeatedly
+          // invoke the model while the acceptance decision is pending.
+          // An already committed Acceptance is held for the same reason: the
+          // completion consumer may be between its event and CompleteWork
+          // transaction.
+          const completionTables =
+            Option.isSome(sql) &&
+            (yield* sql.value.unsafe<{ readonly name: string }>(
+              "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('verifications', 'work_acceptances')",
+            )).length === 2;
+          if (
+            completionTables &&
+            Option.isSome(verifications) &&
+            Option.isSome(acceptances)
+          ) {
+            for (const work of open) {
+              const acceptance = yield* acceptances.value.findByWorkRevision(
+                work.workId,
+                work.revision,
+              );
+              if (Option.isSome(acceptance)) {
+                held.add(work.workId);
+                continue;
+              }
+              const history = yield* verifications.value.listByWork(
+                work.workId,
+              );
+              const concludedCurrentRevision = history.filter(
+                (verification) =>
+                  verification.targetWorkRevision === work.revision &&
+                  verification.state.status === "Concluded",
+              );
+              if (
+                concludedCurrentRevision.some(
+                  (verification) =>
+                    verification.state.status === "Concluded" &&
+                    verification.state.verdict === "Pass",
+                )
+              ) {
+                held.add(work.workId);
+              } else if (concludedCurrentRevision.length > 0) {
+                held.delete(work.workId);
+              }
+            }
+          }
           if (Option.isSome(workspace) && open.length > 0) {
             if (Option.isNone(readmissionGate)) {
               return yield* Effect.fail({
@@ -85,12 +225,25 @@ export const DependencyAwareRunnableWorkSourceLive: Layer.Layer<
               });
             }
             for (const work of open) {
-              const source = yield* readmissionGate.value.hasBlockingSource({
-                projectId: workspace.value.projectId,
-                workspaceId,
-                workId: work.workId,
-                workRevision: work.revision,
-              });
+              // A terminal provider record can be intentionally held by the
+              // readmission gate when its failure evidence is incomplete.
+              // Classification must keep the daemon alive so the user can
+              // inspect the Work and submit a new revision; turning that
+              // durable hold into a scheduler error makes recovery
+              // impossible after a restart.
+              const source = yield* readmissionGate.value
+                .hasBlockingSource({
+                  projectId: workspace.value.projectId,
+                  workspaceId,
+                  workId: work.workId,
+                  workRevision: work.revision,
+                })
+                .pipe(
+                  Effect.catchTag("ReadmissionGateIntegrityFailure", () => {
+                    held.add(work.workId);
+                    return Effect.succeed(Option.none());
+                  }),
+                );
               if (Option.isSome(source)) held.add(work.workId);
             }
           }

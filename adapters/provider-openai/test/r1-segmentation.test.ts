@@ -74,27 +74,19 @@ const clientAt = (parts: ReadonlyArray<Uint8Array>): OpenAISdkClient =>
     // Local deterministic transport double — the explicit unauthenticated
     // exemption (P16 `01` §3).
     allowUnauthenticated: true,
-    fetch: (async () => ({
-      ok: true,
-      status: 200,
-      body: {
-        getReader: () => {
-          let position = 0;
-          return {
-            read: () =>
-              new Promise((resolve) => {
-                if (position >= parts.length) {
-                  resolve({ done: true, value: undefined });
-                  return;
-                }
-                resolve({ done: false, value: parts[position] });
-                position += 1;
-              }),
-            releaseLock: () => undefined,
-          };
-        },
-      },
-    })) as never,
+    fetch: (async () => {
+      let position = 0;
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          pull(controller) {
+            const part = parts[position++];
+            if (part === undefined) controller.close();
+            else controller.enqueue(part);
+          },
+        }),
+        { status: 200 },
+      );
+    }) as never,
   });
 
 const canonicalToolCalls = async (

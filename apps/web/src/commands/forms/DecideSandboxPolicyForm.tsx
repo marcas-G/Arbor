@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "../../components/Button.js";
 import { Card } from "../../components/Card.js";
 import { Field } from "../../components/Field.js";
+import { cn } from "../../lib/utils.js";
 import { decideSandboxPolicyPayloadFromCandidate } from "../sandbox-policy-selection.js";
 import { sandboxPolicySelectionSchema } from "../schemas.js";
 import type { CommandReceiptView } from "../submitCommand.js";
@@ -65,7 +66,6 @@ export function DecideSandboxPolicyForm({
     .filter((line) => line.length > 0);
   const requiresRestrictedDestinations =
     candidate?.kind === "OsEnforced" && candidate.networkMode === "Restricted";
-
   useEffect(() => {
     if (
       state.rejection === "StaleSandboxPolicyInputs" &&
@@ -118,7 +118,10 @@ export function DecideSandboxPolicyForm({
 
   return (
     <Card title="选择执行沙箱策略">
-      <form className="arbor-command-form" onSubmit={doSubmit}>
+      <form
+        className={cn("arbor-command-form", "flex flex-col gap-ui-3")}
+        onSubmit={doSubmit}
+      >
         <p>
           请选择一个候选。选择只提交现有策略命令，不会启动执行或探测提供方。
         </p>
@@ -130,7 +133,13 @@ export function DecideSandboxPolicyForm({
                 ? "TrustedLocal：FullAccess，不受 OS 隔离"
                 : `${profileLabel(item.profile)} · ${item.providerId} ${item.providerVersion} · capability ${item.capabilityRevision} · ${networkLabel(item.networkMode)}`;
             return (
-              <label className="arbor-command-check" key={item.candidateId}>
+              <label
+                className={cn(
+                  "arbor-command-check",
+                  "flex items-center gap-ui-2 text-muted-foreground text-small",
+                )}
+                key={item.candidateId}
+              >
                 <input
                   type="radio"
                   name="sandbox-policy-candidate"
@@ -150,7 +159,12 @@ export function DecideSandboxPolicyForm({
           })}
         </fieldset>
         {candidate?.kind === "TrustedLocalUnconfinedV1" ? (
-          <label className="arbor-command-check">
+          <label
+            className={cn(
+              "arbor-command-check",
+              "flex items-center gap-ui-2 text-muted-foreground text-small",
+            )}
+          >
             <input
               type="checkbox"
               checked={trustedLocalConfirmed}

@@ -1,7 +1,5 @@
 import type { ReactNode } from "react";
 import { Button } from "./Button.js";
-import { cx } from "./cx.js";
-import styles from "./Empty.module.css";
 
 /** Structured action (W-01 formal API): renders as a quiet Button. */
 export type EmptyAction = {
@@ -35,13 +33,15 @@ export function Empty({
 }) {
   return (
     <div
-      className={cx(["arbor-empty", styles.empty])}
+      className="arbor-empty flex flex-col items-center gap-ui-3 p-ui-5 border border-dashed border-border-strong rounded-md bg-background/55"
       role={action === undefined ? "status" : undefined}
       aria-live={action === undefined ? "polite" : undefined}
     >
-      <span className={cx(["arbor-empty-text", styles.text])}>{children}</span>
+      <span className="arbor-empty-text text-subtle text-small not-italic">
+        {children}
+      </span>
       {action === undefined ? null : (
-        <div className={cx(["arbor-empty-action", styles.action])}>
+        <div className="arbor-empty-action flex justify-center">
           {isEmptyAction(action) ? (
             <Button variant="quiet" onClick={action.onClick}>
               {action.label}

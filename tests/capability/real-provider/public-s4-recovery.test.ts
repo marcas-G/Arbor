@@ -1346,7 +1346,7 @@ it.skipIf(skipReason !== undefined)(
           retryDecision: "Stop",
           successEvidenceVersion: null,
           observation: {
-            responseStarted: false,
+            responseStarted: true,
             canonicalEventEmitted: false,
             consumerVisibleOutput: false,
             toolCallProposed: false,

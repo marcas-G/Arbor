@@ -14,7 +14,7 @@ import {
 } from "../src/commands/catalog.js";
 import { uuidv7 } from "../src/commands/uuid7.js";
 
-const EXPECTED_SIXTEEN = [
+const EXPECTED_COMMANDS = [
   "CreateProject",
   "RenameProject",
   "CloseProject",
@@ -26,6 +26,8 @@ const EXPECTED_SIXTEEN = [
   "StopExecution",
   "GrantPermission",
   "DecideSandboxPolicy",
+  "AuthorizeWorkspaceSandbox",
+  "RevokeWorkspaceSandboxAuthorization",
   "RevokePermission",
   "SubmitHumanMessage",
   "ResumeConversationResponse",
@@ -40,6 +42,7 @@ const NEVER_EXPOSED = [
   "AdmitExecution",
   "SettleExecution",
   "CompleteWork",
+  "BindWorkspaceSandboxPolicy",
 ];
 
 const UUIDV7_SHAPE =
@@ -48,9 +51,9 @@ const UUIDV7_SHAPE =
 describe("EC-6 human-actionable catalog", () => {
   it("is exactly the human-actionable set (order-independent)", () => {
     expect([...HUMAN_ACTIONABLE_COMMANDS].sort()).toEqual(
-      [...EXPECTED_SIXTEEN].sort(),
+      [...EXPECTED_COMMANDS].sort(),
     );
-    expect(HUMAN_ACTIONABLE_COMMANDS.length).toBe(16);
+    expect(HUMAN_ACTIONABLE_COMMANDS.length).toBe(18);
   });
 
   it("contains no system-internal / agent-originated commandType", () => {
@@ -58,7 +61,7 @@ describe("EC-6 human-actionable catalog", () => {
       expect(HUMAN_ACTIONABLE_COMMANDS).not.toContain(commandType);
       expect(isHumanActionableCommand(commandType)).toBe(false);
     }
-    for (const commandType of EXPECTED_SIXTEEN) {
+    for (const commandType of EXPECTED_COMMANDS) {
       expect(isHumanActionableCommand(commandType)).toBe(true);
     }
   });

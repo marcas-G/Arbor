@@ -1,10 +1,6 @@
 import type { ReactNode } from "react";
 import type { Tone } from "../tokens.js";
-import styles from "./Badge.module.css";
-import { cx } from "./cx.js";
-
-/** W-01 formal Badge. Global `arbor-badge-*` classes stay as the stable
- * styling/test contract; module classes add the formal refinements. */
+import { Badge as UiBadge } from "./ui/badge.js";
 export function Badge({
   tone,
   children,
@@ -13,15 +9,8 @@ export function Badge({
   readonly children: ReactNode;
 }) {
   return (
-    <span
-      className={cx([
-        "arbor-badge",
-        `arbor-badge-${tone}`,
-        styles.badge,
-        styles[`tone-${tone}`],
-      ])}
-    >
+    <UiBadge tone={tone} className={`arbor-badge arbor-badge-${tone}`}>
       {children}
-    </span>
+    </UiBadge>
   );
 }

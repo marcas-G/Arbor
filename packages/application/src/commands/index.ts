@@ -1,5 +1,6 @@
 export * from "./accept-complete.js";
 export * from "./assign-work.js";
+export * from "./bind-workspace-sandbox-policy.js";
 export * from "./conclude-verification.js";
 export * from "./conversation-response.js";
 export * from "./create-child-workspace.js";
@@ -25,4 +26,5 @@ export * from "./start-verification.js";
 export * from "./steer-work.js";
 export * from "./submit-human-message.js";
 export * from "./update-resource-boundary.js";
+export * from "./workspace-sandbox-authorization.js";
 export * from "./worktree-lifecycle.js";

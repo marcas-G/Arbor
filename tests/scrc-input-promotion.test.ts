@@ -7,6 +7,7 @@ import {
   InboxProjectionStoreLive,
   layer,
   P37_MIGRATIONS,
+  P55_SESSION_CAUSAL_PROVENANCE_MIGRATION,
   runMigrations,
   SessionRepositoryLive,
   TransactionPortLive,
@@ -51,6 +52,12 @@ const makeApp = () => {
     Layer.provide(InputPromotionServiceLive, dependencies),
   );
 };
+
+const runFixtureMigrations = Effect.gen(function* () {
+  yield* runMigrations(P37_MIGRATIONS);
+  const sql = yield* SqlClient;
+  yield* sql.unsafe(P55_SESSION_CAUSAL_PROVENANCE_MIGRATION.sql);
+});
 
 const execution: Execution = {
   executionId,
@@ -156,7 +163,7 @@ const request = {
 describe("SCRC durable input promotion", () => {
   it("promotes one Inbox source exactly once and consumes it atomically", async () => {
     const program = Effect.gen(function* () {
-      yield* runMigrations(P37_MIGRATIONS);
+      yield* runFixtureMigrations;
       yield* seed;
       const promotions = yield* InputPromotionService;
       const first = yield* promotions.promoteInbox(request);
@@ -192,7 +199,7 @@ describe("SCRC durable input promotion", () => {
 
   it("rolls back Session append when Inbox consumption fails, then retries cleanly", async () => {
     const program = Effect.gen(function* () {
-      yield* runMigrations(P37_MIGRATIONS);
+      yield* runFixtureMigrations;
       yield* seed;
       const sql = yield* SqlClient;
       yield* sql.unsafe(`

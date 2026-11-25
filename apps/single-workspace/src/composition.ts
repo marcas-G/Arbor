@@ -1,3 +1,5 @@
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   AgentLoopDriverLive,
   type AgentLoopQualificationProbe,
@@ -8,9 +10,9 @@ import {
 import {
   type AttentionPollPolicyConfig,
   type AttentionPollQualificationProbe,
-  type AuthorityResolverPort,
+  AuthorityResolverPort,
   AuthorityResolverPortLive,
-  type CommandGateway,
+  CommandGateway,
   type CommandGatewayQualificationProbe,
   type CommandHandlerRegistry,
   type DecideSandboxPolicyPreparation,
@@ -28,7 +30,7 @@ import {
   type WorkflowSignalConsumer,
   WorkflowSignalConsumerLive,
 } from "@arbor/application";
-import { BlobStorePortLive } from "@arbor/blob-local";
+import { defaultBlobRoot, makeBlobStorePortLive } from "@arbor/blob-local";
 import { Principal, type ProjectId, parse } from "@arbor/domain";
 import {
   EnvironmentResolverLocalLive,
@@ -135,21 +137,25 @@ import {
   type TransactionBeginQualificationProbe,
   VerificationRepositoryLive,
   VerificationSignalReconciliationStoreLive,
+  WorkBlockerStoreLive,
   WorkContractRevisionRepositoryLive,
   WorkReadmissionGateStoreLive,
   WorkRepositoryLive,
   WorkspaceRepositoryLive,
   type WorkspaceResourceActivationQualificationProbe,
   WorkspaceResourceActivationStoreLive,
+  WorkspaceSandboxAuthorizationInitializationPortLive,
+  WorkspaceSandboxAuthorizationStoreLive,
   WorktreeStoreLive,
   WorkWaitStoreLive,
 } from "@arbor/persistence-sqlite";
 import {
   type AgentLoopStepStore,
+  BlobStorePort,
   type CanonicalProviderEvent,
   Clock,
   type CommandStore,
-  type CurrentSandboxAuthoritySnapshotPort,
+  CurrentSandboxAuthoritySnapshotPort,
   type DecisionRequestStore,
   type DeliverableRepository,
   DependencyRepository,
@@ -176,7 +182,7 @@ import {
   ProjectResourceProfilePort,
   type ProjectResourceProfilePortService,
   type ProviderFailureKind,
-  type ProviderPort,
+  ProviderPort,
   type ReconciliationSource,
   type ResolvedModelBinding,
   ResourceOwnershipRepository,
@@ -184,10 +190,11 @@ import {
   type RunnableWorkSource,
   resolvedModelBindingFingerprint,
   resolveModelBinding,
-  type SandboxPolicyCandidateBoundaryReadPort,
+  SandboxPolicyCandidateBoundaryReadPort,
   SandboxPolicyDecisionStore,
   SandboxPolicyRequirementReadPort,
   SandboxProcessPort,
+  SandboxProviderUnavailableStore,
   SecretMaterial,
   type SecretRef,
   SecretStorePort,
@@ -201,11 +208,14 @@ import {
   ToolReconciliationProfileRegistry,
   TransactionPort,
   type TrustedHostConfigurationSourceService,
+  type WorkBlockerStore,
   type WorkReadmissionGateStore,
   WorkRepository,
   type WorkspaceKnowledgePort,
   type WorkspacePlacementPort,
   WorkspaceRepository,
+  WorkspaceSandboxAuthorizationStore,
+  WorkspaceSandboxPolicyBindingPort,
   WorktreeStore,
   type WorkWaitStore,
 } from "@arbor/ports";
@@ -238,7 +248,7 @@ import {
   type ToolRuntimeQualificationProbe,
 } from "@arbor/tool-runtime";
 import { WorkerDispatchPortLive } from "@arbor/worker-local";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Stream } from "effect";
 import {
   SqlClient,
   type SqlClient as SqlClientService,
@@ -282,11 +292,14 @@ import { INLINE_SECRET_REF } from "./provider-config.js";
 import { PROVIDER_REGISTRY_TABLE } from "./provider-registry.table.js";
 import { makeSingleWorkspaceCommandHandlerRegistryLive } from "./registry.js";
 import { DependencyAwareRunnableWorkSourceLive } from "./runnable-source-p7.js";
+import { makeRuntimeInfo, RuntimeIdentity } from "./runtime-info.js";
 import {
   SandboxAuthoritySnapshot,
   SandboxAuthoritySnapshotLive,
   sandboxIssuerSnapshotOf,
 } from "./sandbox-authority-bundle.js";
+import { probeInstalledLinuxSandbox } from "./sandbox-linux-capability.js";
+import { hasLinuxWorkspaceWriteEnabledQualificationSync } from "./sandbox-linux-qualification.js";
 import { SandboxPolicyCandidateBoundaryReadPortLive } from "./sandbox-policy-candidate-boundary-read-port.js";
 import {
   makeSandboxPolicyDecisionPreparation,
@@ -300,8 +313,12 @@ import {
 } from "./transport/auth.js";
 import type { CreateProjectPostCommitBeforeActivationQualificationProbe } from "./transport/composition.js";
 import { publishConversationProgress } from "./transport/conversation-progress-bridge.js";
+import { openNetworkProxyBroker } from "./transport/network-proxy-broker.js";
+import { openNetworkProxyBrokerV2 } from "./transport/network-proxy-broker-v2.js";
+import { assertNoIncompleteRestore } from "./user-data-restore-guard.js";
 import { WorkspaceKnowledgePortLive } from "./workspace-knowledge.js";
 import { WorkspacePlacementPortLive } from "./workspace-placement.js";
+import { makeWorkspaceSandboxPolicyBindingService } from "./workspace-sandbox-policy-binding.js";
 
 /** P12 `03` §3: secret adapter selection is Composition-Root config. */
 export type SecretStoreConfig =
@@ -356,12 +373,16 @@ export const selectProviderLayer = (
 
 export interface SingleWorkspaceConfig {
   readonly databaseFile: string;
+  /** Ordinary production never falls back to deterministic Provider output. */
+  readonly requireRealProvider?: boolean;
   /** P12 accepted first-release mode. Startup-only and fail-closed by default. */
   readonly processExecutionMode?: "Disabled" | "NativeOsSupportedOnly";
   /** P5 startup-only source. Production must inject the OS-protected trusted
    * host configuration source; absence or invalid data disables sandbox
    * policy authority. This is never loaded from environment or a request. */
   readonly trustedHostConfigurationSource?: TrustedHostConfigurationSourceService;
+  /** Internal composition fact derived from the protected Linux registry. */
+  readonly nativeOsSupportedTupleAvailable?: boolean;
   /** Accepted V21 P4/P11 preparation seam. Production without a validated
    * materializer remains fail-closed and exposes no local-default fallback. */
   readonly sandboxPolicyDecisionPreparation?: DecideSandboxPolicyPreparation;
@@ -404,8 +425,9 @@ export interface SingleWorkspaceConfig {
    * single-user loopback principal; remote deployments must configure an
    * authenticator explicitly. */
   readonly authenticator?: AuthenticatorService;
-  /** P12 host-owned immutable startup snapshot for project bootstrap. */
+  /** P12 host-owned project bootstrap reference registry. */
   readonly projectResourceProfiles?: ProjectResourceProfilePortService;
+  readonly projectDirectories?: import("./project-directories.js").HostProjectDirectories;
   /** B-7: the system principal the production daemon submits recovery /
    * consumer commands as (default `runtime:system`). */
   readonly principalRef?: string;
@@ -413,8 +435,8 @@ export interface SingleWorkspaceConfig {
   readonly consumerBatchSize?: number;
   /** P12 v1.43 deployment-pinned Attention poll settings. */
   readonly attentionPollPolicy?: AttentionPollPolicyConfig;
-  /** B-7: the content-addressed blob root used by the snapshot-retention ops
-   * action (defaults to the local blob adapter root). */
+  /** Shared durable content root for BlobStore and snapshot retention.
+   * Persistent databases default to `<database filename>.blobs`. */
   readonly blobRoot?: string;
   /** Explicit test-only in-process fault probe; never loaded from env or a
    * public request. Production startup leaves this absent. */
@@ -481,6 +503,8 @@ export const resolveCompositionGovernance = (
     : { authenticatedHumans: [], directParentOf: [] });
 
 export type SingleWorkspaceServices =
+  | WorkspaceSandboxAuthorizationStore
+  | WorkspaceSandboxPolicyBindingPort
   | CommandGateway
   | CommandStore
   | Clock
@@ -506,6 +530,7 @@ export type SingleWorkspaceServices =
   | RunnableWorkSource
   | WorkWaitStore
   | WorkReadmissionGateStore
+  | WorkBlockerStore
   | DecisionRequestStore
   | ExecutionDriverPort
   | CommandHandlerRegistry
@@ -530,6 +555,7 @@ export type SingleWorkspaceServices =
   | ProductionDaemonService
   | ProductionDaemonServices
   | SnapshotRetention
+  | RuntimeIdentity
   | WorkspaceKnowledgePort
   | WorkspacePlacementPort;
 
@@ -555,6 +581,11 @@ const buildSingleWorkspaceLayerInternal = (
   allowTrustedLocalForFunctionalTests: boolean,
 ): Layer.Layer<SingleWorkspaceServices> => {
   const governance = resolveCompositionGovernance(config);
+  const nativeOsSupportedTupleAvailable =
+    config.nativeOsSupportedTupleAvailable ??
+    hasLinuxWorkspaceWriteEnabledQualificationSync(
+      config.trustedHostConfigurationSource,
+    );
   try {
     config.startupDiagnosticProbe?.("p39.layer-path-validation.before");
   } catch {
@@ -577,9 +608,18 @@ const buildSingleWorkspaceLayerInternal = (
   }
   const primaryDatabaseFilename =
     preparedDatabase?.databaseFilename ?? config.databaseFile;
+  const blobRoot =
+    config.blobRoot ??
+    (primaryDatabaseFilename === ":memory:"
+      ? defaultBlobRoot()
+      : `${primaryDatabaseFilename}.blobs`);
+  const blobStore = makeBlobStorePortLive(blobRoot, {
+    legacyRoot: join(tmpdir(), "arbor-blobs"),
+  });
   const base = layer({ filename: primaryDatabaseFilename });
   const infra = Layer.mergeAll(
     base,
+    Layer.sync(RuntimeIdentity, () => makeRuntimeInfo(primaryDatabaseFilename)),
     ClockLive,
     RuntimeClockLive,
     IdGeneratorLive,
@@ -625,7 +665,31 @@ const buildSingleWorkspaceLayerInternal = (
     ProjectEnvironmentPortFromResolverLive,
     environmentResolver,
   );
-  const nativePosixSandbox = makeNativePosixSandboxProcessPort();
+  const nativePosixSandbox = makeNativePosixSandboxProcessPort({
+    networkBrokerFactory: (networkPolicy, protocol = "V1") =>
+      protocol === "V2"
+        ? openNetworkProxyBrokerV2(networkPolicy)
+        : openNetworkProxyBroker(networkPolicy),
+    linuxProbe: () =>
+      probeInstalledLinuxSandbox(config.trustedHostConfigurationSource),
+    readVerificationQualificationEvidence: async (ref) => {
+      const digest = ref.slice("blob:sha256:".length);
+      try {
+        const bytes = await Effect.runPromise(
+          Effect.provide(
+            Effect.gen(function* () {
+              const blobs = yield* BlobStorePort;
+              return yield* blobs.get(digest);
+            }),
+            blobStore,
+          ),
+        );
+        return new TextDecoder().decode(bytes);
+      } catch {
+        return undefined;
+      }
+    },
+  });
   const windowsSandbox = makeProductionWindowsSandboxProcessPort(
     config.trustedHostConfigurationSource,
   );
@@ -719,30 +783,40 @@ const buildSingleWorkspaceLayerInternal = (
       ? undefined
       : resolvedModelBindingFingerprint(deploymentBinding);
   const provider =
-    deploymentBinding !== undefined
-      ? deploymentBinding.adapter.layerFor({
-          ...(deploymentBinding.deployment.endpoint !== undefined
-            ? { endpoint: deploymentBinding.deployment.endpoint }
-            : {}),
-          ...(deploymentBinding.deployment.wireModelName !== undefined
-            ? { wireModelName: deploymentBinding.deployment.wireModelName }
-            : {}),
-          ...(deploymentBinding.deployment.secretRef !== undefined
-            ? { secretRef: deploymentBinding.deployment.secretRef }
-            : {}),
-          ...(deploymentBinding.deployment.extraHeaders !== undefined
-            ? { extraHeaders: deploymentBinding.deployment.extraHeaders }
-            : {}),
+    config.requireRealProvider === true &&
+    deploymentBinding === undefined &&
+    config.provider === undefined
+      ? Layer.succeed(ProviderPort, {
+          runTurn: () =>
+            Stream.fail({
+              _tag: "ProviderFailure" as const,
+              kind: "RequestRejected" as const,
+            }),
         })
-      : config.provider !== undefined
-        ? selectProviderLayer(config.provider)
-        : selectProviderLayer({
-            adapterId: "provider-fake",
-            turns: config.providerTurns ?? [],
-            ...(config.providerFailures !== undefined
-              ? { failures: config.providerFailures }
+      : deploymentBinding !== undefined
+        ? deploymentBinding.adapter.layerFor({
+            ...(deploymentBinding.deployment.endpoint !== undefined
+              ? { endpoint: deploymentBinding.deployment.endpoint }
               : {}),
-          });
+            ...(deploymentBinding.deployment.wireModelName !== undefined
+              ? { wireModelName: deploymentBinding.deployment.wireModelName }
+              : {}),
+            ...(deploymentBinding.deployment.secretRef !== undefined
+              ? { secretRef: deploymentBinding.deployment.secretRef }
+              : {}),
+            ...(deploymentBinding.deployment.extraHeaders !== undefined
+              ? { extraHeaders: deploymentBinding.deployment.extraHeaders }
+              : {}),
+          })
+        : config.provider !== undefined
+          ? selectProviderLayer(config.provider)
+          : selectProviderLayer({
+              adapterId: "provider-fake",
+              turns: config.providerTurns ?? [],
+              ...(config.providerFailures !== undefined
+                ? { failures: config.providerFailures }
+                : {}),
+            });
   // Gate C C1/C2: the adapter's declared usage capabilities and the binding
   // identity for continuation checkpoints ride the ProviderRuntime config
   // (single adapter per runtime — single-deployment v1 semantics).
@@ -800,15 +874,17 @@ const buildSingleWorkspaceLayerInternal = (
         ? { projectId: config.projectId }
         : {}),
       processExecutionMode: config.processExecutionMode ?? "Disabled",
-      // Production trust, signed helper, and exact release qualification
-      // materials are not provisioned in this composition yet.
-      nativeOsSupportedTupleAvailable: false,
+      nativeOsSupportedTupleAvailable,
       testOnlyAllowTrustedLocalProcessExecution:
         allowTrustedLocalForFunctionalTests,
     }),
     projectToolRegistry,
   );
   const domainEventJournal = Layer.provide(DomainEventJournalLive, infra);
+  const sandboxUnavailableStore = Layer.provide(
+    SandboxProviderUnavailableStoreLive,
+    Layer.mergeAll(infra, domainEventJournal),
+  );
   const inboxProjection = Layer.provide(InboxProjectionStoreLive, infra);
   const executableApprovalStore = Layer.provide(
     ExecutableApprovalStoreLive,
@@ -825,7 +901,11 @@ const buildSingleWorkspaceLayerInternal = (
     Layer.provide(WorkspaceResourceActivationStoreLive, infra),
     Layer.provide(WorkRepositoryLive, infra),
     Layer.provide(WorkContractRevisionRepositoryLive, infra),
-    Layer.provide(WorkReadmissionGateStoreLive, infra),
+    Layer.provide(
+      WorkReadmissionGateStoreLive,
+      Layer.mergeAll(infra, sandboxUnavailableStore),
+    ),
+    Layer.provide(WorkBlockerStoreLive, infra),
     Layer.provide(LocalPlanStoreLive, infra),
     Layer.provide(SessionRepositoryLive, infra),
     Layer.provide(AgentExecutionStateStoreLive, infra),
@@ -862,6 +942,7 @@ const buildSingleWorkspaceLayerInternal = (
     Layer.provide(AcceptanceRepositoryLive, infra),
     Layer.provide(PermissionGrantRepositoryLive, infra),
     Layer.provide(SandboxPolicyDecisionStoreLive, infra),
+    Layer.provide(WorkspaceSandboxAuthorizationStoreLive, infra),
     Layer.provide(SandboxPolicyRequirementReadPortLive, infra),
     candidateBoundarySources,
     candidateBoundaryReadPortLayer,
@@ -876,10 +957,7 @@ const buildSingleWorkspaceLayerInternal = (
       ),
       Layer.mergeAll(infra, Layer.provide(DomainEventJournalLive, infra)),
     ),
-    Layer.provide(
-      SandboxProviderUnavailableStoreLive,
-      Layer.mergeAll(infra, domainEventJournal),
-    ),
+    sandboxUnavailableStore,
     Layer.provide(SandboxProviderUnavailableAttentionQueueLive, infra),
     Layer.provide(ConversationAttemptStoreLive, infra),
     Layer.provide(ProviderDeploymentBreakerLive, infra),
@@ -901,7 +979,15 @@ const buildSingleWorkspaceLayerInternal = (
     toolCatalog,
     ToolDefinitionStoreLive,
     SandboxPortLive,
-    BlobStorePortLive,
+    blobStore,
+  );
+  const workspaceAuthorizationInitialization = Layer.provide(
+    WorkspaceSandboxAuthorizationInitializationPortLive({
+      qualified:
+        nativeOsSupportedTupleAvailable &&
+        (config.processExecutionMode ?? "Disabled") === "NativeOsSupportedOnly",
+    }),
+    repos,
   );
   const admission = Layer.provide(ResourceAdmissionLive, repos);
   const workspaceKnowledge = Layer.provide(WorkspaceKnowledgePortLive, repos);
@@ -964,8 +1050,7 @@ const buildSingleWorkspaceLayerInternal = (
       config.testOnlyToolReconciliation?.executors ?? BUILTIN_EXECUTORS,
       {
         processExecutionMode: config.processExecutionMode ?? "Disabled",
-        // No signed production helper/trust/evidence tuple is provisioned.
-        nativeOsSupportedTupleAvailable: false,
+        nativeOsSupportedTupleAvailable,
         testOnlyAllowTrustedLocalProcessExecution:
           allowTrustedLocalForFunctionalTests,
         ...(config.toolQualificationProbe === undefined
@@ -1042,6 +1127,7 @@ const buildSingleWorkspaceLayerInternal = (
     ),
     Layer.mergeAll(
       repos,
+      workspaceAuthorizationInitialization,
       infra,
       projectResourceProfilePort,
       sandboxAuthoritySnapshotLayer,
@@ -1050,6 +1136,38 @@ const buildSingleWorkspaceLayerInternal = (
   const gateway = Layer.provide(
     makeCommandGatewayLive(config.gatewayQualificationProbe),
     Layer.mergeAll(infra, registry, repos, fence),
+  );
+  const workspacePolicyBinding = Layer.provide(
+    Layer.unwrap(
+      Effect.gen(function* () {
+        const authorizations = yield* WorkspaceSandboxAuthorizationStore;
+        return Layer.succeed(
+          WorkspaceSandboxPolicyBindingPort,
+          makeWorkspaceSandboxPolicyBindingService({
+            transaction: yield* TransactionPort,
+            workspaces: yield* WorkspaceRepository,
+            executions: yield* ExecutionRepository,
+            authorizations,
+            decisions: yield* SandboxPolicyDecisionStore,
+            unavailable: yield* SandboxProviderUnavailableStore,
+            boundary: yield* SandboxPolicyCandidateBoundaryReadPort,
+            currentHost: yield* CurrentSandboxAuthoritySnapshotPort,
+            gateway: yield* CommandGateway,
+            resolver: yield* AuthorityResolverPort,
+            clock: yield* Clock,
+            ids: yield* IdGenerator,
+          }),
+        );
+      }),
+    ),
+    Layer.mergeAll(
+      repos,
+      infra,
+      gateway,
+      registry,
+      authorityResolver,
+      candidateBoundaryReadPortLayer,
+    ),
   );
   const controlActionHandlers = Layer.provide(
     config.assignWorkBindingAttentionQualificationProbe === undefined &&
@@ -1097,11 +1215,17 @@ const buildSingleWorkspaceLayerInternal = (
     ),
     Layer.mergeAll(
       toolRuntime,
+      // The explicitly opted-in historical TrustedLocal qualification path
+      // exercises human policy decisions. The standing Workspace binder only
+      // creates OS-enforced policies and must not intercept that test path.
+      ...(allowTrustedLocalForFunctionalTests ? [] : [workspacePolicyBinding]),
       infra,
       toolCatalog,
       repos,
       authorityResolver,
       environmentResolver,
+      candidateBoundaryReadPortLayer,
+      blobStore,
     ),
   );
   const turnProfiles = Layer.provide(
@@ -1219,6 +1343,8 @@ const buildSingleWorkspaceLayerInternal = (
     capability,
     registry,
     gateway,
+    workspacePolicyBinding,
+    workspaceAuthorizationInitialization,
     reconciliation,
     projectResourceProfilePort,
     nativeSandboxProcessPort,
@@ -1344,7 +1470,7 @@ const buildSingleWorkspaceLayerInternal = (
     Layer.mergeAll(coreAll, t1Recovery, recordEnvironmentChange),
   );
   const snapshotRetention = Layer.provide(
-    SnapshotRetentionLive(config.blobRoot),
+    SnapshotRetentionLive(blobRoot),
     coreAll,
   );
   const usage = UsageServiceLive;
@@ -1441,8 +1567,10 @@ const buildSingleWorkspaceLayerInternal = (
 /** Production composition has no TrustedLocal escape hatch. */
 export const buildSingleWorkspaceLayer = (
   config: SingleWorkspaceConfig,
-): Layer.Layer<SingleWorkspaceServices> =>
-  buildSingleWorkspaceLayerInternal(config, false);
+): Layer.Layer<SingleWorkspaceServices> => {
+  assertNoIncompleteRestore(config.databaseFile);
+  return buildSingleWorkspaceLayerInternal(config, false);
+};
 
 /** Internal functional-qualification seam. This is intentionally not re-exported
  * from the package entry point and is only used by tests/functional fixtures. */

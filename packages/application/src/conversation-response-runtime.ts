@@ -5,7 +5,13 @@ import type {
   Principal,
   ProjectId,
 } from "@arbor/domain";
-import { Actor, CommandId, ExecutionId, parse } from "@arbor/domain";
+import {
+  Actor,
+  CommandId,
+  ExecutionId,
+  executionEpisode,
+  parse,
+} from "@arbor/domain";
 import type {
   ClockService,
   ConversationAttemptConflict,
@@ -56,14 +62,18 @@ export interface ConversationResponseTriggerDependencies {
   readonly gateway: CommandGatewayService;
   readonly jobs: Pick<
     ConversationResponseJobStoreService,
-    "listEligible" | "transition"
+    "find" | "listEligible" | "transition"
   >;
-  readonly attempts: Pick<ConversationAttemptStoreService, "insert">;
+  readonly attempts: Pick<
+    ConversationAttemptStoreService,
+    "insert" | "list" | "settle"
+  >;
   readonly projects: Pick<ProjectRepositoryService, "findById">;
   readonly executions: Pick<
     ExecutionRepositoryService,
     "findActiveMainByWorkspace"
-  >;
+  > &
+    Partial<Pick<ExecutionRepositoryService, "findById">>;
   readonly clock: Pick<ClockService, "now">;
   readonly tx: Pick<TransactionPortService, "transact">;
   readonly principal: Principal;
@@ -81,11 +91,203 @@ export type ConversationResponseRuntimeError =
   | ExecutionRepositoryError
   | ProjectRepositoryError;
 
+const admissionRecoveryCommandId = (executionId: ExecutionId): CommandId =>
+  parse(CommandId)(
+    `cmd_${newUuid7("p17-conversation-admission-recovery", String(executionId))}`,
+  );
+
+const admissionRecoveryFingerprint = (executionId: ExecutionId): string =>
+  `conversation-admission:${String(executionId)}`;
+
+const admissionRecoverySettlement = {
+  _tag: "Failed" as const,
+  failure: {
+    _tag: "ExecutionFailure" as const,
+    reason:
+      "Conversation response admission was interrupted before the response attempt was bound; resend is required.",
+  },
+};
+
+/**
+ * Repairs a conversation admission whose Execution exists without its
+ * Attempt/Job binding. The old response is made visible as NeedsAttention;
+ * the next user retry receives a new deterministic attempt identity.
+ *
+ * The operation is idempotent and also covers a process exit between the
+ * settlement command and the Attempt/Job repair transaction.
+ */
+export const recoverConversationResponseAdmission = (
+  dependencies: Pick<
+    ConversationResponseTriggerDependencies,
+    | "gateway"
+    | "jobs"
+    | "attempts"
+    | "executions"
+    | "clock"
+    | "tx"
+    | "principal"
+  >,
+  projectId?: ProjectId,
+): Effect.Effect<ReadonlyArray<string>, ConversationResponseRuntimeError> =>
+  Effect.gen(function* () {
+    const findExecutionById = dependencies.executions.findById;
+    if (findExecutionById === undefined) return [];
+    const now = yield* dependencies.clock.now();
+    const eligible = (yield* dependencies.tx.transact(
+      dependencies.jobs.listEligible(now),
+    )).filter((job) => projectId === undefined || job.projectId === projectId);
+    const recovered: string[] = [];
+    for (const job of eligible) {
+      const attemptNo = job.nextAttemptNo;
+      const executionId = executionIdOf(job.messageId, attemptNo);
+      const execution = yield* dependencies.tx.transact(
+        findExecutionById(executionId),
+      );
+      if (Option.isNone(execution)) continue;
+      const episode = executionEpisode(execution.value);
+      if (
+        episode?._tag !== "ConversationResponseEpisode" ||
+        episode.messageId !== job.messageId ||
+        episode.responseJobRevision !== job.revision
+      ) {
+        continue;
+      }
+      const attempts = yield* dependencies.tx.transact(
+        dependencies.attempts.list(job.messageId),
+      );
+      const existingAttempt = attempts.find(
+        (attempt) =>
+          attempt.attemptNo === attemptNo &&
+          attempt.executionId === executionId,
+      );
+      if (
+        execution.value.state.status === "Active" &&
+        existingAttempt !== undefined &&
+        existingAttempt.settledAt === null
+      ) {
+        yield* dependencies.tx.transact(
+          dependencies.attempts.settle({
+            messageId: existingAttempt.messageId,
+            attemptNo: existingAttempt.attemptNo,
+            settledAt: now,
+            settlementKind: "AdmissionInterrupted",
+            failureClass: "UnknownFailure",
+            failureFingerprint: admissionRecoveryFingerprint(executionId),
+            retryDecision: {
+              _tag: "Attention",
+              reason: "AdmissionInterrupted",
+            },
+          }),
+        );
+      }
+      if (execution.value.state.status === "Active") {
+        const payload = {
+          executionId,
+          settlement: admissionRecoverySettlement,
+        };
+        const commandId = admissionRecoveryCommandId(executionId);
+        const authority = {
+          _tag: "SettleExecutionAuthority" as const,
+          submissionOrigin: "RecoveryController" as const,
+          principal: dependencies.principal,
+          commandId,
+          semanticRequestFingerprint: semanticRequestFingerprint({
+            commandType: "SettleExecution",
+            projectId: job.projectId,
+            actor: parse(Actor)(dependencies.principal),
+            schemaVersion: "1",
+            payload,
+          }),
+          projectId: job.projectId,
+          commandKind: "SettleExecution" as const,
+          executionId,
+        };
+        const receipt = yield* dependencies.gateway.execute(
+          {
+            commandType: "SettleExecution",
+            commandId,
+            projectId: job.projectId,
+            actor: parse(Actor)(dependencies.principal),
+            issuedAt: now,
+            causationRef: String(job.messageId),
+            payload,
+          },
+          {
+            _tag: "RecoveryController",
+            principal: dependencies.principal,
+            causationRef: `p17-conversation-admission-recovery:${String(job.messageId)}`,
+          },
+          authority,
+        );
+        if (receipt.resolution._tag !== "Committed") {
+          return yield* Effect.die(
+            new Error(
+              `conversation admission recovery could not settle ${String(executionId)}`,
+            ),
+          );
+        }
+      }
+      if (existingAttempt === undefined) {
+        yield* dependencies.tx.transact(
+          dependencies.attempts.insert({
+            messageId: job.messageId,
+            attemptNo,
+            executionId,
+            admittedAt: execution.value.admittedAt,
+            settledAt: now,
+            settlementKind: "AdmissionInterrupted",
+            failureClass: "UnknownFailure",
+            failureFingerprint: admissionRecoveryFingerprint(executionId),
+            retryDecision: {
+              _tag: "Attention",
+              reason: "AdmissionInterrupted",
+            },
+            policyVersion: job.policyVersion,
+          }),
+        );
+      }
+      yield* dependencies.tx.transact(
+        dependencies.jobs.transition({
+          messageId: job.messageId,
+          expectedRevision: job.revision,
+          expectedState: job.state._tag,
+          next: {
+            ...job,
+            state: {
+              _tag: "NeedsAttention",
+              reason: "UnknownFailure",
+              failureFingerprint: admissionRecoveryFingerprint(executionId),
+              lastExecutionId: executionId,
+            },
+            nextAttemptNo: Math.max(job.nextAttemptNo, attemptNo + 1),
+            lastFailureClass: "UnknownFailure",
+            revision: job.revision + 1,
+            updatedAt: now,
+          },
+        }),
+      );
+      recovered.push(`attention:${job.messageId}`);
+    }
+    return recovered;
+  });
+
 export const runConversationResponseTrigger = (
   dependencies: ConversationResponseTriggerDependencies,
   projectId: ProjectId,
 ): Effect.Effect<ReadonlyArray<string>, ConversationResponseRuntimeError> =>
   Effect.gen(function* () {
+    if (dependencies.executions.findById !== undefined) {
+      const recovered = yield* recoverConversationResponseAdmission(
+        dependencies as ConversationResponseTriggerDependencies & {
+          readonly executions: Pick<
+            ExecutionRepositoryService,
+            "findActiveMainByWorkspace" | "findById"
+          >;
+        },
+        projectId,
+      );
+      if (recovered.length > 0) return recovered;
+    }
     const now = yield* dependencies.clock.now();
     const eligible = (yield* dependencies.tx.transact(
       dependencies.jobs.listEligible(now),
@@ -231,34 +433,55 @@ export const runConversationResponseTrigger = (
       ];
     }
 
-    yield* dependencies.tx.transact(
-      Effect.gen(function* () {
-        yield* dependencies.attempts.insert({
-          messageId: job.messageId,
-          attemptNo,
-          executionId,
-          admittedAt: issuedAt,
-          settledAt: null,
-          settlementKind: null,
-          failureClass: null,
-          failureFingerprint: null,
-          retryDecision: null,
-          policyVersion: job.policyVersion,
-        });
-        yield* dependencies.jobs.transition({
-          messageId: job.messageId,
-          expectedRevision: job.revision,
-          expectedState: job.state._tag,
-          next: {
-            ...job,
-            state: { _tag: "Running", attemptNo, executionId },
-            nextAttemptNo: attemptNo + 1,
-            revision: job.revision + 1,
-            updatedAt: issuedAt,
-          },
-        });
-      }),
+    // Production's AdmitExecution handler binds the Attempt and Job in the
+    // same transaction. Keep this idempotent fallback for older/programmatic
+    // compositions whose handler only admits the Execution; it is a no-op
+    // once the atomic binding has already changed the Job to Running.
+    const currentJob = yield* dependencies.tx.transact(
+      dependencies.jobs.find(job.messageId),
     );
+    if (
+      Option.isSome(currentJob) &&
+      currentJob.value.state._tag === "Running" &&
+      currentJob.value.state.executionId === executionId
+    ) {
+      return [`admitted:${executionId}`];
+    }
+
+    if (
+      Option.isSome(currentJob) &&
+      currentJob.value.revision === job.revision &&
+      currentJob.value.state._tag === job.state._tag
+    ) {
+      yield* dependencies.tx.transact(
+        Effect.gen(function* () {
+          yield* dependencies.attempts.insert({
+            messageId: job.messageId,
+            attemptNo,
+            executionId,
+            admittedAt: issuedAt,
+            settledAt: null,
+            settlementKind: null,
+            failureClass: null,
+            failureFingerprint: null,
+            retryDecision: null,
+            policyVersion: job.policyVersion,
+          });
+          yield* dependencies.jobs.transition({
+            messageId: job.messageId,
+            expectedRevision: job.revision,
+            expectedState: job.state._tag,
+            next: {
+              ...job,
+              state: { _tag: "Running", attemptNo, executionId },
+              nextAttemptNo: attemptNo + 1,
+              revision: job.revision + 1,
+              updatedAt: issuedAt,
+            },
+          });
+        }),
+      );
+    }
     return [`admitted:${executionId}`];
   });
 

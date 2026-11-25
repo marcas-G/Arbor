@@ -27,7 +27,7 @@ export const TOKENS = {
   "--arbor-rail-ink": "#edf5f1",
   "--arbor-rail-muted": "#9eb2a8",
   "--arbor-font-sans":
-    'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    '"Noto Sans SC Variable", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   "--arbor-font-serif":
     '"Palatino Linotype", "Iowan Old Style", Palatino, Georgia, serif',
   "--arbor-font-mono":

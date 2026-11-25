@@ -2,7 +2,9 @@ import {
   type CommandHandler,
   CommandHandlerRegistry,
   type DecideSandboxPolicyPreparation,
+  eraseCommandHandler,
   makeAcceptWorkOutcomeHandler,
+  makeBindWorkspaceSandboxPolicyHandler,
   makeCancelConversationResponseHandler,
   makeCompleteWorkHandler,
   makeConcludeVerificationHandler,
@@ -27,6 +29,7 @@ import {
   makeStartVerificationHandler,
   makeSteerWorkHandler,
   makeSubmitHumanMessageHandler,
+  makeWorkspaceSandboxAuthorizationHandlers,
   type ParentUserGovernanceFacts,
 } from "@arbor/application";
 import type {
@@ -38,12 +41,14 @@ import { repositoryFailure } from "@arbor/persistence-sqlite";
 import {
   AcceptanceRepository,
   type AcceptanceRepositoryService,
+  AgentLoopStepStore,
   AssignWorkTargetBindingRepository,
   type AssignWorkTargetBindingRepositoryService,
   BlobStorePort,
   Clock,
   ControlApprovalStore,
   type ControlApprovalStoreService,
+  ConversationAttemptStore,
   ConversationResponseJobStore,
   type ConversationResponseJobStoreService,
   DeliverableRepository,
@@ -68,17 +73,21 @@ import {
   type PermissionGrantRepositoryService,
   ProjectRepository,
   ProjectResourceProfilePort,
+  ProviderTurnStore,
   ResourceOwnershipRepository,
   RetryVerificationOriginRepository,
   SandboxPolicyDecisionStore,
   SessionRepository,
   VerificationRepository,
   type VerificationRepositoryService,
+  WorkBlockerStore,
   WorkContractRevisionRepository,
   WorkReadmissionGateStore,
   WorkRepository,
   WorkspaceRepository,
   WorkspaceResourceActivationStore,
+  WorkspaceSandboxAuthorizationInitializationPort,
+  WorkspaceSandboxAuthorizationStore,
   WorkWaitStore,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
@@ -165,6 +174,9 @@ export const makeSingleWorkspaceCommandHandlerRegistryLive = (
         () => executableApprovalStoreUnavailable,
       );
       const workWaits = yield* WorkWaitStore;
+      const blockers = yield* Effect.serviceOption(WorkBlockerStore);
+      const loopSteps = yield* Effect.serviceOption(AgentLoopStepStore);
+      const providerTurns = yield* Effect.serviceOption(ProviderTurnStore);
       const readmissionGate = yield* Effect.serviceOption(
         WorkReadmissionGateStore,
       );
@@ -185,11 +197,20 @@ export const makeSingleWorkspaceCommandHandlerRegistryLive = (
       const acceptances = yield* AcceptanceRepository;
       const grants = yield* PermissionGrantRepository;
       const sandboxPolicyDecisions = yield* SandboxPolicyDecisionStore;
+      const workspaceAuthorizations = yield* Effect.serviceOption(
+        WorkspaceSandboxAuthorizationStore,
+      );
+      const workspaceAuthorizationInitialization = yield* Effect.serviceOption(
+        WorkspaceSandboxAuthorizationInitializationPort,
+      );
       const assignWorkBindings = yield* Effect.serviceOption(
         AssignWorkTargetBindingRepository,
       );
       const humanMessages = yield* HumanMessageStore;
       const responseJobs = yield* ConversationResponseJobStore;
+      const conversationAttempts = yield* Effect.serviceOption(
+        ConversationAttemptStore,
+      );
       const controlApprovals =
         yield* Effect.serviceOption(ControlApprovalStore);
       const dependencyStore = yield* DependencyRepository;
@@ -249,10 +270,29 @@ export const makeSingleWorkspaceCommandHandlerRegistryLive = (
         sessions,
         executions,
         workWaits,
+        works,
+        inbox,
+        ...(Option.isSome(blockers) ? { blockers: blockers.value } : {}),
+        ...(Option.isSome(loopSteps) && Option.isSome(providerTurns)
+          ? {
+              blockedEvidence: {
+                loopSteps: loopSteps.value,
+                providerTurns: providerTurns.value,
+              },
+            }
+          : {}),
         ...(Option.isSome(readmissionGate)
           ? { readmissionGate: readmissionGate.value }
           : {}),
         executableApprovals,
+        ...(Option.isSome(conversationAttempts)
+          ? {
+              conversationResponse: {
+                jobs: responseJobs,
+                attempts: conversationAttempts.value,
+              },
+            }
+          : {}),
       });
       const stopHandler = p2Handlers.find(
         (candidate) => candidate.commandType === "StopExecution",
@@ -264,6 +304,7 @@ export const makeSingleWorkspaceCommandHandlerRegistryLive = (
         works,
         revisions: workContractRevisions,
         inbox: inbox as Pick<InboxProjectionStoreService, "admitUpsert">,
+        ...(Option.isSome(blockers) ? { blockers: blockers.value } : {}),
       });
       const criticalSteerHandler = makeCriticalSteerCommandHandler({
         steerHandler,
@@ -271,6 +312,31 @@ export const makeSingleWorkspaceCommandHandlerRegistryLive = (
         executions,
       }) as unknown as CommandHandler<unknown, unknown>;
       const handlers: ReadonlyArray<CommandHandler<unknown, unknown>> = [
+        ...(Option.isSome(workspaceAuthorizations) &&
+        sandboxPolicyDecisionPreparation !== undefined
+          ? [
+              ...makeWorkspaceSandboxAuthorizationHandlers({
+                workspaces,
+                executions,
+                authorizations: workspaceAuthorizations.value,
+                clock: Option.getOrElse(clock, () => ({
+                  now: () => Effect.succeed(new Date().toISOString()),
+                })),
+              }),
+              eraseCommandHandler(
+                makeBindWorkspaceSandboxPolicyHandler({
+                  workspaces,
+                  executions,
+                  authorizations: workspaceAuthorizations.value,
+                  decisions: sandboxPolicyDecisions,
+                  preparation: sandboxPolicyDecisionPreparation,
+                  clock: Option.getOrElse(clock, () => ({
+                    now: () => Effect.succeed(new Date().toISOString()),
+                  })),
+                }),
+              ),
+            ]
+          : []),
         ...makeP1CommandHandlers({
           ...(Option.isSome(clock) ? { clock: clock.value } : {}),
           projects,
@@ -297,6 +363,15 @@ export const makeSingleWorkspaceCommandHandlerRegistryLive = (
           grants,
           ...(Option.isSome(controlApprovals)
             ? { approvals: controlApprovals.value }
+            : {}),
+          ...(Option.isSome(workspaceAuthorizationInitialization)
+            ? {
+                workspaceAuthorizationInitialization:
+                  workspaceAuthorizationInitialization.value,
+              }
+            : {}),
+          ...(Option.isSome(workspaceAuthorizations)
+            ? { workspaceAuthorizations: workspaceAuthorizations.value }
             : {}),
         }),
         ...makeP15CommandHandlers({
@@ -435,6 +510,7 @@ export const makeSingleWorkspaceCommandHandlerRegistryLive = (
         makeGrantPermissionHandler({
           grants: grants as PermissionGrantRepositoryService,
           executions,
+          workspaces,
           ...(Option.isSome(clock) ? { clock: clock.value } : {}),
           ...(sandboxPolicyGrantIssuerConfigSnapshot === undefined
             ? {}

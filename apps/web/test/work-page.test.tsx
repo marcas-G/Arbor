@@ -28,6 +28,7 @@ import {
   SessionContext,
   type SessionContextValue,
 } from "../src/session/SessionContext.js";
+import { workDetailBlocked } from "../src/views/fixtures.js";
 
 type MockOutcome = { readonly dto: unknown } | { readonly problem: Problem };
 type ViewHandler = () => MockOutcome;
@@ -109,6 +110,24 @@ afterEach(() => {
 });
 
 describe("W-06 Work Detail 页", () => {
+  it("offers a scoped file permission action for an exact blocked current Work", async () => {
+    const urls = installViews({
+      ...defaultHandlers,
+      "work-detail": () => ({
+        dto: {
+          ...workDetailCurrent,
+          blockedEpisode: workDetailBlocked.blockedEpisode,
+        },
+      }),
+    });
+    renderWork(WORK_CURRENT);
+    fireEvent.click(await screen.findByRole("button", { name: "文件权限" }));
+    expect(
+      screen.getByRole("heading", { name: "允许当前分工修改项目文件" }),
+    ).toBeTruthy();
+    expect(urls.some((url) => url.includes("/commands"))).toBe(false);
+  });
+
   it("工作详情来自 exact Work Detail view + 返回工作区导航", async () => {
     installViews();
     renderWork(WORK_CURRENT);

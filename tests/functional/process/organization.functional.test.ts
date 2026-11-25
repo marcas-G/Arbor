@@ -1350,7 +1350,13 @@ describe("release-functional long-lived responsibility", () => {
           wasCompleted ? 1 : expectedPhase === null ? 1 : 2,
         );
         expect(inboxCount).toBe(1);
-        expect(Number(recoveryOffset?.last_sequence ?? 0)).toBe(eventSequence);
+        // The consumer advances one committed batch and may process events
+        // after the injected dead letter before this snapshot is read. The
+        // durable contract is that the offset covers the target event while
+        // the target dead letter and reconciliation facts remain retained.
+        expect(
+          Number(recoveryOffset?.last_sequence ?? 0),
+        ).toBeGreaterThanOrEqual(eventSequence);
         expect(retainedDeadLetter?.reason).toBe("unsupported eventVersion 2");
         expect(recoveredConclusionEvents).toBe(1);
         finishF18Stage(run, recoveredFactsStage, "passed", {

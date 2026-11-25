@@ -1,5 +1,10 @@
 # Findings
 
+> Historical audit snapshot. This file records investigation performed against
+> an older checkout and intentionally preserves its original conclusions.
+> It is not the current project-status source. See `docs/CURRENT_STATE.md` and
+> `docs/KNOWN_PROBLEMS.md` for the maintained present-tense assessment.
+
 ## Baseline
 
 - Checkout: `master` at `8b1e968`.

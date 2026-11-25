@@ -10,6 +10,7 @@ import type {
   ExecutionSettlement,
   ProviderTurnId,
   TerminalActionDenial,
+  ToolInvocationId,
   WorkRevision,
 } from "@arbor/domain";
 import {
@@ -1008,6 +1009,7 @@ export const executeAgentLoopActions = (
           readonly canonicalRefs?: ReadonlyArray<string>;
           readonly modelOutputRef?: string;
           readonly artifactRefs?: ReadonlyArray<string>;
+          readonly invocationId?: ToolInvocationId;
           readonly reconciliationFactRef?: string;
         },
         fence: AgentLoopStepFence,
@@ -1035,6 +1037,9 @@ export const executeAgentLoopActions = (
                     _tag: "ToolResult" as const,
                     callRef: targetInvocation.callRef,
                     toolName: targetInvocation.toolName,
+                    ...(terminal.invocationId === undefined
+                      ? {}
+                      : { invocationId: terminal.invocationId }),
                     ...(terminal.reconciliationFactRef === undefined
                       ? {}
                       : {
@@ -1122,6 +1127,7 @@ export const executeAgentLoopActions = (
         readonly truncated?: boolean;
         readonly modelOutputRef?: string;
         readonly artifactRefs?: ReadonlyArray<string>;
+        readonly invocationId?: ToolInvocationId;
         readonly reconciliationFactRef?: string;
       }): Effect.Effect<void, ExecutionDriverError> =>
         Effect.gen(function* () {
@@ -1233,6 +1239,9 @@ export const executeAgentLoopActions = (
                     ...(terminal.artifactRefs === undefined
                       ? {}
                       : { artifactRefs: terminal.artifactRefs }),
+                    ...(terminal.invocationId === undefined
+                      ? {}
+                      : { invocationId: terminal.invocationId }),
                     ...(terminal.reconciliationFactRef === undefined
                       ? {}
                       : {
@@ -1484,6 +1493,29 @@ export const executeAgentLoopActions = (
         } = {},
       ): Effect.Effect<boolean, ExecutionDriverError> =>
         Effect.gen(function* () {
+          // Recovery can settle the P4 invocation before this P3 process has
+          // observed the corresponding fenced step transition. Refresh the
+          // exact step/action tuple before treating a stale in-memory cursor
+          // as an inability to project the terminal ToolResult.
+          if (
+            loopSteps !== undefined &&
+            typeof loopSteps.find === "function" &&
+            loopStepFence !== undefined &&
+            currentLoopStep !== undefined
+          ) {
+            const freshStep = yield* tx
+              .transact(loopSteps.find(currentLoopStep.identity))
+              .pipe(Effect.mapError(failure));
+            if (Option.isSome(freshStep)) {
+              currentLoopStep = freshStep.value;
+              const freshActions = yield* tx
+                .transact(loopSteps.listActions(currentLoopStep.identity))
+                .pipe(Effect.mapError(failure));
+              loopAction = freshActions.find(
+                (candidate) => candidate.actionIndex === actionIndex,
+              );
+            }
+          }
           if (
             loopAction === undefined ||
             currentLoopStep === undefined ||
@@ -1713,10 +1745,13 @@ export const executeAgentLoopActions = (
         return { _tag: "Settle", settlement };
       }
       if (activityDecision === "Stop") {
-        const settlement = safetyStop("RuntimeSafetyStop");
+        const stopRequested = stopRequestedSettlement(input.execution);
+        const settlement = stopRequested ?? safetyStop("RuntimeSafetyStop");
         yield* persistActionRejection(
           settlement,
-          "RuntimeSafetyStop",
+          stopRequested === undefined
+            ? "RuntimeSafetyStop"
+            : "ExecutionStopping",
           "Interrupted",
         );
         return {
@@ -1873,6 +1908,9 @@ export const executeAgentLoopActions = (
               ...(executed.outcome.artifactRefs === undefined
                 ? {}
                 : { artifactRefs: executed.outcome.artifactRefs }),
+              ...(executed.outcome.invocationId === undefined
+                ? {}
+                : { invocationId: executed.outcome.invocationId }),
               reconciliationFactRef: executed.outcome.reconciliationFactRef,
             });
             return { _tag: "Settle", settlement };

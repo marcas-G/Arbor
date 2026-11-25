@@ -54,6 +54,7 @@ export interface ViewFetchOptions {
 }
 
 export interface ProjectDirectoryEntry {
+  readonly directoryPath?: string | null;
   readonly projectId: string;
   readonly name: string;
   readonly lifecycle: "Open" | "Closed";
@@ -80,6 +81,7 @@ export interface ProjectResourceProfileEntry {
 export interface ProjectResourceCatalog {
   readonly profiles: ReadonlyArray<ProjectResourceProfileEntry>;
   readonly conversationOnlySupported: true;
+  readonly directorySelectionSupported?: boolean;
 }
 
 /** Authenticated host bootstrap catalog (P12 `10` §9). Keep only the frozen
@@ -168,7 +170,13 @@ export const fetchProjectResources = async (
   }
   return {
     ok: true,
-    dto: { profiles, conversationOnlySupported: true },
+    dto: {
+      profiles,
+      conversationOnlySupported: true,
+      ...(dto.directorySelectionSupported === true
+        ? { directorySelectionSupported: true }
+        : {}),
+    },
   };
 };
 

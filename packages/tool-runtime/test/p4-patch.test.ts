@@ -163,4 +163,53 @@ describe("P4 patch tool", () => {
     expect(second.settlement._tag).toBe("Success");
     expect(readFileSync(target, "utf8")).toBe("first\nsecond");
   });
+
+  it("accepts the common Begin Patch Add File format", async () => {
+    const target = join(root, "begin-end-created.txt");
+    const diff =
+      "*** Begin Patch\n*** Add File: begin-end-created.txt\n+created by a coding model\n*** End Patch";
+    const execute = () =>
+      Effect.runPromise(
+        patchExecutor.execute({
+          intent: intent(
+            JSON.stringify({
+              target: { mount: "workspace", path: "begin-end-created.txt" },
+              unifiedDiff: diff,
+            }),
+          ),
+          definition: {} as never,
+          context,
+          sandbox,
+          regions: [],
+        }),
+      );
+
+    const first = await execute();
+    const second = await execute();
+    expect(first.settlement._tag).toBe("Success");
+    expect(second.settlement._tag).toBe("Success");
+    expect(readFileSync(target, "utf8")).toBe("created by a coding model");
+  });
+
+  it("accepts the common Begin Patch Update File format", async () => {
+    writeFileSync(file, "line1\nline2\nline3");
+    const diff =
+      "*** Begin Patch\n*** Update File: a.txt\n@@\n line1\n-line2\n+LINE2\n line3\n*** End Patch";
+    const result = await Effect.runPromise(
+      patchExecutor.execute({
+        intent: intent(
+          JSON.stringify({
+            target: { mount: "workspace", path: "a.txt" },
+            unifiedDiff: diff,
+          }),
+        ),
+        definition: {} as never,
+        context,
+        sandbox,
+        regions: [],
+      }),
+    );
+    expect(result.settlement._tag).toBe("Success");
+    expect(readFileSync(file, "utf8")).toBe("line1\nLINE2\nline3");
+  });
 });

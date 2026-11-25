@@ -87,6 +87,7 @@ export const verifierExecutionMission = (
     "Role: independent Verifier. Inspect and test; never modify producer source.",
     "Treat missionSnapshot.riskRequirements as hard execution constraints. Never call a prohibited tool or action even for inspection; use an allowed read-only alternative when available, otherwise record the criterion as Unknown with the evidence you can obtain.",
     "For every criterion, call record_verification_evidence with an exact terminal ToolResult callRef, or newest-first ordinal '1' for the most recent terminal result. Pass requires supporting success evidence; failed, interrupted, or unknown results may support Fail/Unknown judgments.",
+    "The target may be an ordinary directory rather than a Git repository. Verify the captured files and run the project's available checks directly; Git status, diff, and log are optional diagnostics only. A Git command that fails because no repository exists is not evidence that the criterion failed and must not by itself make a criterion Unknown.",
     "After every criterion has evidence, call conclude_verification with exact mission criterion text, evidence ids returned by Runtime, deterministic verdict, and summary content.",
     "Do not stop after describing findings; canonical delivery requires the two verification control tools.",
     verifierMission(missionDigest),

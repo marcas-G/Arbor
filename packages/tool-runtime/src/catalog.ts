@@ -103,6 +103,81 @@ const LIST_RESULT_SCHEMA = JSON.stringify({
   },
 });
 
+const WRITE_INPUT_SCHEMA = JSON.stringify({
+  type: "object",
+  required: ["target", "content"],
+  additionalProperties: false,
+  properties: {
+    target: TARGET_SCHEMA,
+    content: { type: "string", maxLength: 5_000_000 },
+  },
+});
+
+const WRITE_RESULT_SCHEMA = JSON.stringify({
+  type: "object",
+  required: ["written", "created", "byteSize"],
+  properties: {
+    written: { type: "boolean" },
+    created: { type: "boolean" },
+    byteSize: { type: "integer" },
+  },
+});
+
+const GLOB_INPUT_SCHEMA = JSON.stringify({
+  type: "object",
+  required: ["target", "pattern"],
+  additionalProperties: false,
+  properties: {
+    target: TARGET_SCHEMA,
+    pattern: { type: "string", minLength: 1, maxLength: 500 },
+    maxResults: { type: "integer", minimum: 1, maximum: 500 },
+    maxDepth: { type: "integer", minimum: 0, maximum: 32 },
+  },
+});
+
+const GLOB_RESULT_SCHEMA = JSON.stringify({
+  type: "object",
+  required: ["matches", "truncated"],
+  properties: {
+    matches: { type: "array", items: { type: "string" } },
+    truncated: { type: "boolean" },
+  },
+});
+
+const GREP_INPUT_SCHEMA = JSON.stringify({
+  type: "object",
+  required: ["target", "query"],
+  additionalProperties: false,
+  properties: {
+    target: TARGET_SCHEMA,
+    query: { type: "string", minLength: 1, maxLength: 500 },
+    caseSensitive: { type: "boolean" },
+    maxResults: { type: "integer", minimum: 1, maximum: 200 },
+    maxDepth: { type: "integer", minimum: 0, maximum: 32 },
+  },
+});
+
+const GREP_RESULT_SCHEMA = JSON.stringify({
+  type: "object",
+  required: ["matches", "truncated"],
+  properties: {
+    matches: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["path", "line", "column", "text"],
+        properties: {
+          path: { type: "string" },
+          line: { type: "integer" },
+          column: { type: "integer" },
+          text: { type: "string" },
+        },
+      },
+    },
+    truncated: { type: "boolean" },
+  },
+});
+
 export const READ_DEFINITION: ToolDefinition = {
   name: "read",
   version: "2",
@@ -121,7 +196,7 @@ export const PATCH_DEFINITION: ToolDefinition = {
   version: "2",
   hash: "patch-v2-mount-relative-create",
   description:
-    "Create or update one workspace-relative file with an idempotent unified diff.",
+    "Create or update one workspace-relative file with an idempotent unified diff. The unifiedDiff may also use the common single-file *** Begin Patch / *** Add File or *** Update File format.",
   inputSchemaJson: PATCH_INPUT_SCHEMA,
   resultSchemaJson: PATCH_RESULT_SCHEMA,
   capabilityMetadata: ["fs:write"],
@@ -164,11 +239,53 @@ export const LIST_DEFINITION: ToolDefinition = {
   source: "Builtin",
 };
 
+export const WRITE_DEFINITION: ToolDefinition = {
+  name: "write",
+  version: "1",
+  hash: "write-v1-mount-relative-atomic-non-idempotent",
+  description:
+    "Create or replace a workspace-relative text file, creating missing parent directories inside the writable mount.",
+  inputSchemaJson: WRITE_INPUT_SCHEMA,
+  resultSchemaJson: WRITE_RESULT_SCHEMA,
+  capabilityMetadata: ["fs:write"],
+  sideEffectSemantics: "NonIdempotent",
+  source: "Builtin",
+};
+
+export const GLOB_DEFINITION: ToolDefinition = {
+  name: "glob",
+  version: "1",
+  hash: "glob-v1-mount-relative-bounded",
+  description:
+    "Find files under a workspace-relative directory using a bounded glob pattern.",
+  inputSchemaJson: GLOB_INPUT_SCHEMA,
+  resultSchemaJson: GLOB_RESULT_SCHEMA,
+  capabilityMetadata: ["fs:read"],
+  sideEffectSemantics: "ReadOnly",
+  source: "Builtin",
+};
+
+export const GREP_DEFINITION: ToolDefinition = {
+  name: "grep",
+  version: "1",
+  hash: "grep-v1-mount-relative-bounded",
+  description:
+    "Search text files under a workspace-relative directory with a bounded regular expression.",
+  inputSchemaJson: GREP_INPUT_SCHEMA,
+  resultSchemaJson: GREP_RESULT_SCHEMA,
+  capabilityMetadata: ["fs:read"],
+  sideEffectSemantics: "ReadOnly",
+  source: "Builtin",
+};
+
 export const BUILTIN_TOOLS: ReadonlyArray<ToolDefinition> = [
   READ_DEFINITION,
   PATCH_DEFINITION,
   SHELL_DEFINITION,
   LIST_DEFINITION,
+  WRITE_DEFINITION,
+  GLOB_DEFINITION,
+  GREP_DEFINITION,
 ];
 
 export const ToolDefinitionStoreLive: Layer.Layer<ToolDefinitionStore> =
@@ -232,7 +349,13 @@ export const ToolCatalogPortLive = (
         (config.processExecutionMode === "NativeOsSupportedOnly" &&
           config.nativeOsSupportedTupleAvailable === true);
       const releaseTools = (tools: ReadonlyArray<ToolDefinition>) =>
-        shellAvailable ? tools : tools.filter((tool) => tool.name !== "shell");
+        tools.filter(
+          (tool) =>
+            (shellAvailable || tool.name !== "shell") &&
+            (process.platform === "linux" ||
+              tool.source !== "Builtin" ||
+              !["write", "glob", "grep"].includes(tool.name)),
+        );
 
       const catalogued = (): Effect.Effect<ReadonlyArray<ToolDefinition>> => {
         if (projectId === undefined) {

@@ -11,7 +11,7 @@ import {
   encodeExecutionEpisodeBinding,
   executionEpisode,
   type ProjectId,
-  sandboxPolicyCommittedViewOf,
+  sandboxPolicyCommittedViewOfCurrent,
   settlementFingerprint,
   type WorkId,
   type WorkRevision,
@@ -48,6 +48,7 @@ import {
   SandboxProviderUnavailableStore,
   sameSandboxPolicyPreIntentRequirement,
   sha256Hex,
+  TERMINAL_PROVIDER_FAILURE_KINDS,
   type TerminalProviderFailureSource,
   ToolCatalogPort,
   TransactionPort,
@@ -57,6 +58,7 @@ import {
   WorkReadmissionGateStore,
   WorkRepository,
   WorkspaceRepository,
+  WorkspaceSandboxAuthorizationStore,
   WorkWaitStore,
 } from "@arbor/ports";
 import type {
@@ -324,6 +326,9 @@ const projectionQueryService = (
     const journal = yield* DomainEventJournal;
     const bindingAttention = yield* RecoveryAttentionFactStore;
     const attentionProjection = yield* AttentionProjectionStore;
+    const workspaceAuthorizations = yield* Effect.serviceOption(
+      WorkspaceSandboxAuthorizationStore,
+    );
     const sandboxPolicyStore = yield* Effect.serviceOption(
       SandboxPolicyDecisionStore,
     );
@@ -558,11 +563,9 @@ const projectionQueryService = (
           attempt.outcome !== "TerminalFailure" ||
           attempt.retry_decision !== "Stop" ||
           (!processLostWithoutFailureKind &&
-            ![
-              "AuthenticationFailed",
-              "RequestRejected",
-              "ProtocolViolation",
-            ].includes(attempt.provider_error_kind ?? ""))
+            !(
+              TERMINAL_PROVIDER_FAILURE_KINDS as ReadonlyArray<string>
+            ).includes(attempt.provider_error_kind ?? ""))
         ) {
           return yield* failClosed();
         }
@@ -684,11 +687,12 @@ const projectionQueryService = (
           }
           const executions = yield* sql.unsafe<{
             readonly execution_id: string;
+            readonly binding_kind: "workspace" | "execution_bound";
             readonly project_id: string;
             readonly workspace_id: string;
             readonly episode_json: string | null;
           }>(
-            `SELECT e.execution_id, e.project_id, e.workspace_id,
+            `SELECT e.execution_id, e.binding_kind, e.project_id, e.workspace_id,
                     state.episode_json
                FROM executions AS e
                LEFT JOIN agent_execution_state AS state
@@ -758,6 +762,7 @@ const projectionQueryService = (
               episodeWorkId === null ? undefined : workById.get(episodeWorkId);
             return {
               executionId: row.execution_id,
+              bindingKind: row.binding_kind,
               projectId: row.project_id as ProjectId,
               workspaceId: row.workspace_id as WorkspaceId,
               episodeJson: row.episode_json,
@@ -1189,6 +1194,26 @@ const projectionQueryService = (
       );
 
     const workspaceDetail: WorkspaceDetailDeps = {
+      workspaceSandboxAuthorizationForWorkspace: (workspace) =>
+        Option.isNone(workspaceAuthorizations)
+          ? Effect.succeed(undefined)
+          : inTx(
+              Effect.gen(function* () {
+                const current =
+                  yield* workspaceAuthorizations.value.findCurrent(
+                    workspace.projectId,
+                    workspace.workspaceId,
+                  );
+                return {
+                  expectedAuthorizationRevision: Option.isSome(current)
+                    ? current.value.authorizationRevision
+                    : 0,
+                  resourceBoundaryRevision: workspace.resourceBoundaryRevision,
+                  workspacePolicyRevision: workspace.workspacePolicyRevision,
+                  current: Option.getOrNull(current),
+                };
+              }),
+            ),
       findWorkspace: (workspaceId) => inTx(workspaces.findById(workspaceId)),
       findWork: (workId) => inTx(works.findById(workId)),
       listWorksByWorkspace: (workspaceId) =>
@@ -1331,7 +1356,7 @@ const projectionQueryService = (
                   ...(Option.isSome(currentDecision)
                     ? {
                         sandboxPolicy: {
-                          ...sandboxPolicyCommittedViewOf(
+                          ...sandboxPolicyCommittedViewOfCurrent(
                             currentDecision.value.result,
                           ),
                           status: "NeedsDecision" as const,
@@ -1404,7 +1429,7 @@ const projectionQueryService = (
                 );
               }
               const now = yield* clock.now();
-              const committedView = sandboxPolicyCommittedViewOf(result);
+              const committedView = sandboxPolicyCommittedViewOfCurrent(result);
               if (
                 unavailable === undefined &&
                 Option.isSome(p4SandboxOutcomeReadPort)

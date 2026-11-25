@@ -57,6 +57,11 @@ import {
  *    `description:name` / `schemaJson:"{}"` placeholder.
  */
 
+const filesystemToolNames =
+  process.platform === "linux"
+    ? ["glob", "grep", "list", "patch", "read", "write"]
+    : ["list", "patch", "read"];
+
 const refOf = (name: string): ToolDefinitionRef => {
   const found = BUILTIN_TOOLS.find((tool) => tool.name === name);
   if (found === undefined) {
@@ -216,11 +221,7 @@ describe("P12-007 ToolCatalogPort model-facing resolution", () => {
         return yield* catalog.visibleRefs();
       }),
     );
-    expect(refs.map((ref) => ref.name).sort()).toEqual([
-      "list",
-      "patch",
-      "read",
-    ]);
+    expect(refs.map((ref) => ref.name).sort()).toEqual(filesystemToolNames);
     expect(refs.some((ref) => ref.name === "ghost")).toBe(false);
   });
 
@@ -271,10 +272,13 @@ describe("P12-007 compiler emits real tool metadata (CI-6)", () => {
       prepared.turn.request.toolDefinitions.map((tool) => [tool.name, tool]),
     );
     expect(Object.keys(byName).sort()).toEqual([
+      "glob",
+      "grep",
       "list",
       "patch",
       "read",
       "shell",
+      "write",
     ]);
     for (const builtin of BUILTIN_TOOLS) {
       const compiled = byName[builtin.name];
@@ -369,11 +373,9 @@ describe("P12-007 catalog union (builtins ∪ committed registered project tools
         const catalog = yield* ToolCatalogPort;
 
         const before = yield* catalog.visibleRefs();
-        expect(before.map((ref) => ref.name).sort()).toEqual([
-          "list",
-          "patch",
-          "read",
-        ]);
+        expect(before.map((ref) => ref.name).sort()).toEqual(
+          filesystemToolNames,
+        );
 
         yield* tx.transact(
           registry.register({
@@ -386,13 +388,9 @@ describe("P12-007 catalog union (builtins ∪ committed registered project tools
         );
 
         const after = yield* catalog.visibleRefs();
-        expect(after.map((ref) => ref.name).sort()).toEqual([
-          "list",
-          "patch",
-          "project-echo",
-          "project-ping",
-          "read",
-        ]);
+        expect(after.map((ref) => ref.name).sort()).toEqual(
+          [...filesystemToolNames, "project-echo", "project-ping"].sort(),
+        );
 
         const echoRef: ToolDefinitionRef = {
           name: ECHO_DEFINITION.name,
@@ -462,11 +460,7 @@ describe("P12-007 catalog union (builtins ∪ committed registered project tools
         );
 
         const refs = yield* catalog.visibleRefs();
-        expect(refs.map((ref) => ref.name).sort()).toEqual([
-          "list",
-          "patch",
-          "read",
-        ]);
+        expect(refs.map((ref) => ref.name).sort()).toEqual(filesystemToolNames);
       }),
     );
   });

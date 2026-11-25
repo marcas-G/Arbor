@@ -24,6 +24,7 @@ import { useViewQuery } from "../../api/useViewQuery.js";
 import { DecideSandboxPolicyForm } from "../../commands/forms/DecideSandboxPolicyForm.js";
 import { SteerWorkForm } from "../../commands/forms/SteerWorkForm.js";
 import { StopExecutionForm } from "../../commands/forms/StopExecutionForm.js";
+import { WorkspaceSandboxAuthorizationForm } from "../../commands/forms/WorkspaceSandboxAuthorizationForm.js";
 import type { CommandReceiptView } from "../../commands/submitCommand.js";
 import { Badge } from "../../components/Badge.js";
 import { Button } from "../../components/Button.js";
@@ -32,6 +33,7 @@ import { Empty } from "../../components/Empty.js";
 import { MonoText } from "../../components/MonoText.js";
 import { StatusBadge } from "../../components/StatusBadge.js";
 import { Tabs } from "../../components/Tabs.js";
+import { cn } from "../../lib/utils.js";
 import { ProblemCard } from "../../problems/ProblemCard.js";
 import { useSession } from "../../session/SessionContext.js";
 import { CurrentWorkView } from "../../views/CurrentWorkView.js";
@@ -41,7 +43,7 @@ import { SandboxPolicySummary, TimeText } from "../../views/shared.js";
 import { TranscriptView } from "../../views/TranscriptView.js";
 import { VerificationView } from "../../views/VerificationView.js";
 import { ConversationTab } from "./ConversationTab.js";
-import styles from "./workspace.module.css";
+import styles from "./workspace.styles.js";
 
 type WorkspaceId = ViewRequestMap["workspace-detail"]["workspaceId"];
 type ProjectId = ViewRequestMap["responsibility-tree"]["projectId"];
@@ -188,13 +190,17 @@ function OverviewTab({
     detail.data?.currentWork?.activeExecution?.executionId ??
     detail.data?.executionSummary?.executionId;
   return (
-    <div className="arbor-view-stack">
+    <div className={cn("arbor-view-stack", "flex flex-col gap-ui-3")}>
       {currentWork.isPending ? (
         <Empty>加载中</Empty>
       ) : currentWork.isError ? (
         <ProblemCard problem={asProblem(currentWork.error)} />
       ) : (
-        <CurrentWorkView work={currentWork.data ?? null} />
+        <CurrentWorkView
+          work={currentWork.data ?? null}
+          projectId={projectId}
+          workspaceId={workspaceId}
+        />
       )}
       {detail.isPending ? (
         <Empty>加载中</Empty>
@@ -244,7 +250,13 @@ function OverviewTab({
             </Card>
           )}
           {candidateReadNotice === null ? null : (
-            <p className="arbor-command-receipt" role="status">
+            <p
+              className={cn(
+                "arbor-command-receipt",
+                "m-0 p-[var(--arbor-space-2)_var(--arbor-space-3)] border-l-[3px] border-solid border-primary bg-accent text-foreground text-small [&_.arbor-mono]:text-muted-foreground [&_.arbor-mono]:ml-ui-1",
+              )}
+              role="status"
+            >
               {candidateReadInvalidatedAt !== null && !candidateReadIsFresh
                 ? `${candidateReadNotice} 正在刷新候选。`
                 : candidateReadNotice}
@@ -260,7 +272,21 @@ function OverviewTab({
               ) : null}
             </p>
           )}
-          {candidateRead === undefined ||
+          {detail.data.workspaceSandboxAuthorization === undefined ? null : (
+            <WorkspaceSandboxAuthorizationForm
+              projectId={projectId}
+              workspaceId={workspaceId}
+              actor={session.actor ?? ""}
+              token={session.token ?? undefined}
+              authorization={detail.data.workspaceSandboxAuthorization}
+              candidateRead={candidateReadIsFresh ? candidateRead : undefined}
+              onSubmitted={() =>
+                refreshCandidateRead("工作区执行环境授权已提交。")
+              }
+            />
+          )}
+          {detail.data.workspaceSandboxAuthorization !== undefined ||
+          candidateRead === undefined ||
           !candidateReadIsFresh ? null : activeExecutionId === undefined ? (
             <p role="alert">无法确定候选所绑定的当前执行；未提交策略。</p>
           ) : (
@@ -366,22 +392,23 @@ export function WorkspacePage({
         projectId={projectId as ProjectId}
         workspaceId={workspaceIdTyped}
       />
-      <Tabs items={TAB_ITEMS} active={tab} onChange={handleTabChange} />
-      <div className={styles.tabPanel} key={workspaceId}>
-        {tab === "overview" ? (
-          <OverviewTab projectId={projectId} workspaceId={workspaceIdTyped} />
-        ) : tab === "dependencies" ? (
-          <DependencyTab workspaceId={workspaceIdTyped} />
-        ) : tab === "verification" ? (
-          <VerificationTab workspaceId={workspaceIdTyped} />
-        ) : tab === "transcript" ? (
-          <TranscriptTab workspaceId={workspaceIdTyped} />
-        ) : tab === "conversation" ? (
-          <ConversationTab projectId={projectId} workspaceId={workspaceId} />
-        ) : (
-          <InboxTab workspaceId={workspaceIdTyped} />
-        )}
-      </div>
+      <Tabs items={TAB_ITEMS} active={tab} onChange={handleTabChange}>
+        <div className={styles.tabPanel} key={workspaceId}>
+          {tab === "overview" ? (
+            <OverviewTab projectId={projectId} workspaceId={workspaceIdTyped} />
+          ) : tab === "dependencies" ? (
+            <DependencyTab workspaceId={workspaceIdTyped} />
+          ) : tab === "verification" ? (
+            <VerificationTab workspaceId={workspaceIdTyped} />
+          ) : tab === "transcript" ? (
+            <TranscriptTab workspaceId={workspaceIdTyped} />
+          ) : tab === "conversation" ? (
+            <ConversationTab projectId={projectId} workspaceId={workspaceId} />
+          ) : (
+            <InboxTab workspaceId={workspaceIdTyped} />
+          )}
+        </div>
+      </Tabs>
     </div>
   );
 }

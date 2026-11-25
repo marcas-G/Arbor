@@ -1,9 +1,9 @@
 # 已知问题
 
-更新日期：2026-11-17
+更新日期：2026-11-25
 范围：只记录当前仍成立、能由源码或现有门禁复现的问题。历史上已经修复的问题保留在 `planning/results/**`，不在此重复列为当前缺陷。
 
-当前发布口径已明确：Arbor 是 Linux 本机单用户 coding agent，必须可安装、必须使用真实 Provider，文件和进程能力属于首发范围。fake Provider、ConversationOnly 和 Disabled 进程模式只能作为测试或兼容实现，不能作为首发产品行为。
+当前发布口径已明确：Arbor 是 Linux 本机单用户 coding agent，必须可安装、必须使用真实 Provider，文件和进程能力属于首发范围。fake Provider、ConversationOnly 和未资格化环境中的 Disabled 只能作为测试、显式停用或安全失败状态，不能作为合格 Linux 首发的普通产品行为。2026-11-20 的设计决定要求：资格通过后，Workspace 初始化自动建立当前边界内的 `WorkspaceWrite × Enabled` 基础能力；源码初始化链路已落地，但安装资格、真实命令旅程和发布资格仍未完成。
 
 ## KP-000：当前没有普通用户可安装的 Linux 发行物
 
@@ -192,8 +192,9 @@ Native POSIX adapter 现在已有 systemd 用户单元 + bubblewrap 的真实执
 进程树停止；本机真实定向矩阵已覆盖项目写入、主机目录/环境/网络隔离、输出上限
 和 supervisor 超时分类；后续精确资格绑定、正式 shell 名称及输出溢出进程组清理
 修复后为 27/27。修复及反例见 `docs/decisions/2026-11-14-native-posix-execution-review.md`。它仍不会自行生成 Supported 资格，production composition 仍把
-`nativeOsSupportedTupleAvailable` 已改为从用户级受信 authority registry 派生，但本机默认
-用户目录尚未安装材料，默认模式仍是 `Disabled`。后续独立安装包已取得下述首装
+`nativeOsSupportedTupleAvailable` 已改为从用户级受信 authority registry 派生；本机默认
+用户目录尚未安装材料，因此当前实际模式仍是 `Disabled`。这属于未资格化环境的安全
+状态，不是合格 Linux 首发的目标默认；后续独立安装包已取得下述首装
 结果；普通完整 shell、构建及测试任务尚未验收。
 
 联网也是该阻断项的一部分。负责人要求严格隔离同时支持网络；当前 Linux
@@ -236,6 +237,11 @@ doctor 与 admission 共用完整检查。独立资格生成/安装、schema 顺
 完整命令任务仍未完成，不能将这次接线称作 Supported 能力已交付。新增包、真实
 编译/npm 局部证据和失败边界见
 `docs/verification/2026-11-16-installed-linux-artifacts.md`。
+
+2026-11-19 已关闭 provider 升级后的重新资格化死路：安装包新增
+`reinstall-environment`，真实 22/22 Linux 隔离检查通过，新 authority
+`linux-bwrap-v2-49d25075afe4ba40` 已发布，旧 authority 保留在带时间戳目录。
+首次 `install-environment` 仍保持不覆盖已有材料的保护语义。
 
 2026-11-16 首装增量：安装包内 `install-environment` 已在独立 ext4 用户目录
 完成真实 22/22 控制和受保护材料安装；同包 doctor exit 0，Linux 环境可用。
@@ -786,20 +792,26 @@ Parent 只能通过正式通信和治理路径协作；同时文件、命令和�
 准入，明确共享不扩大权限，交付不冒充 Acceptance，停止和重启后 Workspace、消息、
 Deliverable、Verification、Acceptance 与资源绑定保持一致。
 
-## KP-016：sandbox 策略选择仍错误依赖第二个人类身份
+## KP-016：Workspace 默认执行能力已完成设计，运行时接入及发布资格仍未完成
 
 **问题编号**
 KP-016
 
 **现象**
-旧 `DecideSandboxPolicy` 的特殊授权链要求不同的两个 HumanPrincipal；原单用户
-Resolver 复现会返回 `NoApplicableGrant`。替代路径现在已接入生产：持久 Workspace
+历史 `DecideSandboxPolicy` 的特殊授权链曾要求不同的两个 HumanPrincipal；原单用户
+Resolver 复现会返回 `NoApplicableGrant`。设计层现已明确不再用第二个人类身份承载
+Workspace 默认能力；持久 Workspace
 授权、人类公开授权/撤销、内部自动执行绑定和浏览器表单只用一个本机用户，保留旧
 回执历史。schema57、升级工具、生产 Layer 重开/撤销/恢复及当前来源门已有集中验证。
 
 本问题仍为 OPEN/P0 的原因是**同一新安装包上的真实命令交付资格尚未完成**：模型
 实际 Parent 分配入口已接通并通过撤权/恢复/回执重放集成检查，但真实模型分配、
 完整联网构建测试、双 Workspace、停止恢复及最终验收仍待通过。不能继续把“schema57/handler 未注册”作为当前源码原因。
+
+2026-11-24 源码复核又关闭了一处越权风险：Child 创建时若 Parent 当前授权缺失、
+撤销或无法解析，不再静默建立 Child 的默认执行能力；Web 在 Workspace 尚未获得
+`SystemInitialization` 基线时也不再展示无资格手工授权入口。该修复已有 Child
+边界和 Web 定向回归，但没有改变本问题的真实安装包和完整 coding 旅程阻断。
 
 晚间更新：`c283c8709076` 包已通过普通授权后的实际修改、构建、测试和公网 HTTPS；
 尚未走完的是独立验证、人工验收及完整多工作区/停止恢复。此前的 qualification
@@ -877,6 +889,11 @@ KP-017
 曾使整个项目关注事项读取返回 503；该读取缺陷已修复并通过新包公开浏览器恢复。
 用户补充指导后，旧版验证等待仍阻塞新版 Work；源码已修复，安装恢复已观察到
 revision 5→6 的公开提交、新执行和精确命令审批，尚未完成后续验证与验收。
+2026-11-25 另修正了 Verifier 的任务指令：普通项目目录可能不是 Git 仓库，`git
+status`、`git diff` 和 `git log` 只能作为可选诊断，不能把“不存在 Git 仓库”的退出码
+直接当作核心 criterion 的失败或 Unknown。该修复已通过根 typecheck、Biome 和新
+Linux preview 打包，但尚未证明独立 Verifier 能在真实安装旅程中完成全部命令、证据、
+结论和人工验收，因此不关闭本问题。
 
 **复现步骤**
 
@@ -1037,3 +1054,67 @@ barrel export 隐藏依赖。
 每次只移动一个边界，执行受影响 package 的 typecheck、架构检查和目标功能测试；
 最后从 clean checkout 构建发布物，确认 fake/testecho 与 TEST-ONLY adapter 不在
 正式运行入口的依赖闭包中，同时真实 Provider、文件工具和 Linux 隔离路径仍可用。
+
+## KP-020：最终 Provider 失败曾跨 Execution 无限重入同一 Work revision
+
+**问题编号**
+KP-020
+
+**现象**
+真实 Linux 发行物在 Provider 连续 `TransportFailed` 后，每次 Provider Turn 都正确
+记录 `TerminalFailure + retry_decision=Stop`，但同一 Open Work revision 没有
+readmission hold。Scheduler 因而不断创建新的 WorkEpisode Execution；一次真实验收
+数据库中出现 `7,585` 个失败 Execution，其中 `7,584` 个属于 Work Episode。
+
+方案 A 已于 2026-11-25 获负责人确认：所有非取消型 Provider failure，只要最终 Attempt
+是 `TerminalFailure + Stop` 且 Step/Turn/Attempt/Manifest 链完整，就建立精确
+Work-revision hold。当前代码已将该 gate 扩展到 `TransportFailed`、`ProviderUnavailable`
+等 failure kind；P2/P7/P10 定向验证和真实 retryable failure 旅程通过。新生成的
+source-free Linux x64 preview 已完成启动烟测，但完整发行物 Provider 失败旅程、重启
+保持 hold 和 revision-advancing `SteerWork` 仍待验收。
+
+**复现步骤**
+
+1. 使用真实 Provider 让同一 Work 的 Provider Turn 连续发生 `TransportFailed`。
+2. 等待第一次 Execution 以 `Failed(ProviderFailure:TransportFailed)` 结算。
+3. 在旧实现中观察同一 Work revision 产生第二个及后续 WorkEpisode Execution。
+4. 查询数据库中的 `provider_attempts`，可见最终记录为 `TerminalFailure / Stop`。
+
+**影响范围**
+
+Provider 失败恢复、Scheduler、Provider 额度和网络资源、SQLite 执行历史、Attention、
+Work 修订、重启恢复及真实 coding 任务交付。
+
+**可能原因**
+
+旧 RAI-DG-02 只允许 `AuthenticationFailed`、`RequestRejected` 和
+`ProtocolViolation` 进入 readmission gate，而 Provider Runtime 允许
+`TransportFailed` 等 retryable kind 在安全证据不足或预算耗尽时最终 Stop。Turn-local
+重试和 Work-level admission 之间缺少跨 Execution 的持久阻塞语义。
+
+**涉及文件**
+
+- `packages/ports/src/readmission-gate.ts`
+- `adapters/persistence-sqlite/src/work-readmission-gate.ts`
+- `apps/single-workspace/src/runnable-source-p7.ts`
+- `apps/single-workspace/src/projection-query.ts`
+- `packages/api-contracts/src/views.ts`
+- `planning/proposals/2026-11-25-terminal-provider-failure-all-stop-readmission-hold.md`
+
+**优先级**
+
+P0 — 会造成后台无限消耗，发布前必须关闭。
+
+**建议修复方式**
+
+使用现有 exact Work-revision gate，验证完整 Step/Turn/Attempt/Manifest 链；任何最终
+`TerminalFailure + Stop` 的非取消型 Provider failure 都建立 hold。Work 保持 Open，
+仅由明确的 revision-advancing `SteerWork` 恢复；不引入自动轮询、合成 WorkWait 或
+伪造成功。
+
+**验证方式**
+
+P2 gate 对所有 failure kind 的完整链测试通过；真实 Scheduler 在连续 tick、daemon
+重启和 Provider 失败后都只保留一个同 revision Execution；Steer 后只创建一个新
+revision Execution；Attention/Work Detail 显示安全的 failure kind，且不泄露 Provider
+原始响应、凭据或请求内容。

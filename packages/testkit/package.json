@@ -15,7 +15,8 @@
   "dependencies": {
     "@arbor/domain": "workspace:*",
     "@arbor/ports": "workspace:*",
-    "@arbor/application": "workspace:*"
+    "@arbor/application": "workspace:*",
+    "effect": "4.0.0-rc.115"
   },
   "scripts": {
     "build": "tsc -b"

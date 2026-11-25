@@ -127,6 +127,8 @@ const runStoppedRecovery = async (input: {
         Effect.succeed(
           input.includePendingSelection ? Option.some(step) : Option.none(),
         ),
+      listByExecution: () =>
+        Effect.succeed(input.includePendingSelection ? [step] : []),
       listActions: () => Effect.succeed([action]),
     } as never),
     Layer.succeed(DecisionRequestStore, {

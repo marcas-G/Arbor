@@ -339,6 +339,25 @@ export type VerifiedCommandAuthority =
       readonly contentHash: string;
     }
   | {
+      /** Internal host binding from current standing Workspace authority. */
+      readonly _tag: "WorkspaceSandboxPolicyBindingAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly workspaceId: WorkspaceId;
+      readonly executionId: ExecutionId;
+      readonly episodeBinding: ExecutionEpisodeBinding;
+      readonly episodeRevision: number;
+      readonly workspaceAuthorizationRevision: number;
+      readonly authorityBundleRevision: number;
+      readonly authorityBundleDigest: string;
+      readonly providerRegistryRevision: number;
+      readonly providerRegistryDigest: string;
+      readonly operatorConfigRevision: number;
+      readonly operatorConfigDigest: string;
+    }
+  | {
       /** P12-produced exact human CAPA binding for the V21 sandbox decision.
        * The command handler independently re-reads Grant and provenance in
        * the Gateway transaction before any durable write. */
@@ -370,6 +389,11 @@ export type VerifiedCommandAuthority =
       readonly semanticRequestFingerprint: SemanticRequestFingerprint;
       readonly projectId: ProjectId;
       readonly permissionGrantId: PermissionGrantId;
+      /** Persistent tool permission: current governance-bound Workspace CAS. */
+      readonly workspacePermissionBinding?: {
+        readonly workspaceId: WorkspaceId;
+        readonly workspaceRevision: number;
+      };
       /** Present only when this exact GrantPermission issues a sandbox policy
        * decision Grant under the current P5 operator snapshot. */
       readonly sandboxPolicyIssuerBinding?: {
@@ -451,7 +475,26 @@ export type SatisfyAuthoritySource =
 
 export type CommandAuthorityFact =
   | VerifiedCommandAuthority
-  | VerifiedRuntimeCommandAuthority;
+  | VerifiedRuntimeCommandAuthority
+  | {
+      readonly _tag: "WorkspaceSandboxAuthorizationAuthority";
+      readonly principal: Principal;
+      readonly commandId: CommandId;
+      readonly semanticRequestFingerprint: SemanticRequestFingerprint;
+      readonly projectId: ProjectId;
+      readonly workspaceId: WorkspaceId;
+      readonly commandKind:
+        | "AuthorizeWorkspaceSandbox"
+        | "RevokeWorkspaceSandboxAuthorization";
+      readonly source:
+        | { readonly kind: "Human" }
+        | {
+            readonly kind: "Parent";
+            readonly parentWorkspaceId: WorkspaceId;
+            readonly parentAuthorizationRevision: number;
+            readonly parentExecutionId: ExecutionId;
+          };
+    };
 
 /**
  * Stop-admission policy (P2 `01` §3). An explicit ADT, never a boolean.

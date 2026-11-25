@@ -19,12 +19,13 @@
 | F13 | Verification Unknown | public HTTP | Work remains Open; no Acceptance/Completion |
 | F14 | browser approval flow | Playwright | approve exact action without copying an ID |
 | F15 | browser verification and Acceptance flow | Playwright | PASS appears as an acceptance item; user records Acceptance and the queue clears; terminal lifecycle needs F22 |
-| F16 | crash after provider wire completion | public process | one visible answer after restart; safe bounded provider retry |
+| F16 | crash before/after durable provider success | public process | before commit: visible NeedsAttention without inferred output or retry; after commit: one recovered answer without another provider request |
 | F17 | long conversation pagination | public HTTP | third page reachable with no duplicate turns |
 | F18 | child Workspace proposal/approval/result | public HTTP | child initial Work PASS is parent-accepted and no longer current; terminal lifecycle needs F22 |
 | F19 | Dependency/Deliverable workflow in both event orders | public HTTP | existing delivery is matched on declaration; dependency-first Work stays asleep until later child delivery, then exact Dependency becomes Satisfied and consumer receives that delivery |
 | F20 | fresh packaged checkout | clean local clone | frozen install, build and public black-box pass from committed HEAD |
 | F22 | completed Work remains inspectable | Playwright | after Acceptance and hard restart, the original Work page shows objective, Completed lifecycle, Acceptance and its exact Verification; absent and foreign targets share a non-disclosing 404 |
+| F24 | stop a running Provider before it responds | public process | public StopExecution sets the durable fence, aborts the held Provider request, and settles the Execution as Interrupted without another Provider call |
 
 ## Next release-blocking journeys
 

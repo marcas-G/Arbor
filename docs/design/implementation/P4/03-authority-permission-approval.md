@@ -211,6 +211,12 @@ Denial and approval reuse:
 - `ApprovalRequired` is not in the new-write denial set. Historical persisted
   `Denied(ApprovalRequired)` remains a terminal decoder/replay case only.
 
+**Accepted P38/P39 RecoveryBindingV1 projection:** `targetResourceSpaceIds`
+uses the exact trusted receipt array; order and duplicate occurrences remain
+significant. `approvalTargetDigest` is derived from that array without sorting
+or deduplication. This records the existing P38 matching behavior and does not
+change approval target equality.
+
 ### Control ActionApproval consumption for AssignWork (DID v1.33)
 
 For the AssignWork Control route, the P4-owned `ControlApprovalStore` exposes
@@ -257,6 +263,29 @@ CommandId-bound approval consumption, replay evidence, or transaction boundary.
 - `ExecutionStopping` and P4 `Interrupted` are separate stop/quiescence results,
   not permission-denial projections.
 
+## Accepted pre-intent policy candidate approval source (2026-10-21)
+
+Under `ACCEPT_P10_P1_PREINTENT_CANDIDATE_READ_BOOTSTRAP_V1`, the read-only P4
+sandbox requirement may bind the exact P4 Executable approval created by the
+existing `ApprovalRequired` handoff. For this pre-intent branch the approval
+must be the exact `Pending` row bound to the current Pending P3 Executable
+Action, with its exact ApprovalId, revision, immutable `expiresAt` and
+unconsumed state. A pre-intent requirement is unavailable once the approval
+is Approved, Rejected, Expired, Cancelled, or consumed; the existing
+NotAdmitted-invocation requirement remains available after the ordinary P4
+claim path when appropriate.
+
+The pre-intent P4/P10 read does not create/renew/resolve approval and does not
+consume it. The human may commit P1's sandbox decision first, then Resolve
+the same approval via its current authenticated command. P4's existing claim
+transaction remains the only operation that atomically creates ToolInvocation
+intent and consumes the exact Approved revision. P1's current-source CAS
+re-reads approval identity/state/revision/expiry under the same
+`BEGIN IMMEDIATE` transaction, requires `expiresAt > trusted GatewayNow`, and
+returns the accepted P1/01 stale field mapping without decision/event when
+the source changed. Approval state/revision and expiry have no new wire field,
+approval state, persistence table or consumption path.
+
 ## 6. Must Not Decide
 
 - No PermissionGrant lookup / Parent-User resolution / RBAC-ABAC-ACL.
@@ -278,3 +307,83 @@ CommandId-bound approval consumption, replay evidence, or transaction boundary.
   delegation depth.
 - Authority denial is a normal Tool observation, never a defect or canonical
   mutation.
+
+
+## 2026-11-16 Workspace permission continuity supplement
+
+Product authorization: the user explicitly accepted persistent Workspace
+permissions across tasks/restarts and explicit direct-Parent distribution within
+its existing ceiling. Decision:
+`docs/decisions/2026-11-16-workspace-scoped-sandbox-authority.md`.
+Engineering landing package: `docs/proposals/2026-11-16-workspace-permission-continuity.md`;
+SHA-256 `d0049ca9e8e4e1c9246813be633b381b2458040741fdb58497d8c0a29ad6ac5f`. Product acceptance is not implementation or release qualification.
+
+Persistent exact Workspace tool permissions may have expiresAt:null, explicitly
+meaning until revocation/invalidation, across Work/Execution/restart. This is not
+an exact-action approval. Read/resource/policy checks remain in force. This
+first entry point is limited to fs:write and shell:exec; other capability grants
+retain finite expiry until their complete owning contracts are implemented.
+Parent distribution is explicit, bound to a direct Child, and intersected with
+current upstream capability and the Child boundary. No automatic full inheritance.
+
+
+## 2026-11-16 Durable Workspace sandbox authorization storage supplement
+
+Engineering landing of the already accepted Workspace permission lifetime and
+bounded Parent allocation decisions; package
+`docs/proposals/2026-11-16-workspace-sandbox-authorization-storage.md`,
+SHA-256 `3beeec1c67f3b4013431f9971d5dee562294a218a9a00032c62e77de9129d21c`. Runtime integration and installed qualification remain open.
+
+The current Workspace sandbox authorization head is an input snapshot to a pure
+effective-authority evaluation. Require Active same-Project Workspaces, exact
+boundary/policy revisions, trusted time, a non-revoked current head and an acyclic
+current direct-Parent source chain. Parent profile/provider/network/lifetime
+ceilings are checked at use time as well as allocation; replacing/revoking a
+source invalidates old dependent allocations. Ownership and exact approvals
+remain separate. This new input must be wired before counting it as tool authority.
+
+
+## 2026-11-16 supplement: Workspace authorization commands and human revocation
+
+Product authority: explicit project-owner answers on persistent Workspace
+authorization, bounded direct-Parent allocation and user-only reversal of
+human revocation. Engineering landing package: `docs/proposals/2026-11-16-workspace-authorization-commands-and-revocation.md`; SHA-256
+`07e2552d26ff41a1b23df398260cda6752c81f4fe0fe5f275eda54f291e65e7c`.
+
+The user may revoke the target Child's standing Workspace authorization while
+its Parent stays authorized. A new Parent allocation must be denied until a new
+explicit human authorization clears that Revoked head. Allocations do not expand
+resource ownership or waive sensitive-action approval. Workspace authorization
+remains separate from freshly bound exact Execution/Episode policy; the staged
+ledger cannot authorize the current legacy Native handler by itself.
+
+
+## 2026-11-16 supplement: Workspace authorization to execution policy
+
+Product authority is the owner's persistent Workspace/bounded Parent/user-only
+revocation decisions. Exact engineering package:
+`docs/proposals/2026-11-16-workspace-execution-policy-binding.md`, SHA-256
+`9d3a968400d89bc9865ac92dd91e143f2390db6037ff4286a4a79d4385c267f4`.
+
+A new exact execution policy may derive from a current standing Workspace
+authorization, without a second human. Host preparation receives only host-bound
+authority fields. Selection and finite binding expiry must fit the current
+Workspace choice and expiry, and all source-chain/resource/host facts must be
+checked again at commit and admission. No revoked or stale source can be repaired
+by automatically granting permission. A new Execution/Episode still needs its own
+binding; standing permission is not an exact action approval.
+
+## 2026-11-20 Workspace default execution capability supplement
+
+Accepted under `ACCEPT_WORKSPACE_DEFAULT_EXECUTION_CAPABILITY`; fixed proposal
+`docs/proposals/2026-11-20-workspace-default-execution-capability.md`, SHA-256
+`8503d5c2663d3098171c57646b78a8408d5f1a28dc7f3cf3a37f2181fddaed66`.
+
+The system-created baseline Workspace fact is the ordinary source of standing
+execution capability for a newly initialized qualified Linux Workspace. It is
+not an `AuthorizeWorkspaceSandbox` ceremony presented as a per-Work human
+decision, and it must not be represented as a synthetic `PermissionGrant`.
+The authority/approval boundary still rereads the current Workspace fact,
+ResourceBoundary, ownership, provider qualification and revocation state before
+binding an Execution. Exact sensitive-action approval remains independent and
+cannot be satisfied by the baseline fact.

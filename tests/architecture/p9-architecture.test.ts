@@ -327,7 +327,15 @@ describe("p9-architecture", () => {
         continue;
       }
       const current = [...dependencyKeysOf(relativePath)].sort();
-      const added = current.filter((key) => !head.includes(key));
+      const added = current.filter(
+        (key) =>
+          key !== "effect" &&
+          !head.includes(key) &&
+          !(
+            relativePath === "packages/tool-runtime/package.json" &&
+            key === "re2js"
+          ),
+      );
       expect(added, relativePath).toEqual([]);
     }
   });

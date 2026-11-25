@@ -213,6 +213,10 @@ export const compileTurn = (input: {
     ...input.plan.tools.map((tool) => ({
       name: tool.name,
       route: "Executable" as const,
+      // P4 definitions use (name, version, hash) as their canonical identity.
+      // Pin the name in the shared evidence projection at compilation time;
+      // replay must never invent it for an incomplete historical manifest.
+      stableId: tool.name,
       version: tool.version,
       hash: tool.hash,
     })),

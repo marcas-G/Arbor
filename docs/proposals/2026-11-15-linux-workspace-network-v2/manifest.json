@@ -1,0 +1,75 @@
+{
+  "status": "PREPARED_NOT_ACCEPTED",
+  "proposal": "docs/proposals/2026-11-15-linux-workspace-network-v2.md",
+  "proposalSha256": "9801a907a540a7ea2ec5a68e2ac197105c4bf5a1b00191c3801e888dded59111",
+  "preparerSha256": "de47df2ad218eef3a9ade25eca6dd6f0ee82f9e5f39b90b75e2abd27f14d3544",
+  "patchSha256": "ab30671efd8272079831fd5f6d52455b34e7f287ebbf469e808fbf90216f01d8",
+  "files": [
+    {
+      "path": "docs/design/01-scenarios.md",
+      "beforeSha256": "a728f222093ca1af6416445dc85e60030e7447b0fe182d95a8ccd752d7043081",
+      "afterSha256": "1c7b1ec76a7cc201d5c662f244877466711f505a2501da821b333f77d371425c"
+    },
+    {
+      "path": "docs/design/02-system-design.md",
+      "beforeSha256": "8b78b7a77d8160c71e8a70aacf2c3de527aa1f8ae76ca9eaf173608608d1d7fe",
+      "afterSha256": "2c9b4edcfd4b34ece52d9093657e9254f8f07c956b0d91cbcca27a00ce6d5967"
+    },
+    {
+      "path": "docs/design/03-detailed-implementation-design.md",
+      "beforeSha256": "fbc20a919cb778056db75f1686fe0545d971de43c8d30d5758061f9ff9a8508c",
+      "afterSha256": "5871926a365b60c17343a525fb5c755db7304da903b1b582b1fc0cb697c3d9e3"
+    },
+    {
+      "path": "docs/design/implementation/P1/01-command-contracts.md",
+      "beforeSha256": "7b3fad3829c39689532291bf96372cda6ad9513723edd7d533bd475356a764d7",
+      "afterSha256": "ff3e7575e137ffef7c9391b27313e88fd2abe017acb05954f35b546c7add8606"
+    },
+    {
+      "path": "docs/design/implementation/P1/02-port-contracts.md",
+      "beforeSha256": "a0be0fe79039a489cdd8208ee8bdd8509740a66dc0b7ef29154962a3a860be67",
+      "afterSha256": "58020d3fa50ed88ac154b6edfc81a8ae5787b5bb8f83a6f6f49ab02f2ce24665"
+    },
+    {
+      "path": "docs/design/implementation/P1/04-sqlite-schema.md",
+      "beforeSha256": "cf6a902ead498012b00a0db0e632810e40b1f8724c2d75483ea8ce0298eeedbf",
+      "afterSha256": "32beba02c10d9d3a0be50f67ab57efe51cb25e48d953bf1d76b382ab704357c5"
+    },
+    {
+      "path": "docs/design/implementation/P4/04-sandbox.md",
+      "beforeSha256": "679288093f7f989cd2172f855fb8feb2e336d3fe5a29f9ccb06475344a8adf4c",
+      "afterSha256": "bc4b2da469bd2b84eaeeb3b9f8ef23afd26e638c71945f1449c95ce9f129bdc1"
+    },
+    {
+      "path": "docs/design/implementation/P5/01-composition-root.md",
+      "beforeSha256": "3f6a99e9af0e0943ed8e544c6ad26eb4ea3d862201603ac80270450ae5b565d6",
+      "afterSha256": "4ebbe51ce5c241d44be58ab2671398c7d7c01de237aa5504052f7a01e8951a99"
+    },
+    {
+      "path": "docs/design/implementation/P10/05-surface-actions-transport.md",
+      "beforeSha256": "ad2116f5af404bfcf1533d5c6c9a212c924a8674c6da541ecad0a67a4c90a133",
+      "afterSha256": "15427c90e88524c13f04634825ad648dd769585a17370fb55be0916662ad0a88"
+    },
+    {
+      "path": "docs/design/implementation/P13/02-command-exposure-matrix.md",
+      "beforeSha256": "78f16bb4d91f493804db81845949ad591c91a841a164604e44289bc559fb7742",
+      "afterSha256": "5733a51592275a3b7a214b5858e9ad16aadf4f24d75a811ac97dde8c51f40e0b"
+    },
+    {
+      "path": "docs/design/implementation/P12/12-providers-tools.md",
+      "beforeSha256": "b38fb0a8d05808139f6379a8fca100fda0becade5df15db4ea4fc4794b3c293a",
+      "afterSha256": "f546bfc9c9deea370f9b82979117d3f7effaed772c56df11697510f97999fc33"
+    },
+    {
+      "path": "docs/design/implementation/P12/13-security-performance.md",
+      "beforeSha256": "222e9b549d32cc275b33264f044b1d37151c389ea494b34078886e3d5d5cce63",
+      "afterSha256": "3083ddd7470042afb76deb2df872cbd6f6170a7acadb8e25bbcf3b9830ea73d5"
+    },
+    {
+      "path": "docs/design/implementation/P12/14-acceptance.md",
+      "beforeSha256": "953340dd8cd75619f7911be41e675f0835acb53e27003a1912cfc5215b7219eb",
+      "afterSha256": "9069aeabf23d61c0e4a627e617dcf3ea4d977329e900fe556fb09003a79f05f4"
+    }
+  ],
+  "designFilesModifiedByPreparation": false
+}

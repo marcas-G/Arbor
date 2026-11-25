@@ -8,11 +8,11 @@ import { useState } from "react";
 import { type Resolver, useForm } from "react-hook-form";
 import { Button } from "../../components/Button.js";
 import { Card } from "../../components/Card.js";
+import { cn } from "../../lib/utils.js";
 import { stopExecutionSchema, zodResolver } from "../schemas.js";
 import type { CommandReceiptView } from "../submitCommand.js";
 import { useCommandSubmission } from "../useCommandSubmission.js";
 import { FormFeedback } from "./FormFeedback.js";
-import "./forms.css";
 
 type StopValues = { executionId: string; confirmed: boolean };
 
@@ -65,13 +65,21 @@ export function StopExecutionForm({
   };
   return (
     <Card title="停止当前运行">
-      <form className="arbor-command-form" onSubmit={doSubmit}>
+      <form
+        className={cn("arbor-command-form", "flex flex-col gap-ui-3")}
+        onSubmit={doSubmit}
+      >
         <p>
           {workspaceName === undefined
             ? "停止后，Arbor 将不再继续当前运行。"
             : `停止后，${workspaceName}将不再继续当前运行。`}
         </p>
-        <label className="arbor-command-check">
+        <label
+          className={cn(
+            "arbor-command-check",
+            "flex items-center gap-ui-2 text-muted-foreground text-small",
+          )}
+        >
           <input
             type="checkbox"
             disabled={submissionLocked}
@@ -87,7 +95,7 @@ export function StopExecutionForm({
           <Button
             variant="danger"
             type="submit"
-            disabled={submissionLocked || confirmed !== true}
+            disabled={state.phase === "submitting" || confirmed !== true}
           >
             确认停止
           </Button>

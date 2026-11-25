@@ -11,6 +11,7 @@ import { useState } from "react";
 import { Button } from "../components/Button.js";
 import { Card } from "../components/Card.js";
 import { Field } from "../components/Field.js";
+import { cn } from "../lib/utils.js";
 import { useSession } from "./SessionContext.js";
 
 export function LoginCard() {
@@ -27,9 +28,17 @@ export function LoginCard() {
     setSession(trimmedToken, trimmedActor);
   };
   return (
-    <div className="arbor-session-login">
+    <div
+      className={cn(
+        "arbor-session-login",
+        "w-full max-w-[440px] max-[56rem]:m-[0_auto]",
+      )}
+    >
       <Card title="连接 Arbor">
-        <form className="arbor-command-form" onSubmit={connect}>
+        <form
+          className={cn("arbor-command-form", "flex flex-col gap-ui-3")}
+          onSubmit={connect}
+        >
           <p>输入工作环境提供的连接信息。信息只在当前页面中使用。</p>
           <Field
             control="input"

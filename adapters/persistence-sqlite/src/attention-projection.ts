@@ -1,6 +1,6 @@
 import type { DomainEvent, ProjectId } from "@arbor/domain";
 import {
-  decodeCanonicalSandboxPolicyDecisionCommittedInternalV1,
+  decodeCanonicalSandboxPolicyDecisionCommittedInternal,
   encodeExecutionEpisodeBinding,
 } from "@arbor/domain";
 import {
@@ -129,6 +129,8 @@ interface SandboxProviderUnavailableAttentionDbRow {
   readonly decision_command_id: string;
   readonly command_resolution: string | null;
   readonly command_schema_version: string | null;
+  readonly authority_kind: "LegacyHumanGrant" | "WorkspaceAuthorization";
+  readonly workspace_authorization_revision: number | null;
   readonly command_result_json: string | null;
   readonly command_project_id: string | null;
   readonly disposition_json: string;
@@ -1321,6 +1323,16 @@ export const makeAttentionProjectionStoreLive = (
                 ),
               );
             }
+            const policyColumns = yield* run(
+              sql.unsafe<{ readonly name: string }>(
+                "PRAGMA table_info(sandbox_policy_decisions)",
+              ),
+            );
+            const provenanceColumns = policyColumns.some(
+              (column) => column.name === "authority_kind",
+            )
+              ? "d.authority_kind, d.workspace_authorization_revision"
+              : "'LegacyHumanGrant' AS authority_kind, NULL AS workspace_authorization_revision";
             const rows = yield* run(
               sql.unsafe<SandboxProviderUnavailableAttentionDbRow>(
                 `SELECT f.project_id, f.attention_fact_id, f.workspace_id,
@@ -1328,7 +1340,7 @@ export const makeAttentionProjectionStoreLive = (
                         f.provider_version, f.probe_evidence_ref, f.failure_code,
                         d.policy_digest, d.profile_id, d.provider_id,
                         d.episode_binding_json, s.episode_json AS active_episode_json,
-                        d.decision_command_id, c.resolution AS command_resolution,
+                        d.decision_command_id, ${provenanceColumns}, c.resolution AS command_resolution,
                         c.schema_version AS command_schema_version,
                         c.result_json AS command_result_json,
                         c.project_id AS command_project_id,
@@ -1390,16 +1402,27 @@ export const makeAttentionProjectionStoreLive = (
               }
               const committed =
                 row.command_resolution === "Committed" &&
-                row.command_schema_version === "1" &&
+                (row.command_schema_version === "1" ||
+                  row.command_schema_version === "2") &&
                 row.command_project_id === row.project_id &&
                 row.command_result_json !== null
-                  ? decodeCanonicalSandboxPolicyDecisionCommittedInternalV1(
+                  ? decodeCanonicalSandboxPolicyDecisionCommittedInternal(
                       row.command_result_json,
                       sha256Hex,
                     )
                   : undefined;
               if (
                 committed === undefined ||
+                (row.authority_kind === "WorkspaceAuthorization"
+                  ? row.command_schema_version !== "1" ||
+                    committed.version !== 3 ||
+                    committed.workspaceAuthorizationRevision !==
+                      row.workspace_authorization_revision
+                  : row.authority_kind !== "LegacyHumanGrant" ||
+                    row.workspace_authorization_revision !== null ||
+                    committed.version === 3 ||
+                    (row.command_schema_version === "1" &&
+                      committed.version !== 1)) ||
                 committed.commandId !== row.decision_command_id ||
                 committed.projectId !== row.project_id ||
                 committed.workspaceId !== row.workspace_id ||

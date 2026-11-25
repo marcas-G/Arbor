@@ -8,6 +8,7 @@ import {
   buildSingleWorkspaceLayer,
   type SingleWorkspaceServices,
 } from "../apps/single-workspace/src/composition.js";
+import { makeHostProjectDirectories } from "../apps/single-workspace/src/project-directories.js";
 import {
   type HostProjectResourceProfileConfig,
   makeProjectResourceProfilePort,
@@ -205,6 +206,70 @@ const readCounts = Effect.gen(function* () {
 });
 
 describe("F21 CreateProject v2 host resource admission", () => {
+  itWithSchema44TestDatabase(
+    "prevents duplicate dynamic directory bindings inside the creation transaction and replays before registry lookup",
+    async (database) => {
+      const root = tempRoot();
+      const directory = join(root, "selected");
+      mkdirSync(directory);
+      const host = makeHostProjectDirectories({
+        registryDirectory: join(root, "registry"),
+      });
+      const prepared = await host.prepare(directory, false);
+      const first = ids("e1");
+      const second = ids("e2");
+      const localPrincipal = parse(Principal)("user:local");
+      const localEnvelope = (request: RequestIds) => ({
+        ...rawEnvelope(request, payload(request, prepared.selection)),
+        actor: "user:local",
+      });
+      const submitLocal = (request: RequestIds) =>
+        Effect.gen(function* () {
+          const submission = yield* makeExternalSubmissionFromServices({
+            authenticatedHumans: [localPrincipal],
+            directParentOf: [],
+          });
+          return yield* submission.submit(
+            localPrincipal,
+            externalContext(localPrincipal),
+            localEnvelope(request),
+          );
+        });
+      const outcome = await runWith(
+        database.databaseFilename,
+        host.profiles,
+        Effect.gen(function* () {
+          const created = yield* submitLocal(first);
+          const duplicate = yield* submitLocal(second);
+          return { created, duplicate, counts: yield* readCounts };
+        }),
+      );
+      expect(outcome.created).toMatchObject({
+        ok: true,
+        body: { resolution: "Committed" },
+      });
+      expect(outcome.duplicate).toMatchObject({
+        ok: true,
+        body: {
+          resolution: "TerminalRejected",
+          rejection: "ProjectResourceUnavailable",
+        },
+      });
+      expect(outcome.counts).toMatchObject({
+        projects: 1,
+        workspaces: 1,
+        sessions: 1,
+        receipts: 2,
+      });
+      const replayed = await runWith(
+        database.databaseFilename,
+        makeProjectResourceProfilePort([]),
+        submitLocal(first),
+      );
+      expect(replayed).toEqual(outcome.created);
+    },
+  );
+
   itWithSchema44TestDatabase(
     "rejects raw or mixed caller boundaries before receipt or aggregate writes",
     async (database) => {

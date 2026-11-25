@@ -1,9 +1,16 @@
-import type { ExecutionId, ProviderTurnId, Sha256 } from "@arbor/domain";
+import {
+  type ExecutionId,
+  encodeExecutionEpisodeBinding,
+  type ProviderTurnId,
+  type Sha256,
+} from "@arbor/domain";
 import {
   type ReadmissionGateIntegrityFailure,
   type ReadmissionSourceKind,
   type ReadmissionTargetMismatch,
+  SandboxProviderUnavailableStore,
   sha256Hex,
+  TERMINAL_PROVIDER_FAILURE_KINDS,
   type TerminalProviderFailureKind,
   type TerminalProviderFailureSource,
   TransactionScope,
@@ -276,10 +283,10 @@ const terminalProviderFailureKind = (
   const prefix = "ProviderFailure:";
   if (!failure.reason.startsWith(prefix)) return null;
   const kind = failure.reason.slice(prefix.length);
-  return kind === "AuthenticationFailed" ||
-    kind === "RequestRejected" ||
-    kind === "ProtocolViolation"
-    ? kind
+  return (TERMINAL_PROVIDER_FAILURE_KINDS as ReadonlyArray<string>).includes(
+    kind,
+  )
+    ? (kind as TerminalProviderFailureKind)
     : null;
 };
 
@@ -336,11 +343,12 @@ const isFailureCode = (kind: FactRow["fact_kind"], code: string): boolean =>
 export const WorkReadmissionGateStoreLive: Layer.Layer<
   WorkReadmissionGateStore,
   never,
-  SqlClient
+  SqlClient | SandboxProviderUnavailableStore
 > = Layer.effect(
   WorkReadmissionGateStore,
   Effect.gen(function* () {
     const sql = yield* SqlClient;
+    const sandboxUnavailable = yield* SandboxProviderUnavailableStore;
     const run = <A>(effect: Effect.Effect<A, SqlError>) =>
       effect.pipe(
         Effect.mapError(repositoryFailure("WorkReadmissionGateStore", "query")),
@@ -424,6 +432,109 @@ export const WorkReadmissionGateStoreLive: Layer.Layer<
           const executionsById = new Map(
             executions.map((row) => [row.execution_id, row]),
           );
+
+          // P50 records an immutable environment blocker for the exact
+          // ExecutionEpisode that could not start. It is a readmission hold
+          // even if an older recovery path incorrectly settled that
+          // Execution as Interrupted: otherwise the next scheduler tick can
+          // create a replacement Execution for the same Work revision and
+          // lose the user's actionable Attention. The store performs strict
+          // fact decoding; this boundary additionally proves the fact still
+          // names the exact durable Execution episode before holding it.
+          const sandboxUnavailableFacts = yield* sandboxUnavailable
+            .list(input.projectId)
+            .pipe(
+              Effect.mapError(
+                repositoryFailure(
+                  "WorkReadmissionGateStore",
+                  "sandbox-provider-unavailable-fact",
+                ),
+              ),
+            );
+          for (const fact of sandboxUnavailableFacts) {
+            if (fact.workspaceId !== input.workspaceId) continue;
+            const execution = executionsById.get(fact.executionId);
+            if (execution === undefined) {
+              return yield* Effect.fail(
+                makeIntegrity(
+                  "SourceExecutionMissing",
+                  fact.executionId,
+                  "SandboxProviderUnavailableFact",
+                ),
+              );
+            }
+            if (
+              execution.project_id !== fact.projectId ||
+              execution.workspace_id !== fact.workspaceId
+            ) {
+              return yield* Effect.fail(
+                makeIntegrity(
+                  execution.project_id !== fact.projectId
+                    ? "SourceProjectMismatch"
+                    : "SourceWorkspaceMismatch",
+                  fact.executionId,
+                  "SandboxProviderUnavailableFact",
+                ),
+              );
+            }
+            if (execution.episode_json === null) {
+              return yield* Effect.fail(
+                makeIntegrity(
+                  "SourceEpisodeStateMissing",
+                  fact.executionId,
+                  "SandboxProviderUnavailableFact",
+                ),
+              );
+            }
+            const decoded = exactEpisode(execution);
+            if (decoded.episode === undefined) {
+              return yield* Effect.fail(
+                makeIntegrity(
+                  decoded.reason,
+                  fact.executionId,
+                  "SandboxProviderUnavailableFact",
+                ),
+              );
+            }
+            if (
+              encodeExecutionEpisodeBinding(fact.episodeBinding) !==
+              execution.episode_json
+            ) {
+              return yield* Effect.fail(
+                makeIntegrity(
+                  "SourceFactEpisodeMismatch",
+                  fact.executionId,
+                  "SandboxProviderUnavailableFact",
+                ),
+              );
+            }
+            if (fact.episodeBinding._tag !== "WorkEpisode") continue;
+            if (decoded.episode._tag !== "WorkEpisode") {
+              return yield* Effect.fail(
+                makeIntegrity(
+                  "SourceFactEpisodeMismatch",
+                  fact.executionId,
+                  "SandboxProviderUnavailableFact",
+                ),
+              );
+            }
+            if (fact.episodeBinding.workId !== input.workId) continue;
+            if (fact.episodeBinding.targetWorkRevision > input.workRevision) {
+              return yield* Effect.fail(
+                makeIntegrity(
+                  "FutureWorkRevision",
+                  fact.executionId,
+                  "SandboxProviderUnavailableFact",
+                ),
+              );
+            }
+            if (fact.episodeBinding.targetWorkRevision === input.workRevision) {
+              return Option.some({
+                sourceKind: "SandboxProviderUnavailableFact" as const,
+                executionId: fact.executionId,
+              });
+            }
+          }
 
           const terminalCandidates: Array<{
             readonly execution: ExecutionRow;

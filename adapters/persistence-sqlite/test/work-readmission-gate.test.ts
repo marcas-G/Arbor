@@ -5,6 +5,8 @@ import {
   DomainEventJournal,
   type IdGenerator,
   RecoveryAttentionFactStore,
+  TERMINAL_PROVIDER_FAILURE_KINDS,
+  type TerminalProviderFailureKind,
   TransactionPort,
   WorkReadmissionGateStore,
 } from "@arbor/ports";
@@ -20,6 +22,8 @@ import {
   IdGeneratorLive,
   layer,
   makeRecoveryAttentionFactStoreLive,
+  SandboxProviderUnavailableStoreLive,
+  sandboxProviderUnavailableFactIdV1,
   TransactionPortLive,
   WorkReadmissionGateStoreLive,
 } from "../src/index.js";
@@ -46,11 +50,19 @@ const makeApp = (filename: string) => {
   const sqlite = layer({ filename });
   const infra = Layer.mergeAll(sqlite, IdGeneratorLive);
   const journal = Layer.provide(DomainEventJournalLive, infra);
+  const sandboxUnavailableStore = Layer.provide(
+    SandboxProviderUnavailableStoreLive,
+    Layer.mergeAll(infra, journal),
+  );
   return Layer.mergeAll(
     infra,
     journal,
     Layer.provide(TransactionPortLive, sqlite),
-    Layer.provide(WorkReadmissionGateStoreLive, sqlite),
+    Layer.provide(
+      WorkReadmissionGateStoreLive,
+      Layer.mergeAll(sqlite, sandboxUnavailableStore),
+    ),
+    sandboxUnavailableStore,
     Layer.provide(
       makeRecoveryAttentionFactStoreLive(),
       Layer.mergeAll(infra, journal),
@@ -202,11 +214,7 @@ const terminalSettlement = (kind: string) => ({
 });
 
 const seedTerminalProviderFailureChain = (
-  kind:
-    | "AuthenticationFailed"
-    | "RequestRejected"
-    | "ProtocolViolation"
-    | "UnknownProviderFailure" = "RequestRejected",
+  kind: TerminalProviderFailureKind = "RequestRejected",
   options: {
     readonly omitStep?: boolean;
     readonly taxonomy?: string;
@@ -783,6 +791,55 @@ const queryTarget = (
   });
 
 describe("P2 WorkReadmissionGateStore", () => {
+  it("holds the exact Work revision after a persisted sandbox-provider-unavailable fact", () =>
+    runDb(
+      Effect.gen(function* () {
+        yield* seed();
+        const sql = yield* SqlClient;
+        const factId = sandboxProviderUnavailableFactIdV1(executionId, 1);
+        // This test isolates the readmission gate from P50's write path. The
+        // fact decoder and the gate's scope/episode checks are the subject
+        // under test; the FK witness is covered by the P50 store tests.
+        yield* sql.unsafe("PRAGMA foreign_keys = OFF");
+        yield* sql.unsafe(
+          `INSERT INTO sandbox_provider_unavailable_facts (
+             attention_fact_id, event_id, project_id, execution_id,
+             workspace_id, episode_binding_json, policy_revision,
+             policy_digest, profile_id, provider_id, provider_version,
+             probe_evidence_ref, failure_code, first_detected_at
+           ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, 'ReadOnly', 'bwrap', '0.8.0',
+                     NULL, 'ProviderUnavailable', '2026-10-19T10:00:00.000Z')`,
+          [
+            factId,
+            "evt_readmission_sandbox_unavailable",
+            projectId,
+            executionId,
+            workspaceId,
+            JSON.stringify({
+              _tag: "WorkEpisode",
+              workId,
+              targetWorkRevision: 0,
+            }),
+            "a".repeat(64),
+          ],
+        );
+        yield* sql.unsafe("PRAGMA foreign_keys = ON");
+
+        expect(yield* query()).toEqual(
+          Option.some({
+            sourceKind: "SandboxProviderUnavailableFact",
+            executionId,
+          }),
+        );
+
+        yield* sql.unsafe(
+          "UPDATE works SET revision = 1, updated_at = 't2' WHERE work_id = ?",
+          [workId],
+        );
+        expect(Option.isNone(yield* query(1))).toBe(true);
+      }),
+    ));
+
   it("maps SQLite query failures to the shared semantic persistence error", () =>
     runDb(
       Effect.gen(function* () {
@@ -1363,11 +1420,7 @@ describe("P2 WorkReadmissionGateStore", () => {
       }),
     ));
 
-  it.each([
-    "AuthenticationFailed",
-    "RequestRejected",
-    "ProtocolViolation",
-  ] as const)(
+  it.each([...TERMINAL_PROVIDER_FAILURE_KINDS])(
     "derives the complete %s Provider failure source from the exact durable chain",
     (kind) =>
       runDb(
@@ -1671,12 +1724,13 @@ describe("P2 WorkReadmissionGateStore", () => {
     ));
 
   it.each(["RateLimited", "ProviderUnavailable", "StreamInterrupted"] as const)(
-    "does not hold retryable %s failures even when the Execution failed",
+    "holds final %s failures when the exact terminal chain is complete",
     (kind) =>
       runDb(
         Effect.gen(function* () {
           yield* seed(terminalSettlement(kind));
-          expect(Option.isNone(yield* query())).toBe(true);
+          yield* seedTerminalProviderFailureChain(kind);
+          expect(Option.isSome(yield* query())).toBe(true);
         }),
       ),
   );

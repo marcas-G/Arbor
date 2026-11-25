@@ -2,10 +2,10 @@ import { useState } from "react";
 import { Button } from "../../components/Button.js";
 import { Card } from "../../components/Card.js";
 import { Field } from "../../components/Field.js";
+import { cn } from "../../lib/utils.js";
 import type { CommandReceiptView } from "../submitCommand.js";
 import { useCommandSubmission } from "../useCommandSubmission.js";
 import { FormFeedback } from "./FormFeedback.js";
-import "./forms.css";
 
 export function ResolveExecutableApprovalForm({
   actor,
@@ -42,7 +42,7 @@ export function ResolveExecutableApprovalForm({
 
   return (
     <Card title="工具动作审批">
-      <div className="arbor-command-form">
+      <div className={cn("arbor-command-form", "flex flex-col gap-ui-3")}>
         <p>{summary}</p>
         <Field
           control="select"

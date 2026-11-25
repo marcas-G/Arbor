@@ -42,9 +42,11 @@ These are constraints for the current Linux single-user release target:
 - Runtime schema is 57. The offline copy upgrader accepts disposable
   qualification sources 36–38 and 44–57. Preserved user databases remain
   unsupported until their migration and recovery contract is qualified.
-- Production process execution defaults to `Disabled`; no ordinary production
-  composition may claim a Native OS `Supported` tuple without the required
-  qualification evidence.
+- A qualified Linux release defaults process execution to `NativeOsSupportedOnly`
+  and initializes each new Workspace with its bounded `WorkspaceWrite × Enabled`
+  baseline; `Disabled` is reserved for explicit stop/rollback or an unavailable
+  qualified environment. No ordinary production composition may claim a Native
+  OS `Supported` tuple without the required qualification evidence.
 - Workspaces are the authorization and resource boundary. Workspace grants
   persist across tasks and restarts. A Parent may allocate only within its own
   current ceiling; a user revocation remains in force until the user reverses
@@ -61,6 +63,42 @@ These are constraints for the current Linux single-user release target:
   do not reintroduce CSS Modules or hand-written modal focus traps.
 - Fake and test-echo providers, test-only environments and harnesses are for
   tests. They must not be used to claim real-provider or release behavior.
+
+## Runtime environment and recovery rules
+
+- Treat the database, `XDG_DATA_HOME`-derived authority/state root, project
+  root and provider configuration as one runtime context. A launcher must set
+  or validate all of them together; setting only `ARBOR_DB` is insufficient and
+  can make persisted workspace/provider state disagree with the authority
+  loaded by the daemon.
+- Resolve workspace-scoped authority from the same context that created the
+  database. Do not silently fall back to the host user's default authority
+  directory when an explicit database or project context is in use.
+- Validate provider version, capability and authority bindings at the
+  boundary before executing a tool. A mismatch is an environment-blocking
+  condition, not an ordinary tool failure and not permission to use a fake,
+  stale or unqualified provider.
+- When a provider or sandbox is unavailable, terminate only the current action
+  and recoverable step, persist the typed failure and user-visible Attention,
+  and preserve the existing Work/Execution identity. Do not automatically
+  create a replacement Execution, re-probe indefinitely or retry in a loop.
+- Scheduler readmission must consult durable environment-blocking facts as
+  well as settlement status. A Work that is blocked by an unavailable provider
+  must remain blocked across ticks and restarts until the user repairs the
+  environment and explicitly retries it.
+- If observed runtime behavior conflicts with the frozen recovery contract,
+  trace the full path from launcher and composition root through scheduler,
+  runtime, persistence and projections before changing code. Do not fix only
+  the visible error or add a readmission gate while leaving an incorrect
+  settlement path in place.
+- Real acceptance must use a fresh isolated database and a coherent runtime
+  context, and must exercise the actual daemon/provider boundary. Never reuse
+  a polluted acceptance database, rely on a stale build artifact, or infer
+  release behavior from a unit test alone.
+- Record the exact commit, runtime context and command for verification. A
+  green check is evidence only for the code and environment that actually ran;
+  targeted, fake-provider or test-only results must not be expanded into a
+  full release claim.
 
 ## Package and architecture rules
 

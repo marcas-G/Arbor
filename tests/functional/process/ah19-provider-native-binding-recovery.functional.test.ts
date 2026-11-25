@@ -81,6 +81,10 @@ interface Ah19ProviderRequest {
     readonly implementation?: string;
     readonly bindingFingerprint?: string;
     readonly opaqueItemRef?: string;
+    readonly providerTurnId?: string;
+    readonly callRef?: string;
+    readonly role?: string;
+    readonly text?: string;
   }>;
 }
 
@@ -125,6 +129,8 @@ interface Ah19Snapshot {
     predecessor_logical_step_no: number | null;
     predecessor_repair_attempt: number | null;
     successor_json: string | null;
+    settlement_json: string | null;
+    next_step_reason: string | null;
     decoded_output_hash: string | null;
     model_output_session_sequence: number | null;
   }>;
@@ -153,7 +159,9 @@ interface Ah19Snapshot {
     sequence: number;
     entry_kind: string;
     item_type: string | null;
+    source_kind: string | null;
     source_ref: string | null;
+    causal_binding_json: string | null;
     payload_json: string;
   }>;
   readonly execution:
@@ -697,7 +705,7 @@ const ah19Failure = (phase: string, error: unknown) => {
   );
   const original = error instanceof Error ? error : new Error(String(error));
   return new Error(
-    `${original.message}; AH19 diagnostics=${diagnostic.render?.() ?? "unavailable"}`,
+    `${original.message}; AH19 failure phase=${phase}; AH19 diagnostics=${diagnostic.render?.() ?? "unavailable"}`,
     { cause: original },
   );
 };
@@ -1372,7 +1380,8 @@ const readSnapshot = (
           `SELECT logical_step_no, repair_attempt, provider_turn_id, state,
                   next_action_index,
                   predecessor_logical_step_no, predecessor_repair_attempt,
-                  successor_json, decoded_output_hash,
+                  successor_json, settlement_json, next_step_reason,
+                  decoded_output_hash,
                   model_output_session_sequence
              FROM agent_loop_steps WHERE execution_id = ?
             ORDER BY logical_step_no, repair_attempt`,
@@ -1398,7 +1407,8 @@ const readSnapshot = (
         .all(input.executionId) as Ah19Snapshot["providerLinks"],
       sessionEntries: db
         .prepare(
-          `SELECT sequence, entry_kind, item_type, source_ref, payload_json
+          `SELECT sequence, entry_kind, item_type, source_kind, source_ref,
+                  causal_binding_json, payload_json
              FROM session_entries WHERE session_id = ? ORDER BY sequence`,
         )
         .all(input.sessionId) as Ah19Snapshot["sessionEntries"],
@@ -1542,7 +1552,8 @@ const readTypedSessionRows = (databaseFile: string, sessionId: string) => {
     db.exec("BEGIN DEFERRED");
     return db
       .prepare(
-        `SELECT sequence, item_type, source_kind, source_ref, payload_json
+        `SELECT sequence, item_type, source_kind, source_ref,
+                causal_binding_json, payload_json
            FROM session_entries
           WHERE session_id = ? AND schema_version = 2
           ORDER BY sequence`,
@@ -1552,7 +1563,45 @@ const readTypedSessionRows = (databaseFile: string, sessionId: string) => {
       item_type: string;
       source_kind: string | null;
       source_ref: string | null;
+      causal_binding_json: string | null;
       payload_json: string;
+    }>;
+  } finally {
+    db.close();
+  }
+};
+
+const readToolCallOwners = (
+  databaseFile: string,
+  sessionId: string,
+  callRefs: ReadonlyArray<string>,
+) => {
+  if (callRefs.length === 0) return [];
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    const placeholders = callRefs.map(() => "?").join(",");
+    return db
+      .prepare(
+        `SELECT json_extract(se.payload_json, '$.callRef') AS call_ref,
+                json_extract(se.payload_json, '$.providerTurnId') AS provider_turn_id,
+                pt.execution_id,
+                json_extract(se.causal_binding_json, '$.workId') AS work_id,
+                json_extract(se.causal_binding_json, '$.episodeBinding') AS episode_binding
+           FROM session_entries se
+           LEFT JOIN provider_turns pt
+             ON pt.provider_turn_id =
+                json_extract(se.payload_json, '$.providerTurnId')
+          WHERE se.session_id = ?
+            AND se.item_type = 'ToolCall'
+            AND json_extract(se.payload_json, '$.callRef') IN (${placeholders})
+          ORDER BY se.sequence`,
+      )
+      .all(sessionId, ...callRefs) as Array<{
+      call_ref: string;
+      provider_turn_id: string;
+      execution_id: string | null;
+      work_id: string | null;
+      episode_binding: string | null;
     }>;
   } finally {
     db.close();
@@ -2908,6 +2957,9 @@ const startOrdinaryNativeAtCheckpointBoundary = async (
       }
       return rootReply(call, index);
     },
+    ...(process.env.ARBOR_AH19_PRESERVE_FAILURE_FIXTURES === "1"
+      ? { preserveDirectoryOnStop: true }
+      : {}),
     onResponseSent: (call, index) =>
       responsesSent.push({ index, request: call }),
     daemonEnvironment: {
@@ -3003,10 +3055,16 @@ const startOrdinaryNativeAtCheckpointBoundary = async (
     });
     await waitForPublic(
       async () => ({
-        count: providerRequests.length,
+        requests: providerRequests.slice(beforeSteer),
         native: providerRequests.find(ordinaryWorkNative),
       }),
-      (state) => state.count >= beforeSteer + 2 || state.native !== undefined,
+      (state) =>
+        state.native !== undefined ||
+        state.requests.some(
+          (request) =>
+            request.operationKind === "Inference" &&
+            request.hasPublicWorkInput === true,
+        ),
       120_000,
     ).catch((error: unknown) => {
       throw new Error(
@@ -3379,10 +3437,16 @@ describe("AH19 ProviderNative binding recovery", () => {
       });
       await waitForPublic(
         async () => ({
-          count: providerRequests.length,
+          requests: providerRequests.slice(before),
           native: providerRequests.find(ordinaryWorkNative),
         }),
-        (state) => state.count >= before + 2 || state.native !== undefined,
+        (state) =>
+          state.native !== undefined ||
+          state.requests.some(
+            (request) =>
+              request.operationKind === "Inference" &&
+              request.hasPublicWorkInput === true,
+          ),
         60_000,
       ).catch((error: unknown) => {
         throw ah19Failure(
@@ -3408,11 +3472,103 @@ describe("AH19 ProviderNative binding recovery", () => {
     expect(ordinaryNative?.providerTurnId).toMatch(/_native_compact_0$/u);
     expect(ordinaryNative?.providerTurnId).not.toContain("_overflow_");
     expect(ordinaryNative?.hasPublicWorkInput).toBe(true);
-    expect(ordinaryNative?.workActionHistoryCount).toBeGreaterThan(0);
+    const ordinaryNativeSessionRows = readTypedSessionRows(
+      fixture.databaseFile,
+      project.rootSessionId,
+    );
+    expect(
+      ordinaryNativeSessionRows.some((row) =>
+        ["ToolCall", "ToolResult", "ControlResult"].includes(row.item_type),
+      ),
+    ).toBe(true);
     const executionId = readExecutionIdForProviderTurn(
       fixture.databaseFile,
       ordinaryNative?.providerTurnId ?? "",
     );
+    expect(
+      ordinaryNative?.workActionHistoryCount,
+      JSON.stringify({
+        ordinaryNative: {
+          ...ordinaryNative,
+          items: ordinaryNative?.items.map(
+            ({ _tag, providerTurnId, callRef, role }) => ({
+              _tag,
+              providerTurnId,
+              callRef,
+              role,
+            }),
+          ),
+        },
+        providerRequests: providerRequests.map(
+          ({
+            operationKind,
+            providerTurnId,
+            workActionHistoryCount,
+            hasPublicWorkInput,
+            items,
+          }) => ({
+            operationKind,
+            providerTurnId,
+            workActionHistoryCount,
+            hasPublicWorkInput,
+            items: items.map(({ _tag, providerTurnId: itemTurn, callRef }) => ({
+              _tag,
+              providerTurnId: itemTurn,
+              callRef,
+            })),
+          }),
+        ),
+        sessionRows: ordinaryNativeSessionRows.map(
+          ({
+            sequence,
+            item_type,
+            source_kind,
+            source_ref,
+            causal_binding_json,
+          }) => ({
+            sequence,
+            item_type,
+            source_kind,
+            source_ref,
+            causal_binding_json,
+          }),
+        ),
+      }),
+    ).toBeGreaterThan(0);
+    const nativeActionItems =
+      ordinaryNative?.items.filter((item) =>
+        ["ToolCall", "ToolResult", "ControlResult"].includes(item._tag),
+      ) ?? [];
+    const nativeCallItems = nativeActionItems.filter(
+      (item) => item._tag === "ToolCall",
+    );
+    expect(nativeCallItems.length).toBeGreaterThan(0);
+    const currentCallRefs = new Set(
+      nativeCallItems
+        .map((item) => item.callRef)
+        .filter((callRef): callRef is string => callRef !== undefined),
+    );
+    const toolCallOwners = readToolCallOwners(
+      fixture.databaseFile,
+      project.rootSessionId,
+      [...currentCallRefs],
+    );
+    expect(toolCallOwners).toHaveLength(currentCallRefs.size);
+    expect(
+      toolCallOwners.every(
+        (owner) =>
+          owner.work_id === workId && owner.episode_binding === "WorkEpisode",
+      ),
+      JSON.stringify(toolCallOwners),
+    ).toBe(true);
+    expect(
+      nativeActionItems
+        .filter((item) => item._tag !== "ToolCall")
+        .every(
+          (item) =>
+            item.callRef !== undefined && currentCallRefs.has(item.callRef),
+        ),
+    ).toBe(true);
     const snapshot = readSnapshot(fixture.databaseFile, {
       sessionId: project.rootSessionId,
       executionId,
@@ -3471,15 +3627,19 @@ describe("AH19 ProviderNative binding recovery", () => {
           entry.sequence <= Number(lastSequence),
       ).length,
     ).toBeLessThanOrEqual(64);
+    const sourceAgentLoopStep = nativeManifest.sourceAgentLoopStep;
+    expect(sourceAgentLoopStep?.executionId).toBe(executionId);
+    expect(sourceAgentLoopStep?.logicalStepNo).toEqual(expect.any(Number));
+    expect(sourceAgentLoopStep?.repairAttempt).toBe(0);
     const sourceStep = snapshot.steps.find(
-      (step) => step.logical_step_no === 1 && step.repair_attempt === 0,
+      (step) =>
+        step.logical_step_no === sourceAgentLoopStep?.logicalStepNo &&
+        step.repair_attempt === sourceAgentLoopStep.repairAttempt,
     );
-    expect(nativeManifest.sourceAgentLoopStep).toEqual({
-      executionId,
-      logicalStepNo: 1,
-      repairAttempt: 0,
-      providerTurnId: sourceStep?.provider_turn_id,
-    });
+    expect(sourceStep).toBeDefined();
+    expect(sourceAgentLoopStep?.providerTurnId).toBe(
+      sourceStep?.provider_turn_id,
+    );
 
     const replacementInferenceId = ordinaryNative?.providerTurnId.replace(
       "_native_compact_0",
@@ -3510,16 +3670,30 @@ describe("AH19 ProviderNative binding recovery", () => {
         opaqueItemRef: `ah19-opaque:${ordinaryNative?.providerTurnId}`,
       }),
     );
-    await waitForPublic(
-      async () =>
-        providerRequests.find(
+    const successorState = await waitForPublic(
+      async () => ({
+        request: providerRequests.find(
           (request) =>
             request.operationKind === "Inference" &&
             request.providerTurnId === `ptn_${executionId}_1`,
         ),
-      (request) => request !== undefined,
+        snapshot: readSnapshot(fixture.databaseFile, {
+          sessionId: project.rootSessionId,
+          executionId,
+          workId,
+        }),
+      }),
+      (state) =>
+        state.request !== undefined ||
+        state.snapshot.steps.some(
+          (step) =>
+            step.logical_step_no === 1 && step.state === "SettlementProposed",
+        ),
       45_000,
-    );
+    ).catch((error: unknown) => {
+      throw ah19Failure("successor Inference after Native checkpoint", error);
+    });
+    expect(successorState.request).toBeDefined();
     expect(
       providerRequests.filter(
         (request) => request.operationKind === "CompactionNative",
@@ -3669,7 +3843,16 @@ describe("AH19 ProviderNative binding recovery", () => {
       async () =>
         providerRequests
           .slice(priorRequests)
-          .find((request) => request.operationKind === "Inference"),
+          .find(
+            (request) =>
+              request.operationKind === "Inference" &&
+              request.items.some(
+                (item) =>
+                  item._tag === "Message" &&
+                  item.role === "user" &&
+                  item.text?.includes(currentGuidance),
+              ),
+          ),
       (request) => request !== undefined,
       120_000,
     ).catch(async (error: unknown) => {
@@ -3792,13 +3975,21 @@ describe("AH19 ProviderNative binding recovery", () => {
         text?: string;
       }>;
     };
-    expect(
+    const resumedGuidanceItems =
       portableRequest.inputItems?.filter(
         (item) =>
           item._tag === "Message" &&
           item.role === "user" &&
           item.text?.includes(currentGuidance),
-      ),
+      ) ?? [];
+    expect(
+      resumedGuidanceItems,
+      JSON.stringify({
+        inputFrontier: manifest.inputFrontier,
+        contextRefs: manifest.contextRefs,
+        inputItems: portableRequest.inputItems,
+        tailRows: allRowsAfterRequest.slice(-12),
+      }),
     ).toHaveLength(1);
 
     const controlBasis = manifest.controlBasis;
@@ -4006,7 +4197,7 @@ describe("AH19 ProviderNative binding recovery", () => {
       }
       const compactionDaemonEnvironment = {
         ...daemonEnvironment,
-        ARBOR_AH19_CONTEXT_WINDOW: "10240",
+        ARBOR_AH19_CONTEXT_WINDOW: "16384",
         ARBOR_AH19_ROOT_WORK_ALREADY_ASSIGNED: "1",
       };
       await fixture.crash();
@@ -4627,7 +4818,9 @@ describe("AH19 ProviderNative binding recovery", () => {
               state.rows > rowsBefore &&
               state.requests > requestsBefore,
             60_000,
-          );
+          ).catch((error: unknown) => {
+            throw ah19Failure("post-checkpoint tail steer", error);
+          });
           postCheckpointTailCount = typedRowsNow().filter(
             (row) => row.sequence > tailCheckpointSequence,
           ).length;
@@ -5171,8 +5364,21 @@ describe("AH19 restart binding qualification", () => {
       sourceAgentLoopStep?: unknown;
     };
     expect(summaryManifest.operationKind).toBe("CompactionSummary");
-    expect(summaryManifest.inputFrontier).toEqual(nativeManifest.inputFrontier);
-    expect(summaryManifest.contextRefs).toEqual(nativeManifest.contextRefs);
+    expect(summaryManifest.inputFrontier?.firstSequence).toBe(
+      nativeManifest.inputFrontier?.firstSequence,
+    );
+    expect(summaryManifest.inputFrontier?.lastSequence).toBeGreaterThanOrEqual(
+      nativeManifest.inputFrontier?.lastSequence ?? 0,
+    );
+    expect(
+      summaryManifest.contextRefs?.slice(
+        0,
+        nativeManifest.contextRefs?.length ?? 0,
+      ),
+    ).toEqual(nativeManifest.contextRefs);
+    expect(new Set(summaryManifest.contextRefs).size).toBe(
+      summaryManifest.contextRefs?.length,
+    );
     expect(summaryManifest.sourceAgentLoopStep).toEqual(
       expect.objectContaining({
         logicalStepNo: nativeManifest.sourceAgentLoopStep?.logicalStepNo,
@@ -5207,6 +5413,323 @@ describe("AH19 restart binding qualification", () => {
     expect(after.checkpoints[0]?.source_ref).toBe(nativeTurnId);
     expect(fixture.daemonErrors).toEqual([]);
   }, 120_000);
+
+  it("rebases an inherited Native checkpoint when the next Work execution changes binding", async () => {
+    const scenario = await startOrdinaryNativeAtCheckpointBoundary(
+      "AH17AfterCheckpointEpochCommit",
+    );
+    const { fixture, project, workId, native, probe, reportUrl, childOutput } =
+      scenario;
+    const inheritedExecutionId = probe.executionId;
+    const inheritedIds = {
+      sessionId: project.rootSessionId,
+      executionId: inheritedExecutionId,
+      workId,
+    };
+    const checkpointBeforeSettlement = readSnapshot(
+      fixture.databaseFile,
+      inheritedIds,
+    );
+    expect(checkpointBeforeSettlement.checkpoints).toHaveLength(1);
+    expect(
+      checkpointBeforeSettlement.providerTurns.find(
+        (turn) => turn.provider_turn_id === native.providerTurnId,
+      ),
+    ).toMatchObject({ execution_id: inheritedExecutionId });
+
+    // The boundary fixture intentionally holds the Native provider after the
+    // checkpoint commit. Recover that execution with the original binding so
+    // it can settle before the next public SteerWork creates a new execution.
+    await fixture.crash();
+    await expireLeaseAfterOldDaemonExit(
+      fixture,
+      project.rootSessionId,
+      inheritedExecutionId,
+      workId,
+    );
+    await fixture.restart({
+      entry: childEntry,
+      daemonEnvironment: {
+        ARBOR_AH19_BOUNDARY: "none",
+        ARBOR_AH19_BINDING_VARIANT: "A",
+        ARBOR_AH19_ORDINARY_WORK: "1",
+        ARBOR_AH19_CONTEXT_WINDOW: "16384",
+        ARBOR_AH19_ROOT_WORK_ALREADY_ASSIGNED: "1",
+        ARBOR_AH19_REPORT_URL: reportUrl,
+      },
+    });
+    const inheritedSettled = await waitForPublic(
+      async () => readSnapshot(fixture.databaseFile, inheritedIds),
+      (snapshot) =>
+        snapshot.execution?.settled_at !== null &&
+        snapshot.workWait !== undefined,
+      60_000,
+    );
+    const requestsBeforeNewExecution = providerRequests.length;
+
+    await fixture.restart({
+      entry: childEntry,
+      daemonEnvironment: {
+        ARBOR_AH19_BOUNDARY: "none",
+        ARBOR_AH19_BINDING_VARIANT: "B",
+        ARBOR_AH19_ORDINARY_WORK: "1",
+        ARBOR_AH19_CONTEXT_WINDOW: "16384",
+        ARBOR_AH19_ROOT_WORK_ALREADY_ASSIGNED: "1",
+        ARBOR_AH19_REPORT_URL: reportUrl,
+      },
+    });
+    const client = makePublicClient(fixture.baseUrl);
+    const current = await waitForPublic(
+      () =>
+        client.view<{
+          workId?: string;
+          revision: number;
+          status: string;
+        } | null>("current-work", { workspaceId: project.rootWorkspaceId }),
+      (value) => value?.workId === workId && value.status === "Open",
+    );
+    if (current === null || current.workId === undefined) {
+      throw new Error("inherited Native test lost the current Work");
+    }
+    await client.command(project.projectId, "SteerWork", {
+      workId,
+      workspaceId: project.rootWorkspaceId,
+      expectedWorkRevision: current.revision,
+      steer: {
+        severity: "Normal",
+        guidance: `AH19 ordinary recovery history inherited binding change ${crypto.randomUUID()}`,
+      },
+      provenance: { source: "HumanInput" },
+    });
+
+    const summaryRequest = await waitForPublic(
+      async () =>
+        providerRequests
+          .slice(requestsBeforeNewExecution)
+          .find(
+            (request) =>
+              request.operationKind === "CompactionSummary" &&
+              request.bindingVariant === "B",
+          ),
+      (request) => request !== undefined,
+      90_000,
+    );
+    if (summaryRequest === undefined) {
+      throw new Error(
+        `inherited Native binding rebase did not request Summary; child=${JSON.stringify(childOutput)} daemon=${JSON.stringify(fixture.daemonErrors)}`,
+      );
+    }
+    const newExecutionId = readExecutionIdForProviderTurn(
+      fixture.databaseFile,
+      summaryRequest.providerTurnId,
+    );
+    expect(newExecutionId).not.toBe(inheritedExecutionId);
+
+    const newInference = await waitForPublic(
+      async () =>
+        providerRequests
+          .slice(requestsBeforeNewExecution)
+          .find(
+            (request) =>
+              request.operationKind === "Inference" &&
+              request.bindingVariant === "B",
+          ),
+      (request) => request !== undefined,
+      60_000,
+    );
+    expect(newInference).toBeDefined();
+    expect(
+      providerRequests
+        .slice(requestsBeforeNewExecution)
+        .filter((request) => request.operationKind === "CompactionNative"),
+    ).toHaveLength(0);
+    expect(
+      newInference?.items.some(
+        (item) =>
+          item._tag === "CompactionCheckpoint" &&
+          item.implementation === "ProviderNative",
+      ),
+    ).toBe(false);
+
+    const newIds = {
+      sessionId: project.rootSessionId,
+      executionId: newExecutionId,
+      workId,
+    };
+    const recovered = await waitForPublic(
+      async () => readSnapshot(fixture.databaseFile, newIds),
+      (snapshot) =>
+        snapshot.execution?.settled_at !== null &&
+        snapshot.workWait !== undefined &&
+        snapshot.checkpoints.length === 2,
+      90_000,
+    );
+    const summaryTurn = recovered.providerTurns.find(
+      (turn) => turn.provider_turn_id === summaryRequest.providerTurnId,
+    );
+    const summaryManifest = JSON.parse(summaryTurn?.manifest_json ?? "{}") as {
+      executionId?: string;
+      sourceAgentLoopStep?: { executionId?: string };
+      operationKind?: string;
+      resolvedModelBindingFingerprint?: string;
+    };
+    expect(summaryManifest).toMatchObject({
+      executionId: newExecutionId,
+      operationKind: "CompactionSummary",
+      resolvedModelBindingFingerprint:
+        expect.stringMatching(/^p16fp_[0-9a-f]{64}$/u),
+      sourceAgentLoopStep: { executionId: inheritedExecutionId },
+    });
+    expect(recovered.steps).toContainEqual(
+      expect.objectContaining({ logical_step_no: 0, repair_attempt: 0 }),
+    );
+    expect(readSnapshot(fixture.databaseFile, inheritedIds).steps).toEqual(
+      inheritedSettled.steps,
+    );
+    expect(fixture.daemonErrors).toEqual([]);
+  }, 180_000);
+
+  it("reuses an inherited Native checkpoint when the next Work execution keeps binding", async () => {
+    const scenario = await startOrdinaryNativeAtCheckpointBoundary(
+      "AH17AfterCheckpointEpochCommit",
+    );
+    const { fixture, project, workId, native, probe, reportUrl, childOutput } =
+      scenario;
+    const inheritedExecutionId = probe.executionId;
+    const inheritedIds = {
+      sessionId: project.rootSessionId,
+      executionId: inheritedExecutionId,
+      workId,
+    };
+    expect(
+      readSnapshot(fixture.databaseFile, inheritedIds).checkpoints,
+    ).toHaveLength(1);
+
+    await fixture.crash();
+    await expireLeaseAfterOldDaemonExit(
+      fixture,
+      project.rootSessionId,
+      inheritedExecutionId,
+      workId,
+    );
+    await fixture.restart({
+      entry: childEntry,
+      daemonEnvironment: {
+        ARBOR_AH19_BOUNDARY: "none",
+        ARBOR_AH19_BINDING_VARIANT: "A",
+        ARBOR_AH19_ORDINARY_WORK: "1",
+        ARBOR_AH19_CONTEXT_WINDOW: "16384",
+        ARBOR_AH19_ROOT_WORK_ALREADY_ASSIGNED: "1",
+        ARBOR_AH19_REPORT_URL: reportUrl,
+      },
+    });
+    const inheritedSettled = await waitForPublic(
+      async () => readSnapshot(fixture.databaseFile, inheritedIds),
+      (snapshot) =>
+        snapshot.execution?.settled_at !== null &&
+        snapshot.workWait !== undefined,
+    );
+
+    const requestsBeforeNewExecution = providerRequests.length;
+    const client = makePublicClient(fixture.baseUrl);
+    const current = await waitForPublic(
+      () =>
+        client.view<{
+          workId?: string;
+          revision: number;
+          status: string;
+        } | null>("current-work", { workspaceId: project.rootWorkspaceId }),
+      (value) => value?.workId === workId && value.status === "Open",
+    );
+    if (current === null || current.workId === undefined) {
+      throw new Error(
+        "inherited Native exact-binding test lost the current Work",
+      );
+    }
+    await client.command(project.projectId, "SteerWork", {
+      workId,
+      workspaceId: project.rootWorkspaceId,
+      expectedWorkRevision: current.revision,
+      steer: {
+        severity: "Normal",
+        guidance: `AH19 inherited Native exact binding ${crypto.randomUUID()}`,
+      },
+      provenance: { source: "HumanInput" },
+    });
+
+    const newInference = await waitForPublic(
+      async () =>
+        providerRequests
+          .slice(requestsBeforeNewExecution)
+          .find(
+            (request) =>
+              request.operationKind === "Inference" &&
+              request.bindingVariant === "A",
+          ),
+      (request) => request !== undefined,
+      90_000,
+    ).catch((error: unknown) => {
+      const diagnosticSnapshot = readSnapshot(fixture.databaseFile, {
+        sessionId: project.rootSessionId,
+        executionId: inheritedExecutionId,
+        workId,
+      });
+      throw new Error(
+        `inherited Native exact-binding reuse did not request Inference: ${error instanceof Error ? error.message : String(error)} requests=${JSON.stringify(providerRequests.slice(requestsBeforeNewExecution).map(({ operationKind, providerTurnId, bindingVariant }) => ({ operationKind, providerTurnId, bindingVariant })))} stderr=${JSON.stringify(fixture.daemonErrors)} stdout=${JSON.stringify(childOutput.slice(-80))} inheritedSnapshot=${JSON.stringify({ session: diagnosticSnapshot.session, checkpoints: diagnosticSnapshot.checkpoints, providerTurns: diagnosticSnapshot.providerTurns, steps: diagnosticSnapshot.steps, providerLinks: diagnosticSnapshot.providerLinks, execution: diagnosticSnapshot.execution, leases: diagnosticSnapshot.leases })} fixtureDirectory=${fixture.directory}`,
+      );
+    });
+    expect(newInference).toBeDefined();
+    expect(
+      providerRequests
+        .slice(requestsBeforeNewExecution)
+        .filter((request) => request.operationKind === "CompactionNative"),
+    ).toHaveLength(0);
+    expect(
+      newInference?.items.filter(
+        (item) =>
+          item._tag === "CompactionCheckpoint" &&
+          item.implementation === "ProviderNative",
+      ),
+    ).toHaveLength(1);
+    expect(
+      providerRequests.filter(
+        (request) => request.providerTurnId === native.providerTurnId,
+      ),
+    ).toHaveLength(1);
+
+    const newExecutionId = readExecutionIdForProviderTurn(
+      fixture.databaseFile,
+      newInference?.providerTurnId ?? "",
+    );
+    expect(newExecutionId).not.toBe(inheritedExecutionId);
+    const newIds = {
+      sessionId: project.rootSessionId,
+      executionId: newExecutionId,
+      workId,
+    };
+    const recovered = await waitForPublic(
+      async () => readSnapshot(fixture.databaseFile, newIds),
+      (snapshot) =>
+        snapshot.execution?.settled_at !== null &&
+        snapshot.workWait !== undefined &&
+        snapshot.checkpoints.length === 1,
+      90_000,
+    );
+    expect(recovered.steps).toContainEqual(
+      expect.objectContaining({ logical_step_no: 0, repair_attempt: 0 }),
+    );
+    expect(
+      recovered.providerTurns.some(
+        (turn) =>
+          turn.provider_turn_id === newInference?.providerTurnId &&
+          turn.execution_id === newExecutionId,
+      ),
+    ).toBe(true);
+    expect(readSnapshot(fixture.databaseFile, inheritedIds).steps).toEqual(
+      inheritedSettled.steps,
+    );
+    expect(fixture.daemonErrors).toEqual([]);
+  }, 180_000);
 
   it("fails closed when ordinary Native startup has two same-epoch candidates", async () => {
     const scenario = await startOrdinaryNativeAtCheckpointBoundary(

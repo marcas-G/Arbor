@@ -16,7 +16,8 @@
     "@arbor/domain": "workspace:*",
     "@arbor/ports": "workspace:*",
     "@arbor/application": "workspace:*",
-    "@arbor/agent-runtime": "workspace:*"
+    "@arbor/agent-runtime": "workspace:*",
+    "effect": "4.0.0-rc.115"
   },
   "scripts": {
     "build": "tsc -b"

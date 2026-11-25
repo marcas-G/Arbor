@@ -1,9 +1,12 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { ArtifactId, parse } from "@arbor/domain";
 import { ArtifactService, TransactionPort } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { ArtifactServiceLive } from "../../../packages/tool-runtime/src/index.js";
-import { BlobStorePortLive } from "../../blob-local/src/index.js";
+import { makeBlobStorePortLive } from "../../blob-local/src/index.js";
 import {
   ArtifactMetadataRepositoryLive,
   layer,
@@ -12,13 +15,20 @@ import {
   TransactionPortLive,
 } from "../src/index.js";
 
+const directories: string[] = [];
+afterEach(() => {
+  for (const root of directories.splice(0))
+    rmSync(root, { recursive: true, force: true });
+});
 const makeApp = () => {
+  const blobRoot = mkdtempSync(join(tmpdir(), "arbor-artifact-test-"));
+  directories.push(blobRoot);
   const base = layer({ filename: ":memory:" });
   const infra = Layer.mergeAll(base);
   const deps = Layer.mergeAll(
     Layer.provide(TransactionPortLive, infra),
     Layer.provide(ArtifactMetadataRepositoryLive, infra),
-    BlobStorePortLive,
+    makeBlobStorePortLive(blobRoot),
   );
   return Layer.mergeAll(infra, deps, Layer.provide(ArtifactServiceLive, deps));
 };

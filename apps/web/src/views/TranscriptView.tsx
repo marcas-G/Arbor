@@ -7,6 +7,7 @@
 import type { TranscriptRes } from "@arbor/api-contracts";
 import { Button } from "../components/Button.js";
 import { Empty } from "../components/Empty.js";
+import { cn } from "../lib/utils.js";
 import { EnumBadge, TimeText } from "./shared.js";
 
 function eventKindLabel(kind: string): string {
@@ -39,11 +40,16 @@ export function TranscriptView({
     (entry) => entry.kind !== "ModelOutput",
   );
   return (
-    <div className="arbor-view-stack">
+    <div className={cn("arbor-view-stack", "flex flex-col gap-ui-3")}>
       {visibleEntries.length === 0 ? (
         <Empty>无会话记录</Empty>
       ) : (
-        <ul className="arbor-conversation-list">
+        <ul
+          className={cn(
+            "arbor-conversation-list",
+            "flex flex-col gap-ui-4 m-0 p-0 list-none",
+          )}
+        >
           {visibleEntries.map((entry, index) => {
             // The legacy arm's `kind: string` overlaps the turn literals, so
             // narrow by property presence (the frozen arms are distinguished
@@ -52,11 +58,28 @@ export function TranscriptView({
               return (
                 <li
                   key={`human:${entry.messageId}`}
-                  className="arbor-conversation-turn arbor-conversation-human"
+                  className={cn(
+                    "arbor-conversation-turn arbor-conversation-human",
+                    "flex max-w-[min(84%,_48rem)] flex-col gap-ui-1 p-[var(--arbor-space-3)_var(--arbor-space-4)] border border-solid border-border rounded-lg text-foreground [&_.arbor-time]:text-subtle [&_.arbor-time]:text-caption max-[47.99rem]:max-w-[100%] self-end rounded-br-[var(--arbor-space-1)] border-[color-mix(in_srgb,_var(--arbor-leaf)_18%,_var(--arbor-line))] bg-accent",
+                  )}
                   data-conversation-turn-key={`human:${entry.messageId}`}
                 >
-                  <span className="arbor-conversation-author">你</span>
-                  <span className="arbor-conversation-body">{entry.body}</span>
+                  <span
+                    className={cn(
+                      "arbor-conversation-author",
+                      "text-primary text-caption font-bold tracking-[0.02em]",
+                    )}
+                  >
+                    你
+                  </span>
+                  <span
+                    className={cn(
+                      "arbor-conversation-body",
+                      "wrap-anywhere whitespace-pre-wrap leading-[1.65]",
+                    )}
+                  >
+                    {entry.body}
+                  </span>
                   <TimeText at={entry.occurredAt} />
                 </li>
               );
@@ -65,11 +88,28 @@ export function TranscriptView({
               return (
                 <li
                   key={`assistant:${entry.executionId}:${entry.occurredAt}`}
-                  className="arbor-conversation-turn arbor-conversation-assistant"
+                  className={cn(
+                    "arbor-conversation-turn arbor-conversation-assistant",
+                    "flex max-w-[min(84%,_48rem)] flex-col gap-ui-1 p-[var(--arbor-space-3)_var(--arbor-space-4)] border border-solid border-border rounded-lg text-foreground [&_.arbor-time]:text-subtle [&_.arbor-time]:text-caption max-[47.99rem]:max-w-[100%] self-start rounded-bl-[var(--arbor-space-1)] bg-card [box-shadow:0_3px_12px_color-mix(in_srgb,_var(--arbor-ink)_5%,_transparent)]",
+                  )}
                   data-conversation-turn-key={`assistant:${entry.executionId}:${entry.occurredAt}`}
                 >
-                  <span className="arbor-conversation-author">Arbor</span>
-                  <span className="arbor-conversation-body">{entry.body}</span>
+                  <span
+                    className={cn(
+                      "arbor-conversation-author",
+                      "text-primary text-caption font-bold tracking-[0.02em]",
+                    )}
+                  >
+                    Arbor
+                  </span>
+                  <span
+                    className={cn(
+                      "arbor-conversation-body",
+                      "wrap-anywhere whitespace-pre-wrap leading-[1.65]",
+                    )}
+                  >
+                    {entry.body}
+                  </span>
                   <TimeText at={entry.occurredAt} />
                 </li>
               );
@@ -77,7 +117,10 @@ export function TranscriptView({
             return (
               <li
                 key={`${entry.at}:${String(index)}`}
-                className="arbor-conversation-turn arbor-conversation-event"
+                className={cn(
+                  "arbor-conversation-turn arbor-conversation-event",
+                  "flex max-w-[min(84%,_48rem)] flex-col gap-ui-1 p-[var(--arbor-space-3)_var(--arbor-space-4)] border border-solid border-border rounded-lg text-foreground [&_.arbor-time]:text-subtle [&_.arbor-time]:text-caption max-[47.99rem]:max-w-[100%] self-start rounded-bl-[var(--arbor-space-1)] bg-card [box-shadow:0_3px_12px_color-mix(in_srgb,_var(--arbor-ink)_5%,_transparent)]",
+                )}
               >
                 <EnumBadge label={eventKindLabel(entry.kind)} />
                 <span>{summaryLabel(entry.summaryRef)}</span>

@@ -61,7 +61,13 @@ export const resolveStatic = (
   if (clean.includes("..")) {
     return { kind: "rejected" };
   }
-  const isAssets = clean === "/assets" || clean.startsWith("/assets/");
+  // Vite's hashed JavaScript and the bundled font CSS/woff2 files are both
+  // immutable application assets. Other paths remain SPA routes.
+  const isImmutableAsset =
+    clean === "/assets" ||
+    clean.startsWith("/assets/") ||
+    clean === "/fonts" ||
+    clean.startsWith("/fonts/");
   const relative = normalize(clean).replaceAll(sep === "/" ? "\\" : "\\", "/");
   const absolute = resolve(
     join(root, relative.startsWith("/") ? relative.slice(1) : relative),
@@ -69,7 +75,7 @@ export const resolveStatic = (
   if (absolute !== root && !absolute.startsWith(`${root}${sep}`)) {
     return { kind: "rejected" };
   }
-  if (isAssets) {
+  if (isImmutableAsset) {
     const bytes = readIfFile(absolute);
     if (bytes === null) {
       return { kind: "rejected" };

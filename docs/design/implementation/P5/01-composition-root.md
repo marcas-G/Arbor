@@ -11,6 +11,25 @@ apps/single-workspace/        # minimal runnable composition root
   src/composition.ts          # the Layer graph wiring P1–P4
 ```
 
+## 2026-11-20 Workspace default execution capability supplement
+
+Accepted under `ACCEPT_WORKSPACE_DEFAULT_EXECUTION_CAPABILITY`; fixed proposal
+`docs/proposals/2026-11-20-workspace-default-execution-capability.md`, SHA-256
+`8503d5c2663d3098171c57646b78a8408d5f1a28dc7f3cf3a37f2181fddaed66`.
+
+The ordinary composition owns the initialization gate for the Linux single-user
+baseline. After the launcher/install layer has verified the exact qualified
+`linux-bwrap × WorkspaceWrite × Enabled` tuple, Project/Workspace creation must
+atomically establish the Workspace-scoped baseline fact before admitting an
+executable Work. If the tuple is unavailable, composition exposes an install or
+repair state and does not start a Work or silently select host/fake execution.
+
+The composition passes that durable fact into the existing per-Execution policy
+Binder; it does not bypass the Binder or action approval. Reopening the same
+Project/Workspace reuses the current fact, while explicit user revocation,
+boundary changes and provider drift invalidate it according to the existing
+fail-closed rules.
+
 - It is a **runnable** composition root (not test-harness-only) but **not** a
   production daemon/CLI (DID v1.9 G1): no auth/UI/ops surface.
 - `apps/*` is the Composition Root permitted by DID §10.4.1; it may depend on any
@@ -558,3 +577,57 @@ reasons add `TrustSetMalformed`, `TrustSetDigestMismatch`,
 `SignatureInvalid` and `TrustCurrentnessMismatch`; V1/V2 error/audit codecs
 remain unchanged. V3 audit/probe evidence carries only safe trust revision/
 digest/source identity, never SPKI, signature, path or raw exception.
+
+## Linux workspace networking V2 governance supplement
+
+Accepted under `ACCEPT_LINUX_WORKSPACE_NETWORK_V2`; proposal SHA-256 `9801a907a540a7ea2ec5a68e2ac197105c4bf5a1b00191c3801e888dded59111`.
+
+This supplement owns only the Linux V2 changes assigned to this document. For V2 it supersedes the conflicting first-release Windows-only, blanket loopback-denial, V1 broker and discovery clauses; V1/Windows/historical evidence retain their original meaning. It creates no Supported result, migration execution, preserved-database upgrade or release claim. Service registration, cross-command service reuse and preview still require their separate exact contract and acceptance; the full product goal is not reduced. DID 1.66 owns the closed technical definitions.
+
+#### 6. 资格和正式装配
+
+- provider 探测只报告事实，不能自行产生 Supported。精确主机 build、provider/
+  capability 版本、profile×network、规则和实际产物摘要必须与受信 registry 和
+  qualification manifest 一致；受信来源继续使用现有 P5 authority/source/high-water
+  机制。Linux 不伪造 Windows signed-helper 证据。
+- 必须验证真实文件、namespace、未授权 socket、网络、资源限制、进程树停止及
+  崩溃恢复；不以命令退出零或工具存在替代。
+- 新安装默认使用完成资格的隔离执行模式。条件不满足时明确报告未完成命令执行
+  安装，不自动提权、不退回 TrustedLocal，也不把仅文件功能称为交付完成。
+- 配置仍是启动快照；更新、主机/产物漂移、过期或缺失证据导致不可用，不能通过
+  CLI/环境变量/模型输出强制宣称 Supported。既有安装不被后台静默切换。
+
+##### 8.4 受信 Linux 资格材料
+
+P5 registry entry 的现有字段与 canonical codec 不变；新 row 的
+enforcementRuleSetDigest 必须等于 8.1 模板摘要，精确元组不得从旧 row 推导。
+新增 protected source 只读方法 `readLinuxSandboxQualificationEvidence(ref)`：
+输入只能是 registry 的 blob SHA-256 引用，输出规范 manifest 原字节或 unavailable，
+不能接受模型提供的文件路径、公钥或自定义 verifier。缺少该可选方法时不支持 V2。
+
+Linux manifest version=2 的规范键序为：version,providerId,providerVersion,
+capabilityRevision,osFamily,osBuild,profile,networkMode,networkPolicyCodecVersion,
+enforcementRuleSetDigest,validatedLimits,artifactHashes,cases。其余标量使用对应
+registry/domain 类型及 closed 值；validatedLimits 使用现有 SandboxPolicyLimitsV1
+的完整字段/顺序。artifactHashes 是按 UTF-8 role 唯一排序的
+`{role,sha256}` 数组；role 集合精确为 adapter-runtime,adapter-source,bwrap,
+qualification-control,relay-runtime,relay-source,systemctl,systemd-run。路径由安装产物
+和受信 host 配置固定，manifest 不携带任意可执行路径。每个摘要为实际完整文件
+字节的 SHA-256 小写值；不能仅哈希版本字符串。
+
+cases 是按 caseId UTF-8 排序的 `{caseId,verdict,evidenceRef}`，verdict 仅为 PASS，
+evidenceRef 必须是对应完整资格结果的 `blob:sha256:<lowerhex>`；没有自引用。
+必需 caseId 集合精确为：artifact-drift,cancel-before-spawn,cancel-running-tree,
+dns-mixed-denied,dns-rebinding,env-secret-absent,file-ro,file-rw,file-outside-denied,
+host-loopback-denied,namespace-escape-denied,output-bound,private-target-denied,
+process-limit,public-https,raw-network-denied,readonly-sharing,resource-cpu,
+resource-memory,same-namespace-tcp,socket-outside-denied,timeout-tree。
+Restricted 另必须包括 restricted-allow,restricted-deny；Disabled 不允许公共出站，
+其 public-https 项替换为 disabled-egress-denied。每项为真实控制测试，不接受模拟
+支持能力替代；完整 ordinary install/real-model/双 Workspace 验收另由第 7 节负责。
+
+manifest 摘要必须等于当前受信 registry row 的 qualificationEvidenceRef；
+manifest 的全部元组必须逐项相同。每次 capability 和 effect admission 核对当前
+source/high-water、主机及实际产物字节；请求限制不得超过经过测试的 validatedLimits。
+独立离线资格/安装流程可生成并明确安装材料，daemon/provider 自己不能签发 row，
+不能把运行中的 probe success 自动写成 Supported。Windows 信任/签名源保持不变。

@@ -141,7 +141,9 @@ export const makeCommandGatewayLive = (
               envelope.commandType,
             );
             if (inputContract !== undefined) {
-              const validated = inputContract.decodePayload(envelope.payload);
+              const validated = inputContract.decodeInternalPayload(
+                envelope.payload,
+              );
               if (!validated.ok) {
                 return yield* Effect.fail({
                   _tag: "InternalCommandContractDefect" as const,

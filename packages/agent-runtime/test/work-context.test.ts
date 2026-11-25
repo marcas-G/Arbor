@@ -90,5 +90,26 @@ describe("WorkContextAssembler", () => {
     expect([...assembled.contents.values()].join("\n")).toContain(
       "call claim_completion",
     );
+    expect([...assembled.contents.values()].join("\n")).toContain(
+      "use a plain Yielded wait",
+    );
+  });
+
+  it("does not expose the host filesystem path in the model resource context", () => {
+    const workspace = makeWorkspaceFixture({
+      workspaceId: "ws_00000000-0000-7000-8000-0000000000c4",
+      projectId: "prj_00000000-0000-7000-8000-0000000000c4",
+      sessionId: "ses_00000000-0000-7000-8000-0000000000c4",
+      resourcePath: "/srv/private/project",
+    });
+
+    const assembled = assembleWorkContext(workspace, null);
+    const boundary = assembled.contents.get(
+      "resource-boundary:ws_00000000-0000-7000-8000-0000000000c4:0",
+    );
+
+    expect(boundary).toContain('"executableFilesystemMount":"workspace"');
+    expect(boundary).toContain('"pathConvention":"mount-relative"');
+    expect(boundary).not.toContain("/srv/private/project");
   });
 });

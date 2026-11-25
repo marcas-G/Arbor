@@ -6,6 +6,7 @@
  */
 import type { Problem } from "@arbor/api-contracts";
 import { Button } from "../components/Button.js";
+import { cn } from "../lib/utils.js";
 import { ProblemCard } from "../problems/ProblemCard.js";
 
 export function UnauthorizedGate({
@@ -16,7 +17,12 @@ export function UnauthorizedGate({
   readonly onRelogin: () => void;
 }) {
   return (
-    <div className="arbor-unauthorized-gate">
+    <div
+      className={cn(
+        "arbor-unauthorized-gate",
+        "flex flex-col items-start gap-ui-3 max-w-[560px] m-[0_auto]",
+      )}
+    >
       <ProblemCard problem={problem} />
       <Button variant="primary" onClick={onRelogin}>
         重新登录

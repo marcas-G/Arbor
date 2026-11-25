@@ -142,6 +142,62 @@ describe("P4 shell tool + policy", () => {
     expect(JSON.parse(failed.observation.text).exitCode).toBe(7);
   });
 
+  it("normalizes a legacy absolute cwd only inside the admitted workspace", async () => {
+    const seen: Array<{ mount: string; path: string }> = [];
+    const runProcess: SandboxProcessRunner = ({ cwd }) => {
+      seen.push(cwd);
+      return Effect.succeed({
+        _tag: "Completed" as const,
+        exitCode: 0,
+        stdout: "ok",
+        stderr: "",
+        timedOut: false,
+        truncated: false,
+      });
+    };
+    const admittedSandbox = { rootPath: "/srv/project" } as never;
+
+    const inside = await Effect.runPromise(
+      diagnosticShellExecutor.execute({
+        intent: {
+          ...intent("echo hi"),
+          argumentsJson: JSON.stringify({
+            command: "echo hi",
+            cwd: { mount: "workspace", path: "/srv/project/src" },
+          }),
+        },
+        definition: {} as never,
+        context,
+        sandbox: admittedSandbox,
+        regions: [],
+        runProcess,
+      }),
+    );
+    const outside = await Effect.runPromise(
+      diagnosticShellExecutor.execute({
+        intent: {
+          ...intent("echo hi"),
+          argumentsJson: JSON.stringify({
+            command: "echo hi",
+            cwd: { mount: "workspace", path: "/srv/other" },
+          }),
+        },
+        definition: {} as never,
+        context,
+        sandbox: admittedSandbox,
+        regions: [],
+        runProcess,
+      }),
+    );
+
+    expect(inside.settlement._tag).toBe("Success");
+    expect(outside.settlement._tag).toBe("Success");
+    expect(seen).toEqual([
+      { mount: "workspace", path: "src" },
+      { mount: "workspace", path: "/srv/other" },
+    ]);
+  });
+
   it("projects the policy allow-list at the sandbox provider boundary", async () => {
     const previous = {
       LANG: process.env.LANG,

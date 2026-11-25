@@ -258,6 +258,40 @@ const ACCEPT_RESULT_SCHEMA = JSON.stringify({
   },
 });
 
+const ALLOCATE_WORKSPACE_SANDBOX_SCHEMA = JSON.stringify({
+  type: "object",
+  additionalProperties: false,
+  required: ["targetWorkspaceRef", "profile", "networkPolicy", "expiresAt"],
+  properties: {
+    targetWorkspaceRef: {
+      type: "string",
+      minLength: 1,
+      description:
+        "Exact direct-child ref returned by list_workspaces/read_workspace.",
+    },
+    profile: { enum: ["ReadOnly", "WorkspaceWrite"] },
+    networkPolicy: {
+      type: "object",
+      additionalProperties: false,
+      required: ["version", "mode", "destinations"],
+      properties: {
+        version: { const: 1 },
+        mode: { enum: ["Disabled", "Restricted", "Enabled"] },
+        destinations: {
+          type: "array",
+          maxItems: 64,
+          items: { type: "string" },
+        },
+      },
+    },
+    expiresAt: {
+      type: ["string", "null"],
+      description:
+        "Explicit expiry, or null for persistent authority; cannot outlive the Parent's authority.",
+    },
+  },
+});
+
 const UPDATE_PLAN_SCHEMA = JSON.stringify({
   type: "object",
   additionalProperties: false,
@@ -641,6 +675,16 @@ export const controlToolDefinitions =
         schemaJson: ACCEPT_RESULT_SCHEMA,
         version: "1",
         requiredCapability: "agent:accept-result",
+        legacyNames: [],
+      },
+      {
+        stableId: "core.control.allocate-workspace-sandbox",
+        name: "allocate_workspace_sandbox",
+        description:
+          "Explicitly allocate execution-environment capabilities to an active direct Child within this Workspace's current authorization. Does not share resources, authorize beyond the Parent ceiling, or undo a human revocation. Runtime binds provider, Workspace identities and revisions.",
+        schemaJson: ALLOCATE_WORKSPACE_SANDBOX_SCHEMA,
+        version: "1",
+        requiredCapability: "agent:allocate-workspace-sandbox",
         legacyNames: [],
       },
       {

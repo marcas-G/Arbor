@@ -504,7 +504,13 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
         let latestToolResult = "<none>";
         const fixture = await startProductionFixture({
           admitWorkspaceDirectory: true,
-          daemonEnvironment: { ARBOR_AH19_STARTUP_TRACE: "1" },
+          daemonEnvironment: {
+            ARBOR_AH19_STARTUP_TRACE: "1",
+            // Keep the seed daemon from dispatching the newly approved Work
+            // before the test kills it; the restarted daemon still gets a
+            // bounded scheduler tick instead of inheriting a live seed lease.
+            ARBOR_TICK_INTERVAL_MS: "10000",
+          },
           preserveDirectoryOnStop: true,
           reply: (call) => {
             const context = JSON.stringify(call.messages);
@@ -514,7 +520,11 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
                 .filter((name): name is string => name !== undefined),
             );
             const targetWorkTurn = available.has("read");
-            if (context.includes(marker) && targetWorkTurn) {
+            // The Work objective is a canonical instruction in the provider
+            // request. Identify this synthetic provider turn by its exact
+            // executable Work surface rather than requiring the objective to
+            // be duplicated in the captured chat-message subset.
+            if (targetWorkTurn) {
               if (!probeArmed) {
                 return { _tag: "HttpError", status: 503 };
               }
@@ -557,7 +567,7 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
                 },
               };
             }
-            if (context.includes(marker) && targetWorkTurn) {
+            if (targetWorkTurn) {
               const expectedFailureResult = call.messages.some(
                 (message) =>
                   message.role === "tool" &&
@@ -731,6 +741,11 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
         // failure (never a ToolCall/P4 effect); killing it now lets recovery
         // redispatch the same Open Work under the selected probe.
         await fixture.crash();
+        // A Work execution may have acquired its normal 30-second lease just
+        // before the seed daemon stopped. Recovery is intentionally fenced
+        // until that lease expires; wait for the durable takeover window
+        // instead of treating the live old-generation lease as a test failure.
+        await new Promise((resolveWait) => setTimeout(resolveWait, 31_000));
         activePhase = "seed-daemon-exited";
         const fixturePhase = fixturePhases.get(fixture);
         if (fixturePhase !== undefined)
@@ -739,7 +754,10 @@ describe("AH7 AgentLoop and P4 tool intent process crash", () => {
         const targetProviderCallStart = fixture.providerCalls.length;
         await fixture.restart({
           entry: crashChild,
-          daemonEnvironment: { ARBOR_AH_BOUNDARY: boundary },
+          daemonEnvironment: {
+            ARBOR_AH_BOUNDARY: boundary,
+            ARBOR_TICK_INTERVAL_MS: "1000",
+          },
         });
         activePhase = "probe-daemon-ready";
         if (fixturePhase !== undefined)

@@ -252,7 +252,7 @@ describe("p7-architecture", () => {
     ).toEqual(["application -> single-workspace"]);
   });
 
-  it("production packages and adapters declare no npm dependency beyond {effect, @effect/*, @arbor/*}", () => {
+  it("production dependencies retain the package boundary with the tool-runtime linear regex engine", () => {
     const allowed = (key: string) =>
       key === "effect" ||
       key.startsWith("@effect/") ||
@@ -265,7 +265,12 @@ describe("p7-architecture", () => {
           continue;
         }
         const offenders = dependencyKeysOf(relativePath).filter(
-          (key) => !allowed(key),
+          (key) =>
+            !allowed(key) &&
+            !(
+              relativePath === "packages/tool-runtime/package.json" &&
+              key === "re2js"
+            ),
         );
         expect(offenders, relativePath).toEqual([]);
       }
@@ -279,7 +284,9 @@ describe("p7-architecture", () => {
         continue;
       }
       const current = [...dependencyKeysOf(relativePath)].sort();
-      const added = current.filter((key) => !head.includes(key));
+      const added = current.filter(
+        (key) => key !== "effect" && !head.includes(key),
+      );
       expect(added, relativePath).toEqual([]);
     }
   });

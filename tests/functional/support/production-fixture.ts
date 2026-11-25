@@ -12,6 +12,7 @@ import {
   stopChildBounded as stopChild,
   waitForDaemonListening as waitForNonceBoundPort,
 } from "./daemon-process-lifecycle.js";
+import { writeFunctionalProviderConfig } from "./provider-config-isolation.js";
 import { safeHandshakeFailure } from "./safe-handshake-failure.js";
 import {
   cloneFunctionalCurrentSchemaDatabase,
@@ -711,6 +712,12 @@ export const startProductionFixture = async (input: {
       ...input.daemonEnvironment,
       ...override?.daemonEnvironment,
     };
+    if (daemonEnv.ARBOR_CONFIG === join(directory, "no-provider-config.json")) {
+      daemonEnv.ARBOR_CONFIG = writeFunctionalProviderConfig(
+        directory,
+        daemonEnv,
+      );
+    }
     lastWebStaticIndex = existsSync(
       join(
         resolve(directory, daemonEnv.ARBOR_WEB_DIST ?? WEB_DIST),
@@ -960,6 +967,14 @@ export const startProductionFixture = async (input: {
         ...input.daemonEnvironment,
         ...options.daemonEnvironment,
       };
+      if (
+        daemonEnv.ARBOR_CONFIG === join(directory, "no-provider-config.json")
+      ) {
+        daemonEnv.ARBOR_CONFIG = writeFunctionalProviderConfig(
+          directory,
+          daemonEnv,
+        );
+      }
       if (input.admitWorkspaceDirectory === true) {
         daemonEnv.ARBOR_PROJECT_ROOT = workspaceDirectory;
       } else {

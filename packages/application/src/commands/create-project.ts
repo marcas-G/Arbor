@@ -6,6 +6,7 @@ import {
   err,
   normalizeProjectName,
   ok,
+  Principal,
   type ProjectId,
   type ProjectPolicy,
   parse,
@@ -26,6 +27,7 @@ import type {
   SessionRepositoryService,
   WorkspaceRepositoryService,
   WorkspaceResourceActivationStoreService,
+  WorkspaceSandboxAuthorizationInitializationPortService,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { commandErr } from "../command-result.js";
@@ -67,6 +69,7 @@ export interface CreateProjectResult {
   readonly projectId: ProjectId;
   readonly rootWorkspaceId: WorkspaceId;
   readonly primarySessionId: SessionId;
+  readonly workspaceAuthorization?: import("@arbor/domain").WorkspaceSandboxAuthorization;
 }
 
 export interface CreateProjectDependencies {
@@ -75,6 +78,7 @@ export interface CreateProjectDependencies {
   readonly sessions: SessionRepositoryService;
   readonly projectResourceProfiles?: ProjectResourceProfilePortService;
   readonly activations?: WorkspaceResourceActivationStoreService;
+  readonly workspaceAuthorizationInitialization?: WorkspaceSandboxAuthorizationInitializationPortService;
 }
 
 export const makeCreateProjectHandler = (
@@ -108,6 +112,21 @@ export const makeCreateProjectHandler = (
           });
         }
         trustedAddresses = [selected.value.canonicalAddress];
+        if (
+          payload.rootWorkspace.resourceSelection.resourceProfileRef.startsWith(
+            "directory-",
+          ) &&
+          (String(envelope.actor) !== "user:local" ||
+            dependencies.projects.isDirectoryLinked === undefined ||
+            (yield* dependencies.projects.isDirectoryLinked(
+              selected.value.canonicalAddress.path,
+            )))
+        ) {
+          return commandErr({
+            _tag: "ProjectResourceUnavailable",
+            commandId: envelope.commandId,
+          });
+        }
       }
       const resourceBoundary = {
         basisResponsibilityRevision:
@@ -167,6 +186,27 @@ export const makeCreateProjectHandler = (
           contextEpoch: payload.primarySession.contextEpoch,
         }),
       );
+      const initialization =
+        dependencies.workspaceAuthorizationInitialization === undefined
+          ? undefined
+          : yield* dependencies.workspaceAuthorizationInitialization.initialize(
+              {
+                projectId: envelope.projectId,
+                workspaceId: payload.rootWorkspaceId,
+                commandId: envelope.commandId,
+                actorPrincipal: parse(Principal)(String(envelope.actor)),
+                resourceBoundaryRevision,
+                workspacePolicyRevision:
+                  payload.rootWorkspace.workspacePolicyRevision,
+                recordedAt: envelope.issuedAt,
+                providerId: "linux-bwrap",
+                networkPolicy: {
+                  version: 1,
+                  mode: "Enabled",
+                  destinations: [],
+                },
+              },
+            );
 
       const activationEvent: PendingDomainEvent | undefined =
         payload.rootWorkspace.resourceSelection._tag === "Profile"
@@ -236,6 +276,25 @@ export const makeCreateProjectHandler = (
           },
         },
         ...(activationEvent === undefined ? [] : [activationEvent]),
+        ...(initialization?._tag === "Initialized"
+          ? [
+              {
+                projectId: envelope.projectId,
+                eventType: "WorkspaceSandboxAuthorizationChanged" as const,
+                eventVersion: 1,
+                occurredAt: envelope.issuedAt,
+                aggregateRef: payload.rootWorkspaceId,
+                actor: envelope.actor,
+                causedByCommandId: envelope.commandId,
+                payload: {
+                  workspaceId: payload.rootWorkspaceId,
+                  authorizationRevision:
+                    initialization.authorization.authorizationRevision,
+                  state: initialization.authorization.state,
+                },
+              },
+            ]
+          : []),
       ];
 
       return ok({
@@ -243,6 +302,9 @@ export const makeCreateProjectHandler = (
           projectId: envelope.projectId,
           rootWorkspaceId: payload.rootWorkspaceId,
           primarySessionId: payload.primarySession.sessionId,
+          ...(initialization?._tag === "Initialized"
+            ? { workspaceAuthorization: initialization.authorization }
+            : {}),
         },
         events,
       });

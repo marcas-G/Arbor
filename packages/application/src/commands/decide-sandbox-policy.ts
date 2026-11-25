@@ -1,6 +1,7 @@
 import type {
   CommandId,
   EffectivePolicySummaryV1,
+  EffectivePolicySummaryV2,
   ExecutionEpisodeBinding,
   ExecutionId,
   ProjectId,
@@ -10,11 +11,14 @@ import type {
 } from "@arbor/domain";
 import {
   decodeEffectivePolicySummaryV1,
+  decodeEffectivePolicySummaryV2,
   decodeSandboxNetworkPolicySelectionV1,
   encodeEffectivePolicySummaryV1,
+  encodeEffectivePolicySummaryV2,
   encodeExecutionEpisodeBinding,
   encodeNetworkPolicyV1,
   encodeSandboxPolicyDecisionCommittedInternalV1,
+  encodeSandboxPolicyDecisionCommittedInternalV2,
   executionEpisode,
   isIsoTimestamp,
   type SandboxPolicyPreconditionsV1,
@@ -95,14 +99,23 @@ export type DecideSandboxPolicyPayload = DecideSandboxPolicyPayloadBase &
       }
   );
 
+/** Trusted host inputs needed for preparation, independent of human grant provenance. */
+export interface SandboxPolicyPreparationAuthority {
+  readonly commandId: CommandId;
+  readonly authorityBundleRevision: number;
+  readonly authorityBundleDigest: string;
+  readonly operatorConfigRevision: number;
+  readonly operatorConfigDigest: string;
+}
+
 export interface DecideSandboxPolicyPreparation {
   readonly prepare: (
     payload: DecideSandboxPolicyPayload,
-    authority: Extract<
-      import("../authority.js").CommandAuthorityFact,
-      { readonly _tag: "SandboxPolicyDecisionAuthority" }
-    >,
-  ) => Effect.Effect<EffectivePolicySummaryV1, TransactionOperationalFailure>;
+    authority: SandboxPolicyPreparationAuthority,
+  ) => Effect.Effect<
+    EffectivePolicySummaryV1 | EffectivePolicySummaryV2,
+    TransactionOperationalFailure
+  >;
   /** Re-read exact Workspace/resource/mount/authority inputs under the P1
    * transaction. This is deliberately separate from provider probing. */
   readonly currentPreconditions: (
@@ -131,7 +144,7 @@ export interface DecideSandboxPolicyPreparation {
 type PreparedSandboxPolicyDecision =
   | {
       readonly _tag: "Ready";
-      readonly summary: EffectivePolicySummaryV1;
+      readonly summary: EffectivePolicySummaryV1 | EffectivePolicySummaryV2;
     }
   | {
       readonly _tag: "Rejected";
@@ -141,7 +154,7 @@ type PreparedSandboxPolicyDecision =
       >;
     };
 
-const decodePreparedSandboxPolicyDecision = (
+export const decodePreparedSandboxPolicyDecision = (
   value: unknown,
 ): PreparedSandboxPolicyDecision | undefined => {
   if (typeof value !== "object" || value === null || Array.isArray(value))
@@ -170,9 +183,13 @@ const decodePreparedSandboxPolicyDecision = (
     record.summary !== null &&
     !Array.isArray(record.summary)
   ) {
+    const summary =
+      decodeEffectivePolicySummaryV2(record.summary, sha256Hex) ??
+      decodeEffectivePolicySummaryV1(record.summary, sha256Hex);
+    if (summary === undefined) return undefined;
     return {
       _tag: "Ready",
-      summary: record.summary as EffectivePolicySummaryV1,
+      summary,
     };
   }
   return undefined;
@@ -208,7 +225,7 @@ const sameEpisode = (
 ): boolean =>
   encodeExecutionEpisodeBinding(left) === encodeExecutionEpisodeBinding(right);
 
-const preconditionMismatch = (
+export const sandboxPolicyPreconditionMismatch = (
   payload: DecideSandboxPolicyPayload,
   expectedPolicyRevision: number,
   current: SandboxPolicyPreconditionsV1,
@@ -256,6 +273,82 @@ const preconditionMismatch = (
   ) {
     return stale("ProviderRegistryRevision");
   }
+  return undefined;
+};
+
+/** Revalidate prepared host facts under the Gateway transaction. Preparation
+ * never itself supplies authority; both provenance paths share these checks. */
+export const sandboxPolicySnapshotMismatch = (
+  payload: DecideSandboxPolicyPayload,
+  currentRevision: number,
+  currentPreconditions: SandboxPolicyPreconditionsV1,
+  summary: EffectivePolicySummaryV1 | EffectivePolicySummaryV2,
+): CommandRejection | undefined => {
+  const decodedSelection = decodeSandboxNetworkPolicySelectionV1(
+    payload.networkPolicy,
+  );
+  const snapshot =
+    summary.version === 2
+      ? decodeEffectivePolicySummaryV2(summary, sha256Hex)
+      : decodeEffectivePolicySummaryV1(summary, sha256Hex);
+  if (
+    decodedSelection === undefined ||
+    snapshot === undefined ||
+    snapshot.projectId !== payload.projectId ||
+    snapshot.workspaceId !== payload.workspaceId ||
+    snapshot.executionId !== payload.executionId ||
+    !sameEpisode(snapshot.episodeBinding, payload.episodeBinding) ||
+    snapshot.policyRevision !== currentRevision + 1 ||
+    snapshot.expiresAt !== payload.decisionExpiresAt ||
+    (snapshot.kind === "OsEnforced"
+      ? decodedSelection.kind !== "OsEnforced" ||
+        snapshot.profile !== payload.profile ||
+        snapshot.providerId !== payload.providerId ||
+        payload.providerVersion === undefined ||
+        payload.capabilityRevision === undefined ||
+        snapshot.providerVersion !== payload.providerVersion ||
+        snapshot.capabilityRevision !== payload.capabilityRevision ||
+        encodeNetworkPolicyV1(snapshot.networkPolicy) !==
+          encodeNetworkPolicyV1(decodedSelection.policy)
+      : decodedSelection.kind !== "TrustedLocalUnconfinedV1" ||
+        payload.profile !== "FullAccess" ||
+        payload.providerId !== "TrustedLocal")
+  )
+    return { _tag: "SandboxAuthorityUnavailable" };
+  if (snapshot.workspaceRevision !== currentPreconditions.workspaceRevision)
+    return stale("WorkspaceRevision");
+  if (
+    snapshot.resourceBoundaryRevision !==
+    currentPreconditions.resourceBoundaryRevision
+  )
+    return stale("ResourceBoundaryRevision");
+  if (
+    snapshot.sandboxHandleBindingDigest !==
+    currentPreconditions.sandboxHandleBindingDigest
+  )
+    return stale("SandboxHandleBindingDigest");
+  if (
+    snapshot.authorityBundleRevision !==
+      currentPreconditions.authorityBundleRevision ||
+    snapshot.authorityBundleDigest !==
+      currentPreconditions.authorityBundleDigest
+  )
+    return stale("AuthorityBundleRevision");
+  if (
+    snapshot.operatorConfigRevision !==
+      currentPreconditions.operatorConfigRevision ||
+    snapshot.operatorConfigDigest !== currentPreconditions.operatorConfigDigest
+  )
+    return stale("OperatorConfigRevision");
+  if (
+    snapshot.kind === "OsEnforced" &&
+    (currentPreconditions.kind !== "OsEnforced" ||
+      snapshot.providerRegistryRevision !==
+        currentPreconditions.providerRegistryRevision ||
+      snapshot.providerRegistryDigest !==
+        currentPreconditions.providerRegistryDigest)
+  )
+    return stale("ProviderRegistryRevision");
   return undefined;
 };
 
@@ -403,7 +496,7 @@ export const makeDecideSandboxPolicyHandler = (
         : 0;
       const currentPreconditions =
         yield* dependencies.preparation.currentPreconditions(payload);
-      const mismatch = preconditionMismatch(
+      const mismatch = sandboxPolicyPreconditionMismatch(
         payload,
         currentRevision,
         currentPreconditions,
@@ -429,87 +522,53 @@ export const makeDecideSandboxPolicyHandler = (
       )
         return commandErr({ _tag: "DecisionExpiryInvalid" });
 
+      const snapshotMismatch = sandboxPolicySnapshotMismatch(
+        payload,
+        currentRevision,
+        currentPreconditions,
+        preparedDecision.summary,
+      );
+      if (snapshotMismatch !== undefined) return commandErr(snapshotMismatch);
+      const snapshot = preparedDecision.summary;
       const decodedSelection = decodeSandboxNetworkPolicySelectionV1(
         payload.networkPolicy,
       );
-      const snapshot = decodeEffectivePolicySummaryV1(
-        preparedDecision.summary,
-        sha256Hex,
-      );
-      if (
-        decodedSelection === undefined ||
-        snapshot === undefined ||
-        snapshot.projectId !== payload.projectId ||
-        snapshot.workspaceId !== payload.workspaceId ||
-        snapshot.executionId !== payload.executionId ||
-        !sameEpisode(snapshot.episodeBinding, payload.episodeBinding) ||
-        snapshot.policyRevision !== currentRevision + 1 ||
-        snapshot.expiresAt !== payload.decisionExpiresAt ||
-        (snapshot.kind === "OsEnforced"
-          ? decodedSelection.kind !== "OsEnforced" ||
-            snapshot.profile !== payload.profile ||
-            snapshot.providerId !== payload.providerId ||
-            payload.providerVersion === undefined ||
-            payload.capabilityRevision === undefined ||
-            snapshot.providerVersion !== payload.providerVersion ||
-            snapshot.capabilityRevision !== payload.capabilityRevision ||
-            encodeNetworkPolicyV1(snapshot.networkPolicy) !==
-              encodeNetworkPolicyV1(decodedSelection.policy)
-          : decodedSelection.kind !== "TrustedLocalUnconfinedV1" ||
-            payload.profile !== "FullAccess" ||
-            payload.providerId !== "TrustedLocal")
-      )
+      if (decodedSelection === undefined)
         return commandErr({ _tag: "SandboxAuthorityUnavailable" });
-      if (snapshot.workspaceRevision !== currentPreconditions.workspaceRevision)
-        return commandErr(stale("WorkspaceRevision"));
-      if (
-        snapshot.resourceBoundaryRevision !==
-        currentPreconditions.resourceBoundaryRevision
-      )
-        return commandErr(stale("ResourceBoundaryRevision"));
-      if (
-        snapshot.sandboxHandleBindingDigest !==
-        currentPreconditions.sandboxHandleBindingDigest
-      )
-        return commandErr(stale("SandboxHandleBindingDigest"));
-      if (
-        snapshot.authorityBundleRevision !==
-          currentPreconditions.authorityBundleRevision ||
-        snapshot.authorityBundleDigest !==
-          currentPreconditions.authorityBundleDigest
-      )
-        return commandErr(stale("AuthorityBundleRevision"));
-      if (
-        snapshot.operatorConfigRevision !==
-          currentPreconditions.operatorConfigRevision ||
-        snapshot.operatorConfigDigest !==
-          currentPreconditions.operatorConfigDigest
-      )
-        return commandErr(stale("OperatorConfigRevision"));
-      if (
-        snapshot.kind === "OsEnforced" &&
-        (currentPreconditions.kind !== "OsEnforced" ||
-          snapshot.providerRegistryRevision !==
-            currentPreconditions.providerRegistryRevision ||
-          snapshot.providerRegistryDigest !==
-            currentPreconditions.providerRegistryDigest)
-      )
-        return commandErr(stale("ProviderRegistryRevision"));
 
-      const policyDigest = sha256Hex(encodeEffectivePolicySummaryV1(snapshot));
-      const result = {
-        version: 1 as const,
-        commandId: envelope.commandId as CommandId,
-        projectId: payload.projectId,
-        workspaceId: payload.workspaceId,
-        executionId: payload.executionId,
-        episodeBinding: payload.episodeBinding,
-        policyRevision: snapshot.policyRevision,
-        policyDigest,
-        effectivePolicySnapshot: snapshot,
-      };
+      const policyDigest = sha256Hex(
+        snapshot.version === 2
+          ? encodeEffectivePolicySummaryV2(snapshot)
+          : encodeEffectivePolicySummaryV1(snapshot),
+      );
+      const result =
+        snapshot.version === 2
+          ? {
+              version: 2 as const,
+              commandId: envelope.commandId as CommandId,
+              projectId: payload.projectId,
+              workspaceId: payload.workspaceId,
+              executionId: payload.executionId,
+              episodeBinding: payload.episodeBinding,
+              policyRevision: snapshot.policyRevision,
+              policyDigest,
+              effectivePolicySnapshot: snapshot,
+            }
+          : {
+              version: 1 as const,
+              commandId: envelope.commandId as CommandId,
+              projectId: payload.projectId,
+              workspaceId: payload.workspaceId,
+              executionId: payload.executionId,
+              episodeBinding: payload.episodeBinding,
+              policyRevision: snapshot.policyRevision,
+              policyDigest,
+              effectivePolicySnapshot: snapshot,
+            };
       const canonicalResult =
-        encodeSandboxPolicyDecisionCommittedInternalV1(result);
+        result.version === 2
+          ? encodeSandboxPolicyDecisionCommittedInternalV2(result)
+          : encodeSandboxPolicyDecisionCommittedInternalV1(result);
       if (new TextEncoder().encode(canonicalResult).byteLength > 65_536)
         return commandErr({ _tag: "SandboxPolicySummaryTooLarge" });
       const decision = {

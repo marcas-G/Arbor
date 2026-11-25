@@ -15,11 +15,13 @@ import {
   decodeEffectivePolicySummaryV1,
   ExecutionId,
   encodeSandboxEnforcementRuleSetV1,
+  encodeSandboxEnforcementRuleSetV2,
   encodeWindowsNativeManifestSignatureV1,
   Principal,
   ProjectId,
   parse,
   sandboxEnforcementRuleSetV1ForProvider,
+  sandboxEnforcementRuleSetV2ForProvider,
   WorkspaceId,
 } from "@arbor/domain";
 import type {
@@ -468,97 +470,183 @@ const fixture = (
 };
 
 describe("production sandbox decision materializer", () => {
-  it("selects one exact Supported OS tuple only after V3 signed evidence verifies", async () => {
-    const signed = makeSignedWindowsAuthority();
-    const { preparation, transaction } = fixture(
-      undefined,
-      resolver,
-      signed.snapshot,
-      signed.io,
-    );
-    const request = osPayload({
-      providerId: signed.row.providerId,
-      providerVersion: signed.row.providerVersion,
-      capabilityRevision: signed.row.capabilityRevision,
-      expectedProviderRegistryRevision: 3,
-      expectedProviderRegistryDigest: "3".repeat(64),
-    });
-    const prepared = await Effect.runPromise(
-      preparation.prepare(request, authority),
-    );
-    expect(prepared).toMatchObject({
-      kind: "OsEnforced",
-      providerId: signed.row.providerId,
-      providerVersion: signed.row.providerVersion,
-      capabilityRevision: signed.row.capabilityRevision,
-      osFamily: signed.host.osFamily,
-      osBuild: signed.host.osBuild,
-      qualificationEvidenceRef: signed.row.qualificationEvidenceRef,
-      providerRegistryRevision: 3,
-      providerRegistryDigest: "3".repeat(64),
-      networkPolicy: request.networkPolicy.policy,
-    });
-    expect(decodeEffectivePolicySummaryV1(prepared, hash)).toEqual(prepared);
-    expect(JSON.stringify(prepared)).not.toContain("/repo/workspace");
-    const current = await Effect.runPromise(
-      transaction.transact(preparation.currentPreconditions(request)),
-    );
-    expect(current.kind).toBe("OsEnforced");
-    expect(current.sandboxHandleBindingDigest).toBe(
-      prepared.sandboxHandleBindingDigest,
-    );
-  });
-
-  it("rejects absent, duplicate, non-Supported, and mismatched exact tuples", async () => {
-    const signed = makeSignedWindowsAuthority();
-    const exactRow = signed.row;
-    const request = osPayload({
-      providerId: signed.row.providerId,
-      providerVersion: signed.row.providerVersion,
-      capabilityRevision: signed.row.capabilityRevision,
-    });
-    const cases = [
-      [],
-      [{ ...exactRow, status: "Experimental" as const }],
-      [exactRow, { ...exactRow }],
-      [{ ...exactRow, qualificationEvidenceRef: null }],
-      [{ ...exactRow, providerVersion: "other-version" }],
-    ];
-    for (const entries of cases) {
-      const snapshot = {
-        ...signed.snapshot,
-        bundle: {
-          ...signed.snapshot.bundle,
-          providerRegistry: { version: 1 as const, revision: 3, entries },
+  it.skipIf(process.platform !== "linux")(
+    "materializes the installed Linux V2 authority without requiring Windows V3 trust",
+    async () => {
+      const host = sandboxPolicyCurrentHostV1();
+      const rules = sandboxEnforcementRuleSetV2ForProvider("linux-bwrap");
+      if (host === undefined || rules === undefined)
+        throw new Error("Linux rules unavailable");
+      const row = {
+        providerId: "linux-bwrap",
+        providerVersion: "linux-v2",
+        capabilityRevision: 1,
+        osFamily: "Linux" as const,
+        osBuild: host.osBuild,
+        tuple: {
+          profile: "ReadOnly" as const,
+          networkMode: "Enabled" as const,
+          networkPolicyCodecVersion: 1 as const,
+          enforcementRuleSetDigest: hash(
+            encodeSandboxEnforcementRuleSetV2(rules),
+          ),
         },
-      } satisfies SandboxAuthorityBundleSnapshotCurrent;
-      const { preparation } = fixture(undefined, resolver, snapshot, signed.io);
+        status: "Supported" as const,
+        qualificationEvidenceRef: `blob:sha256:${"a".repeat(64)}`,
+      };
+      const snapshot = {
+        ...authorityBundleSnapshot,
+        bundle: {
+          ...authorityBundleSnapshot.bundle,
+          providerRegistry: {
+            version: 1 as const,
+            revision: 3,
+            entries: [row],
+          },
+        },
+      };
+      const request = osPayload({
+        providerId: row.providerId,
+        providerVersion: row.providerVersion,
+        capabilityRevision: row.capabilityRevision,
+        networkPolicy: {
+          kind: "OsEnforced",
+          policy: { version: 1, mode: "Enabled", destinations: [] },
+        },
+      });
+      const { preparation } = fixture(undefined, resolver, snapshot);
+      await expect(
+        Effect.runPromise(preparation.prepare(request, authority)),
+      ).resolves.toMatchObject({
+        version: 2,
+        kind: "OsEnforced",
+        providerId: row.providerId,
+        qualificationEvidenceRef: row.qualificationEvidenceRef,
+        osBuild: host.osBuild,
+      });
+      const duplicate = {
+        ...snapshot,
+        bundle: {
+          ...snapshot.bundle,
+          providerRegistry: {
+            ...snapshot.bundle.providerRegistry,
+            entries: [row, row],
+          },
+        },
+      };
+      await expect(
+        Effect.runPromise(
+          fixture(undefined, resolver, duplicate).preparation.prepare(
+            request,
+            authority,
+          ),
+        ),
+      ).rejects.toMatchObject({ _tag: "TransactionOperationalFailure" });
+    },
+  );
+
+  it.skipIf(process.platform !== "win32")(
+    "selects one exact Supported OS tuple only after V3 signed evidence verifies",
+    async () => {
+      const signed = makeSignedWindowsAuthority();
+      const { preparation, transaction } = fixture(
+        undefined,
+        resolver,
+        signed.snapshot,
+        signed.io,
+      );
+      const request = osPayload({
+        providerId: signed.row.providerId,
+        providerVersion: signed.row.providerVersion,
+        capabilityRevision: signed.row.capabilityRevision,
+        expectedProviderRegistryRevision: 3,
+        expectedProviderRegistryDigest: "3".repeat(64),
+      });
+      const prepared = await Effect.runPromise(
+        preparation.prepare(request, authority),
+      );
+      expect(prepared).toMatchObject({
+        kind: "OsEnforced",
+        providerId: signed.row.providerId,
+        providerVersion: signed.row.providerVersion,
+        capabilityRevision: signed.row.capabilityRevision,
+        osFamily: signed.host.osFamily,
+        osBuild: signed.host.osBuild,
+        qualificationEvidenceRef: signed.row.qualificationEvidenceRef,
+        providerRegistryRevision: 3,
+        providerRegistryDigest: "3".repeat(64),
+        networkPolicy: request.networkPolicy.policy,
+      });
+      expect(decodeEffectivePolicySummaryV1(prepared, hash)).toEqual(prepared);
+      expect(JSON.stringify(prepared)).not.toContain("/repo/workspace");
+      const current = await Effect.runPromise(
+        transaction.transact(preparation.currentPreconditions(request)),
+      );
+      expect(current.kind).toBe("OsEnforced");
+      expect(current.sandboxHandleBindingDigest).toBe(
+        prepared.sandboxHandleBindingDigest,
+      );
+    },
+  );
+
+  it.skipIf(process.platform !== "win32")(
+    "rejects absent, duplicate, non-Supported, and mismatched exact tuples",
+    async () => {
+      const signed = makeSignedWindowsAuthority();
+      const exactRow = signed.row;
+      const request = osPayload({
+        providerId: signed.row.providerId,
+        providerVersion: signed.row.providerVersion,
+        capabilityRevision: signed.row.capabilityRevision,
+      });
+      const cases = [
+        [],
+        [{ ...exactRow, status: "Experimental" as const }],
+        [exactRow, { ...exactRow }],
+        [{ ...exactRow, qualificationEvidenceRef: null }],
+        [{ ...exactRow, providerVersion: "other-version" }],
+      ];
+      for (const entries of cases) {
+        const snapshot = {
+          ...signed.snapshot,
+          bundle: {
+            ...signed.snapshot.bundle,
+            providerRegistry: { version: 1 as const, revision: 3, entries },
+          },
+        } satisfies SandboxAuthorityBundleSnapshotCurrent;
+        const { preparation } = fixture(
+          undefined,
+          resolver,
+          snapshot,
+          signed.io,
+        );
+        await expect(
+          Effect.runPromise(preparation.prepare(request, authority)),
+        ).rejects.toMatchObject({
+          _tag: "TransactionOperationalFailure",
+        });
+      }
+      const paths = fixedWindowsNativeProductionArtifactPaths();
+      const badSignatureIo: WindowsNativeQualificationIo = {
+        ...signed.io,
+        read: (path) =>
+          path === paths.signature
+            ? Buffer.from("tampered signature")
+            : signed.io.read(path),
+      };
+      const { preparation } = fixture(
+        undefined,
+        resolver,
+        signed.snapshot,
+        badSignatureIo,
+      );
       await expect(
         Effect.runPromise(preparation.prepare(request, authority)),
       ).rejects.toMatchObject({
         _tag: "TransactionOperationalFailure",
       });
-    }
-    const paths = fixedWindowsNativeProductionArtifactPaths();
-    const badSignatureIo: WindowsNativeQualificationIo = {
-      ...signed.io,
-      read: (path) =>
-        path === paths.signature
-          ? Buffer.from("tampered signature")
-          : signed.io.read(path),
-    };
-    const { preparation } = fixture(
-      undefined,
-      resolver,
-      signed.snapshot,
-      badSignatureIo,
-    );
-    await expect(
-      Effect.runPromise(preparation.prepare(request, authority)),
-    ).rejects.toMatchObject({
-      _tag: "TransactionOperationalFailure",
-    });
-  });
+    },
+  );
 
   it("binds P1 preparation to complete current V3 bundle revision/digest", async () => {
     const v3 = {

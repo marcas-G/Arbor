@@ -101,6 +101,18 @@ it("associates a held correction with its body and releases it from finally afte
         headers: { "content-type": "application/json" },
         body: requestBody,
       });
+      const headersBeforeRelease = await Promise.race([
+        pendingFetch,
+        new Promise<undefined>((resolveTimeout) =>
+          setTimeout(() => resolveTimeout(undefined), 500),
+        ),
+      ]);
+      expect(headersBeforeRelease?.status).toBe(200);
+      let bodyDelivered = false;
+      const pendingBody = headersBeforeRelease?.text().then((text) => {
+        bodyDelivered = true;
+        return text;
+      });
       heldRequest = await waitForHeldProviderResponse(run, {
         afterSequence: 0,
         deadlineAt: Date.now() + 1_000,
@@ -126,6 +138,8 @@ it("associates a held correction with its body and releases it from finally afte
       expect(JSON.stringify(heldRequest.request)).toContain(marker);
       expect(complete?.sequence).toBe(heldRequest.sequence);
       expect(complete?.responseBodyBase64).toBeDefined();
+      expect(bodyDelivered).toBe(false);
+      pendingFetch = pendingBody?.then((body) => new Response(body));
       throw new Error("synthetic assertion failure while response is held");
     } catch (error) {
       observedError = error;

@@ -5,13 +5,13 @@ import { useRef, useState } from "react";
 import { Button } from "../../components/Button.js";
 import { Card } from "../../components/Card.js";
 import { Field } from "../../components/Field.js";
+import { cn } from "../../lib/utils.js";
 import { Mono } from "../../views/shared.js";
 import { retryVerificationSchema } from "../schemas.js";
 import type { CommandReceiptView } from "../submitCommand.js";
 import { useCommandSubmission } from "../useCommandSubmission.js";
 import { uuidv7 } from "../uuid7.js";
 import { FormFeedback } from "./FormFeedback.js";
-import "./forms.css";
 
 export function RetryVerificationForm({
   actor,
@@ -64,13 +64,13 @@ export function RetryVerificationForm({
   return (
     <Card title="重新启动验证">
       <form
-        className="arbor-command-form"
+        className={cn("arbor-command-form", "flex flex-col gap-ui-3")}
         onSubmit={doSubmit}
         aria-label="重新启动验证"
       >
         <p>
           <Mono>{workId}</Mono> · <Mono>{verificationId}</Mono>{" "}
-          <span className="arbor-command-static">
+          <span className={cn("arbor-command-static", "text-subtle")}>
             revision {expectedWorkRevision}
           </span>
         </p>
@@ -86,7 +86,14 @@ export function RetryVerificationForm({
           }}
         />
         {validationError !== null ? (
-          <p className="arbor-command-error">{validationError}</p>
+          <p
+            className={cn(
+              "arbor-command-error",
+              "m-0 text-small text-destructive",
+            )}
+          >
+            {validationError}
+          </p>
         ) : null}
         <FormFeedback state={state} onRetry={() => doSubmit()} />
         <Button

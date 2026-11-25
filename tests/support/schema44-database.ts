@@ -21,6 +21,8 @@ import {
   P53_CANONICAL_OWNERSHIP_CARVEOUTS_MIGRATION,
   P54_NATIVE_PROCESS_MODE_NO_EFFECT_DENIAL_MIGRATION,
   P55_SESSION_CAUSAL_PROVENANCE_MIGRATION,
+  P56_LINUX_WORKSPACE_NETWORK_V2_MIGRATION,
+  P57_WORKSPACE_SANDBOX_AUTHORIZATION_MIGRATION,
   preflightVerificationEvidenceSnapshot,
   runMigrations,
   runP39SqliteMaintenance,
@@ -83,7 +85,9 @@ export interface Schema42TestDatabaseOptions {
     | 52
     | 53
     | 54
-    | 55;
+    | 55
+    | 56
+    | 57;
 }
 
 export interface Schema42TestDatabaseFactory {
@@ -222,6 +226,8 @@ export const upgradeSchema44ToCurrentTestDatabase = async (input: {
   await upgradeSchema53Suffix(input.databaseFilename);
   await upgradeSchema54Suffix(input.databaseFilename);
   await upgradeSchema55Suffix(input.databaseFilename);
+  await upgradeSchema56Suffix(input.databaseFilename);
+  await upgradeSchema57Suffix(input.databaseFilename);
 
   const database = new DatabaseSync(input.databaseFilename, { readOnly: true });
   try {
@@ -531,6 +537,38 @@ const upgradeSchema55Suffix = async (
   await checkpointSqlite(databaseFilename);
 };
 
+const upgradeSchema57Suffix = async (
+  databaseFilename: string,
+): Promise<void> => {
+  await runPrimary(
+    databaseFilename,
+    runMigrations([P57_WORKSPACE_SANDBOX_AUTHORIZATION_MIGRATION], {
+      allowOfflineOnly: true,
+    }),
+  );
+  const version = await readUserVersion(databaseFilename);
+  if (version !== 57) throw new Error(`Schema-57 fixture ended at ${version}`);
+  await checkpointSqlite(databaseFilename);
+};
+
+const upgradeSchema56Suffix = async (
+  databaseFilename: string,
+): Promise<void> => {
+  await runPrimary(
+    databaseFilename,
+    runMigrations([P56_LINUX_WORKSPACE_NETWORK_V2_MIGRATION], {
+      allowOfflineOnly: true,
+    }),
+  );
+  const version = await readUserVersion(databaseFilename);
+  if (version !== 56)
+    throw new Schema42TestDatabaseSetupError(
+      "SCHEMA42_SETUP_FAILED",
+      `Schema-56 disposable fixture upgrade ended at user_version ${version}, expected 56.`,
+      version,
+    );
+  await checkpointSqlite(databaseFilename);
+};
 /** Creates a directory whose path remains owned while P39 ACL setup runs. */
 export const createSchema42PrivateTestDirectory = (
   parent: string,
@@ -951,7 +989,9 @@ export const createSchema42TestDatabase = async (
       options.targetSchemaVersion === 52 ||
       options.targetSchemaVersion === 53 ||
       options.targetSchemaVersion === 54 ||
-      options.targetSchemaVersion === 55
+      options.targetSchemaVersion === 55 ||
+      options.targetSchemaVersion === 56 ||
+      options.targetSchemaVersion === 57
         ? `arbor-schema${options.targetSchemaVersion}-test-`
         : options.targetSchemaVersion === 44
           ? "arbor-schema44-test-"
@@ -974,29 +1014,28 @@ export const createSchema42TestDatabase = async (
     }
 
     const target = options.targetSchemaVersion;
-    if (target !== undefined && target >= 45 && target <= 55) {
+    if (target !== undefined && target >= 45 && target <= 57) {
       await upgradeSchema44TestDatabase({
         databaseFilename,
         p39ReportFilename,
         beforeP39Maintenance: options.beforeP39Maintenance,
       });
-      if (target === 55) {
-        await upgradeSchema44ToCurrentTestDatabase({ databaseFilename });
-      } else if (target === 54) {
-      } else {
-        await upgradeSchema45Suffix(databaseFilename);
-        if (target >= 46) await upgradeSchema46Suffix(databaseFilename);
-        if (target >= 47) {
-          await upgradeSchema47Suffix(databaseFilename);
-        }
-        if (target >= 48) {
-          await upgradeSchema48Suffix(databaseFilename);
-        }
-        if (target >= 50) await upgradeSchema50Suffix(databaseFilename);
-        if (target >= 51) await upgradeSchema51Suffix(databaseFilename);
-        if (target >= 52) await upgradeSchema52Suffix(databaseFilename);
-        if (target >= 53) await upgradeSchema53Suffix(databaseFilename);
+      await upgradeSchema45Suffix(databaseFilename);
+      if (target >= 46) await upgradeSchema46Suffix(databaseFilename);
+      if (target >= 47) {
+        await upgradeSchema47Suffix(databaseFilename);
       }
+      if (target >= 48) {
+        await upgradeSchema48Suffix(databaseFilename);
+      }
+      if (target >= 50) await upgradeSchema50Suffix(databaseFilename);
+      if (target >= 51) await upgradeSchema51Suffix(databaseFilename);
+      if (target >= 52) await upgradeSchema52Suffix(databaseFilename);
+      if (target >= 53) await upgradeSchema53Suffix(databaseFilename);
+      if (target >= 54) await upgradeSchema54Suffix(databaseFilename);
+      if (target >= 55) await upgradeSchema55Suffix(databaseFilename);
+      if (target >= 56) await upgradeSchema56Suffix(databaseFilename);
+      if (target >= 57) await upgradeSchema57Suffix(databaseFilename);
     } else if (options.targetSchemaVersion === 44)
       await upgradeSchema44TestDatabase({
         databaseFilename,
@@ -1108,7 +1147,9 @@ export const createSchema42TestDatabaseFactory = async (
       options.targetSchemaVersion === 52 ||
       options.targetSchemaVersion === 53 ||
       options.targetSchemaVersion === 54 ||
-      options.targetSchemaVersion === 55
+      options.targetSchemaVersion === 55 ||
+      options.targetSchemaVersion === 56 ||
+      options.targetSchemaVersion === 57
         ? `arbor-schema${options.targetSchemaVersion}-template-`
         : options.targetSchemaVersion === 44
           ? "arbor-schema44-template-"
@@ -1135,7 +1176,9 @@ export const createSchema42TestDatabaseFactory = async (
           options.targetSchemaVersion === 52 ||
           options.targetSchemaVersion === 53 ||
           options.targetSchemaVersion === 54 ||
-          options.targetSchemaVersion === 55
+          options.targetSchemaVersion === 55 ||
+          options.targetSchemaVersion === 56 ||
+          options.targetSchemaVersion === 57
           ? `arbor-schema${options.targetSchemaVersion}-clone-`
           : options.targetSchemaVersion === 44
             ? "arbor-schema44-clone-"

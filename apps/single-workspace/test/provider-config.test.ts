@@ -3,7 +3,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SecretStorePort, secretRef, ToolCatalogPort } from "@arbor/ports";
 import { Effect, type Layer } from "effect";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { createCurrentSchemaTestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import { buildSingleWorkspaceLayer } from "../src/composition.js";
 import { main } from "../src/main.js";
@@ -51,6 +59,23 @@ beforeAll(async () => {
 afterAll(() => schema44Factory?.cleanup(), 120_000);
 
 describe("arbor.config.json — standard provider configuration", () => {
+  it("does not inherit a default model when an explicit fresh config location is selected", () => {
+    const { dir } = withConfig(
+      JSON.stringify({
+        provider: { deploymentId: "unrelated", modelRef: "unrelated" },
+      }),
+    );
+    const priorConfig = process.env.ARBOR_CONFIG;
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue(dir);
+    process.env.ARBOR_CONFIG = join(dir, "fresh-install.json");
+    try {
+      expect(findArborConfigFile()).toBeUndefined();
+    } finally {
+      cwd.mockRestore();
+      if (priorConfig === undefined) delete process.env.ARBOR_CONFIG;
+      else process.env.ARBOR_CONFIG = priorConfig;
+    }
+  });
   it("keeps the config-file process mode authoritative over programmatic overrides", () => {
     const startup = bindProcessExecutionModeSnapshot(
       {
@@ -71,6 +96,17 @@ describe("arbor.config.json — standard provider configuration", () => {
   it("does not let an untyped production override expose TrustedLocal shell", async () => {
     expect(productionConfigHasNoTrustedLocalSwitch).toBe(true);
     const database = schema44Factory.create();
+    // This test is about the production composition boundary, not the
+    // developer's real user configuration. An explicit missing path prevents
+    // the test from inheriting ~/.config/arbor/arbor.config.json and turning
+    // a valid NativeOsSupportedOnly shell into a false TrustedLocal failure.
+    const { dir } = withConfig(
+      JSON.stringify({
+        provider: { deploymentId: "test-only", modelRef: "test-only" },
+      }),
+    );
+    const priorConfig = process.env.ARBOR_CONFIG;
+    process.env.ARBOR_CONFIG = join(dir, "fresh-install.json");
     const forgedConfig = {
       databaseFile: database.databaseFilename,
       processExecutionMode: "Disabled",
@@ -88,6 +124,8 @@ describe("arbor.config.json — standard provider configuration", () => {
       );
       expect(visible.some((ref) => ref.name === "shell")).toBe(false);
     } finally {
+      if (priorConfig === undefined) delete process.env.ARBOR_CONFIG;
+      else process.env.ARBOR_CONFIG = priorConfig;
       database.cleanup();
     }
   }, 120_000);

@@ -1,5 +1,11 @@
 {
-  "$comment": "Arbor provider config. Copy to an untracked arbor.config.json and edit the endpoint/model for your OpenAI-compatible service. Keep credentials outside this file: use an env SecretRef or a private key file. Lookup order: ARBOR_CONFIG, ./arbor.config.json, then ~/.config/arbor/arbor.config.json.",
+  "$comment": "Arbor provider config. Copy to an untracked arbor.config.json and edit the endpoint/model for your OpenAI-compatible service. Keep credentials outside this file: use an env SecretRef or a private key file. Process execution remains Disabled unless an exact release-qualified Native OS tuple is provisioned. Lookup order: ARBOR_CONFIG, ./arbor.config.json, then ~/.config/arbor/arbor.config.json.",
+  "runtime": {
+    "processExecutionMode": {
+      "version": 1,
+      "processExecutionMode": "Disabled"
+    }
+  },
   "provider": {
     "deploymentId": "dep-env",
     "modelRef": "model-openai",

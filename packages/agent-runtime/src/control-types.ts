@@ -55,6 +55,13 @@ export type AgentAction =
       readonly query?: string;
     }
   | { readonly _tag: "ReadWorkspace"; readonly workspaceRef: string }
+  | {
+      readonly _tag: "AllocateWorkspaceSandbox";
+      readonly targetWorkspaceRef: string;
+      readonly profile: "ReadOnly" | "WorkspaceWrite";
+      readonly networkPolicy: import("@arbor/domain").NetworkPolicyV1;
+      readonly expiresAt: string | null;
+    }
   | { readonly _tag: "AcceptResult"; readonly resultRef: string }
   | {
       readonly _tag: "ResolveWorkBlocker";

@@ -12,6 +12,8 @@ import {
   type WorkspaceId,
 } from "@arbor/domain";
 import type {
+  ConversationAttemptStoreService,
+  ConversationResponseJobStoreService,
   ExecutionRepositoryService,
   PendingDomainEvent,
   ProjectRepositoryService,
@@ -58,6 +60,16 @@ export interface AdmitExecutionDependencies {
   readonly sessions: SessionRepositoryService;
   readonly executions: ExecutionRepositoryService;
   readonly readmissionGate: WorkReadmissionGateStoreService;
+  /** P17 conversation admission is completed in the same transaction as the
+   * ConversationResponseEpisode Execution. Without this binding, a crash
+   * after AdmitExecution could leave an Active Execution with a Queued job. */
+  readonly conversationResponse?: {
+    readonly jobs: Pick<
+      ConversationResponseJobStoreService,
+      "find" | "transition"
+    >;
+    readonly attempts: Pick<ConversationAttemptStoreService, "insert">;
+  };
 }
 
 type AdmitExecutionHandlerFailure =
@@ -188,6 +200,66 @@ export const makeAdmitExecutionHandler = (
           }),
         );
         yield* dependencies.executions.admitExecution(admitted.value);
+      }
+
+      if (
+        payload._tag === "WorkspaceMain" &&
+        payload.episode?._tag === "ConversationResponseEpisode"
+      ) {
+        const conversationResponse = dependencies.conversationResponse;
+        if (conversationResponse === undefined) {
+          return yield* Effect.die(
+            new Error(
+              "conversation response admission stores are not registered",
+            ),
+          );
+        }
+        const job = yield* conversationResponse.jobs.find(
+          payload.episode.messageId,
+        );
+        if (
+          Option.isNone(job) ||
+          job.value.projectId !== envelope.projectId ||
+          job.value.rootWorkspaceId !== payload.workspaceId ||
+          job.value.revision !== payload.episode.responseJobRevision ||
+          (job.value.state._tag !== "Queued" &&
+            job.value.state._tag !== "RetryScheduled")
+        ) {
+          return yield* Effect.fail({
+            _tag: "ConversationJobConflict" as const,
+            messageId: payload.episode.messageId,
+            reason: "RevisionOrStateMismatch" as const,
+          });
+        }
+        const attemptNo = job.value.nextAttemptNo;
+        yield* conversationResponse.attempts.insert({
+          messageId: payload.episode.messageId,
+          attemptNo,
+          executionId: payload.executionId,
+          admittedAt: envelope.issuedAt,
+          settledAt: null,
+          settlementKind: null,
+          failureClass: null,
+          failureFingerprint: null,
+          retryDecision: null,
+          policyVersion: job.value.policyVersion,
+        });
+        yield* conversationResponse.jobs.transition({
+          messageId: job.value.messageId,
+          expectedRevision: job.value.revision,
+          expectedState: job.value.state._tag,
+          next: {
+            ...job.value,
+            state: {
+              _tag: "Running",
+              attemptNo,
+              executionId: payload.executionId,
+            },
+            nextAttemptNo: attemptNo + 1,
+            revision: job.value.revision + 1,
+            updatedAt: envelope.issuedAt,
+          },
+        });
       }
 
       const events: PendingDomainEvent[] = [

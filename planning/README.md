@@ -3,6 +3,14 @@
 Execution tracking for the Arbor implementation phases defined in
 `docs/design/03-detailed-implementation-design.md` §11 (DID-10).
 
+The files in this directory are historical planning, governance and
+verification evidence for their recorded source revisions. They are not a
+single mutable current-status document. Use `docs/CURRENT_STATE.md`,
+`docs/KNOWN_PROBLEMS.md`, and `docs/OPEN_QUESTIONS.md` for the maintained
+present-tense project assessment. As of 2026-11-09 the runtime schema is 55;
+older schema references in result files remain part of their original audit
+record.
+
 ## Layout
 
 ```text

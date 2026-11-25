@@ -12,6 +12,7 @@ import {
   type AhProbeHit,
   recordAhProbeLine,
 } from "../support/ah-probe-line.js";
+import { expireExecutionLeaseAfterOwnerExitForQualification } from "../support/lease-qualification.js";
 import {
   type CapturedProviderCall,
   type ProductionFixture,
@@ -266,6 +267,41 @@ interface AttentionSnapshot {
   readonly markers: ReadonlyArray<Record<string, unknown>>;
 }
 
+const activeExecutionId = (
+  databaseFile: string,
+  workspaceId: string,
+): string => {
+  const db = new DatabaseSync(databaseFile, { readOnly: true });
+  try {
+    const row = db
+      .prepare(
+        "SELECT execution_id FROM executions WHERE workspace_id = ? AND settled_at IS NULL ORDER BY admitted_at DESC LIMIT 1",
+      )
+      .get(workspaceId) as { execution_id?: string } | undefined;
+    if (row?.execution_id === undefined) {
+      throw new Error(
+        `AH14 active Work execution is missing for workspace ${workspaceId}`,
+      );
+    }
+    return row.execution_id;
+  } finally {
+    db.close();
+  }
+};
+
+const expireLeaseAfterCrash = async (
+  fixture: ProductionFixture,
+  executionId: string,
+) =>
+  expireExecutionLeaseAfterOwnerExitForQualification({
+    databaseFile: fixture.databaseFile,
+    executionId,
+    daemon: {
+      crash: fixture.crash,
+      snapshot: fixture.daemonProcessSnapshot,
+    },
+  });
+
 const snapshot = (
   databaseFile: string,
   providerTurnId: string,
@@ -463,6 +499,11 @@ describe("AH14 legacy-action disposition Attention process recovery", () => {
       await heldWorkRead.waitUntilEntered();
       await fixture.crash();
       heldWorkRead.abort();
+      const executionId = activeExecutionId(
+        fixture.databaseFile,
+        project.rootWorkspaceId,
+      );
+      await expireLeaseAfterCrash(fixture, executionId);
       await fixture.restart({
         entry: crashChild,
         daemonEnvironment: { ARBOR_AH_BOUNDARY: "AH3BeforeStepAvailable" },
@@ -471,7 +512,9 @@ describe("AH14 legacy-action disposition Attention process recovery", () => {
         async () => hits,
         (value) =>
           value.some((hit) => hit.boundary === "AH3BeforeStepAvailable"),
-        25_000,
+        // The qualification seam establishes lease expiry only after the old
+        // process has exited; this bound covers real restart/recovery work.
+        30_000,
       );
       const providerTurnId = initial.find(
         (hit) => hit.boundary === "AH3BeforeStepAvailable",
@@ -482,7 +525,6 @@ describe("AH14 legacy-action disposition Attention process recovery", () => {
         );
       }
       await fixture.crash();
-      let executionId: string;
       const db = new DatabaseSync(fixture.databaseFile);
       try {
         const provider = db
@@ -493,7 +535,7 @@ describe("AH14 legacy-action disposition Attention process recovery", () => {
         if (provider?.execution_id === undefined) {
           throw new Error("AH14 ProviderTurn lacks its Execution binding");
         }
-        executionId = provider.execution_id;
+        expect(provider.execution_id).toBe(executionId);
         const changed = db
           .prepare(
             "UPDATE provider_attempts SET success_evidence_version = NULL WHERE provider_turn_id = ? AND outcome = 'Success' AND success_evidence_version = 'provider-success-v1'",
@@ -511,6 +553,8 @@ describe("AH14 legacy-action disposition Attention process recovery", () => {
       expect(beforeRecovery.facts).toEqual([]);
       expect(beforeRecovery.failureEvents).toEqual([]);
 
+      await expireLeaseAfterCrash(fixture, executionId);
+
       await fixture.restart({
         entry: crashChild,
         daemonEnvironment: { ARBOR_AH_BOUNDARY: boundary },
@@ -525,6 +569,7 @@ describe("AH14 legacy-action disposition Attention process recovery", () => {
         );
       });
       await fixture.crash();
+      await expireLeaseAfterCrash(fixture, executionId);
       const afterBoundary = snapshot(
         fixture.databaseFile,
         providerTurnId,
@@ -734,6 +779,11 @@ describe("AH14 legacy-action disposition Attention process recovery", () => {
       await heldWorkRead.waitUntilEntered();
       await fixture.crash();
       heldWorkRead.abort();
+      const executionId = activeExecutionId(
+        fixture.databaseFile,
+        project.rootWorkspaceId,
+      );
+      await expireLeaseAfterCrash(fixture, executionId);
       await fixture.restart({
         entry: crashChild,
         daemonEnvironment: { ARBOR_AH_BOUNDARY: "AH3BeforeStepAvailable" },
@@ -742,7 +792,9 @@ describe("AH14 legacy-action disposition Attention process recovery", () => {
         async () => hits,
         (value) =>
           value.some((hit) => hit.boundary === "AH3BeforeStepAvailable"),
-        25_000,
+        // The qualification seam establishes lease expiry only after the old
+        // process has exited; this bound covers real restart/recovery work.
+        30_000,
       );
       const providerTurnId = initial.find(
         (hit) => hit.boundary === "AH3BeforeStepAvailable",
@@ -753,7 +805,6 @@ describe("AH14 legacy-action disposition Attention process recovery", () => {
         );
       }
       await fixture.crash();
-      let executionId: string;
       const db = new DatabaseSync(fixture.databaseFile);
       try {
         const provider = db
@@ -763,7 +814,7 @@ describe("AH14 legacy-action disposition Attention process recovery", () => {
           .get(providerTurnId) as { execution_id?: string } | undefined;
         if (provider?.execution_id === undefined)
           throw new Error("AH14 resolution ProviderTurn lacks Execution");
-        executionId = provider.execution_id;
+        expect(provider.execution_id).toBe(executionId);
         const changed = db
           .prepare(
             "UPDATE provider_attempts SET success_evidence_version = NULL WHERE provider_turn_id = ? AND outcome = 'Success' AND success_evidence_version = 'provider-success-v1'",
@@ -773,6 +824,8 @@ describe("AH14 legacy-action disposition Attention process recovery", () => {
       } finally {
         db.close();
       }
+
+      await expireLeaseAfterCrash(fixture, executionId);
 
       // First persist the original P9 Attention fact, then add a P4 terminal
       // Denied invocation whose P39 binding names this exact decoded action.
@@ -791,6 +844,7 @@ describe("AH14 legacy-action disposition Attention process recovery", () => {
         45_000,
       );
       await fixture.crash();
+      await expireLeaseAfterCrash(fixture, executionId);
       const beforeResolution = snapshot(
         fixture.databaseFile,
         providerTurnId,
@@ -823,6 +877,7 @@ describe("AH14 legacy-action disposition Attention process recovery", () => {
         );
       });
       await fixture.crash();
+      await expireLeaseAfterCrash(fixture, executionId);
       const afterResolutionBoundary = snapshot(
         fixture.databaseFile,
         providerTurnId,

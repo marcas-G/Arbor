@@ -7,6 +7,7 @@ import {
   type CommandRejection,
   semanticRequestFingerprint,
   type VerifiedRuntimeCommandAuthority,
+  workspaceSandboxPolicyBindingIsAuthorized,
 } from "@arbor/application";
 import type {
   AgentEpisodeIdentity,
@@ -17,7 +18,6 @@ import type {
   LeaseGeneration,
   Principal,
   SandboxAuthorityBundleSnapshotCurrent,
-  SandboxPolicyDecisionCommittedInternalV1,
   WakeReason,
 } from "@arbor/domain";
 import { encodeExecutionEpisodeBinding, executionEpisode } from "@arbor/domain";
@@ -50,6 +50,9 @@ import {
   type TransactionOperationalFailure,
   TransactionPort,
   WorkerDispatchPort,
+  WorkspaceRepository,
+  WorkspaceSandboxAuthorizationStore,
+  WorkspaceSandboxPolicyBindingPort,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { LOCAL_WORKER_INCARNATION_ID } from "./process-identity.js";
@@ -59,6 +62,11 @@ import { recordSubmittedDecisionBindingFailure } from "./submitted-decision-bind
  * the TTL/3 renewal-cadence convention is contract (P9 `03` §1). */
 export const LEASE_TTL_MS = 30_000;
 export const LEASE_RENEW_INTERVAL_MS = LEASE_TTL_MS / 3;
+
+/** Bound the time between a durable StopExecution commit and interruption of
+ * the running provider/tool fiber. Durable settlement remains owned by the
+ * existing recovery path after the interruption. */
+export const STOP_REQUEST_POLL_INTERVAL_MS = 100;
 
 /** Test-only process-local seam. Production composition leaves it absent. */
 export type ExecutionSettlementQualificationProbe = (
@@ -171,7 +179,7 @@ const sandboxPolicyDecisionIsCurrentForRequirement = (input: {
 }): boolean => {
   const { execution, requirement, committed, authority } = input;
   const decision = committed.decision;
-  const result: SandboxPolicyDecisionCommittedInternalV1 = committed.result;
+  const result = committed.result;
   const snapshot = result.effectivePolicySnapshot;
   const currentEpisode = executionEpisode(execution);
   if (currentEpisode === undefined) return false;
@@ -345,6 +353,34 @@ export const leaseRenewalLoop = (
     }),
   );
 
+/** Read the durable stop fence while an Execution is running. This loop only
+ * interrupts the in-flight driver; it deliberately does not settle the
+ * Execution, so ProviderRuntime cancellation and unresolved-side-effect
+ * recovery keep their existing ownership and fail-closed rules. */
+export const stopRequestLoop = (
+  executionId: ExecutionId,
+  intervalMs: number = STOP_REQUEST_POLL_INTERVAL_MS,
+  onStop?: () => void,
+): Effect.Effect<
+  { readonly _tag: "StopRequestedByControl" },
+  ExecutionRepositoryError | TransactionOperationalFailure,
+  TransactionPort | ExecutionRepository
+> =>
+  Effect.gen(function* () {
+    while (true) {
+      yield* Effect.sleep(intervalMs);
+      const tx = yield* TransactionPort;
+      const repository = yield* ExecutionRepository;
+      const current = yield* tx.transact(repository.findById(executionId));
+      if (Option.isSome(current) && current.value.stopRequestedAt !== null) {
+        onStop?.();
+        return {
+          _tag: "StopRequestedByControl" as const,
+        };
+      }
+    }
+  });
+
 /**
  * Orchestration: durable admission already exists; dispatch, acquire a lease,
  * drive, and persist the driver's settlement proposal through the command
@@ -370,6 +406,10 @@ export const runExecution = (
     const sandboxUnavailableStore = yield* Effect.serviceOption(
       SandboxProviderUnavailableStore,
     );
+    const workspaceAuthorizations = yield* Effect.serviceOption(
+      WorkspaceSandboxAuthorizationStore,
+    );
+    const policyWorkspaces = yield* Effect.serviceOption(WorkspaceRepository);
     const sandboxPolicyDecisions = yield* Effect.serviceOption(
       SandboxPolicyDecisionStore,
     );
@@ -408,6 +448,14 @@ export const runExecution = (
       );
     if (Option.isNone(execution)) {
       return yield* Effect.fail({ _tag: "ExecutionNotFound" as const });
+    }
+    // Standing authority is converted to an exact execution snapshot before
+    // any policy-dependent recovery gate can block the same admitted episode.
+    const workspacePolicyBinding = yield* Effect.serviceOption(
+      WorkspaceSandboxPolicyBindingPort,
+    );
+    if (Option.isSome(workspacePolicyBinding)) {
+      yield* workspacePolicyBinding.value.ensureForExecution(executionId);
     }
     if (Option.isSome(sandboxPolicyRequirements)) {
       const pendingRequirement = yield* tx.transact(
@@ -454,6 +502,24 @@ export const runExecution = (
                 executionId,
               );
             if (Option.isNone(current)) return true;
+            if (
+              current.value.decision.authorityKind === "WorkspaceAuthorization"
+            ) {
+              if (
+                Option.isNone(workspaceAuthorizations) ||
+                Option.isNone(policyWorkspaces)
+              )
+                return true;
+              const authorized =
+                yield* workspaceSandboxPolicyBindingIsAuthorized(
+                  {
+                    workspaces: policyWorkspaces.value,
+                    authorizations: workspaceAuthorizations.value,
+                  },
+                  { ...current.value, now },
+                );
+              if (!authorized) return true;
+            }
             return !sandboxPolicyDecisionIsCurrentForRequirement({
               execution: execution.value,
               requirement: requirement.value,
@@ -648,8 +714,12 @@ export const runExecution = (
     }
     // P9 `03` §1: race the drive against the renewal loop — the first to
     // complete wins; a lost renewal (LeaseLost) interrupts the drive so no
-    // durable mutation is attempted, and no ordinary retry occurs.
-    const outcome = yield* Effect.raceFirst(
+    // durable mutation is attempted, and no ordinary retry occurs. A durable
+    // StopExecution is a second control boundary: its watcher interrupts the
+    // same driver fiber and lets recovery perform the existing settlement or
+    // reconciliation pass.
+    const stopController = new AbortController();
+    const driveOrStop = Effect.raceFirst(
       driver.drive({
         execution: execution.value,
         agentExecutionState,
@@ -663,7 +733,14 @@ export const runExecution = (
           workerIncarnationId: lease.workerIncarnationId,
         },
         safetyGate: safety,
+        cancellationSignal: stopController.signal,
       }),
+      stopRequestLoop(executionId, STOP_REQUEST_POLL_INTERVAL_MS, () =>
+        stopController.abort(),
+      ),
+    );
+    const outcome = yield* Effect.raceFirst(
+      driveOrStop,
       leaseRenewalLoop(
         executionId,
         lease.workerId,
@@ -683,6 +760,24 @@ export const runExecution = (
           }),
       ),
     );
+
+    if (outcome._tag === "StopRequestedByControl") {
+      // Effect interruption has already run ProviderRuntime's cancellation
+      // finalizer. Do not renew or synthesize a settlement here; the recovery
+      // controller must still inspect reconciliation evidence before it can
+      // commit Interrupted(StopRequested).
+      yield* tx
+        .transact(
+          leases.release(
+            executionId,
+            lease.workerId,
+            lease.workerIncarnationId,
+            lease.generation,
+          ),
+        )
+        .pipe(Effect.ignore);
+      return { _tag: "RecoveryBlocked" as const };
+    }
 
     // The background loop keeps a long drive live. Renew once more at the
     // durability boundary so a scheduler delay around the final tick cannot

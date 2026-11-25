@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   type AttentionPollPolicyConfig,
@@ -19,6 +18,7 @@ import {
   pollOnce,
   pruneSnapshots,
   type RetentionPolicy,
+  recoverConversationResponseAdmission,
   runAttentionPollOnce,
   runConversationResponseSettlementSweep,
   runConversationResponseTrigger,
@@ -32,6 +32,7 @@ import {
   type VerificationSignalReconciliationQualificationProbe,
   WorkflowSignalConsumer,
 } from "@arbor/application";
+import { defaultBlobRoot } from "@arbor/blob-local";
 import {
   conversationResponseEpisode,
   type ExecutionId,
@@ -40,6 +41,7 @@ import {
   type WakeReason,
 } from "@arbor/domain";
 import {
+  containFencingRejection,
   type ExecutionLeaseQualificationProbe,
   type ExecutionSettlementQualificationProbe,
   preDispatchCheck,
@@ -436,6 +438,8 @@ export const ProductionDaemonServiceLive = (
       const scheduler = yield* ExecutionScheduler;
       const projectRepository = yield* ProjectRepository;
       const gateway = yield* CommandGateway;
+      const conversationJobs = yield* ConversationResponseJobStore;
+      const conversationAttempts = yield* ConversationAttemptStore;
       const t1 = yield* T1RecoveryState;
       const resolver = yield* EnvironmentResolverPort;
       const changes = yield* RecordEnvironmentChange;
@@ -1026,6 +1030,15 @@ export const ProductionDaemonServiceLive = (
               // Test-only startup diagnostics are non-authoritative.
             }
           });
+          yield* recoverConversationResponseAdmission({
+            gateway,
+            jobs: conversationJobs,
+            attempts: conversationAttempts,
+            executions,
+            clock,
+            tx,
+            principal: config.principal,
+          });
           yield* startupRecovery(
             config.principal,
             config.submittedDecisionRecoveryQualificationProbe,
@@ -1045,6 +1058,15 @@ export const ProductionDaemonServiceLive = (
           Effect.gen(function* () {
             yield* expireExecutableApprovals;
             yield* reconcileVerificationSignals;
+            yield* recoverConversationResponseAdmission({
+              gateway,
+              jobs: conversationJobs,
+              attempts: conversationAttempts,
+              executions,
+              clock,
+              tx,
+              principal: config.principal,
+            });
             yield* sweepRecovery(
               config.principal,
               config.submittedDecisionRecoveryQualificationProbe,
@@ -1072,16 +1094,14 @@ export const ProductionDaemonServiceLive = (
           ) =>
             Effect.gen(function* () {
               if (!(yield* preDispatchCheck(executionId))) return null;
-              return yield* runExecution(
-                executionId,
-                wakeReason,
-                config.principal,
-                undefined,
-                config.executionSettlementQualificationProbe,
-                config.executionLeaseQualificationProbe,
-              ).pipe(
-                Effect.catchTag("LeaseFencingRejected", () =>
-                  Effect.succeed(null),
+              return yield* containFencingRejection(
+                runExecution(
+                  executionId,
+                  wakeReason,
+                  config.principal,
+                  undefined,
+                  config.executionSettlementQualificationProbe,
+                  config.executionLeaseQualificationProbe,
                 ),
               );
             });
@@ -1189,6 +1209,7 @@ export const ProductionDaemonServiceLive = (
                 );
                 if (
                   settlement !== null &&
+                  settlement !== undefined &&
                   settlement._tag !== "ApprovalRequired"
                 ) {
                   publishConversationSettled(
@@ -1336,7 +1357,7 @@ export class SnapshotRetention extends Context.Service<
  * is never inline in a canonical transaction and refuses a still-referenced
  * snapshot (typed); canonical records are untouched. */
 export const SnapshotRetentionLive = (
-  blobRoot: string = join(tmpdir(), "arbor-blobs"),
+  blobRoot: string = defaultBlobRoot(),
 ): Layer.Layer<SnapshotRetention, never, SqlClient> =>
   Layer.effect(
     SnapshotRetention,

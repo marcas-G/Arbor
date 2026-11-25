@@ -3185,7 +3185,36 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
             (value) => value?.settlement_kind === "ReconciledNoEffect",
             reconciliationDrift === undefined ? 45_000 : 90_000,
           );
-          recovered = durableSnapshot(fixture.databaseFile);
+          recovered = await waitForPublic(
+            async () => durableSnapshot(fixture.databaseFile),
+            (value) =>
+              value.toolInvocations.some(
+                (invocation) =>
+                  invocation.invocation_id === hit?.invocationId &&
+                  invocation.settlement_kind === "ReconciledNoEffect",
+              ) &&
+              value.actions.some(
+                (action) =>
+                  action.execution_id === targetExecutionId &&
+                  action.call_ref === hit?.callRef &&
+                  action.state === "TerminalRejected",
+              ) &&
+              value.toolResults.some((row) =>
+                isToolResultFor(
+                  row,
+                  hit?.invocationId ?? "",
+                  hit?.callRef ?? "",
+                ),
+              ) &&
+              value.steps.some(
+                (step) =>
+                  step.execution_id === targetExecutionId &&
+                  step.logical_step_no === 0 &&
+                  step.repair_attempt === 0 &&
+                  step.next_action_index === 1,
+              ),
+            reconciliationDrift === undefined ? 45_000 : 90_000,
+          );
         } else {
           recovered = await waitForPublic(
             async () => durableSnapshot(fixture.databaseFile),
@@ -3263,10 +3292,32 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
                 reconciliationMode === "Occurred"
               ) {
                 if (noEffectRetryDenied) {
-                  return value.toolInvocations.some(
-                    (invocation) =>
-                      invocation.invocation_id === hit?.invocationId &&
-                      invocation.settlement_kind === "ReconciledNoEffect",
+                  return (
+                    value.toolInvocations.some(
+                      (invocation) =>
+                        invocation.invocation_id === hit?.invocationId &&
+                        invocation.settlement_kind === "ReconciledNoEffect",
+                    ) &&
+                    value.actions.some(
+                      (action) =>
+                        action.execution_id === targetExecutionId &&
+                        action.call_ref === hit?.callRef &&
+                        action.state === "TerminalRejected",
+                    ) &&
+                    value.toolResults.some((row) =>
+                      isToolResultFor(
+                        row,
+                        hit?.invocationId ?? "",
+                        hit?.callRef ?? "",
+                      ),
+                    ) &&
+                    value.steps.some(
+                      (step) =>
+                        step.execution_id === targetExecutionId &&
+                        step.logical_step_no === 0 &&
+                        step.repair_attempt === 0 &&
+                        step.next_action_index === 1,
+                    )
                   );
                 }
                 return (
@@ -3618,9 +3669,12 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
         expect(recoveredInvocationBinding?.effect_admission_state).toBe(
           "MayHaveStarted",
         );
-        expect(settledInvocation?.settled_at).toBeNull();
-        expect(settledInvocation?.settlement_kind).toBeNull();
-        expect(settledInvocation?.settlement_json).toBeNull();
+        expect(settledInvocation?.settled_at).not.toBeNull();
+        expect(settledInvocation?.settlement_kind).toBe("OutcomeUnknown");
+        expect(JSON.parse(String(settledInvocation?.settlement_json))).toEqual({
+          _tag: "OutcomeUnknown",
+          reconciliationRefs: [hit?.invocationId],
+        });
       } else {
         expect(settledInvocation?.settled_at).toBeNull();
         expect(settledInvocation?.settlement_kind).toBeNull();

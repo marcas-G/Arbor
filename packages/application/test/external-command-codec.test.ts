@@ -22,7 +22,7 @@ describe("external wire-v1 command payload codec", () => {
     });
   });
 
-  it.each(["target", "expiresAt"] as const)(
+  it.each(["target"] as const)(
     "rejects a null GrantPermission %s with a stable field path",
     (field) => {
       const payload: Record<string, unknown> = {
@@ -608,5 +608,52 @@ describe("external wire-v1 command payload codec", () => {
         },
       }).ok,
     ).toBe(true);
+  });
+});
+
+describe("Workspace sandbox human wire commands", () => {
+  const selection = {
+    workspaceId: `ws_${UUID_V7}`,
+    expectedAuthorizationRevision: 0,
+    expectedResourceBoundaryRevision: 0,
+    expectedWorkspacePolicyRevision: 0,
+    profile: "WorkspaceWrite",
+    providerId: "linux-bwrap",
+    networkPolicy: { version: 1, mode: "Enabled", destinations: [] },
+    expiresAt: null,
+    source: { kind: "Human" },
+  };
+  it("accepts explicit persistent human authorization and exact revocation", () => {
+    expect(
+      decodeCommandPayload("AuthorizeWorkspaceSandbox", selection).ok,
+    ).toBe(true);
+    expect(
+      decodeCommandPayload("RevokeWorkspaceSandboxAuthorization", {
+        workspaceId: selection.workspaceId,
+        expectedAuthorizationRevision: 1,
+      }).ok,
+    ).toBe(true);
+  });
+  it.each([
+    { source: { kind: "Parent", expectedParentAuthorizationRevision: 1 } },
+    { source: { kind: "Human", principal: "user:other" } },
+    { profile: "FullAccess" },
+    { expiresAt: undefined },
+    { permissionGrantId: "invented" },
+  ])(
+    "rejects external authority fabrication or unsupported scope %#",
+    (patch) => {
+      expect(
+        decodeCommandPayload("AuthorizeWorkspaceSandbox", {
+          ...selection,
+          ...patch,
+        }).ok,
+      ).toBe(false);
+    },
+  );
+  it("never exposes the automatic binding command on the wire", () => {
+    expect(
+      CommandInputContractRegistry.lookup("BindWorkspaceSandboxPolicy"),
+    ).toBeUndefined();
   });
 });

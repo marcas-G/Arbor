@@ -1,8 +1,8 @@
 # Arbor Problem Definition & Goals
 
-**Version:** 1.3
-**Status:** FROZEN — minimal architecture convergence vocabulary clarification
-**Date:** 2026-10-03
+**Version:** 1.4
+**Status:** FROZEN — minimal architecture convergence and Workspace default execution capability clarification
+**Date:** 2026-11-20
 **Position in document chain:** Problem & Goals → Scenarios → System Design → Detailed Implementation Design  
 **Owns:** problem statement, P1–P8, root tensions, mission, G1–G8, goal-level success criteria  
 **Does not own:** scenario flow, domain model, Runtime/component design, persistence/API/package/implementation contracts
@@ -408,3 +408,22 @@ Implementation
 ```
 
 因此，后续任何设计若需要改变本文的核心问题或 G1–G8，应视为**目标层变更**，而不是普通实现细节调整。
+
+## Governance addendum — Workspace default execution capability (v1.4)
+
+Accepted by the project owner on 2026-11-20 under the fixed proposal
+`docs/proposals/2026-11-20-workspace-default-execution-capability.md`, SHA-256
+`8503d5c2663d3098171c57646b78a8408d5f1a28dc7f3cf3a37f2181fddaed66`.
+
+The G8 default is clarified for the Linux single-user coding-agent release:
+after the qualified isolated execution environment is installed, a newly
+initialized Workspace receives the baseline capabilities needed for ordinary
+coding work inside its own admitted ResourceBoundary—project read/write,
+local build/test/command execution and controlled public network access.
+The user must not configure or re-authorize these baseline capabilities for
+each Work or restart. This is a bounded default, not FullAccess, TrustedLocal,
+host access, cross-Workspace access or permission to perform high-risk external
+side effects. Boundary expansion, ownership changes and sensitive actions
+remain explicitly governed. If the qualified environment is unavailable, the
+system must explain the repair/install state and must not silently fall back to
+an unisolated or fake execution path.

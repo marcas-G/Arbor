@@ -45,7 +45,7 @@ describe("registered command receipt decoders", () => {
     );
 
     expect(external.filter((descriptor) => descriptor.required)).toHaveLength(
-      32,
+      33,
     );
     expect(external.filter((descriptor) => !descriptor.required)).toEqual([
       expect.objectContaining({
@@ -55,8 +55,23 @@ describe("registered command receipt decoders", () => {
     ]);
     expect(internal).toEqual([
       expect.objectContaining({
+        commandType: "AuthorizeWorkspaceSandbox",
+        schemaVersion: "1",
+        required: false,
+      }),
+      expect.objectContaining({
+        commandType: "RevokeWorkspaceSandboxAuthorization",
+        schemaVersion: "1",
+        required: false,
+      }),
+      expect.objectContaining({
         commandType: "UpdateResourceBoundary",
         schemaVersion: "1",
+      }),
+      expect.objectContaining({
+        commandType: "BindWorkspaceSandboxPolicy",
+        schemaVersion: "1",
+        required: false,
       }),
     ]);
   });
@@ -125,7 +140,90 @@ describe("registered command receipt decoders", () => {
     const policyDigest = createHash("sha256")
       .update(encodeEffectivePolicySummaryV1(policySummary))
       .digest("hex");
+    const {
+      trustedRuntimeIdentity: _identity,
+      trustedRuntimeVersion: _version,
+      networkBoundary: _networkBoundary,
+      ...commonPolicy
+    } = policySummary;
+    const workspacePolicySnapshot = {
+      ...commonPolicy,
+      version: 2 as const,
+      kind: "OsEnforced" as const,
+      profile: "ReadOnly" as const,
+      providerId: "linux-bwrap",
+      providerVersion: "1.0",
+      capabilityRevision: 1,
+      osFamily: "Linux" as const,
+      osBuild: "linux",
+      qualificationEvidenceRef: `blob:sha256:${"1".repeat(64)}`,
+      networkPolicy: {
+        version: 1 as const,
+        mode: "Disabled" as const,
+        destinations: [],
+      },
+      networkPolicyDigest: createHash("sha256")
+        .update(
+          encodeNetworkPolicyV1({
+            version: 1,
+            mode: "Disabled",
+            destinations: [],
+          }),
+        )
+        .digest("hex"),
+      networkBrokerControls: networkBrokerControlsV2ForMode("Disabled"),
+      providerRegistryRevision: 1,
+      providerRegistryDigest: "2".repeat(64),
+    };
+    const workspacePolicyResult = {
+      version: 3,
+      workspaceAuthorizationRevision: 1,
+      commandId: id("cmd"),
+      projectId,
+      workspaceId,
+      executionId,
+      episodeBinding: policyEpisode,
+      policyRevision: 1,
+      policyDigest: createHash("sha256")
+        .update(encodeEffectivePolicySummaryV2(workspacePolicySnapshot))
+        .digest("hex"),
+      effectivePolicySnapshot: JSON.parse(
+        encodeEffectivePolicySummaryV2(workspacePolicySnapshot),
+      ),
+    };
     const validResults: Readonly<Record<string, unknown>> = {
+      BindWorkspaceSandboxPolicy: workspacePolicyResult,
+      AuthorizeWorkspaceSandbox: {
+        authorization: {
+          version: 1,
+          projectId,
+          workspaceId,
+          authorizationRevision: 1,
+          commandId: id("cmd"),
+          actorPrincipal: "user:local",
+          recordedAt: "2026-11-16T00:00:00Z",
+          state: "Granted",
+          origin: { kind: "Human", principal: "user:local" },
+          resourceBoundaryRevision: 0,
+          workspacePolicyRevision: 0,
+          profile: "WorkspaceWrite",
+          providerId: "linux-bwrap",
+          networkPolicy: { version: 1, mode: "Enabled", destinations: [] },
+          expiresAt: null,
+        },
+      },
+      RevokeWorkspaceSandboxAuthorization: {
+        authorization: {
+          version: 1,
+          projectId,
+          workspaceId,
+          authorizationRevision: 2,
+          commandId: id("cmd"),
+          actorPrincipal: "user:local",
+          recordedAt: "2026-11-16T00:00:00Z",
+          state: "Revoked",
+        },
+      },
       CreateProject: {
         projectId,
         rootWorkspaceId: workspaceId,
@@ -561,4 +659,7 @@ import { createHash } from "node:crypto";
 import {
   type EffectivePolicySummaryV1,
   encodeEffectivePolicySummaryV1,
+  encodeEffectivePolicySummaryV2,
+  encodeNetworkPolicyV1,
+  networkBrokerControlsV2ForMode,
 } from "@arbor/domain";

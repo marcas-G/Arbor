@@ -15,6 +15,7 @@ import {
   workspaceBound,
 } from "@arbor/domain";
 import {
+  AcceptanceRepositoryLive,
   ClockLive,
   DependencyRepositoryLive,
   IdGeneratorLive,
@@ -22,6 +23,7 @@ import {
   P12_MIGRATIONS,
   runMigrations,
   TransactionPortLive,
+  VerificationRepositoryLive,
   WorkRepositoryLive,
   WorkspaceRepositoryLive,
   WorkWaitStoreLive,
@@ -48,6 +50,8 @@ const sessionId = parse(SessionId)("ses_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const workA = parse(WorkId)("wrk_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const workB = parse(WorkId)("wrk_018f2b3c-4d5e-7abc-8def-0123456789a2");
 const depA = parse(DependencyId)("dep_018f2b3c-4d5e-7abc-8def-0123456789a1");
+const passVerificationId = "ver_018f2b3c-4d5e-7abc-8def-0123456789a1";
+const completionExecutionId = "exe_018f2b3c-4d5e-7abc-8def-0123456789a1";
 
 const dependencyOn = (consumerWorkId: WorkId) =>
   declareDependency({
@@ -72,6 +76,8 @@ const buildClassifyApp = (databaseFile: string) => {
     Layer.provide(TransactionPortLive, base),
     Layer.provide(WorkspaceRepositoryLive, base),
     Layer.provide(WorkRepositoryLive, base),
+    Layer.provide(VerificationRepositoryLive, base),
+    Layer.provide(AcceptanceRepositoryLive, base),
     Layer.provide(WorkWaitStoreLive, base),
     Layer.provide(DependencyRepositoryLive, base),
     NoHoldWorkReadmissionGateStoreLive,
@@ -82,7 +88,18 @@ const buildClassifyApp = (databaseFile: string) => {
   );
 };
 
-const seed = (current: WorkId | null, waitRows: ReadonlyArray<unknown> = []) =>
+const seed = (
+  current: WorkId | null,
+  waitRows: ReadonlyArray<unknown> = [],
+  options: {
+    readonly passVerification?: boolean;
+    readonly acceptance?: boolean;
+    readonly completionClaimed?: boolean;
+    readonly verificationVerdict?: "Pass" | "Fail" | "Unknown";
+    readonly workRevision?: number;
+    readonly verificationTargetRevision?: number;
+  } = {},
+) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient;
     yield* sql.withTransaction(
@@ -139,11 +156,97 @@ const seed = (current: WorkId | null, waitRows: ReadonlyArray<unknown> = []) =>
               "w",
               "[]",
               "done",
-              "{}",
+              JSON.stringify({
+                goal: "verify",
+                criteria: [
+                  {
+                    criterionId: "criterion",
+                    requirement: "the work is verifiable",
+                    required: true,
+                  },
+                ],
+                riskRequirements: [],
+              }),
               "{}",
               "Open",
-              0,
+              workId === workA ? (options.workRevision ?? 0) : 0,
               "t",
+              "t",
+            ],
+          );
+        }
+        if (options.passVerification === true) {
+          const mission = JSON.stringify({
+            goal: "verify",
+            criteria: [
+              {
+                criterionId: "criterion",
+                requirement: "the work is verifiable",
+                required: true,
+              },
+            ],
+            riskRequirements: [],
+          });
+          yield* sql.unsafe(
+            "INSERT INTO verifications (verification_id, project_id, work_id, target_work_revision, owner_workspace_id, mission_snapshot, target_deliverables, target_artifact_versions, target_environment_revision, environment_snapshot_ref, verification_execution_ids, state, verdict, conclusion_reason, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            [
+              passVerificationId,
+              projectId,
+              workA,
+              options.verificationTargetRevision ?? 0,
+              workspaceId,
+              mission,
+              "[]",
+              "[]",
+              null,
+              null,
+              "[]",
+              "Concluded",
+              options.verificationVerdict ?? "Pass",
+              null,
+              "t",
+              "t",
+            ],
+          );
+          if (options.acceptance === true) {
+            yield* sql.unsafe(
+              "INSERT INTO work_acceptances (acceptance_id, project_id, work_id, target_work_revision, verification_id, actor, accepted_at) VALUES (?,?,?,?,?,?,?)",
+              [
+                "acc_018f2b3c-4d5e-7abc-8def-0123456789a1",
+                projectId,
+                workA,
+                0,
+                passVerificationId,
+                "user:test",
+                "t",
+              ],
+            );
+          }
+        }
+        if (options.completionClaimed === true) {
+          yield* sql.unsafe(
+            "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, focus_kind, focus_work_id, parent_execution_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            [
+              completionExecutionId,
+              projectId,
+              "workspace",
+              workspaceId,
+              "work",
+              workA,
+              null,
+              null,
+              sessionId,
+              "t",
+              null,
+              "Completed",
+              JSON.stringify({
+                _tag: "Completed",
+                result: {
+                  _tag: "CompletionClaimed",
+                  workRevision: options.workRevision ?? 0,
+                  claimRef: "clm_018f2b3c-4d5e-7abc-8def-0123456789a1",
+                },
+              }),
               "t",
             ],
           );
@@ -168,6 +271,14 @@ const classify = (
   current: WorkId | null,
   waitRows: ReadonlyArray<unknown> = [],
   withDependencyOn: WorkId | null = null,
+  options: {
+    readonly passVerification?: boolean;
+    readonly acceptance?: boolean;
+    readonly completionClaimed?: boolean;
+    readonly verificationVerdict?: "Pass" | "Fail" | "Unknown";
+    readonly workRevision?: number;
+    readonly verificationTargetRevision?: number;
+  } = {},
 ) => {
   const dir = mkdtempSync(join(tmpdir(), "p5-rs-"));
   const app = buildClassifyApp(join(dir, "slice.db"));
@@ -175,7 +286,7 @@ const classify = (
     Effect.provide(
       Effect.gen(function* () {
         yield* runMigrations(P12_MIGRATIONS);
-        yield* seed(current, waitRows);
+        yield* seed(current, waitRows, options);
         if (withDependencyOn !== null) {
           const tx = yield* TransactionPort;
           const deps = yield* DependencyRepository;
@@ -250,5 +361,51 @@ describe("P5→P7 RunnableWorkSource (supersession semantics, P7 03 §4)", () =>
       expect(result.current.value).toBe(workA);
     }
     expect([...result.runnable]).toEqual([]);
+  });
+
+  it("holds a PASSed current Work until Acceptance instead of re-running it", async () => {
+    const result = await classify(workA, [], null, { passVerification: true });
+    expect(result.current._tag).toBe("None");
+    expect([...result.runnable]).toEqual([workB]);
+  });
+
+  it("holds a CompletionClaimed Work until verification starts", async () => {
+    const result = await classify(workA, [], null, {
+      completionClaimed: true,
+    });
+    expect(result.current._tag).toBe("None");
+    expect([...result.runnable]).toEqual([workB]);
+  });
+
+  it("also holds an accepted Open Work until CompleteWork is consumed", async () => {
+    const result = await classify(workA, [], null, {
+      passVerification: true,
+      acceptance: true,
+    });
+    expect(result.current._tag).toBe("None");
+    expect([...result.runnable]).toEqual([workB]);
+  });
+
+  it.each(["Fail", "Unknown"] as const)(
+    "keeps a %s Verification runnable for explicit recovery",
+    async (verificationVerdict) => {
+      const result = await classify(workA, [], null, {
+        completionClaimed: true,
+        passVerification: true,
+        verificationVerdict,
+      });
+      expect(result.current._tag).toBe("Some");
+      expect(result.runnable).toEqual([workB]);
+    },
+  );
+
+  it("does not hold a PASS from an older Work revision", async () => {
+    const result = await classify(workA, [], null, {
+      passVerification: true,
+      workRevision: 1,
+      verificationTargetRevision: 0,
+    });
+    expect(result.current._tag).toBe("Some");
+    expect(result.runnable).toEqual([workB]);
   });
 });

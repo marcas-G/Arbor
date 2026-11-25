@@ -1,7 +1,10 @@
 import type { CommandReceipt } from "@arbor/domain";
 import {
   aggregateVerdict,
+  decodeCanonicalSandboxPolicyDecisionCommittedInternal,
   decodeCanonicalSandboxPolicyDecisionCommittedInternalV1,
+  decodeCanonicalSandboxPolicyDecisionCommittedInternalV3,
+  decodeWorkspaceSandboxAuthorization,
   ID_SCHEMAS,
   type IdTypeName,
   NO_EFFECT_DENIAL_CODES,
@@ -384,7 +387,12 @@ const concludeVerificationResultV2: Validator = (value) => {
   );
 };
 
-type ReceiptCommandType = RegisteredCommandType | "UpdateResourceBoundary";
+type ReceiptCommandType =
+  | RegisteredCommandType
+  | "UpdateResourceBoundary"
+  | "AuthorizeWorkspaceSandbox"
+  | "BindWorkspaceSandboxPolicy"
+  | "RevokeWorkspaceSandboxAuthorization";
 type ReceiptSchemaVersion = "1" | "2";
 type ResultDecoderRegistry = Readonly<
   Record<
@@ -396,23 +404,55 @@ type ResultDecoderRegistry = Readonly<
 /** Strict JSON DTO decoders for the current registered Handler/result pairs.
  * Command-specific result shape remains owned by each command contract. */
 const resultDecoders: ResultDecoderRegistry = {
+  AuthorizeWorkspaceSandbox: {
+    "1": (value) =>
+      objectWith(value, {
+        authorization: (authorization) =>
+          decodeWorkspaceSandboxAuthorization(authorization)?.state ===
+          "Granted",
+      }),
+  },
+  RevokeWorkspaceSandboxAuthorization: {
+    "1": (value) =>
+      objectWith(value, {
+        authorization: (authorization) =>
+          decodeWorkspaceSandboxAuthorization(authorization)?.state ===
+          "Revoked",
+      }),
+  },
   // F21 v1 CreateProject receipts are preserve-only. The current Handler is v2.
   CreateProject: {
     "2": (value) =>
-      objectWith(value, {
-        projectId: id("ProjectId"),
-        rootWorkspaceId: id("WorkspaceId"),
-        primarySessionId: id("SessionId"),
-      }),
+      objectWith(
+        value,
+        {
+          projectId: id("ProjectId"),
+          rootWorkspaceId: id("WorkspaceId"),
+          primarySessionId: id("SessionId"),
+        },
+        {
+          workspaceAuthorization: (authorization) =>
+            decodeWorkspaceSandboxAuthorization(authorization)?.state ===
+            "Granted",
+        },
+      ),
   },
   CreateChildWorkspace: {
     "1": (value) =>
-      objectWith(value, {
-        workspaceId: id("WorkspaceId"),
-        projectId: id("ProjectId"),
-        parentWorkspaceId: id("WorkspaceId"),
-        primarySessionId: id("SessionId"),
-      }),
+      objectWith(
+        value,
+        {
+          workspaceId: id("WorkspaceId"),
+          projectId: id("ProjectId"),
+          parentWorkspaceId: id("WorkspaceId"),
+          primarySessionId: id("SessionId"),
+        },
+        {
+          workspaceAuthorization: (authorization) =>
+            decodeWorkspaceSandboxAuthorization(authorization)?.state ===
+            "Granted",
+        },
+      ),
   },
   AssignWork: {
     "1": (value) =>
@@ -623,11 +663,30 @@ const resultDecoders: ResultDecoderRegistry = {
       }),
   },
   GrantPermission: {
+    "2": (value) =>
+      objectWith(value, {
+        permissionGrantId: id("PermissionGrantId"),
+        state: permissionGrantLifecycle,
+      }),
     "1": (value) =>
       objectWith(value, {
         permissionGrantId: id("PermissionGrantId"),
         state: permissionGrantLifecycle,
       }),
+  },
+  BindWorkspaceSandboxPolicy: {
+    "1": (value) => {
+      try {
+        return (
+          decodeCanonicalSandboxPolicyDecisionCommittedInternalV3(
+            JSON.stringify(value),
+            sha256Hex,
+          ) !== undefined
+        );
+      } catch {
+        return false;
+      }
+    },
   },
   DecideSandboxPolicy: {
     "1": (value) => {
@@ -644,12 +703,12 @@ const resultDecoders: ResultDecoderRegistry = {
     },
     "2": (value) => {
       try {
-        return (
-          decodeCanonicalSandboxPolicyDecisionCommittedInternalV1(
-            JSON.stringify(value),
-            sha256Hex,
-          ) !== undefined
+        const json = JSON.stringify(value);
+        const result = decodeCanonicalSandboxPolicyDecisionCommittedInternal(
+          json,
+          sha256Hex,
         );
+        return result !== undefined && result.version !== 3;
       } catch {
         return false;
       }
@@ -705,10 +764,18 @@ export const COMMAND_RECEIPT_DECODER_DESCRIPTORS: ReadonlyArray<CommandReceiptDe
         commandType: commandType as ReceiptCommandType,
         schemaVersion: schemaVersion as ReceiptSchemaVersion,
         source:
-          commandType === "UpdateResourceBoundary"
+          commandType === "UpdateResourceBoundary" ||
+          commandType === "AuthorizeWorkspaceSandbox" ||
+          commandType === "BindWorkspaceSandboxPolicy" ||
+          commandType === "RevokeWorkspaceSandboxAuthorization"
             ? ("Internal" as const)
             : ("External" as const),
-        required: commandType !== "ResolveControlApproval",
+        required: ![
+          "ResolveControlApproval",
+          "AuthorizeWorkspaceSandbox",
+          "RevokeWorkspaceSandboxAuthorization",
+          "BindWorkspaceSandboxPolicy",
+        ].includes(commandType),
       })),
     ),
   );
@@ -866,7 +933,22 @@ export const decodeRegisteredCommandReceipt = <R>(
       const parsed: unknown = JSON.parse(stored.resultJson);
       if (!validateResult(parsed)) return Effect.fail(corruption());
       if (
-        commandType === "DecideSandboxPolicy" &&
+        commandType === "AuthorizeWorkspaceSandbox" ||
+        commandType === "RevokeWorkspaceSandboxAuthorization"
+      ) {
+        const authorization = decodeWorkspaceSandboxAuthorization(
+          recordOf(parsed)?.authorization,
+        );
+        if (
+          authorization === undefined ||
+          authorization.commandId !== stored.commandId ||
+          authorization.projectId !== stored.projectId
+        )
+          return Effect.fail(corruption());
+      }
+      if (
+        (commandType === "DecideSandboxPolicy" ||
+          commandType === "BindWorkspaceSandboxPolicy") &&
         (recordOf(parsed)?.commandId !== stored.commandId ||
           recordOf(parsed)?.projectId !== stored.projectId)
       ) {

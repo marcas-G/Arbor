@@ -12,6 +12,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceTab } from "../src/api/router.js";
 import {
@@ -361,6 +362,7 @@ describe("W-05 Workspace page", () => {
   });
 
   it("六 tab 导航：点击各 tab → location.pathname 变化；默认路由无 tab → 概要", async () => {
+    const user = userEvent.setup();
     installViews();
     renderWorkspace();
     await waitFor(() =>
@@ -378,7 +380,7 @@ describe("W-05 Workspace page", () => {
       ["对话", "/p/prj_1/workspace/ws_1/conversation"],
     ];
     for (const [label, path] of expectations) {
-      fireEvent.click(screen.getByRole("tab", { name: label }));
+      await user.click(screen.getByRole("tab", { name: label }));
       expect(window.location.pathname).toBe(path);
     }
   });
@@ -453,7 +455,7 @@ describe("W-05 Workspace page", () => {
       ...detailTypical,
       currentWork: { ...detailTypical.currentWork, revision: 9 as never },
     };
-    installViews({
+    const calls = installViews({
       ...defaultHandlers,
       "workspace-detail": () => ({ dto: revisionedDetail }),
     });
@@ -464,7 +466,21 @@ describe("W-05 Workspace page", () => {
       ).toBeTruthy(),
     );
     fireEvent.click(screen.getByRole("button", { name: "纠偏" }));
-    expect(screen.getByText("rev 9")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("调整说明"), {
+      target: { value: "继续当前工作，但优先处理阻塞项" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送调整" }));
+    await waitFor(() =>
+      expect(calls.some((call) => call.view === "unknown-view")).toBe(true),
+    );
+    const command = calls.find((call) => call.view === "unknown-view")?.request;
+    expect(command).toMatchObject({
+      commandType: "SteerWork",
+      payload: {
+        workId: revisionedDetail.currentWork?.workId,
+        expectedWorkRevision: 9,
+      },
+    });
   });
 
   it("查询 problem → 就地 ProblemCard", async () => {

@@ -22,6 +22,10 @@ playwright-report/
 arbor-schema*-clone-*/
 p12-runtime-safety-template-*/
 .arbor-p39-writer-*.sqlite*
+.arbor-artifacts/
+p12-production-template-*/
+.mac-*/
+.rai-*/
 
 # Local provider configuration — may contain inline credentials
 arbor.config.json

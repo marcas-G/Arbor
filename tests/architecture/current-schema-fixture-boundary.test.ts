@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -17,6 +17,7 @@ const historicalSchemaFixtureOwners = [
   "adapters/persistence-sqlite/test/p47-ah14-legacy-adoption-attention-migration.test.ts",
   "adapters/persistence-sqlite/test/p48-ah19-conversation-checkpoint-owner-migration.test.ts",
   "adapters/persistence-sqlite/test/p51-verification-v2-consumer-reconciliation-migration.test.ts",
+  "adapters/persistence-sqlite/test/p56-linux-network-compatibility.test.ts",
   "adapters/persistence-sqlite/test/sandbox-policy-grant-provenance-repository.test.ts",
   "adapters/persistence-sqlite/test/verification-signal-reconciliation-store.test.ts",
   "adapters/persistence-sqlite/test/schema42-database-fixture.test.ts",
@@ -32,6 +33,7 @@ const historicalSchemaFixtureOwners = [
   // Explicit legacy/fail-closed replay qualification.
   "adapters/persistence-sqlite/test/p40-observation-schema44-fail-closed.test.ts",
   "tests/p4-schema44-profileless-shell2-recovery.test.ts",
+  "tests/workspace-sandbox-authorization.test.ts",
   // The runtime schema gate deliberately manufactures old versions to reject
   // them and explicitly upgrades 48 -> current in its positive control.
   "apps/single-workspace/test/p38-runtime-schema-boundary.test.ts",
@@ -49,14 +51,22 @@ const historicalFixtureSymbol = new RegExp(
 
 describe("current production schema test-fixture boundary", () => {
   it("keeps numbered schema fixtures confined to an explicit historical qualification allowlist", () => {
-    const trackedTypescript = execFileSync("git", ["ls-files", "--", "*.ts"], {
-      cwd: root,
-      encoding: "utf8",
-    })
+    // Include tracked and non-ignored working-tree files. During development,
+    // a newly added qualification test must be checked before it is staged;
+    // otherwise the allowlist can claim to protect it while this test silently
+    // omits it from the scan.
+    const workingTreeTypescript = execFileSync(
+      "git",
+      ["ls-files", "--cached", "--others", "--exclude-standard", "--", "*.ts"],
+      {
+        cwd: root,
+        encoding: "utf8",
+      },
+    )
       .trim()
       .split(/\r?\n/u)
-      .filter((path) => path.length > 0);
-    const actualOwners = trackedTypescript
+      .filter((path) => path.length > 0 && existsSync(join(root, path)));
+    const actualOwners = workingTreeTypescript
       .filter((path) => !fixtureInfrastructure.has(path))
       .filter((path) =>
         historicalFixtureSymbol.test(readFileSync(join(root, path), "utf8")),

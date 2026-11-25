@@ -78,6 +78,21 @@ export const ProjectRepositoryLive: Layer.Layer<
       _tag: "ProjectRepositoryRevisionConflict",
     };
     return ProjectRepository.of({
+      isDirectoryLinked: (path) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const rows = yield* run(
+            sql.unsafe<{ project_id: string }>(
+              `SELECT p.project_id FROM projects p
+                 JOIN workspaces w ON w.workspace_id = p.root_workspace_id
+                WHERE EXISTS (SELECT 1 FROM json_each(w.resource_boundary, '$.addresses') a
+                  WHERE json_extract(a.value, '$._tag') = 'FileTree'
+                    AND json_extract(a.value, '$.path') = ?) LIMIT 1`,
+              [path],
+            ),
+          );
+          return rows.length > 0;
+        }),
       findById: (projectId) =>
         Effect.gen(function* () {
           yield* TransactionScope;

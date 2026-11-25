@@ -58,6 +58,7 @@ const now = "2026-10-12T00:00:00.000Z";
 
 const workspaceRecord = {
   projectId,
+  lifecycle: "Active",
   resourceBoundary: {
     addresses: [{ _tag: "FileTree" as const, path: "C:/authority-denial" }],
   },

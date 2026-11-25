@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Effect, Layer, Option } from "effect";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { BlobStorePortLive } from "../adapters/blob-local/src/index.js";
+import { makeBlobStorePortLive } from "../adapters/blob-local/src/index.js";
 import {
   AgentLoopStepStoreLive,
   ArtifactMetadataRepositoryLive,
@@ -191,7 +191,7 @@ const makeApp = (
     Layer.provide(ArtifactMetadataRepositoryLive, infra),
     Layer.provide(WorkspaceRepositoryLive, infra),
     ToolDefinitionStoreLive,
-    BlobStorePortLive,
+    makeBlobStorePortLive(`${databaseFilename}.blobs`),
     sandbox,
     Layer.succeed(ResourceAdmission, {
       admit: () => Effect.succeed({ _tag: "Admitted" as const }),

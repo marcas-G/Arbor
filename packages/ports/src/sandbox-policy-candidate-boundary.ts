@@ -15,7 +15,7 @@ export interface SandboxPolicyCandidateBoundarySnapshotV1 {
   readonly ownershipClaims: ReadonlyArray<ResourceOwnershipClaimRecord>;
   readonly worktrees: ReadonlyArray<WorktreeRecord>;
   readonly resolvedRegions: ReadonlyArray<CanonicalResourceRegion>;
-  readonly primaryManagedGitWorktreeRegion: CanonicalResourceRegion;
+  readonly primaryResourceRegion: CanonicalResourceRegion;
 }
 
 export type SandboxPolicyCandidateBoundaryReadFailureReasonV1 =

@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   fireEvent,
@@ -276,24 +274,5 @@ describe("D3 Root Workbench shell", () => {
     expect(conversation.getAttribute("aria-pressed")).toBe("false");
     expect(shell.dataset.mobilePane).toBe("tree");
     expect(location.pathname).not.toContain("conversation");
-  });
-
-  it("declares desktop, tablet, and mobile breakpoints for the shell", () => {
-    const css = readFileSync(
-      join(process.cwd(), "src/pages/workbench/workbench.module.css"),
-      { encoding: "utf8" },
-    );
-    expect(css).toMatch(
-      /grid-template-columns:\s*minmax\(0, var\(--workbench-tree-basis\)\)/,
-    );
-    expect(css).toContain("@media (max-width: 63.99rem)");
-    expect(css).toContain("grid-template-columns: 1fr");
-    expect(css).toContain("@media (max-width: 47.99rem)");
-    expect(css).toMatch(
-      /@media \(max-width: 47\.99rem\)[\s\S]*?\.mobileTabs\s*\{\s*display: flex;/,
-    );
-    expect(css).toMatch(
-      /@media \(max-width: 63\.99rem\)[\s\S]*?\.divider\s*\{\s*display: none;/,
-    );
   });
 });

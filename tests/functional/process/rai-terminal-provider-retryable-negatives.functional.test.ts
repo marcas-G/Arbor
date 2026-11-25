@@ -290,7 +290,7 @@ describe("RAI-DG-02 retryable Provider failure negatives", () => {
       "budget-exhaustion",
       "deadline-exhaustion",
     ] as const) {
-      it(`${failureKind} / ${scenario} never creates a terminal Provider hold or Attention`, async () => {
+      it(`${failureKind} / ${scenario} creates one terminal Provider hold without same-revision re-admission`, async () => {
         const marker = `RAI-DG-02-retryable-${failureKind}-${scenario}-${crypto.randomUUID().slice(0, 8)}`;
         const policy = policyFor(scenario);
         let completionFailures = 0;
@@ -354,6 +354,13 @@ describe("RAI-DG-02 retryable Provider failure negatives", () => {
             evidence.attempts.some(
               (attempt) => attempt.provider_error_kind === failureKind,
             ) &&
+            evidence.executions.some(
+              (execution) =>
+                execution.settlement_kind === "Failed" &&
+                execution.settlement_json?.includes(
+                  `ProviderFailure:${failureKind}`,
+                ),
+            ) &&
             (scenario === "eligible-retry"
               ? evidence.attempts.some(
                   (attempt) => attempt.outcome === "Success",
@@ -395,9 +402,7 @@ describe("RAI-DG-02 retryable Provider failure negatives", () => {
         ).toBe(true);
         await new Promise((resolveWait) => setTimeout(resolveWait, 2_200));
         const laterEvidence = readWorkEvidence(fixture.databaseFile, workId);
-        expect(laterEvidence.executions.length).toBeGreaterThanOrEqual(
-          failedOrRetried.executions.length,
-        );
+        expect(laterEvidence.executions).toHaveLength(1);
         const attention = await client.view<{
           rows: Array<{ source: string; targetWorkspaceId: string }>;
         }>("attention", { projectId: project.projectId });
@@ -405,7 +410,7 @@ describe("RAI-DG-02 retryable Provider failure negatives", () => {
           attention.rows.filter(
             (row) => row.source === "TerminalProviderFailure",
           ),
-        ).toEqual([]);
+        ).toHaveLength(1);
         const detail = await client.view<{
           terminalProviderFailure?: unknown;
         }>("work-detail", {
@@ -413,7 +418,9 @@ describe("RAI-DG-02 retryable Provider failure negatives", () => {
           workspaceId: project.rootWorkspaceId,
           workId,
         });
-        expect(detail.terminalProviderFailure).toBeUndefined();
+        expect(detail.terminalProviderFailure).toMatchObject({
+          failureCode: failureKind,
+        });
         expect(fixture.daemonErrors).toEqual([]);
       }, 180_000);
     }

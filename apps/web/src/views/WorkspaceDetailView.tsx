@@ -6,6 +6,7 @@
 import type { WorkspaceDetailRes } from "@arbor/api-contracts";
 import { Card } from "../components/Card.js";
 import { Empty } from "../components/Empty.js";
+import { cn } from "../lib/utils.js";
 import { DependencyTable } from "./DependencyView.js";
 import { InboxRows } from "./InboxView.js";
 import { EnumBadge, Mono, SandboxPolicySummary, TimeText } from "./shared.js";
@@ -41,9 +42,21 @@ function StringList({
     return null;
   }
   return (
-    <div className="arbor-kv">
-      <span className="arbor-kv-label">{label}</span>
-      <ul className="arbor-row-list">
+    <div className={cn("arbor-kv", "flex flex-col gap-ui-1")}>
+      <span
+        className={cn(
+          "arbor-kv-label",
+          "text-muted-foreground font-sans text-caption",
+        )}
+      >
+        {label}
+      </span>
+      <ul
+        className={cn(
+          "arbor-row-list",
+          "flex flex-col gap-ui-2 m-0 p-0 list-none",
+        )}
+      >
         {values.map((value) => (
           <li key={value}>{value}</li>
         ))}
@@ -59,9 +72,9 @@ export function WorkspaceDetailView({
 }) {
   const r = res.responsibility;
   return (
-    <div className="arbor-view-stack">
+    <div className={cn("arbor-view-stack", "flex flex-col gap-ui-3")}>
       <Card title="Responsibility">
-        <div className="arbor-view-stack">
+        <div className={cn("arbor-view-stack", "flex flex-col gap-ui-3")}>
           <span>{r.purpose}</span>
           <StringList
             label="ownedResponsibilities"
@@ -74,15 +87,27 @@ export function WorkspaceDetailView({
         </div>
       </Card>
       <Card title="Resource Boundary">
-        <div className="arbor-view-stack">
-          <div className="arbor-kv">
-            <span className="arbor-kv-label">basisResponsibilityRevision</span>
+        <div className={cn("arbor-view-stack", "flex flex-col gap-ui-3")}>
+          <div className={cn("arbor-kv", "flex flex-col gap-ui-1")}>
+            <span
+              className={cn(
+                "arbor-kv-label",
+                "text-muted-foreground font-sans text-caption",
+              )}
+            >
+              basisResponsibilityRevision
+            </span>
             <Mono>{String(res.boundary.basisResponsibilityRevision)}</Mono>
           </div>
           {res.boundary.addresses.length === 0 ? (
             <Empty>无资源地址</Empty>
           ) : (
-            <ul className="arbor-row-list">
+            <ul
+              className={cn(
+                "arbor-row-list",
+                "flex flex-col gap-ui-2 m-0 p-0 list-none",
+              )}
+            >
               {res.boundary.addresses.map((address, index) => (
                 <li key={`${address._tag}:${String(index)}`}>
                   <Mono>{addressText(address)}</Mono>
@@ -94,7 +119,12 @@ export function WorkspaceDetailView({
       </Card>
       {res.sandboxPolicyCandidateRead === undefined ? null : (
         <Card title="沙箱策略候选（需人工选择）">
-          <ul className="arbor-row-list">
+          <ul
+            className={cn(
+              "arbor-row-list",
+              "flex flex-col gap-ui-2 m-0 p-0 list-none",
+            )}
+          >
             {res.sandboxPolicyCandidateRead.candidates.map((candidate) => (
               <li key={candidate.candidateId}>
                 {candidate.kind === "TrustedLocalUnconfinedV1"
@@ -108,17 +138,24 @@ export function WorkspaceDetailView({
       )}
       {res.currentWork == null ? null : (
         <Card title="当前工作">
-          <div className="arbor-view-stack">
+          <div className={cn("arbor-view-stack", "flex flex-col gap-ui-3")}>
             <span>{res.currentWork.objective}</span>
-            <div className="arbor-badge-row">
+            <div className={cn("arbor-badge-row", "flex flex-wrap gap-ui-2")}>
               <EnumBadge label={res.currentWork.status} />
               {res.currentWork.workId == null ? null : (
                 <Mono>{res.currentWork.workId}</Mono>
               )}
             </div>
             {res.currentWork.activeExecution == null ? null : (
-              <div className="arbor-kv">
-                <span className="arbor-kv-label">activeExecution</span>
+              <div className={cn("arbor-kv", "flex flex-col gap-ui-1")}>
+                <span
+                  className={cn(
+                    "arbor-kv-label",
+                    "text-muted-foreground font-sans text-caption",
+                  )}
+                >
+                  activeExecution
+                </span>
                 <span>
                   <Mono>{res.currentWork.activeExecution.executionId}</Mono>{" "}
                   <TimeText at={res.currentWork.activeExecution.admittedAt} />
@@ -149,9 +186,20 @@ export function WorkspaceDetailView({
         {res.pendingWorks.length === 0 ? (
           <Empty>无待办工作</Empty>
         ) : (
-          <ul className="arbor-row-list">
+          <ul
+            className={cn(
+              "arbor-row-list",
+              "flex flex-col gap-ui-2 m-0 p-0 list-none",
+            )}
+          >
             {res.pendingWorks.map((work) => (
-              <li key={work.workId} className="arbor-pending-row">
+              <li
+                key={work.workId}
+                className={cn(
+                  "arbor-pending-row",
+                  "flex flex-wrap items-center gap-ui-3 pb-ui-2 border-b border-solid border-border",
+                )}
+              >
                 <Mono>{work.workId}</Mono>
                 <span>{work.objective}</span>
               </li>
@@ -182,7 +230,12 @@ export function WorkspaceDetailView({
         {res.auditTimeline.length === 0 ? (
           <Empty>无审计事件</Empty>
         ) : (
-          <table className="arbor-table">
+          <table
+            className={cn(
+              "arbor-table",
+              "w-full border-collapse text-small block overflow-x-auto [overscroll-behavior-inline:contain] [&_th]:wrap-anywhere [&_td]:wrap-anywhere [&_th]:p-[var(--arbor-space-1)_var(--arbor-space-2)] [&_th]:border-b [&_th]:border-solid [&_th]:border-border [&_th]:text-muted-foreground [&_th]:font-sans [&_th]:text-caption [&_th]:font-semibold [&_th]:text-left [&_td]:p-ui-2 [&_td]:border-b [&_td]:border-solid [&_td]:border-border [&_td]:text-left [&_td]:[vertical-align:top]",
+            )}
+          >
             <thead>
               <tr>
                 <th scope="col">sequence</th>

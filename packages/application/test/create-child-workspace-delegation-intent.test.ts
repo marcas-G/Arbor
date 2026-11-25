@@ -4,6 +4,7 @@ import {
   ContextEpochNumber,
   FormationProposalId,
   makeWorkspacePolicy,
+  Principal,
   ProjectId,
   parse,
   ResourceBoundaryRevision,
@@ -13,6 +14,7 @@ import {
   SessionId,
   type Workspace,
   WorkspaceId,
+  type WorkspaceSandboxAuthorization,
 } from "@arbor/domain";
 import { TransactionScope } from "@arbor/ports";
 import { Effect, Option } from "effect";
@@ -131,5 +133,99 @@ describe("CreateChildWorkspace delegated activation intent", () => {
         delegation: approval,
       },
     ]);
+  });
+
+  it("does not initialize Child capability when the current Parent authorization is revoked", async () => {
+    const initialize = () =>
+      Effect.succeed({
+        _tag: "Initialized" as const,
+        authorization: {} as WorkspaceSandboxAuthorization,
+      });
+    let initialized = false;
+    const revoked: WorkspaceSandboxAuthorization = {
+      version: 1,
+      projectId,
+      workspaceId: parentWorkspaceId,
+      authorizationRevision: 2,
+      commandId,
+      actorPrincipal: parse(Principal)("user:formation-test"),
+      recordedAt: "2026-10-26T00:00:00.000Z",
+      state: "Revoked",
+    };
+    const handler = makeCreateChildWorkspaceHandler({
+      workspaces: {
+        findById: () =>
+          Effect.succeed(
+            Option.some({
+              projectId,
+              parentWorkspaceId: null,
+              lifecycle: "Active",
+              revision: parse(Revision)(7),
+              resourceBoundaryRevision: parse(ResourceBoundaryRevision)(9),
+              responsibilityRevision: parse(ResponsibilityRevision)(1),
+              workspacePolicyRevision: parse(Revision)(0),
+            } as unknown as Workspace),
+          ),
+        create: () => Effect.void,
+      } as never,
+      sessions: { create: () => Effect.void } as never,
+      workspaceAuthorizations: {
+        findCurrent: () => Effect.succeed(Option.some(revoked)),
+      } as never,
+      workspaceAuthorizationInitialization: {
+        initialize: () => {
+          initialized = true;
+          return initialize();
+        },
+      } as never,
+      clock: { now: () => Effect.succeed("2026-10-26T00:01:00.000Z") },
+    });
+    const result = await Effect.runPromise(
+      Effect.provideService(
+        handler.execute(
+          {
+            commandType: "CreateChildWorkspace",
+            commandId,
+            projectId,
+            actor,
+            issuedAt: "2026-10-26T00:01:00.000Z",
+            payload: {
+              parentWorkspaceId,
+              workspaceId: childWorkspaceId,
+              primarySession: {
+                sessionId,
+                contextEpoch: parse(ContextEpochNumber)(0),
+              },
+              name: "child",
+              responsibilityDefinition: {
+                purpose: "bounded responsibility",
+                ownedResponsibilities: [],
+                obligations: [],
+                includes: [],
+                excludes: [],
+                interfaces: [],
+              },
+              responsibilityRevision: parse(ResponsibilityRevision)(1),
+              resourceBoundary: {
+                basisResponsibilityRevision: parse(ResponsibilityRevision)(1),
+                addresses: [address],
+              },
+              resourceBoundaryRevision: parse(ResourceBoundaryRevision)(1),
+              agentBinding: responsibilityBound(childWorkspaceId),
+              workspacePolicy: makeWorkspacePolicy(),
+              workspacePolicyRevision: parse(Revision)(0),
+              revision: parse(Revision)(0),
+            },
+          } as never,
+          { _tag: "External", principal: actor as never },
+        ),
+        TransactionScope,
+        { session: { id: "create-child-revoked-parent-test" } },
+      ),
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok)
+      expect(result.value.result.workspaceAuthorization).toBeUndefined();
+    expect(initialized).toBe(false);
   });
 });

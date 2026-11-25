@@ -52,6 +52,7 @@ const loadSafetyStopFacts = (
   episode: string | null,
   bindingWorkRevision: number | null = null,
   episodeWorkId: WorkId | null = null,
+  bindingKind?: "workspace" | "execution_bound",
 ) => {
   const settlementFact: ExecutionSettlementReadFact = {
     executionId,
@@ -69,6 +70,7 @@ const loadSafetyStopFacts = (
       Effect.succeed([
         {
           executionId,
+          ...(bindingKind === undefined ? {} : { bindingKind }),
           projectId,
           workspaceId,
           episodeJson: episode,
@@ -96,6 +98,68 @@ const workspaceSafetyRow = async (
 };
 
 describe("P10 RuntimeSafetyEnvelope episode scope", () => {
+  it("keeps a canonical execution-bound Verifier safety stop visible without inventing a Work binding", async () => {
+    const facts = await Effect.runPromise(
+      loadSafetyStopFacts(
+        JSON.stringify({ _tag: "ExecutionBoundEpisode", executionId }),
+        null,
+        null,
+        "execution_bound",
+      ),
+    );
+    expect(deriveAttentionRows(facts)).toContainEqual(
+      expect.objectContaining({
+        source: "RuntimeSafetyEnvelope",
+        targetWorkspaceId: workspaceId,
+        severity: "Attention",
+      }),
+    );
+  });
+
+  it.each([
+    { _tag: "ExecutionBoundEpisode", executionId: `${executionId}-other` },
+    { _tag: "ExecutionBoundEpisode", executionId, workId },
+    { _tag: "WorkEpisode", workId, targetWorkRevision: currentWorkRevision },
+    { _tag: "LegacyAmbiguousEpisode", executionId },
+  ])(
+    "rejects mismatched execution-bound safety identity %s",
+    async (identity) => {
+      const exit = await Effect.runPromiseExit(
+        loadSafetyStopFacts(
+          JSON.stringify(identity),
+          null,
+          null,
+          "execution_bound",
+        ),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.squash(exit.cause)).toMatchObject({
+          _tag: "ProjectionIntegrityFailure",
+          reasonCode: "EpisodeMalformed",
+        });
+      }
+    },
+  );
+
+  it("rejects an execution-bound safety identity with a Work join", async () => {
+    const exit = await Effect.runPromiseExit(
+      loadSafetyStopFacts(
+        JSON.stringify({ _tag: "ExecutionBoundEpisode", executionId }),
+        currentWorkRevision,
+        workId,
+        "execution_bound",
+      ),
+    );
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) {
+      expect(Cause.squash(exit.cause)).toMatchObject({
+        _tag: "ProjectionIntegrityFailure",
+        reasonCode: "WorkScopeMismatch",
+      });
+    }
+  });
+
   it.each([
     {
       _tag: "ConversationResponseEpisode",

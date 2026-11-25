@@ -124,7 +124,13 @@ describe("p10-boundaries", () => {
         // product over real HTTP process boundaries. They are external test
         // infrastructure, not production transport.
         normalized.includes("/tests/capability/") ||
-        normalized.includes("/tests/functional/")
+        normalized.includes("/tests/functional/") ||
+        // This adapter test creates one real Unix-domain socket solely to
+        // validate the broker binding contract. It does not own production
+        // transport; the exception is intentionally exact and file-scoped.
+        normalized.endsWith(
+          "/adapters/sandbox-native-posix/test/native-posix-policy.test.ts",
+        )
       );
     };
     for (const root of ["packages", "apps", "adapters", "tests"]) {

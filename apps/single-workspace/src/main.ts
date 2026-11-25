@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { inspect } from "node:util";
 import { Principal, parse, WorkspaceId, workEpisode } from "@arbor/domain";
@@ -41,16 +42,22 @@ import {
   type SingleWorkspaceServices,
 } from "./composition.js";
 import { evaluateAndSelect } from "./loop.js";
-import { ProductionDaemonService, TransportBoundary } from "./production.js";
 import {
-  makeProjectResourceProfilePort,
-  projectResourceProfilesFromEnvironment,
-} from "./project-resource-profiles.js";
+  hasConfiguredModel,
+  type ModelSetup,
+  makeModelSetup,
+} from "./model-setup.js";
+import { ProductionDaemonService, TransportBoundary } from "./production.js";
+import { makeHostProjectDirectories } from "./project-directories.js";
+import { projectResourceProfilesFromEnvironment } from "./project-resource-profiles.js";
 import {
   bindProcessExecutionModeSnapshot,
   findArborConfigFile,
   providerDeploymentOfConfig,
 } from "./provider-config.js";
+import { RuntimeIdentity } from "./runtime-info.js";
+import { defaultSandboxAuthoritySource } from "./sandbox-authority-default.js";
+import { hasLinuxWorkspaceWriteEnabledQualificationSync } from "./sandbox-linux-qualification.js";
 import {
   makeBasicAuthenticator,
   makeStaticAuthenticator,
@@ -64,7 +71,7 @@ export const productionSingleWorkspaceConfig = (
 ): SingleWorkspaceConfig => {
   const authenticator = authenticatorFromEnv();
   // Standard config file (arbor.config.json) is the primary provider source;
-  // legacy env vars remain a compatibility fallback; absent both = fake.
+  // legacy env vars remain a compatibility fallback; absent both = setup.
   const configFile = findArborConfigFile();
   if (configFile !== undefined && configFile.ok === false) {
     throw new Error(
@@ -75,7 +82,11 @@ export const productionSingleWorkspaceConfig = (
     configFile !== undefined && configFile.ok === true
       ? providerDeploymentOfConfig(configFile.config)
       : undefined;
-  const deployment = fromConfig?.deployment ?? deploymentFromEnv();
+  const deployment = hasConfiguredModel(configFile)
+    ? (fromConfig?.deployment ?? deploymentFromEnv())
+    : undefined;
+  const trustedHostConfigurationSource =
+    overrides.trustedHostConfigurationSource ?? defaultSandboxAuthoritySource();
   const compositionOverrides = bindProcessExecutionModeSnapshot(
     configFile?.ok === true ? configFile.config : undefined,
     {
@@ -94,7 +105,11 @@ export const productionSingleWorkspaceConfig = (
               : {}),
           }
         : {}),
+      ...(trustedHostConfigurationSource === undefined
+        ? {}
+        : { trustedHostConfigurationSource }),
       ...overrides,
+      requireRealProvider: true,
     },
   );
   return compositionOverrides;
@@ -205,6 +220,7 @@ const authenticatorFromEnv = () => {
 
 export interface ProductionDaemonRunConfig
   extends Partial<SingleWorkspaceConfig> {
+  readonly modelSetup?: ModelSetup;
   /** The workspace whose scheduler/loop is evaluated each tick. Absent means
    * only the recovery/consumer daemons run. */
   readonly workspaceId?: WorkspaceId;
@@ -266,6 +282,34 @@ const reportStartupPhase = (
   } catch {
     // Test-only startup diagnostics are non-authoritative.
   }
+};
+
+/** A concurrent daemon may lose the SQLite writer race before its transaction
+ * body starts. That is a recoverable scheduling condition for a long-running
+ * daemon: the next tick can retry the same durable work. Keep the check
+ * structural because the operational error is wrapped by the execution and
+ * transaction boundaries before it reaches this lifecycle loop. */
+const isTransientSqliteLock = (cause: unknown): boolean => {
+  let current: unknown = cause;
+  for (let depth = 0; depth < 10; depth += 1) {
+    if (
+      typeof current === "object" &&
+      current !== null &&
+      "_tag" in current &&
+      current._tag === "LockTimeoutError"
+    ) {
+      return true;
+    }
+    if (
+      typeof current !== "object" ||
+      current === null ||
+      !("cause" in current)
+    ) {
+      return false;
+    }
+    current = current.cause;
+  }
+  return false;
 };
 
 /** P5 `01` §3: migrate, then run one scheduler loop step for a workspace.
@@ -569,7 +613,7 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
       }
     });
     reportStartupPhase(config.startupDiagnosticProbe, "daemon.start.before");
-    yield* deployment.daemon.start;
+    if (config.modelSetup?.configured !== false) yield* deployment.daemon.start;
     reportStartupPhase(config.startupDiagnosticProbe, "daemon.start.after");
     let webTransportHandle:
       | Awaited<ReturnType<typeof startWebTransport>>
@@ -579,6 +623,7 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
       const sql = yield* SqlClient;
       const projectDirectory = yield* ProjectDirectory;
       const projectResourceProfiles = yield* ProjectResourceProfilePort;
+      const runtimeInfo = yield* RuntimeIdentity;
       reportStartupPhase(
         config.startupDiagnosticProbe,
         "web-transport.bind.before",
@@ -589,9 +634,16 @@ export const runProductionDaemon = (config: ProductionDaemonRunConfig = {}) =>
           webSocket: boundary.webSocket,
           authenticator: boundary.authenticator,
           authenticatorConfigured: boundary.authenticatorConfigured,
+          runtimeInfo,
+          ...(config.modelSetup === undefined
+            ? {}
+            : { modelSetup: config.modelSetup }),
           sql,
           projectDirectory,
           projectResourceProfiles,
+          ...(config.projectDirectories === undefined
+            ? {}
+            : { projectDirectories: config.projectDirectories }),
           ...(config.webTransport?.staticRoot !== undefined
             ? { staticRoot: config.webTransport.staticRoot }
             : {}),
@@ -665,6 +717,7 @@ export const runDaemonOnce = (config: ProductionDaemonRunConfig = {}) =>
     Effect.gen(function* () {
       const { deployment, schedulerTick, conversationTick } =
         yield* runProductionDaemon(config);
+      if (config.modelSetup?.configured === false) return;
       yield* schedulerTick;
       yield* deployment.daemon.pollConsumers;
       yield* deployment.daemon.recoveryTick;
@@ -681,6 +734,7 @@ export const runDaemonForever = (config: ProductionDaemonRunConfig = {}) =>
     Effect.gen(function* () {
       const { deployment, schedulerTick, conversationTick } =
         yield* runProductionDaemon(config);
+      if (config.modelSetup?.configured === false) yield* Effect.never;
       yield* Effect.forever(
         Effect.gen(function* () {
           yield* schedulerTick;
@@ -688,7 +742,13 @@ export const runDaemonForever = (config: ProductionDaemonRunConfig = {}) =>
           yield* deployment.daemon.recoveryTick;
           yield* conversationTick;
           yield* Effect.sleep(Duration.millis(config.tickIntervalMs ?? 1000));
-        }),
+        }).pipe(
+          Effect.catch((cause) =>
+            isTransientSqliteLock(cause)
+              ? Effect.sleep(Duration.millis(100))
+              : Effect.fail(cause),
+          ),
+        ),
       );
     }),
   );
@@ -763,10 +823,36 @@ if (
   const workspaceId = process.env.ARBOR_WORKSPACE_ID;
   const webPort = process.env.ARBOR_HTTP_PORT;
   const webHost = process.env.ARBOR_HTTP_HOST;
+  let requestRestart: () => void = () => {};
+  const restart = new Promise<void>((resolveRestart) => {
+    requestRestart = resolveRestart;
+  });
+  let restartRequested = false;
+  const loadedConfig = findArborConfigFile();
+  const firstRunProcessExecutionMode =
+    process.platform === "linux" &&
+    hasLinuxWorkspaceWriteEnabledQualificationSync(
+      defaultSandboxAuthoritySource(),
+    )
+      ? ("NativeOsSupportedOnly" as const)
+      : ("Disabled" as const);
+  const modelSetup = makeModelSetup({
+    loaded: loadedConfig,
+    configured: hasConfiguredModel(loadedConfig),
+    firstRunProcessExecutionMode,
+    requestRestart: () => {
+      restartRequested = true;
+      requestRestart();
+    },
+  });
+  const projectDirectories = makeHostProjectDirectories({
+    registryDirectory: `${resolve(process.env.ARBOR_DB ?? "./arbor-slice.db")}.project-directories`,
+    startupProfiles: projectResourceProfilesFromEnvironment(),
+  });
   const config: ProductionDaemonRunConfig = {
-    projectResourceProfiles: makeProjectResourceProfilePort(
-      projectResourceProfilesFromEnvironment(),
-    ),
+    modelSetup,
+    projectResourceProfiles: projectDirectories.profiles,
+    projectDirectories,
     ...(workspaceId !== undefined
       ? { workspaceId: parse(WorkspaceId)(workspaceId) }
       : {}),
@@ -785,11 +871,29 @@ if (
   const program = process.argv.includes("--once")
     ? Effect.scoped(runDaemonOnce(config))
     : Effect.scoped(runDaemonForever(config));
-  Effect.runPromise(Effect.provide(program, main(config))).catch((error) => {
-    // Structured diagnosis (Cause/Rollback objects do not stringify).
-    process.stderr.write(
-      `arbor daemon failed: ${inspect(error, { depth: 6, breakLength: 120 })}\n`,
-    );
-    process.exitCode = 1;
-  });
+  Effect.runPromise(
+    Effect.provide(
+      Effect.raceFirst(
+        program,
+        Effect.promise(() => restart),
+      ),
+      main(config),
+    ),
+  )
+    .then(() => {
+      if (restartRequested && process.execve !== undefined) {
+        process.execve(
+          process.execPath,
+          [process.execPath, ...process.argv.slice(1)],
+          process.env,
+        );
+      }
+    })
+    .catch((error) => {
+      // Structured diagnosis (Cause/Rollback objects do not stringify).
+      process.stderr.write(
+        `arbor daemon failed: ${inspect(error, { depth: 6, breakLength: 120 })}\n`,
+      );
+      process.exitCode = 1;
+    });
 }

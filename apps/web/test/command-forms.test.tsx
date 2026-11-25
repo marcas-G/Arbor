@@ -454,8 +454,8 @@ describe("RecordDecisionForm", () => {
         onSubmitted={vi.fn()}
       />,
     );
-    expect(screen.getByText(proposal.proposalId)).toBeTruthy();
-    expect(screen.getByText(/revision 3/)).toBeTruthy();
+    expect(screen.getByText(proposal.summary)).toBeTruthy();
+    expect(screen.queryByLabelText(/proposal|revision/i)).toBeNull();
     fireEvent.change(screen.getByLabelText("决策"), {
       target: { value: "Reject" },
     });
@@ -557,10 +557,10 @@ describe("SteerWorkForm", () => {
 
   it("submits a Normal steer with message and workId", async () => {
     const fetchMock = setup();
-    fireEvent.change(screen.getByLabelText("纠偏消息"), {
+    fireEvent.change(screen.getByLabelText("调整说明"), {
       target: { value: "先完成大纲再动笔" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "发送纠偏" }));
+    fireEvent.click(screen.getByRole("button", { name: "发送调整" }));
     await waitFor(() => expect(fetchMock.mock.calls.length).toBe(1));
     const { envelope } = readCall(fetchMock);
     expect(envelope.commandType).toBe("SteerWork");
@@ -575,22 +575,22 @@ describe("SteerWorkForm", () => {
 
   it("Critical requires the explicit second confirmation before submit", async () => {
     const fetchMock = setup();
-    fireEvent.change(screen.getByLabelText("纠偏消息"), {
+    fireEvent.change(screen.getByLabelText("调整说明"), {
       target: { value: "立即停止扩写，回到主题" },
     });
-    fireEvent.change(screen.getByLabelText("severity"), {
+    fireEvent.change(screen.getByLabelText("紧急程度"), {
       target: { value: "Critical" },
     });
     const submit = screen.getByRole("button", {
-      name: "发送纠偏",
+      name: "发送调整",
     }) as HTMLButtonElement;
     expect(submit.disabled).toBe(true);
-    fireEvent.click(screen.getByLabelText("确认紧急纠偏"));
+    fireEvent.click(screen.getByLabelText("我确认这项调整需要立即生效"));
     expect(
-      (screen.getByRole("button", { name: "发送纠偏" }) as HTMLButtonElement)
+      (screen.getByRole("button", { name: "发送调整" }) as HTMLButtonElement)
         .disabled,
     ).toBe(false);
-    fireEvent.click(screen.getByRole("button", { name: "发送纠偏" }));
+    fireEvent.click(screen.getByRole("button", { name: "发送调整" }));
     await waitFor(() => expect(fetchMock.mock.calls.length).toBe(1));
     expect(payloadOf(readCall(fetchMock).envelope)).toEqual({
       workId: "wrk_9",
@@ -671,8 +671,8 @@ describe("StopExecutionForm", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "紧急停止执行" }));
     expect(fetchMock.mock.calls.length).toBe(0);
-    expect(screen.getByText(/确认停止执行/).textContent).toContain("exe_42");
     expect(screen.getByText(/检索工作区/)).toBeTruthy();
+    expect(screen.queryByText("exe_42")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
     expect(fetchMock.mock.calls.length).toBe(0);
     fireEvent.click(screen.getByRole("button", { name: "紧急停止执行" }));
@@ -680,7 +680,7 @@ describe("StopExecutionForm", () => {
       name: "确认停止",
     }) as HTMLButtonElement;
     expect(confirmStop.disabled).toBe(true);
-    fireEvent.click(screen.getByLabelText("我确认要立即停止该执行"));
+    fireEvent.click(screen.getByLabelText("我确认要立即停止"));
     fireEvent.click(screen.getByRole("button", { name: "确认停止" }));
     await waitFor(() => expect(fetchMock.mock.calls.length).toBe(1));
     const { envelope } = readCall(fetchMock);
@@ -705,7 +705,7 @@ describe("StopExecutionForm", () => {
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "紧急停止执行" }));
-    fireEvent.click(screen.getByLabelText("我确认要立即停止该执行"));
+    fireEvent.click(screen.getByLabelText("我确认要立即停止"));
     fireEvent.click(screen.getByRole("button", { name: "确认停止" }));
     await waitFor(() => expect(fetchMock.mock.calls.length).toBe(1));
     await waitFor(() => expect(screen.getByText("服务不可用")).toBeTruthy());
@@ -728,16 +728,16 @@ describe("GrantPermissionForm", () => {
         onSubmitted={vi.fn()}
       />,
     );
-    fireEvent.change(screen.getByLabelText("capability"), {
+    fireEvent.change(screen.getByLabelText("允许的操作"), {
       target: { value: "RecordDecision" },
     });
-    fireEvent.change(screen.getByLabelText(/target（必填/), {
+    fireEvent.change(screen.getByLabelText("适用范围"), {
       target: { value: "ws_9" },
     });
-    fireEvent.change(screen.getByLabelText("过期时间（必填）"), {
+    fireEvent.change(screen.getByLabelText("过期时间"), {
       target: { value: "2099-10-12T08:30:00+08:00" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "授予" }));
+    fireEvent.click(screen.getByRole("button", { name: "开放操作" }));
     await waitFor(() => expect(fetchMock.mock.calls.length).toBe(1));
     const { envelope } = readCall(fetchMock);
     expect(envelope.commandType).toBe("GrantPermission");
@@ -763,26 +763,26 @@ describe("GrantPermissionForm", () => {
         onSubmitted={vi.fn()}
       />,
     );
-    fireEvent.change(screen.getByLabelText("capability"), {
+    fireEvent.change(screen.getByLabelText("允许的操作"), {
       target: { value: "__custom__" },
     });
-    fireEvent.change(screen.getByLabelText(/自由输入/), {
+    fireEvent.change(screen.getByLabelText("操作名称"), {
       target: { value: "RegisterProjectTool" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "授予" }));
+    fireEvent.click(screen.getByRole("button", { name: "开放操作" }));
     await waitFor(() => expect(fetchMock.mock.calls.length).toBe(0));
     expect(screen.getByText("授权目标必填；请填写精确的资源 ID")).toBeTruthy();
     expect(
       screen.getByText("过期时间必填；GrantPermission 必须有有效期"),
     ).toBeTruthy();
 
-    fireEvent.change(screen.getByLabelText(/target（必填/), {
+    fireEvent.change(screen.getByLabelText("适用范围"), {
       target: { value: "ws_9" },
     });
-    fireEvent.change(screen.getByLabelText("过期时间（必填）"), {
+    fireEvent.change(screen.getByLabelText("过期时间"), {
       target: { value: "2099-10-12T08:30:00.000Z" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "授予" }));
+    fireEvent.click(screen.getByRole("button", { name: "开放操作" }));
     await waitFor(() => expect(fetchMock.mock.calls.length).toBe(1));
     const payload = payloadOf(readCall(fetchMock).envelope) as Record<
       string,
@@ -809,13 +809,13 @@ describe("GrantPermissionForm", () => {
           onSubmitted={vi.fn()}
         />,
       );
-      fireEvent.change(screen.getByLabelText(/target（必填/), {
+      fireEvent.change(screen.getByLabelText("适用范围"), {
         target: { value: target },
       });
-      fireEvent.change(screen.getByLabelText("过期时间（必填）"), {
+      fireEvent.change(screen.getByLabelText("过期时间"), {
         target: { value: expiresAt },
       });
-      fireEvent.click(screen.getByRole("button", { name: "授予" }));
+      fireEvent.click(screen.getByRole("button", { name: "开放操作" }));
 
       await waitFor(() => expect(fetchMock.mock.calls.length).toBe(0));
       expect(screen.getByText(expectedError)).toBeTruthy();
@@ -847,10 +847,10 @@ describe("RevokePermissionForm", () => {
         onSubmitted={vi.fn()}
       />,
     );
-    fireEvent.change(screen.getByLabelText("选择 grant"), {
+    fireEvent.change(screen.getByLabelText("选择授权"), {
       target: { value: "pgr_2" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "撤销" }));
+    fireEvent.click(screen.getByRole("button", { name: "撤销授权" }));
     await waitFor(() => expect(fetchMock.mock.calls.length).toBe(1));
     const { envelope } = readCall(fetchMock);
     expect(envelope.commandType).toBe("RevokePermission");
@@ -867,8 +867,8 @@ describe("RevokePermissionForm", () => {
         onSubmitted={vi.fn()}
       />,
     );
-    expect(screen.getByText("无待撤销的授权")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "撤销" })).toBeNull();
+    expect(screen.getByText("暂无可撤销的授权")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "撤销授权" })).toBeNull();
     expect(fetchMock.mock.calls.length).toBe(0);
   });
 });

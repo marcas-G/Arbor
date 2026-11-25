@@ -1,44 +1,40 @@
-import { cx } from "./cx.js";
-import styles from "./Tabs.module.css";
+import type { ReactNode } from "react";
+import {
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+  Tabs as UiTabs,
+} from "./ui/tabs.js";
 
 export type TabItem = {
   readonly key: string;
   readonly label: string;
 };
 
-/** W-01 Tabs: hairline tab strip; selection is owned by the caller
- * (active + onChange), items render as role=tab buttons. */
+/** Selection remains route-owned. Arrow keys move focus; Enter selects. */
 export function Tabs({
   items,
   active,
   onChange,
+  children,
 }: {
   readonly items: ReadonlyArray<TabItem>;
   readonly active: string;
   readonly onChange: (key: string) => void;
+  readonly children?: ReactNode;
 }) {
   return (
-    <div className={styles.tabs} role="tablist">
-      {items.map((item) => {
-        const selected = item.key === active;
-        return (
-          <button
-            key={item.key}
-            type="button"
-            role="tab"
-            aria-selected={selected}
-            className={cx([
-              styles.tab,
-              selected ? styles.tabActive : undefined,
-            ])}
-            onClick={() => {
-              onChange(item.key);
-            }}
-          >
+    <UiTabs value={active} onValueChange={onChange} activationMode="manual">
+      <TabsList>
+        {items.map((item) => (
+          <TabsTrigger key={item.key} value={item.key}>
             {item.label}
-          </button>
-        );
-      })}
-    </div>
+          </TabsTrigger>
+        ))}
+      </TabsList>
+      {children === undefined ? null : (
+        <TabsContent value={active}>{children}</TabsContent>
+      )}
+    </UiTabs>
   );
 }

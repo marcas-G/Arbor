@@ -52,6 +52,14 @@ export type {
 // Memory/Decisions-store substitute — P10 `00` boundary list).
 
 interface WorkspaceDetailViewCore {
+  readonly workspaceSandboxAuthorization?: {
+    readonly expectedAuthorizationRevision: number;
+    readonly resourceBoundaryRevision: number;
+    readonly workspacePolicyRevision: number;
+    readonly current:
+      | import("@arbor/domain").WorkspaceSandboxAuthorization
+      | null;
+  };
   readonly responsibility: ResponsibilityDefinition;
   readonly boundary: ResourceBoundary;
   readonly currentWork?: CurrentWorkSummaryView | undefined;
@@ -92,6 +100,12 @@ export type WorkspaceDetailSandboxPolicyProjection = {
  * inputs: workspaces / works / executions / dependencies+messages+inbox /
  * verification+evidence / journal). Injected; read-only; never writes. */
 export interface WorkspaceDetailDeps {
+  readonly workspaceSandboxAuthorizationForWorkspace?: (
+    workspace: Workspace,
+  ) => Effect.Effect<
+    WorkspaceDetailView["workspaceSandboxAuthorization"],
+    ProjectionReadError
+  >;
   readonly findWorkspace: (
     workspaceId: WorkspaceId,
   ) => Effect.Effect<Option.Option<Workspace>, ProjectionReadError>;
@@ -366,7 +380,13 @@ export const deriveWorkspaceDetail = (
       (proposalId) => proposalOrigins.get(proposalId) ?? null,
     );
 
+    const workspaceSandboxAuthorization =
+      yield* deps.workspaceSandboxAuthorizationForWorkspace?.(workspace) ??
+        Effect.succeed(undefined);
     const view = {
+      ...(workspaceSandboxAuthorization === undefined
+        ? {}
+        : { workspaceSandboxAuthorization }),
       responsibility: workspace.responsibilityDefinition,
       boundary: workspace.resourceBoundary,
       currentWork,

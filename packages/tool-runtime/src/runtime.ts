@@ -6,11 +6,14 @@ import type {
 } from "@arbor/domain";
 import {
   ArtifactId,
+  decodeCanonicalVerificationSandboxBindingV1,
   decodeExecutionEpisodeBinding,
+  decodeNetworkBrokerControlsV2,
   decodeNetworkPolicyV1,
   decodeSandboxProviderId,
   encodeExecutionEpisodeBinding,
   encodeNetworkPolicyV1,
+  encodeVerificationSandboxBindingV1,
   parse,
   resolveSandboxProvider,
 } from "@arbor/domain";
@@ -40,6 +43,7 @@ import {
   type SandboxProcessPolicyResolution,
   SandboxProcessPort,
   type SandboxProcessRunner,
+  type SandboxProcessRunnerOutcome,
   type SandboxProviderUnavailableOutcome,
   type SelectedP39RecoveryEvidence,
   ToolAuthorityResolver,
@@ -665,6 +669,14 @@ export const ToolRuntimeLive = (
           : "NativeOsTupleUnavailable";
       const processModeBlocksSpawn =
         processExecutionMode === "Disabled" || !nativeOsSupportedTupleAvailable;
+      // Independent Verification runs in a freshly captured, OS-enforced
+      // temporary environment. They are deliberately allowed to reach the
+      // sandbox-process path even when ordinary Workspace shell execution is
+      // disabled; the independent policy resolver below is still mandatory
+      // and must materialize the exact captured environment before spawn.
+      const isIndependentVerificationExecution = (
+        context: ToolExecutionContext,
+      ): boolean => context.independentVerificationTarget !== undefined;
       const definitions = yield* ToolDefinitionStore;
       const sandbox = yield* SandboxPort;
       const sandboxProcess = yield* Effect.serviceOption(SandboxProcessPort);
@@ -756,58 +768,99 @@ export const ToolRuntimeLive = (
               probeEvidenceRef: string | null = null,
               providerVersion = policy.providerVersion,
               capabilityRevision = policy.capabilityRevision,
-            ): SandboxProviderUnavailableOutcome => ({
-              _tag: "SandboxProviderUnavailable",
-              projectId: context.projectId,
-              workspaceId: context.workspaceId,
-              executionId: context.executionId,
-              episodeBinding: policy.episodeBinding,
-              policyRevision: policy.policyRevision,
-              policyDigest: policy.policyDigest,
-              profileId: policy.profile,
-              providerId: policy.providerId,
-              providerVersion,
-              capabilityRevision,
-              probeEvidenceRef,
-              failureCode,
-              actionBinding: {
-                identity: {
-                  executionId: sourceAction.executionId,
-                  logicalStepNo: sourceAction.logicalStepNo,
-                  repairAttempt: sourceAction.repairAttempt,
-                },
-                providerTurnId: sourceAction.providerTurnId,
-                logicalActionId: sourceAction.logicalActionId,
-                actionIndex: sourceAction.actionIndex,
-                callRef: sourceAction.callRef,
-                invocationId: intent.invocationId,
-              },
-            });
-            if (
-              policy.executionId !== context.executionId ||
-              context.executionEpisodeBinding === undefined
-            ) {
+            ): SandboxProcessRunnerOutcome =>
+              policy.kind === "IndependentVerificationProcessPolicyV1"
+                ? {
+                    _tag: "Rejected",
+                    failureCode: "VerificationEnvironmentUnavailable",
+                  }
+                : {
+                    _tag: "SandboxProviderUnavailable",
+                    projectId: context.projectId,
+                    workspaceId: context.workspaceId,
+                    executionId: context.executionId,
+                    episodeBinding: policy.episodeBinding,
+                    policyRevision: policy.policyRevision,
+                    policyDigest: policy.policyDigest,
+                    profileId: policy.profile,
+                    providerId: policy.providerId,
+                    providerVersion,
+                    capabilityRevision,
+                    probeEvidenceRef,
+                    failureCode,
+                    actionBinding: {
+                      identity: {
+                        executionId: sourceAction.executionId,
+                        logicalStepNo: sourceAction.logicalStepNo,
+                        repairAttempt: sourceAction.repairAttempt,
+                      },
+                      providerTurnId: sourceAction.providerTurnId,
+                      logicalActionId: sourceAction.logicalActionId,
+                      actionIndex: sourceAction.actionIndex,
+                      callRef: sourceAction.callRef,
+                      invocationId: intent.invocationId,
+                    },
+                  };
+            if (policy.executionId !== context.executionId) {
               return {
                 _tag: "Rejected" as const,
                 failureCode: "ExecutionBindingMismatch",
               };
             }
-            const policyEpisode = decodeExecutionEpisodeBinding(
-              policy.episodeBinding,
-            );
-            const currentEpisode = decodeExecutionEpisodeBinding(
-              context.executionEpisodeBinding,
-            );
-            if (
-              policyEpisode === undefined ||
-              currentEpisode === undefined ||
-              encodeExecutionEpisodeBinding(policyEpisode) !==
-                encodeExecutionEpisodeBinding(currentEpisode)
-            ) {
-              return {
-                _tag: "Rejected" as const,
-                failureCode: "EpisodeBindingMismatch",
-              };
+            if (policy.kind === "IndependentVerificationProcessPolicyV1") {
+              const binding = decodeCanonicalVerificationSandboxBindingV1(
+                encodeVerificationSandboxBindingV1(policy.verificationBinding),
+              );
+              const target = context.independentVerificationTarget;
+              if (
+                binding === undefined ||
+                target === undefined ||
+                binding.projectId !== context.projectId ||
+                binding.workspaceId !== context.workspaceId ||
+                binding.executionId !== context.executionId ||
+                binding.verificationId !== target.verificationId ||
+                binding.workId !== target.workId ||
+                binding.targetWorkRevision !== target.targetWorkRevision ||
+                binding.authorizationRevision !==
+                  policy.workspaceAuthorizationRevision ||
+                binding.policyRevision !== policy.policyRevision ||
+                binding.expiresAt !== policy.expiresAt ||
+                !/^blob:sha256:[0-9a-f]{64}$/u.test(
+                  policy.verificationMountQualificationEvidenceRef,
+                )
+              ) {
+                return {
+                  _tag: "Rejected" as const,
+                  failureCode: "ExecutionBindingMismatch",
+                };
+              }
+            } else {
+              if (context.executionEpisodeBinding === undefined) {
+                return {
+                  _tag: "Rejected" as const,
+                  failureCode: "ExecutionBindingMismatch",
+                };
+              }
+              const policyEpisode = decodeExecutionEpisodeBinding(
+                policy.episodeBinding,
+              );
+              const currentEpisode =
+                context.executionEpisodeBinding === undefined
+                  ? undefined
+                  : decodeExecutionEpisodeBinding(
+                      context.executionEpisodeBinding,
+                    );
+              if (
+                policyEpisode === undefined ||
+                currentEpisode === undefined ||
+                encodeExecutionEpisodeBinding(policyEpisode) !==
+                  encodeExecutionEpisodeBinding(currentEpisode)
+              ) {
+                return {
+                  _tag: "Rejected" as const,
+                  failureCode: "EpisodeBindingMismatch",
+                };
+              }
             }
             if (policy.sandboxHandleId !== handle.handleId) {
               return {
@@ -816,7 +869,10 @@ export const ToolRuntimeLive = (
               };
             }
 
-            const isOsPolicy = policy.kind === "OsEnforcedProcessPolicy";
+            const isOsPolicy =
+              policy.kind === "OsEnforcedProcessPolicy" ||
+              policy.kind === "OsEnforcedProcessPolicyV2" ||
+              policy.kind === "IndependentVerificationProcessPolicyV1";
             const networkPolicy = isOsPolicy
               ? decodeNetworkPolicyV1(policy.networkPolicy)
               : undefined;
@@ -835,7 +891,14 @@ export const ToolRuntimeLive = (
                   ) ||
                   networkPolicy === undefined ||
                   encodeNetworkPolicyV1(networkPolicy) !==
-                    encodeNetworkPolicyV1(policy.networkPolicy))) ||
+                    encodeNetworkPolicyV1(policy.networkPolicy) ||
+                  ((policy.kind === "OsEnforcedProcessPolicyV2" ||
+                    policy.kind === "IndependentVerificationProcessPolicyV1") &&
+                    (decodeNetworkBrokerControlsV2(
+                      policy.networkBrokerControls,
+                    ) === undefined ||
+                      policy.networkBrokerControls.mode !==
+                        policy.networkPolicy.mode)))) ||
               (!isOsPolicy &&
                 (policy.trustedRuntimeIdentity !== "TrustedLocal" ||
                   policy.trustedRuntimeVersion !== "builtin-v1" ||
@@ -1331,6 +1394,7 @@ export const ToolRuntimeLive = (
                   );
             if (
               policy === undefined ||
+              policy.kind === "IndependentVerificationProcessPolicyV1" ||
               policy.executionId !== context.executionId ||
               policy.policyRevision !== unavailable.policyRevision ||
               policy.policyDigest !== unavailable.policyDigest ||
@@ -1454,8 +1518,9 @@ export const ToolRuntimeLive = (
         intent: ToolIntent,
         context: ToolExecutionContext,
         staleRefreshCount = 0,
-      ): Effect.Effect<CanonicalToolObservation, ToolRuntimeError> =>
-        Effect.gen(function* () {
+      ): Effect.Effect<CanonicalToolObservation, ToolRuntimeError> => {
+        let sandboxPolicyCleanup: Effect.Effect<void> = Effect.void;
+        return Effect.gen(function* () {
           let sandboxPolicyResolutionLoaded = false;
           let sandboxPolicyResolution:
             | SandboxProcessPolicyResolution
@@ -1579,7 +1644,8 @@ export const ToolRuntimeLive = (
           if (
             executor.processCapability === "SandboxProcess" &&
             processModeBlocksSpawn &&
-            !testOnlyAllowTrustedLocalProcessExecution
+            !testOnlyAllowTrustedLocalProcessExecution &&
+            !isIndependentVerificationExecution(context)
           ) {
             const durableInvocation = yield* tx
               .transact(store.findById(intent.invocationId))
@@ -2281,7 +2347,9 @@ export const ToolRuntimeLive = (
             }
             const exactTarget =
               executor.processCapability !== "SandboxProcess" &&
-              ["read", "list", "patch"].includes(intent.toolName)
+              ["read", "list", "patch", "write", "glob", "grep"].includes(
+                intent.toolName,
+              )
                 ? requestedFilesystemTarget(intent.argumentsJson, address)
                 : ({ _tag: "Absent" } as const);
             if (exactTarget._tag === "Invalid") {
@@ -3651,16 +3719,28 @@ export const ToolRuntimeLive = (
                 const unknownWrite = yield* Effect.match(
                   tx.transact(
                     Effect.gen(function* () {
-                      const applied = yield* store.settle(
-                        intent.invocationId,
-                        { _tag: "OutcomeUnknown", reconciliationRefs },
-                        null,
-                        settledAt,
-                        context.executionFence,
-                        context.executionFence === undefined
-                          ? undefined
-                          : yield* clock.now(),
-                      );
+                      const unknownSettlement = {
+                        _tag: "OutcomeUnknown" as const,
+                        reconciliationRefs,
+                      };
+                      const applied = Option.isSome(observationEvidence)
+                        ? (yield* observationEvidence.value.settleOrReadWinner({
+                            invocation: recorded,
+                            settlement: unknownSettlement,
+                            resultRef: null,
+                            observation: unknownSettlement,
+                            settledAt,
+                            executionFence: context.executionFence,
+                            fenceNow: yield* clock.now(),
+                          }))._tag === "Applied"
+                        : yield* store.settle(
+                            intent.invocationId,
+                            unknownSettlement,
+                            null,
+                            settledAt,
+                            context.executionFence,
+                            yield* clock.now(),
+                          );
                       return {
                         applied,
                         current: applied
@@ -4004,6 +4084,7 @@ export const ToolRuntimeLive = (
             executor.processCapability === "SandboxProcess" &&
             processModeBlocksSpawn &&
             !testOnlyAllowTrustedLocalProcessExecution &&
+            !isIndependentVerificationExecution(context) &&
             priorRecord !== undefined &&
             priorRecord.settlement === null &&
             priorRecord.effectAdmissionState === "NotAdmitted"
@@ -4153,9 +4234,20 @@ export const ToolRuntimeLive = (
                 Date.parse(policy.expiresAt) <= Date.parse(now);
               let processPolicy = context.sandboxProcessPolicy;
               let policyNow = effectGateNow;
+              const authorizationRevision =
+                effectAuthority.workspaceSandboxSources?.find(
+                  (source) => source.workspaceId === context.workspaceId,
+                )?.authorizationRevision;
+              const sourceMatches = (
+                policy: ToolExecutionContext["sandboxProcessPolicy"],
+              ) =>
+                authorizationRevision == null ||
+                policy?.workspaceAuthorizationRevision ===
+                  authorizationRevision;
               if (
                 (processPolicy === undefined ||
-                  isPolicyExpired(processPolicy, policyNow)) &&
+                  isPolicyExpired(processPolicy, policyNow) ||
+                  !sourceMatches(processPolicy)) &&
                 context.resolveSandboxProcessPolicy !== undefined
               ) {
                 // This resolver may read the current durable decision,
@@ -4167,6 +4259,7 @@ export const ToolRuntimeLive = (
                 const materialized = yield* resolveSandboxPolicyOnce(policyNow);
                 if (materialized !== undefined) {
                   processPolicy = materialized.policy;
+                  sandboxPolicyCleanup = materialized.dispose ?? Effect.void;
                   processExecutionContext = {
                     ...context,
                     sandboxProcessPolicy: materialized.policy,
@@ -4176,7 +4269,8 @@ export const ToolRuntimeLive = (
               }
               if (
                 processPolicy === undefined ||
-                isPolicyExpired(processPolicy, policyNow)
+                isPolicyExpired(processPolicy, policyNow) ||
+                !sourceMatches(processPolicy)
               ) {
                 // P4 has already durably claimed the exact P3 action and bound
                 // its immutable recovery proof above. Policy absence parks that
@@ -4204,10 +4298,11 @@ export const ToolRuntimeLive = (
               : yield* Effect.match(
                   tx.transact(
                     Effect.gen(function* () {
+                      const admissionNow = yield* clock.now();
                       const admissionResult = yield* store.admitEffect(
                         intent.invocationId,
                         effectAuthority,
-                        effectGateNow,
+                        admissionNow,
                         context.executionFence,
                       );
                       if (
@@ -4217,7 +4312,7 @@ export const ToolRuntimeLive = (
                       ) {
                         yield* p39Recovery.value.admitFirstAttempt(
                           intent.invocationId,
-                          effectGateNow,
+                          admissionNow,
                         );
                       }
                       return admissionResult;
@@ -4962,7 +5057,8 @@ export const ToolRuntimeLive = (
             }
           })();
           return observation;
-        });
+        }).pipe(Effect.ensuring(Effect.suspend(() => sandboxPolicyCleanup)));
+      };
 
       return ToolRuntimePort.of({ invoke });
     }),

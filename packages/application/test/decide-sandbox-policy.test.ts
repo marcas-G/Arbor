@@ -5,22 +5,37 @@ import {
   CommandId,
   ExecutionId,
   encodeNetworkPolicyV1,
+  encodeSandboxPolicyDecisionCommittedInternalV3,
+  makeProjectPolicy,
   networkBrokerControlsV1ForMode,
+  networkBrokerControlsV2ForMode,
   PermissionGrantId,
   Principal,
   ProjectId,
   parse,
   SemanticRequestFingerprint,
+  type Workspace,
   WorkspaceId,
+  type WorkspaceSandboxAuthorization,
 } from "@arbor/domain";
 import { TransactionScope } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import type { CommandAuthorityFact } from "../src/authority.js";
 import {
+  AuthorityResolverPort,
+  AuthorityResolverPortLive,
+} from "../src/authority-resolver.js";
+import { decodeRegisteredCommandReceipt } from "../src/command-result-codec.js";
+import {
+  type BindWorkspaceSandboxPolicyPayload,
+  makeBindWorkspaceSandboxPolicyHandler,
+} from "../src/commands/bind-workspace-sandbox-policy.js";
+import {
   type DecideSandboxPolicyPayload,
   makeDecideSandboxPolicyHandler,
 } from "../src/commands/decide-sandbox-policy.js";
+import { semanticRequestFingerprint } from "../src/fingerprint.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const workspaceId = parse(WorkspaceId)(
@@ -347,4 +362,373 @@ describe("DecideSandboxPolicy command", () => {
       expect(inserted).toHaveLength(0);
     },
   );
+});
+
+describe("Workspace sandbox policy binding", () => {
+  const system = parse(Principal)("system:workspace-sandbox-policy");
+  const context = {
+    _tag: "System" as const,
+    principal: system,
+    causationRef: `workspace-policy:${executionId}`,
+  };
+  const request: BindWorkspaceSandboxPolicyPayload = {
+    ...payload,
+    networkPolicy: osNetworkSelection,
+    providerVersion: "0.8.0",
+    capabilityRevision: 1,
+    profile: "ReadOnly",
+    providerId: "linux-bwrap",
+    expectedAuthorizationRevision: 1,
+  };
+  const currentWorkspace = {
+    workspaceId,
+    projectId,
+    parentWorkspaceId: null,
+    lifecycle: "Active",
+    resourceBoundaryRevision: 1,
+    workspacePolicyRevision: 0,
+  } as Workspace;
+  const authorization: WorkspaceSandboxAuthorization = {
+    version: 1,
+    state: "Granted",
+    projectId,
+    workspaceId,
+    authorizationRevision: 1,
+    commandId: parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789a2"),
+    actorPrincipal: subject,
+    recordedAt: now,
+    origin: { kind: "Human", principal: subject },
+    resourceBoundaryRevision: 1,
+    workspacePolicyRevision: 0,
+    profile: "ReadOnly",
+    providerId: "linux-bwrap" as never,
+    networkPolicy: osNetworkSelection.policy,
+    expiresAt: null,
+  };
+  const host = {
+    authorityBundleRevision: 4,
+    authorityBundleDigest: "e".repeat(64),
+    providerRegistryRevision: 3,
+    providerRegistryDigest: "2".repeat(64),
+    operatorConfigRevision: 4,
+    operatorConfigDigest: "f".repeat(64),
+  };
+  const bindingAuthority = {
+    _tag: "WorkspaceSandboxPolicyBindingAuthority" as const,
+    principal: system,
+    commandId,
+    semanticRequestFingerprint: semanticRequestFingerprint({
+      commandType: "BindWorkspaceSandboxPolicy",
+      projectId,
+      actor: parse(Actor)(system),
+      schemaVersion: "1",
+      payload: request,
+    }),
+    projectId,
+    workspaceId,
+    executionId,
+    episodeBinding,
+    episodeRevision: 2,
+    workspaceAuthorizationRevision: 1,
+    ...host,
+  };
+  const envelope = {
+    commandType: "BindWorkspaceSandboxPolicy",
+    commandId,
+    projectId,
+    actor: parse(Actor)(system),
+    issuedAt: now,
+    causationRef: context.causationRef,
+    payload: request,
+    resolvedAuthority: bindingAuthority,
+  };
+  const linuxSnapshot = {
+    ...snapshot,
+    providerId: "linux-bwrap",
+    version: 2 as const,
+    networkBrokerControls: networkBrokerControlsV2ForMode("Disabled"),
+  };
+  const harness = (
+    options: {
+      revoked?: boolean;
+      staleHost?: boolean;
+      staleExecution?: boolean;
+      finiteExpiry?: boolean;
+    } = {},
+  ) => {
+    const inserted: unknown[] = [];
+    let head = options.revoked
+      ? {
+          version: 1 as const,
+          state: "Revoked" as const,
+          projectId,
+          workspaceId,
+          authorizationRevision: 2,
+          commandId,
+          actorPrincipal: subject,
+          recordedAt: now,
+        }
+      : authorization;
+    if (options.finiteExpiry)
+      head = { ...authorization, expiresAt: "2026-10-19T01:00:00.000Z" };
+    const handler = makeBindWorkspaceSandboxPolicyHandler({
+      workspaces: {
+        findById: () => Effect.succeed(Option.some(currentWorkspace)),
+      },
+      authorizations: { findCurrent: () => Effect.succeed(Option.some(head)) },
+      executions: {
+        findById: () =>
+          Effect.succeed(
+            Option.some(
+              options.staleExecution
+                ? {
+                    ...execution,
+                    state: {
+                      status: "Settled" as const,
+                      settlement: null as never,
+                    },
+                  }
+                : execution,
+            ),
+          ),
+        findEpisodeRevision: () => Effect.succeed(Option.some(2)),
+      },
+      decisions: {
+        findCurrentForExecution: () => Effect.succeed(Option.none()),
+        findExact: () => Effect.succeed(Option.none()),
+        insertCommitted: (value) =>
+          Effect.sync(() => {
+            inserted.push(value);
+          }),
+      },
+      preparation: {
+        prepare: () => Effect.succeed(linuxSnapshot),
+        currentPreconditions: () =>
+          Effect.succeed(
+            options.staleHost
+              ? { ...current, authorityBundleRevision: 5 }
+              : current,
+          ),
+        preIntentSourceStaleField: () => Effect.succeed(undefined),
+      },
+      clock: { now: () => Effect.succeed(now) },
+    });
+    return {
+      handler,
+      inserted,
+      revoke: () => {
+        head = {
+          version: 1,
+          state: "Revoked",
+          projectId,
+          workspaceId,
+          authorizationRevision: 2,
+          commandId,
+          actorPrincipal: subject,
+          recordedAt: now,
+        };
+      },
+    };
+  };
+  const run = <A, E>(effect: Effect.Effect<A, E, TransactionScope>) =>
+    Effect.runPromise(
+      Effect.provideService(effect, TransactionScope, {
+        session: { id: "workspace-policy-test" },
+      }),
+    );
+
+  it("resolves only exact internal System requests using live Workspace authority", async () => {
+    const input = {
+      principal: system,
+      submissionContext: context,
+      envelope,
+      semanticRequestFingerprint: bindingAuthority.semanticRequestFingerprint,
+      canonicalFacts: {
+        projectId,
+        workspace: currentWorkspace,
+        execution: {
+          executionId,
+          projectId,
+          workspaceId,
+          status: "Active" as const,
+          episodeRevision: 2,
+          episodeBinding,
+        },
+      },
+      grants: [],
+      governance: { authenticatedHumans: [subject], directParentOf: [] },
+      policy: makeProjectPolicy(),
+      workspaceSandboxAuthorizationSnapshot: {
+        heads: [authorization],
+        workspaces: [currentWorkspace],
+      },
+      workspaceSandboxAuthorizationNow: now,
+      workspaceSandboxPolicyHostSnapshot: host,
+    };
+    const resolve = (requestInput: typeof input) =>
+      Effect.runPromise(
+        Effect.provide(
+          Effect.flatMap(AuthorityResolverPort, (resolver) =>
+            Effect.result(resolver.resolve(requestInput)),
+          ),
+          AuthorityResolverPortLive,
+        ),
+      );
+    const accepted = await resolve(input);
+    expect(accepted._tag).toBe("Success");
+    if (accepted._tag === "Success")
+      expect(accepted.success).toEqual(bindingAuthority);
+    for (const patch of [
+      { submissionContext: { _tag: "External", principal: system } },
+      { workspaceSandboxPolicyHostSnapshot: undefined },
+      {
+        workspaceSandboxAuthorizationSnapshot: {
+          heads: [],
+          workspaces: [currentWorkspace],
+        },
+      },
+      {
+        envelope: {
+          ...envelope,
+          payload: { ...request, expectedAuthorizationRevision: 2 },
+        },
+      },
+    ])
+      expect((await resolve({ ...input, ...patch } as typeof input))._tag).toBe(
+        "Failure",
+      );
+  });
+
+  it("commits real Workspace provenance and a V2 event without legacy grant fields", async () => {
+    const { handler, inserted } = harness();
+    const prepare = handler.prepare;
+    if (prepare === undefined)
+      throw new Error("binding must preserve its preparation hook");
+    const prepared = await Effect.runPromise(
+      prepare(envelope, context, bindingAuthority),
+    );
+    const outcome = await run(handler.execute(envelope, context, prepared));
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(inserted).toHaveLength(1);
+    expect(inserted[0]).toMatchObject({
+      authorityKind: "WorkspaceAuthorization",
+      workspaceAuthorizationRevision: 1,
+      actorPrincipal: system,
+    });
+    expect(inserted[0]).not.toHaveProperty("permissionGrantId");
+    expect(outcome.value.events[0]).toMatchObject({
+      eventType: "SandboxPolicyDecisionRecorded",
+      eventVersion: 2,
+      payload: { workspaceAuthorizationRevision: 1 },
+    });
+    expect(outcome.value.events[0]?.payload).not.toHaveProperty(
+      "permissionGrantId",
+    );
+    const result = outcome.value.result;
+    // Gateway JSON serialization must itself retain exact canonical bytes.
+    expect(JSON.stringify(result)).toBe(
+      encodeSandboxPolicyDecisionCommittedInternalV3(result),
+    );
+    const stored = {
+      commandId,
+      projectId,
+      semanticRequestFingerprint: bindingAuthority.semanticRequestFingerprint,
+      schemaVersion: "1",
+      fingerprintAlgorithmVersion: 1,
+      resolution: "Committed" as const,
+      resultJson: JSON.stringify(result),
+      terminalErrorJson: null,
+      createdAt: now,
+      settledAt: now,
+    };
+    expect(
+      (
+        await Effect.runPromise(
+          Effect.result(
+            decodeRegisteredCommandReceipt(
+              stored,
+              "BindWorkspaceSandboxPolicy",
+              "1",
+            ),
+          ),
+        )
+      )._tag,
+    ).toBe("Success");
+    expect(
+      (
+        await Effect.runPromise(
+          Effect.result(
+            decodeRegisteredCommandReceipt(
+              { ...stored, schemaVersion: "2" },
+              "DecideSandboxPolicy",
+              "2",
+            ),
+          ),
+        )
+      )._tag,
+    ).toBe("Failure");
+  });
+
+  it("rereads revocation after host preparation before writing any decision", async () => {
+    const { handler, inserted, revoke } = harness();
+    const prepare = handler.prepare;
+    if (prepare === undefined)
+      throw new Error("binding must preserve its preparation hook");
+    const prepared = await Effect.runPromise(
+      prepare(envelope, context, bindingAuthority),
+    );
+    revoke();
+    const outcome = await run(handler.execute(envelope, context, prepared));
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) expect(outcome.error._tag).toBe("AuthorityDenied");
+    expect(inserted).toEqual([]);
+  });
+
+  it.each([
+    [{ staleHost: true }, "StaleSandboxPolicyInputs"],
+    [{ staleExecution: true }, "StaleSandboxPolicyInputs"],
+    [{ finiteExpiry: true }, "DecisionExpiryInvalid"],
+  ] as const)(
+    "rejects stale or outliving bindings %s",
+    async (options, tag) => {
+      const { handler, inserted } = harness(options);
+      const outcome = await run(
+        handler.execute(envelope, context, {
+          _tag: "Ready",
+          summary: linuxSnapshot,
+        }),
+      );
+      expect(outcome.ok).toBe(false);
+      if (!outcome.ok) expect(outcome.error._tag).toBe(tag);
+      expect(inserted).toEqual([]);
+    },
+  );
+
+  it("cannot enlarge the authorized profile or network selection", async () => {
+    const { handler, inserted } = harness();
+    for (const patch of [
+      { profile: "WorkspaceWrite" as const },
+      {
+        networkPolicy: {
+          kind: "OsEnforced" as const,
+          policy: {
+            version: 1 as const,
+            mode: "Enabled" as const,
+            destinations: [],
+          },
+        },
+      },
+    ]) {
+      const outcome = await run(
+        handler.execute(
+          { ...envelope, payload: { ...request, ...patch } },
+          context,
+          { _tag: "Ready", summary: linuxSnapshot },
+        ),
+      );
+      expect(outcome.ok).toBe(false);
+    }
+    expect(inserted).toEqual([]);
+  });
 });

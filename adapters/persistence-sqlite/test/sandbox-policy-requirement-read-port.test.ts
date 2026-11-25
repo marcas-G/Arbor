@@ -332,6 +332,12 @@ const seedSchema = (sql: SqlClientService) =>
       repair_attempt INTEGER NOT NULL, provider_turn_id TEXT NOT NULL,
       state TEXT NOT NULL, next_action_index INTEGER NOT NULL
     )`);
+    yield* sql.unsafe(`CREATE TABLE verifications (
+      verification_id TEXT PRIMARY KEY, state TEXT NOT NULL
+    )`);
+    yield* sql.unsafe(`CREATE TABLE verification_executions (
+      verification_id TEXT NOT NULL, execution_id TEXT NOT NULL
+    )`);
     yield* sql.unsafe(`INSERT INTO executions VALUES (?,?,?,?,NULL,NULL)`, [
       projectId,
       executionId,
@@ -491,6 +497,45 @@ const seedPreIntentSchema = (sql: SqlClientService) =>
   });
 
 describe("P4 SandboxPolicyRequirementReadPort", () => {
+  it("does not treat an open Verification shell as a Workspace policy requirement", async () => {
+    const result = await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient;
+          yield* seedSchema(sql);
+          yield* sql.unsafe(
+            "INSERT INTO verifications VALUES ('ver-open', 'Open')",
+          );
+          yield* sql.unsafe(
+            "INSERT INTO verification_executions VALUES ('ver-open', ?)",
+            [executionId],
+          );
+          yield* sql.unsafe(
+            "UPDATE agent_execution_state SET episode_json = ? WHERE execution_id = ?",
+            [
+              JSON.stringify({
+                _tag: "ExecutionBoundEpisode",
+                executionId,
+              }),
+              executionId,
+            ],
+          );
+          const transactions = yield* TransactionPort;
+          const port = yield* SandboxPolicyRequirementReadPort;
+          return yield* transactions.transact(
+            port.findPendingByExecution({
+              projectId,
+              workspaceId,
+              executionId,
+            }),
+          );
+        }),
+        makeApp(),
+      ),
+    );
+    expect(result).toEqual(Option.none());
+  });
+
   it("returns the exact Pending P3 Action and P4 approval before intent, read-only", async () => {
     const result = await Effect.runPromise(
       Effect.provide(

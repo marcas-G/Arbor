@@ -22,6 +22,7 @@ import type {
   WorkerDispatchError,
   WorkWaitStoreError,
 } from "./errors.js";
+import type { ProviderCancellationSignal } from "./provider.js";
 import type { TransactionScope } from "./session.js";
 
 export interface LeaseRecord {
@@ -217,6 +218,7 @@ export interface ExecutionDriverPortService {
     readonly wakeReason: WakeReason;
     readonly context: CommandSubmissionContext;
     readonly safetyGate: RuntimeSafetyGateService;
+    readonly cancellationSignal?: ProviderCancellationSignal;
   }) => Effect.Effect<ExecutionDriveOutcome, ExecutionDriverError>;
 }
 

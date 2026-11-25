@@ -1,3 +1,4 @@
+import { cn } from "../../lib/utils.js";
 /**
  * P13-005 shared command-form feedback: transport-level Problem → ProblemCard
  * (unavailable/invalid-request treatments, retry affordance reuses the held
@@ -25,7 +26,12 @@ export function FormFeedback({
   }
   if (state.phase === "committed" && state.receipt !== null) {
     return (
-      <p className="arbor-command-receipt arbor-command-receipt-committed">
+      <p
+        className={cn(
+          "arbor-command-receipt arbor-command-receipt-committed",
+          "m-0 p-[var(--arbor-space-2)_var(--arbor-space-3)] border-l-[3px] border-solid border-primary bg-accent text-foreground text-small [&_.arbor-mono]:text-muted-foreground [&_.arbor-mono]:ml-ui-1",
+        )}
+      >
         已完成提交
       </p>
     );

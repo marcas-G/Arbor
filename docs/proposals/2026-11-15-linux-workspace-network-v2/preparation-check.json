@@ -1,0 +1,10 @@
+{
+  "status": "PREPARATION_CHECKS_PASS_NOT_ACCEPTED",
+  "ownerPostimagesVerified": 13,
+  "owningFilesUnchanged": true,
+  "patchCheckPassed": true,
+  "sourceProposalSha256": "9801a907a540a7ea2ec5a68e2ac197105c4bf5a1b00191c3801e888dded59111",
+  "runtimeQualified": false,
+  "releaseQualified": false,
+  "reviewKind": "self-review of prepared artifact, not independent post-landing review"
+}

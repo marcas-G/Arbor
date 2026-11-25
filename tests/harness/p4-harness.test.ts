@@ -36,13 +36,16 @@ describe("p4 harness wiring", () => {
     }
   });
 
-  it("keeps tool-runtime dependent on domain/ports only", () => {
+  it("keeps tool-runtime dependencies scoped to domain, ports, Effect and linear regex", () => {
     const manifest = JSON.parse(read("packages/tool-runtime/package.json")) as {
       dependencies?: Record<string, string>;
     };
+    expect(manifest.dependencies?.re2js).toBe("2.10.0");
     expect(Object.keys(manifest.dependencies ?? {}).sort()).toEqual([
       "@arbor/domain",
       "@arbor/ports",
+      "effect",
+      "re2js",
     ]);
   });
 

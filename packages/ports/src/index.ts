@@ -61,4 +61,7 @@ export * from "./worker-transport.js";
 export * from "./workspace-knowledge.js";
 export * from "./workspace-placement.js";
 export * from "./workspace-resource-activation.js";
+export * from "./workspace-sandbox-authorization.js";
+export * from "./workspace-sandbox-authorization-initialization.js";
+export * from "./workspace-sandbox-policy-binding.js";
 export * from "./worktree-store.js";

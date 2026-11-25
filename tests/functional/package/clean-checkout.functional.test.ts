@@ -1,7 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const repositoryRoot = resolve(import.meta.dirname, "..", "..", "..");
@@ -46,7 +45,15 @@ const run = (
 
 describe("release-functional clean committed checkout", () => {
   it("F20 installs, builds, starts and runs the public black-box from HEAD", () => {
-    const temporaryRoot = mkdtempSync(join(tmpdir(), "arbor-clean-checkout-"));
+    // P39 deliberately requires a supported local filesystem for SQLite
+    // durability and writer-lock qualification. The default OS temp
+    // directory is tmpfs on some Linux developer machines, so placing the
+    // disposable checkout there makes the release test fail before it tests
+    // the release. Keep the temporary clone beside the repository so it
+    // inherits the filesystem selected for the checkout itself.
+    const temporaryRoot = mkdtempSync(
+      join(dirname(repositoryRoot), ".arbor-clean-checkout-"),
+    );
     const checkout = join(temporaryRoot, "repo");
     try {
       run(

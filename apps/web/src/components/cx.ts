@@ -1,7 +1,7 @@
-/** Join class-name parts, skipping falsy values (CSS module access can be
- * undefined under stubbed test transforms). */
+import { cn } from "../lib/utils.js";
+/** Compose utility recipes and resolve caller overrides. */
 export function cx(
   parts: ReadonlyArray<string | false | null | undefined>,
 ): string {
-  return parts.filter((part) => typeof part === "string").join(" ");
+  return cn(...parts);
 }

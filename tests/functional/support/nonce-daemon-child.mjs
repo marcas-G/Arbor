@@ -1,10 +1,11 @@
 import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { Effect } from "effect";
 import {
   main,
   runDaemonForever,
 } from "../../../apps/single-workspace/dist/main.js";
+import { makeHostProjectDirectories } from "../../../apps/single-workspace/dist/project-directories.js";
 import {
   makeProjectResourceProfilePort,
   projectResourceProfilesFromEnvironment,
@@ -85,9 +86,16 @@ const reportStartupPhase = (phase) => {
   }
 };
 
-const projectResourceProfiles = makeProjectResourceProfilePort(
-  projectResourceProfilesFromEnvironment(),
-);
+const projectDirectories =
+  process.env.ARBOR_FUNCTIONAL_DIRECTORY_SELECTION === "1"
+    ? makeHostProjectDirectories({
+        registryDirectory: `${resolve(process.env.ARBOR_DB)}.project-directories`,
+        startupProfiles: projectResourceProfilesFromEnvironment(),
+      })
+    : undefined;
+const projectResourceProfiles =
+  projectDirectories?.profiles ??
+  makeProjectResourceProfilePort(projectResourceProfilesFromEnvironment());
 const port = Number(process.env.ARBOR_HTTP_PORT ?? "0");
 const host = process.env.ARBOR_HTTP_HOST ?? "127.0.0.1";
 const webTransport = {
@@ -99,6 +107,7 @@ const webTransport = {
 };
 const config = {
   projectResourceProfiles,
+  ...(projectDirectories === undefined ? {} : { projectDirectories }),
   webTransport,
   onWebTransportListening,
   startupDiagnosticProbe,

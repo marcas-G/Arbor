@@ -2,7 +2,7 @@ import type { WorkspaceId } from "./ids.js";
 import type { CanonicalResourceRegion } from "./resources.js";
 import { canonicalRegionString } from "./resources.js";
 import { encodeNetworkPolicyV1 } from "./sandbox-policy.js";
-import type { SandboxPolicyLimitsV1 } from "./sandbox-policy-result.js";
+import type { SandboxPolicyLimitsV1 } from "./sandbox-policy-types.js";
 
 export type Sha256Hex = (canonicalUtf8Bytes: string) => string;
 export type SandboxResourceSpaceV1 = "filesystem" | "database" | "external";
@@ -545,6 +545,196 @@ export const decodeNetworkBrokerControlsV1 = (
   }
   if (value.mode !== "Restricted" && value.mode !== "Enabled") return undefined;
   const expected = networkBrokerControlsV1ForMode(value.mode);
+  return exactKeys(value, Object.keys(expected)) &&
+    Object.entries(expected).every(([key, item]) => value[key] === item)
+    ? expected
+    : undefined;
+};
+
+/**
+ * Linux workspace networking V2 is deliberately a separate closed codec.
+ * Keeping this beside (rather than changing) V1 is important: historical
+ * policy rows and qualification evidence must retain their original meaning.
+ */
+export type SandboxNetworkBrokerControlsV2 =
+  | {
+      readonly version: 2;
+      readonly mode: "Disabled";
+      readonly directNetwork: "Denied";
+      readonly broker: "Disabled";
+      readonly localNetwork: "WorkspaceNamespaceTcp";
+    }
+  | {
+      readonly version: 2;
+      readonly mode: "Restricted" | "Enabled";
+      readonly brokerProtocolVersion: 2;
+      readonly directNetwork: "Denied";
+      readonly dns: "BrokerOnly";
+      readonly addressFamily: "IPv4OnlyPublicConnect";
+      readonly ipPinning: "AllAnswersPublicPerConnection";
+      readonly redirectPolicy: "ReauthorizeEachConnect";
+      readonly tlsPolicy: "ClientVerifiedEndToEnd";
+      readonly rawIp: "Denied";
+      readonly udp: "Denied";
+      readonly specialUse: "Denied";
+      readonly localNetwork: "WorkspaceNamespaceTcp";
+    };
+
+export type SandboxPlatformPrimitiveSetIdV2 =
+  "linux-bwrap-workspace-netns-cgroupv2-connect-v2";
+
+export interface SandboxEnforcementRuleSetV2 {
+  readonly version: 2;
+  readonly networkPolicyCodecVersion: 1;
+  readonly filesystemRuleVersion: 1;
+  readonly environmentRuleVersion: 1;
+  readonly processTreeRuleVersion: 1;
+  readonly resourceLimitRuleVersion: 1;
+  readonly brokerProtocolVersion: 2;
+  readonly addressClassificationSnapshotId: string;
+  readonly addressFamily: "IPv4OnlyPublicConnect";
+  readonly redirectPolicy: "ReauthorizeEachConnect";
+  readonly tlsPolicy: "ClientVerifiedEndToEnd";
+  readonly localNetwork: "WorkspaceNamespaceTcp";
+  readonly platformPrimitiveSetId: SandboxPlatformPrimitiveSetIdV2;
+}
+
+export const SANDBOX_ADDRESS_CLASSIFICATION_SNAPSHOT_ID_V2 =
+  SANDBOX_ADDRESS_CLASSIFICATION_SNAPSHOT_ID_V1;
+
+const enforcementRuleSetV2Keys = [
+  "version",
+  "networkPolicyCodecVersion",
+  "filesystemRuleVersion",
+  "environmentRuleVersion",
+  "processTreeRuleVersion",
+  "resourceLimitRuleVersion",
+  "brokerProtocolVersion",
+  "addressClassificationSnapshotId",
+  "addressFamily",
+  "redirectPolicy",
+  "tlsPolicy",
+  "localNetwork",
+  "platformPrimitiveSetId",
+] as const;
+
+export const sandboxEnforcementRuleSetV2ForProvider = (
+  providerId: string,
+): SandboxEnforcementRuleSetV2 | undefined =>
+  providerId === "linux-bwrap"
+    ? {
+        version: 2,
+        networkPolicyCodecVersion: 1,
+        filesystemRuleVersion: 1,
+        environmentRuleVersion: 1,
+        processTreeRuleVersion: 1,
+        resourceLimitRuleVersion: 1,
+        brokerProtocolVersion: 2,
+        addressClassificationSnapshotId:
+          SANDBOX_ADDRESS_CLASSIFICATION_SNAPSHOT_ID_V2,
+        addressFamily: "IPv4OnlyPublicConnect",
+        redirectPolicy: "ReauthorizeEachConnect",
+        tlsPolicy: "ClientVerifiedEndToEnd",
+        localNetwork: "WorkspaceNamespaceTcp",
+        platformPrimitiveSetId:
+          "linux-bwrap-workspace-netns-cgroupv2-connect-v2",
+      }
+    : undefined;
+
+export const encodeSandboxEnforcementRuleSetV2 = (
+  ruleSet: SandboxEnforcementRuleSetV2,
+): string =>
+  `{"version":2,"networkPolicyCodecVersion":1,"filesystemRuleVersion":1,"environmentRuleVersion":1,"processTreeRuleVersion":1,"resourceLimitRuleVersion":1,"brokerProtocolVersion":2,"addressClassificationSnapshotId":${JSON.stringify(ruleSet.addressClassificationSnapshotId)},"addressFamily":"IPv4OnlyPublicConnect","redirectPolicy":"ReauthorizeEachConnect","tlsPolicy":"ClientVerifiedEndToEnd","localNetwork":"WorkspaceNamespaceTcp","platformPrimitiveSetId":"linux-bwrap-workspace-netns-cgroupv2-connect-v2"}`;
+
+export const decodeSandboxEnforcementRuleSetV2 = (
+  input: unknown,
+): SandboxEnforcementRuleSetV2 | undefined => {
+  if (typeof input !== "object" || input === null || Array.isArray(input))
+    return undefined;
+  const value = input as Record<string, unknown>;
+  if (
+    !exactKeys(value, enforcementRuleSetV2Keys) ||
+    value.version !== 2 ||
+    value.networkPolicyCodecVersion !== 1 ||
+    value.filesystemRuleVersion !== 1 ||
+    value.environmentRuleVersion !== 1 ||
+    value.processTreeRuleVersion !== 1 ||
+    value.resourceLimitRuleVersion !== 1 ||
+    value.brokerProtocolVersion !== 2 ||
+    value.addressClassificationSnapshotId !==
+      SANDBOX_ADDRESS_CLASSIFICATION_SNAPSHOT_ID_V2 ||
+    value.addressFamily !== "IPv4OnlyPublicConnect" ||
+    value.redirectPolicy !== "ReauthorizeEachConnect" ||
+    value.tlsPolicy !== "ClientVerifiedEndToEnd" ||
+    value.localNetwork !== "WorkspaceNamespaceTcp" ||
+    value.platformPrimitiveSetId !==
+      "linux-bwrap-workspace-netns-cgroupv2-connect-v2"
+  )
+    return undefined;
+  return sandboxEnforcementRuleSetV2ForProvider("linux-bwrap");
+};
+
+export const decodeCanonicalSandboxEnforcementRuleSetV2 = (
+  json: string,
+): SandboxEnforcementRuleSetV2 | undefined => {
+  try {
+    const decoded = decodeSandboxEnforcementRuleSetV2(JSON.parse(json));
+    return decoded !== undefined &&
+      encodeSandboxEnforcementRuleSetV2(decoded) === json
+      ? decoded
+      : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+export const encodeNetworkBrokerControlsV2 = (
+  controls: SandboxNetworkBrokerControlsV2,
+): string =>
+  controls.mode === "Disabled"
+    ? `{"version":2,"mode":"Disabled","directNetwork":"Denied","broker":"Disabled","localNetwork":"WorkspaceNamespaceTcp"}`
+    : `{"version":2,"mode":${JSON.stringify(controls.mode)},"brokerProtocolVersion":2,"directNetwork":"Denied","dns":"BrokerOnly","addressFamily":"IPv4OnlyPublicConnect","ipPinning":"AllAnswersPublicPerConnection","redirectPolicy":"ReauthorizeEachConnect","tlsPolicy":"ClientVerifiedEndToEnd","rawIp":"Denied","udp":"Denied","specialUse":"Denied","localNetwork":"WorkspaceNamespaceTcp"}`;
+
+export const networkBrokerControlsV2ForMode = (
+  mode: "Disabled" | "Restricted" | "Enabled",
+): SandboxNetworkBrokerControlsV2 =>
+  mode === "Disabled"
+    ? {
+        version: 2,
+        mode,
+        directNetwork: "Denied",
+        broker: "Disabled",
+        localNetwork: "WorkspaceNamespaceTcp",
+      }
+    : {
+        version: 2,
+        mode,
+        brokerProtocolVersion: 2,
+        directNetwork: "Denied",
+        dns: "BrokerOnly",
+        addressFamily: "IPv4OnlyPublicConnect",
+        ipPinning: "AllAnswersPublicPerConnection",
+        redirectPolicy: "ReauthorizeEachConnect",
+        tlsPolicy: "ClientVerifiedEndToEnd",
+        rawIp: "Denied",
+        udp: "Denied",
+        specialUse: "Denied",
+        localNetwork: "WorkspaceNamespaceTcp",
+      };
+
+export const decodeNetworkBrokerControlsV2 = (
+  input: unknown,
+): SandboxNetworkBrokerControlsV2 | undefined => {
+  if (typeof input !== "object" || input === null || Array.isArray(input))
+    return undefined;
+  const value = input as Record<string, unknown>;
+  if (
+    value.mode !== "Disabled" &&
+    value.mode !== "Restricted" &&
+    value.mode !== "Enabled"
+  )
+    return undefined;
+  const expected = networkBrokerControlsV2ForMode(value.mode);
   return exactKeys(value, Object.keys(expected)) &&
     Object.entries(expected).every(([key, item]) => value[key] === item)
     ? expected

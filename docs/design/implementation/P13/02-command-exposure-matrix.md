@@ -266,3 +266,11 @@ existing policy command before resolving that approval through the existing
 `ResolveExecutableApproval` route. No ActionId, ApprovalId, source digest,
 candidate ID, new command, command payload field, auto-submit or approval
 mutation is introduced by the CandidateRead.
+
+## Linux workspace networking V2 governance supplement
+
+Accepted under `ACCEPT_LINUX_WORKSPACE_NETWORK_V2`; proposal SHA-256 `9801a907a540a7ea2ec5a68e2ac197105c4bf5a1b00191c3801e888dded59111`.
+
+This supplement owns only the Linux V2 changes assigned to this document. For V2 it supersedes the conflicting first-release Windows-only, blanket loopback-denial, V1 broker and discovery clauses; V1/Windows/historical evidence retain their original meaning. It creates no Supported result, migration execution, preserved-database upgrade or release claim. Service registration, cross-command service reuse and preview still require their separate exact contract and acceptance; the full product goal is not reduced. DID 1.66 owns the closed technical definitions.
+
+The existing human DecideSandboxPolicy surface may submit schema 2 only for a deliberately selected Linux V2 candidate whose policySchemaVersion is exactly 2. The payload fields, human authority and full CAS remain unchanged; UI must not guess a version from providerId or silently retry schema 1. Display same-workspace TCP and ordinary end-to-end HTTPS accurately; do not claim TLS-content inspection, IPv6-only egress, or unqualified command availability. No new model control, permission or service/preview API is introduced.

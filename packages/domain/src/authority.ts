@@ -75,9 +75,22 @@ export interface GrantPermissionInput {
   readonly capability: string;
   readonly target: string;
   readonly validFrom: string;
-  readonly expiresAt: string;
+  readonly expiresAt: string | null;
   readonly revision: number;
 }
+
+/** Explicit persistent authorization for concrete tools in one Workspace.
+ * Null never means an unbound Human/Execution grant or a sandbox policy. */
+export const isPersistentWorkspaceToolPermission = (input: {
+  readonly subject?: PermissionSubject;
+  readonly target?: string | null;
+  readonly capability?: string;
+  readonly expiresAt?: string | null;
+}): boolean =>
+  input.expiresAt === null &&
+  input.subject?._tag === "WorkspaceAgent" &&
+  input.subject.workspaceId === input.target &&
+  (input.capability === "fs:write" || input.capability === "shell:exec");
 
 /** RFC 3339 timestamp with an explicit timezone and valid calendar fields. */
 export const isIsoTimestamp = (value: string): boolean => {
@@ -135,8 +148,10 @@ export const grantPermission = (
     input.target.trim().length === 0 ||
     input.target !== input.target.trim() ||
     !isIsoTimestamp(input.validFrom) ||
-    !isIsoTimestamp(input.expiresAt) ||
-    Date.parse(input.expiresAt) <= Date.parse(input.validFrom)
+    (input.expiresAt === null
+      ? !isPersistentWorkspaceToolPermission(input)
+      : !isIsoTimestamp(input.expiresAt) ||
+        Date.parse(input.expiresAt) <= Date.parse(input.validFrom))
   ) {
     return err({
       _tag: "AuthorityDenied",

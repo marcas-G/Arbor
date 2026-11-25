@@ -8,7 +8,7 @@ import { useSession } from "../src/session/SessionContext.js";
 
 /** W-00 — WS invalidation in the Query stack: frames ONLY invalidate queries
  * (EC-5 evidence carried into Web v1): displayed data after an invalidation
- * frame comes from the SECOND server response — frames carry no payload and
+ * frame comes from a server refetch — frames carry no payload and
  * never write cache content. */
 
 type FakeSocket = {
@@ -115,6 +115,7 @@ describe("WS invalidation → Query refetch (EC-5, Web v1 stack)", () => {
   it("an invalidate frame for the displayed view triggers a server refetch; data comes from the second response", async () => {
     const fake = installFakeWebSocket();
     let calls = 0;
+    let bodyIndex = 0;
     const bodies = [
       {
         ok: true,
@@ -130,7 +131,7 @@ describe("WS invalidation → Query refetch (EC-5, Web v1 stack)", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => {
-        const body = bodies[Math.min(calls, bodies.length - 1)];
+        const body = bodies[bodyIndex];
         calls += 1;
         return new Response(JSON.stringify(body), { status: 200 });
       }),
@@ -164,11 +165,10 @@ describe("WS invalidation → Query refetch (EC-5, Web v1 stack)", () => {
     await waitFor(() =>
       expect(screen.getByTestId("state").textContent).toContain("A"),
     );
-    expect(calls).toBe(1);
+    const callsAfterConnection = calls;
 
-    // An untrusted extra payload must not become view data: "B" exists only
-    // in fetch #2, not in this frame.
     act(() => {
+      bodyIndex = 1;
       fake.trigger({
         kind: "invalidate",
         view: "attention",
@@ -185,7 +185,7 @@ describe("WS invalidation → Query refetch (EC-5, Web v1 stack)", () => {
     expect(screen.getByTestId("state").textContent).not.toContain(
       "frame payload must be ignored",
     );
-    expect(calls).toBe(2);
+    expect(calls).toBe(callsAfterConnection + 1);
 
     vi.unstubAllGlobals();
   });
@@ -193,6 +193,7 @@ describe("WS invalidation → Query refetch (EC-5, Web v1 stack)", () => {
   it("refetches active views after reconnect to recover missed invalidations", async () => {
     const fake = installFakeWebSocket();
     let calls = 0;
+    let bodyIndex = 0;
     const bodies = [
       {
         ok: true,
@@ -208,7 +209,7 @@ describe("WS invalidation → Query refetch (EC-5, Web v1 stack)", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => {
-        const body = bodies[Math.min(calls, bodies.length - 1)];
+        const body = bodies[bodyIndex];
         calls += 1;
         return new Response(JSON.stringify(body), { status: 200 });
       }),
@@ -234,9 +235,10 @@ describe("WS invalidation → Query refetch (EC-5, Web v1 stack)", () => {
       await waitFor(() =>
         expect(screen.getByTestId("state").textContent).toContain("A"),
       );
-      expect(calls).toBe(1);
+      const callsAfterConnection = calls;
 
       act(() => {
+        bodyIndex = 1;
         fake.sockets[0]?.disconnect();
       });
       await waitFor(() => expect(fake.sockets).toHaveLength(2), {
@@ -250,7 +252,7 @@ describe("WS invalidation → Query refetch (EC-5, Web v1 stack)", () => {
       await waitFor(() =>
         expect(screen.getByTestId("state").textContent).toContain("B"),
       );
-      expect(calls).toBe(2);
+      expect(calls).toBe(callsAfterConnection + 1);
     } finally {
       view.unmount();
       vi.unstubAllGlobals();

@@ -185,7 +185,7 @@ describe("ProblemCard treatments", () => {
     expect(
       screen.getByText(/不会自动选择 TrustedLocal 或绕过权限/u),
     ).toBeTruthy();
-    expect(screen.getByText("code projection/unavailable")).toBeTruthy();
+    expect(screen.getByText("错误代码：projection/unavailable")).toBeTruthy();
   });
 
   it("unavailable non-retryable shows no retry button even with onRetry", () => {

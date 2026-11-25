@@ -178,7 +178,7 @@ describe("W-06 关注事项页（只读）", () => {
             targetWorkspaceId: "ws_1",
             dedupKey: `terminal-provider-failure:wrk_1:2:${"a".repeat(64)}`,
             summaryRef:
-              "The model provider rejected this Work execution. Review the provider configuration or request compatibility, then explicitly steer the Work to retry.",
+              "The model provider could not complete this Work execution. Review the provider configuration or connection, then explicitly steer the Work to retry.",
             occurredAt: "2026-10-25T00:00:01.000Z",
             terminalProviderFailure: {
               kind: "TerminalProviderFailure",

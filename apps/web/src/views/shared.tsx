@@ -1,3 +1,4 @@
+import { cn } from "../lib/utils.js";
 /**
  * P13-004 shared rendering helpers. Views receive ONLY api-contracts DTOs
  * (`03` §1.1); unknown enum labels render verbatim through `statusTone`
@@ -11,7 +12,9 @@ import { statusTone } from "../tokens.js";
 
 /** Monospace run for IDs / timestamps / event / binding vocabulary. */
 export function Mono({ children }: { readonly children: ReactNode }) {
-  return <span className="arbor-mono">{children}</span>;
+  return (
+    <span className={cn("arbor-mono", "font-mono text-small")}>{children}</span>
+  );
 }
 
 /** Enum-ish label badge: text verbatim, tone via the frozen statusTone map. */
@@ -39,7 +42,11 @@ export function TimeText({ at }: { readonly at: string }) {
   const parsed = new Date(at);
   const text = Number.isNaN(parsed.getTime()) ? at : parsed.toLocaleString();
   return (
-    <time className="arbor-mono" dateTime={at} title={at}>
+    <time
+      className={cn("arbor-mono", "font-mono text-small")}
+      dateTime={at}
+      title={at}
+    >
       {text}
     </time>
   );
@@ -51,7 +58,10 @@ export function SandboxPolicySummary({
   readonly policy: NonNullable<ExecutionSummary["sandboxPolicy"]>;
 }) {
   return (
-    <dl className="arbor-view-stack" aria-label="Sandbox policy">
+    <dl
+      className={cn("arbor-view-stack", "flex flex-col gap-ui-3")}
+      aria-label="Sandbox policy"
+    >
       <div>
         <dt>Sandbox status</dt>
         <dd>

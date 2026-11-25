@@ -35,6 +35,7 @@ import {
   ReconciliationSource,
   RecoveryAttentionFactStore,
   SessionRepository,
+  ToolInvocationStore,
   TransactionPort,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
@@ -274,6 +275,7 @@ export const runRecovery = (
     const repository = yield* ExecutionRepository;
     const leases = yield* LeaseService;
     const reconciliation = yield* ReconciliationSource;
+    const toolInvocations = yield* Effect.serviceOption(ToolInvocationStore);
     const recoveryAttentionFacts = yield* Effect.serviceOption(
       RecoveryAttentionFactStore,
     );
@@ -370,7 +372,7 @@ export const runRecovery = (
       if (execution.stopRequestedAt === null) {
         continue;
       }
-      const pending = yield* tx.transact(
+      let pending = yield* tx.transact(
         reconciliation.pending(execution.executionId),
       );
       if (pending.length > 0) {
@@ -518,9 +520,155 @@ export const runRecovery = (
           }
         }
       }
+      if (
+        toolInvocations._tag === "Some" &&
+        execution.stopRequestedAt !== null
+      ) {
+        // A P4 intent can be durable before the owning P3 action projects its
+        // result. If the intent is still NotAdmitted, recovery can close it
+        // deterministically with no external effect. This must happen before
+        // settling the Execution; otherwise the Execution/Step can become
+        // terminal while the ToolInvocation remains open forever.
+        const unsettledInvocations = yield* tx.transact(
+          toolInvocations.value.findUnsettled(execution.executionId),
+        );
+        const noEffectInvocations = unsettledInvocations.filter(
+          (invocation) =>
+            invocation.effectAdmissionState === "NotAdmitted" &&
+            invocation.settlement === null,
+        );
+        if (noEffectInvocations.length > 0) {
+          const acquired = yield* Effect.match(
+            tx.transact(
+              leases.acquire(
+                execution.executionId,
+                RECOVERY_WORKER_ID,
+                RECOVERY_WORKER_INCARNATION_ID,
+              ),
+            ),
+            {
+              onFailure: (error) => ({ ok: false as const, error }),
+              onSuccess: (lease) => ({ ok: true as const, lease }),
+            },
+          );
+          if (!acquired.ok) {
+            if (fencedTakeover(acquired.error)) {
+              escalated.push(execution.executionId);
+              continue;
+            }
+            return yield* Effect.fail(acquired.error);
+          }
+          const lease = acquired.lease;
+          const interrupted = yield* Effect.match(
+            tx.transact(
+              Effect.gen(function* () {
+                yield* leases.renew(
+                  execution.executionId,
+                  lease.workerId,
+                  lease.workerIncarnationId,
+                  lease.generation,
+                );
+                const fence = {
+                  executionId: execution.executionId,
+                  workerId: lease.workerId,
+                  workerIncarnationId: lease.workerIncarnationId,
+                  fencingGeneration: lease.generation,
+                };
+                for (const invocation of noEffectInvocations) {
+                  const recorded =
+                    yield* toolInvocations.value.recordNoEffectInterruption(
+                      invocation.invocationId,
+                      now,
+                      fence,
+                      now,
+                    );
+                  if (!recorded) {
+                    const current = yield* toolInvocations.value.findById(
+                      invocation.invocationId,
+                    );
+                    if (
+                      Option.isNone(current) ||
+                      current.value.settlement === null
+                    ) {
+                      return false;
+                    }
+                  }
+                }
+                return true;
+              }),
+            ),
+            {
+              onFailure: (error) => ({ ok: false as const, error }),
+              onSuccess: (value) => ({ ok: true as const, value }),
+            },
+          );
+          yield* tx.transact(
+            leases.release(
+              execution.executionId,
+              lease.workerId,
+              lease.workerIncarnationId,
+              lease.generation,
+            ),
+          );
+          if (!interrupted.ok) {
+            if (fencedTakeover(interrupted.error)) {
+              escalated.push(execution.executionId);
+              continue;
+            }
+            return yield* Effect.fail(interrupted.error);
+          }
+          if (!interrupted.value) {
+            escalated.push(execution.executionId);
+            continue;
+          }
+        }
+      }
+      pending = yield* tx.transact(
+        reconciliation.pending(execution.executionId),
+      );
       if (pending.length > 0 && submittedDecisionBindingFact === undefined) {
         escalated.push(execution.executionId);
         continue;
+      }
+      if (
+        execution.stopRequestedAt !== null &&
+        submittedDecisionBindingFact === undefined &&
+        Option.isSome(loopSteps)
+      ) {
+        // P4 may have already settled a known in-flight invocation while the
+        // owning P3 process was interrupted. Do not settle the Execution
+        // underneath an ActionsInProgress/Pending action: the existing Agent
+        // Loop must get one fenced pass to project the terminal ToolResult,
+        // Action state and cursor. P4 evidence remains owned by its runtime;
+        // this gate only prevents P2 from stranding the P3 frontier.
+        const steps = yield* tx.transact(
+          loopSteps.value.listByExecution(execution.executionId),
+        );
+        let pendingActionProjection = false;
+        for (const step of steps) {
+          if (step.state !== "ActionsInProgress") continue;
+          const actions = yield* tx.transact(
+            loopSteps.value.listActions(step.identity),
+          );
+          const action = actions.find(
+            (candidate) => candidate.actionIndex === step.nextActionIndex,
+          );
+          // Only executable actions can have an unresolved P4 side effect.
+          // Control actions (for example SelectCurrentWork) are settled by
+          // the application boundary and must not be mistaken for an
+          // in-flight tool invocation during generic Stop recovery.
+          if (
+            action?.state === "Pending" &&
+            action.routeKind === "Executable"
+          ) {
+            pendingActionProjection = true;
+            break;
+          }
+        }
+        if (pendingActionProjection) {
+          escalated.push(execution.executionId);
+          continue;
+        }
       }
       let settlement: ExecutionSettlement = {
         _tag: "Interrupted",

@@ -441,6 +441,14 @@ const readSse = async function* (
           dataLines.push(line.slice(5).trimStart());
         }
       }
+      // OpenAI-compatible providers are allowed to send the terminal
+      // `data: [DONE]` marker without closing the HTTP connection. Waiting
+      // for EOF here leaves a real conversation execution running until its
+      // turn deadline even though the complete response has already arrived.
+      // Cancel the reader in `finally` so the connection is released while
+      // preserving the existing requirement for both [DONE] and a finish
+      // reason.
+      if (doneSeen) break;
       if (read.done) {
         if (buffer.startsWith("data:")) {
           dataLines.push(buffer.slice(5).trimStart());

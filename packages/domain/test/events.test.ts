@@ -63,6 +63,7 @@ const EXPECTED_EVENTS = [
   "ExecutionStopRequested",
   "ExecutionSettled",
   "PermissionChanged",
+  "WorkspaceSandboxAuthorizationChanged",
   "SandboxPolicyGrantIssued",
   "SandboxPolicyDecisionRecorded",
   "SandboxProviderUnavailable",
@@ -117,6 +118,11 @@ describe("domain event catalog", () => {
         expect(isSupportedEventWritePair(eventType, 1)).toBe(false);
         expect(isSupportedEventReadPair(eventType, 1)).toBe(true);
         expect(isSupportedEventReadPair(eventType, 2)).toBe(true);
+      } else if (eventType === "SandboxPolicyDecisionRecorded") {
+        for (const version of [1, 2]) {
+          expect(isSupportedEventWritePair(eventType, version)).toBe(true);
+          expect(isSupportedEventReadPair(eventType, version)).toBe(true);
+        }
       } else {
         expect(isSupportedEventWritePair(eventType, 1)).toBe(true);
         expect(isSupportedEventWritePair(eventType, 2)).toBe(false);
@@ -284,6 +290,45 @@ describe("domain event catalog", () => {
     ]);
   });
 
+  it("decodes Workspace policy events without accepting mixed legacy provenance", () => {
+    const payload = {
+      workspaceId: "ws_018f2b3c-4d5e-7abc-8def-0123456789ab",
+      executionId: "exe_018f2b3c-4d5e-7abc-8def-0123456789ab",
+      episodeBinding: {
+        _tag: "InboxEpisode",
+        entryKey: "entry:one",
+        inputKind: "HumanMessage",
+      },
+      policyRevision: 1,
+      workspaceAuthorizationRevision: 2,
+      operatorConfigRevision: 1,
+      operatorConfigDigest: "a".repeat(64),
+    };
+    expect(
+      decodeSupportedEventPayload("SandboxPolicyDecisionRecorded", 2, payload)
+        ._tag,
+    ).toBe("Decoded");
+    for (const patch of [
+      { permissionGrantId: "legacy" },
+      { workspaceAuthorizationRevision: 0 },
+      { policyRevision: 1.5 },
+      { episodeBinding: {} },
+      { operatorConfigDigest: "invalid" },
+    ]) {
+      expect(
+        decodeSupportedEventPayload("SandboxPolicyDecisionRecorded", 2, {
+          ...payload,
+          ...patch,
+        })._tag,
+      ).toBe("MalformedPayload");
+    }
+    const { workspaceAuthorizationRevision: _revision, ...missing } = payload;
+    expect(
+      decodeSupportedEventPayload("SandboxPolicyDecisionRecorded", 2, missing)
+        ._tag,
+    ).toBe("MalformedPayload");
+  });
+
   it("payloads carry change facts, not aggregate snapshots", () => {
     // P7 (P7 `01` events): the coordination events carry contract payload
     // fields (change facts), not aggregate snapshots.
@@ -291,7 +336,20 @@ describe("domain event catalog", () => {
     for (const name of Object.keys(EVENT_CATALOG)) {
       const fields = Object.keys(payload[name]?.fields ?? { _tag: name });
       for (const forbidden of AGGREGATE_SNAPSHOT_FIELDS) {
-        expect(fields).not.toContain(forbidden);
+        if (
+          name === "WorkspaceSandboxAuthorizationChanged" &&
+          forbidden === "state"
+        ) {
+          // A Granted/Revoked change discriminator, never an aggregate snapshot.
+          expect(fields).toEqual([
+            "_tag",
+            "workspaceId",
+            "authorizationRevision",
+            "state",
+          ]);
+        } else {
+          expect(fields).not.toContain(forbidden);
+        }
       }
     }
   });

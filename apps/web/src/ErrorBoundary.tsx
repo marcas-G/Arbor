@@ -5,6 +5,7 @@
  * it only offers a full reload).
  */
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { cn } from "./lib/utils.js";
 
 export class ErrorBoundary extends Component<
   { readonly children: ReactNode },
@@ -25,20 +26,44 @@ export class ErrorBoundary extends Component<
   override render(): ReactNode {
     if (this.state.message !== null) {
       return (
-        <div className="arbor-error-boundary">
-          <section className="arbor-card">
-            <header className="arbor-card-header">
-              <h2 className="arbor-card-title">页面暂时无法显示</h2>
+        <div
+          className={cn("arbor-error-boundary", "p-ui-4 flex justify-center")}
+        >
+          <section
+            className={cn(
+              "arbor-card",
+              "bg-card border border-solid border-border rounded-md shadow-card overflow-hidden",
+            )}
+          >
+            <header
+              className={cn(
+                "arbor-card-header",
+                "p-[var(--arbor-space-3)_var(--arbor-space-4)] border-b border-solid border-border bg-[color-mix(in_srgb,_var(--arbor-paper)_44%,_transparent)]",
+              )}
+            >
+              <h2
+                className={cn(
+                  "arbor-card-title",
+                  "m-0 text-foreground text-title [font-weight:680] tracking-[-0.01em]",
+                )}
+              >
+                页面暂时无法显示
+              </h2>
             </header>
-            <div className="arbor-card-body">
+            <div className={cn("arbor-card-body", "p-ui-4")}>
               <p>重新加载页面通常可以恢复。未提交的输入可能需要重新填写。</p>
               <details>
                 <summary>问题详情</summary>
-                <p className="arbor-mono">{this.state.message}</p>
+                <p className={cn("arbor-mono", "font-mono text-small")}>
+                  {this.state.message}
+                </p>
               </details>
               <button
                 type="button"
-                className="arbor-button arbor-button-primary"
+                className={cn(
+                  "arbor-button arbor-button-primary",
+                  "min-h-[var(--arbor-row-height)] p-[var(--arbor-space-1)_var(--arbor-space-3)] border border-solid border-border rounded-sm bg-card text-foreground font-sans text-small [font-weight:650] cursor-pointer [transition:border-color_140ms_ease,_background_140ms_ease,_color_140ms_ease,_transform_140ms_ease,_box-shadow_140ms_ease] [&:disabled]:cursor-not-allowed [&:disabled]:opacity-[0.5] border-primary bg-primary text-card [box-shadow:0_4px_12px_color-mix(in_srgb,_var(--arbor-leaf)_20%,_transparent)]",
+                )}
                 onClick={() => {
                   location.reload();
                 }}

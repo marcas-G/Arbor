@@ -46,9 +46,32 @@ test("F14/F15 user approves without IDs and accepts a verified Work", async ({
   await expect(
     page.getByRole("heading", { name: "待处理", exact: true }),
   ).toBeVisible();
-  await expect(page.getByText(marker).first()).toBeVisible({
-    timeout: 30_000,
-  });
+  try {
+    await expect(page.getByText(marker).first()).toBeVisible({
+      timeout: 30_000,
+    });
+  } catch (error) {
+    const client = makePublicClient(fixture.baseUrl);
+    const tree = await client.view<{
+      nodes: ReadonlyArray<{ workspaceId: string }>;
+    }>("responsibility-tree", { projectId });
+    const rootWorkspaceId = tree.nodes[0]?.workspaceId;
+    const inbox =
+      rootWorkspaceId === undefined
+        ? null
+        : await client.view("inbox-view", { workspaceId: rootWorkspaceId });
+    const transcript =
+      rootWorkspaceId === undefined
+        ? null
+        : await client.view("transcript", {
+            workspaceId: rootWorkspaceId,
+            conversationOnly: true,
+            limit: 10,
+          });
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)}; providerCalls=${fixture.providerCalls.length}; inbox=${JSON.stringify(inbox)}; transcript=${JSON.stringify(transcript)}; daemon=${fixture.daemonErrors.join(" | ")}`,
+    );
+  }
   await expect(page.getByRole("button", { name: "批准并继续" })).toBeVisible();
   await page.getByRole("button", { name: "批准并继续" }).click();
 

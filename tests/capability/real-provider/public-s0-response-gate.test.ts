@@ -57,28 +57,35 @@ const hasActionCall = (bodyBase64: string): boolean =>
 
 describe("real Provider response gate capture contract", () => {
   it("wires setup-probe authority env into the reusable restart daemon environment", async () => {
+    const fixtureDirectory = join(tmpdir(), "private-fixture");
+    const evidenceDirectory = join(tmpdir(), "private-evidence");
     const requiredDaemonEnvironment: Record<string, string> = {
       ARBOR_AUTH_TOKENS: "local=user:local,operator=user:operator",
     };
     const setupStages: Array<string> = [];
     const setup = createRealProviderFixtureDaemonSetup({
       baseDaemonEnvironment: {
-        ARBOR_CONFIG: "C:\\private-fixture\\no-provider-config.json",
-        ARBOR_PUBLIC_S1_RESPONSE_GATE_DIR: "C:\\private-evidence\\gate",
+        ARBOR_CONFIG: join(fixtureDirectory, "no-provider-config.json"),
+        ARBOR_PUBLIC_S1_CAPTURE_FILE: join(evidenceDirectory, "captures.jsonl"),
+        ARBOR_PUBLIC_S1_RESPONSE_GATE_DIR: join(evidenceDirectory, "gate"),
         NODE_OPTIONS: "--import=file:///private/hook.mjs",
       },
       requiredDaemonEnvironment,
       setupProbe: (event) => {
         setupStages.push(event.stage);
         if (event.stage === "after-clone") {
-          requiredDaemonEnvironment.ARBOR_SANDBOX_AUTHORITY_SOURCE_FILE = `${event.directory}\\sandbox-policy-v2-source\\authority.json`;
+          requiredDaemonEnvironment.ARBOR_SANDBOX_AUTHORITY_SOURCE_FILE = join(
+            event.directory,
+            "sandbox-policy-v2-source",
+            "authority.json",
+          );
         }
       },
     });
 
     await setup.setupProbe({
       stage: "after-clone",
-      directory: "C:\\private-fixture",
+      directory: fixtureDirectory,
     });
     const firstDaemonEnvironment = { ...setup.daemonEnvironment };
     const restartDaemonEnvironment = {
@@ -88,16 +95,21 @@ describe("real Provider response gate capture contract", () => {
 
     expect(setupStages).toEqual(["after-clone"]);
     expect(firstDaemonEnvironment).toMatchObject({
-      ARBOR_CONFIG: "C:\\private-fixture\\no-provider-config.json",
+      ARBOR_CONFIG: join(fixtureDirectory, "no-provider-config.json"),
       ARBOR_AUTH_TOKENS: "local=user:local,operator=user:operator",
-      ARBOR_SANDBOX_AUTHORITY_SOURCE_FILE:
-        "C:\\private-fixture\\sandbox-policy-v2-source\\authority.json",
+      ARBOR_SANDBOX_AUTHORITY_SOURCE_FILE: join(
+        fixtureDirectory,
+        "sandbox-policy-v2-source",
+        "authority.json",
+      ),
     });
     expect(restartDaemonEnvironment).toMatchObject({
       ARBOR_AUTH_TOKENS: firstDaemonEnvironment.ARBOR_AUTH_TOKENS,
       ARBOR_SANDBOX_AUTHORITY_SOURCE_FILE:
         firstDaemonEnvironment.ARBOR_SANDBOX_AUTHORITY_SOURCE_FILE,
       ARBOR_PUBLIC_S1_RESPONSE_GATE_DIR: "",
+      ARBOR_PUBLIC_S1_CAPTURE_FILE:
+        firstDaemonEnvironment.ARBOR_PUBLIC_S1_CAPTURE_FILE,
     });
     for (const fixtureOwnedKey of [
       "ARBOR_CONFIG",
@@ -138,14 +150,14 @@ describe("real Provider response gate capture contract", () => {
       setupProbe: (event) => {
         if (event.stage === "after-clone") {
           outsideAuthorityRequiredEnvironment.ARBOR_SANDBOX_AUTHORITY_SOURCE_FILE =
-            "C:\\outside-fixture\\authority.json";
+            join(tmpdir(), "outside-fixture", "authority.json");
         }
       },
     });
     await expect(
       outsideAuthoritySetup.setupProbe({
         stage: "after-clone",
-        directory: "C:\\private-fixture",
+        directory: fixtureDirectory,
       }),
     ).rejects.toThrow("inside the private fixture");
   });

@@ -1,5 +1,6 @@
 import {
   CommandGateway,
+  type CommandRejection,
   newUuid7,
   semanticRequestFingerprint,
   type VerifiedCommandAuthority,
@@ -50,13 +51,21 @@ export const selectWorkspaceInboxEpisode = (
       entry.kind === "WorkBlocked",
   );
 
+type FencingRejection =
+  | LeaseFencingRejected
+  | Extract<CommandRejection, { readonly _tag: "FencingRejected" }>;
+
 /** A worker that lost its lease must stop this wake without failing the daemon. */
-export const containLeaseFencingRejected = <A, E, R>(
-  effect: Effect.Effect<A, LeaseFencingRejected | E, R>,
+export const containFencingRejection = <A, E, R>(
+  effect: Effect.Effect<A, FencingRejection | E, R>,
 ): Effect.Effect<A | undefined, E, R> =>
   effect.pipe(
     Effect.catchTag("LeaseFencingRejected", () => Effect.succeed(undefined)),
+    Effect.catchTag("FencingRejected", () => Effect.succeed(undefined)),
   );
+
+/** @deprecated Use containFencingRejection for both lease failure shapes. */
+export const containLeaseFencingRejected = containFencingRejection;
 
 /**
  * P2 production wake consumer. The scheduler remains the only decision
@@ -257,7 +266,7 @@ export const consumeWorkspaceWake = (
         return;
       }
 
-      yield* containLeaseFencingRejected(
+      yield* containFencingRejection(
         runExecution(
           executionId,
           wakeReason,

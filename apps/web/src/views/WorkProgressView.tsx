@@ -4,6 +4,7 @@ import type {
   WorkDetailRes,
 } from "@arbor/api-contracts";
 import { Card } from "../components/Card.js";
+import { cn } from "../lib/utils.js";
 import { EnumBadge, Mono, TimeText } from "./shared.js";
 
 type ProgressState = {
@@ -79,22 +80,43 @@ export function WorkProgressView({
   const execution = current?.activeExecution;
   return (
     <Card title="进度与下一步">
-      <div className="arbor-view-stack">
-        <div className="arbor-badge-row">
+      <div className={cn("arbor-view-stack", "flex flex-col gap-ui-3")}>
+        <div className={cn("arbor-badge-row", "flex flex-wrap gap-ui-2")}>
           <EnumBadge label={state.label} />
           {execution === undefined ? null : <span>运行中</span>}
         </div>
-        <div className="arbor-kv">
-          <span className="arbor-kv-label">当前说明</span>
+        <div className={cn("arbor-kv", "flex flex-col gap-ui-1")}>
+          <span
+            className={cn(
+              "arbor-kv-label",
+              "text-muted-foreground font-sans text-caption",
+            )}
+          >
+            当前说明
+          </span>
           <span>{state.explanation}</span>
         </div>
-        <div className="arbor-kv">
-          <span className="arbor-kv-label">下一步</span>
+        <div className={cn("arbor-kv", "flex flex-col gap-ui-1")}>
+          <span
+            className={cn(
+              "arbor-kv-label",
+              "text-muted-foreground font-sans text-caption",
+            )}
+          >
+            下一步
+          </span>
           <span>{state.next}</span>
         </div>
         {execution === undefined ? null : (
-          <div className="arbor-kv">
-            <span className="arbor-kv-label">本轮运行</span>
+          <div className={cn("arbor-kv", "flex flex-col gap-ui-1")}>
+            <span
+              className={cn(
+                "arbor-kv-label",
+                "text-muted-foreground font-sans text-caption",
+              )}
+            >
+              本轮运行
+            </span>
             <span>
               自 <TimeText at={execution.admittedAt} /> 开始 ·{" "}
               <Mono>{execution.executionId}</Mono>

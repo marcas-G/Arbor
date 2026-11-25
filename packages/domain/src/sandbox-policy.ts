@@ -551,8 +551,7 @@ export const resolveSandboxProvider = (
         selection.expectedQualificationEvidenceRef,
       ) ||
       capability.qualificationEvidenceRef !==
-        selection.expectedQualificationEvidenceRef ||
-      capability.probeEvidenceRef !== selection.expectedQualificationEvidenceRef
+        selection.expectedQualificationEvidenceRef
     ) {
       return {
         _tag: "Unavailable",
@@ -587,7 +586,7 @@ export const resolveSandboxProvider = (
   return { _tag: "Available", capability };
 };
 
-export interface SandboxPolicyDecision {
+export interface SandboxPolicyDecisionBase {
   readonly projectId: ProjectId;
   readonly workspaceId: WorkspaceId;
   readonly executionId: ExecutionId;
@@ -599,9 +598,6 @@ export interface SandboxPolicyDecision {
   readonly providerId: SandboxProviderId;
   readonly networkPolicy: SandboxNetworkPolicySelectionV1;
   readonly policyDigest: string;
-  readonly permissionGrantId: PermissionGrantId;
-  readonly grantPermissionCommandId: CommandId;
-  readonly grantIssuerPrincipal: PrincipalType;
   readonly operatorConfigRevision: number;
   readonly operatorConfigDigest: string;
   readonly actorPrincipal: PrincipalType;
@@ -609,6 +605,24 @@ export interface SandboxPolicyDecision {
   readonly issuedAt: string;
   readonly expiresAt: string;
 }
+
+export type SandboxPolicyDecision = SandboxPolicyDecisionBase &
+  (
+    | {
+        readonly authorityKind?: "LegacyHumanGrant";
+        readonly permissionGrantId: PermissionGrantId;
+        readonly grantPermissionCommandId: CommandId;
+        readonly grantIssuerPrincipal: PrincipalType;
+        readonly workspaceAuthorizationRevision?: never;
+      }
+    | {
+        readonly authorityKind: "WorkspaceAuthorization";
+        readonly workspaceAuthorizationRevision: number;
+        readonly permissionGrantId?: never;
+        readonly grantPermissionCommandId?: never;
+        readonly grantIssuerPrincipal?: never;
+      }
+  );
 
 export interface SandboxPolicyGrantIssuerProvenanceV1 {
   readonly permissionGrantId: PermissionGrantId;

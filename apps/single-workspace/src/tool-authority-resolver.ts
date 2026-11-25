@@ -1,5 +1,10 @@
 import type { ParentUserGovernanceFacts } from "@arbor/application";
-import { AuthorityResolverPort } from "@arbor/application";
+import {
+  AuthorityResolverPort,
+  loadWorkspaceSandboxAuthorizationSnapshot,
+  workspaceSandboxAuthorizationCapabilities,
+} from "@arbor/application";
+import { resolveWorkspaceSandboxAuthorization } from "@arbor/domain";
 import {
   invocationAuthoritySourceRevisionOf,
   PermissionGrantRepository,
@@ -10,6 +15,7 @@ import {
   TransactionScope,
   VerificationRepository,
   WorkspaceRepository,
+  WorkspaceSandboxAuthorizationStore,
 } from "@arbor/ports";
 import { Context, Effect, Layer, Option } from "effect";
 
@@ -34,6 +40,9 @@ export const ToolAuthorityResolverLive = (
       const workspaces = yield* WorkspaceRepository;
       const grants = yield* PermissionGrantRepository;
       const verifications = yield* VerificationRepository;
+      const authorizations = yield* Effect.serviceOption(
+        WorkspaceSandboxAuthorizationStore,
+      );
       const isPolicyDenial = (cause: unknown): boolean =>
         typeof cause === "object" &&
         cause !== null &&
@@ -59,7 +68,20 @@ export const ToolAuthorityResolverLive = (
           const verification = yield* verifications.findByExecutionId(
             input.executionId,
           );
-          return { project, workspace, activeGrants, verification };
+          const workspaceSandbox = Option.isSome(authorizations)
+            ? yield* loadWorkspaceSandboxAuthorizationSnapshot(
+                { workspaces, authorizations: authorizations.value },
+                input.projectId,
+                input.workspaceId,
+              )
+            : undefined;
+          return {
+            project,
+            workspace,
+            activeGrants,
+            verification,
+            workspaceSandbox,
+          };
         });
       return ToolAuthorityResolver.of({
         resolve: (input) =>
@@ -85,10 +107,14 @@ export const ToolAuthorityResolverLive = (
                     executionId: input.context.executionId,
                   }),
                 );
-            if (Option.isNone(snapshot.workspace)) {
+            if (
+              Option.isNone(snapshot.workspace) ||
+              snapshot.workspace.value.projectId !== input.context.projectId ||
+              snapshot.workspace.value.lifecycle !== "Active"
+            ) {
               return yield* Effect.fail({
                 _tag: "ToolAuthorityResolutionError" as const,
-                cause: "workspace not found",
+                cause: "workspace missing, retired or outside current project",
               });
             }
             const actionDigest = sha256Hex(
@@ -98,6 +124,37 @@ export const ToolAuthorityResolverLive = (
                 argumentsJson: input.intent.argumentsJson,
               }),
             );
+            const workspaceSandbox = snapshot.workspaceSandbox;
+            const ceiling =
+              workspaceSandbox === undefined
+                ? undefined
+                : resolveWorkspaceSandboxAuthorization({
+                    ...workspaceSandbox,
+                    projectId: input.context.projectId,
+                    workspaceId: input.context.workspaceId,
+                    now: input.now,
+                  });
+            const workspaceAuthorizationCapabilities =
+              ceiling === undefined
+                ? undefined
+                : workspaceSandboxAuthorizationCapabilities(ceiling);
+            const sensitive = input.definition.capabilityMetadata.some(
+              (capability) => capability !== "fs:read",
+            );
+            // Legacy file grants remain usable before any sandbox choice. Once
+            // a standing choice exists it is also a ceiling on tool authority.
+            if (
+              sensitive &&
+              workspaceSandbox !== undefined &&
+              workspaceSandbox.heads.length > 0 &&
+              (ceiling?._tag !== "Authorized" ||
+                (ceiling.authorization.profile === "ReadOnly" &&
+                  input.definition.capabilityMetadata.includes("fs:write")))
+            ) {
+              return yield* Effect.fail({
+                _tag: "ToolAuthorityDenied" as const,
+              });
+            }
             const authority = yield* resolver
               .resolveInvocation({
                 principal: input.context.authenticatedPrincipal,
@@ -117,6 +174,9 @@ export const ToolAuthorityResolverLive = (
                 },
                 controlBasisDigest: input.context.controlBasisDigest,
                 grants: snapshot.activeGrants,
+                ...(workspaceAuthorizationCapabilities === undefined
+                  ? {}
+                  : { workspaceAuthorizationCapabilities }),
                 governance,
                 policy: snapshot.workspace.value.workspacePolicy,
                 delegationDepth: input.context.delegationDepth ?? 0,
@@ -137,6 +197,39 @@ export const ToolAuthorityResolverLive = (
               );
             return {
               ...authority,
+              ...(ceiling?._tag === "Authorized"
+                ? {
+                    expiresAt: ceiling.lineage.reduce(
+                      (expiry, source) =>
+                        source.expiresAt !== null && source.expiresAt < expiry
+                          ? source.expiresAt
+                          : expiry,
+                      authority.expiresAt,
+                    ),
+                  }
+                : {}),
+              ...(workspaceSandbox === undefined
+                ? {}
+                : {
+                    workspaceSandboxSources: workspaceSandbox.workspaces.map(
+                      (workspace) => ({
+                        workspaceId: workspace.workspaceId,
+                        parentWorkspaceId: workspace.parentWorkspaceId,
+                        lifecycle: workspace.lifecycle,
+                        resourceBoundaryRevision: Number(
+                          workspace.resourceBoundaryRevision,
+                        ),
+                        workspacePolicyRevision: Number(
+                          workspace.workspacePolicyRevision,
+                        ),
+                        authorizationRevision:
+                          workspaceSandbox.heads.find(
+                            (head) =>
+                              head.workspaceId === workspace.workspaceId,
+                          )?.authorizationRevision ?? null,
+                      }),
+                    ),
+                  }),
               sourceRevision: invocationAuthoritySourceRevisionOf({
                 workspacePolicyRevision: Number(
                   snapshot.workspace.value.workspacePolicyRevision,

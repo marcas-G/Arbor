@@ -69,7 +69,10 @@ const project = (projectId: string) => ({
   updatedAt: "2026-10-10T00:00:00.000Z",
 });
 
-const installFetch = (projectIds: ReadonlyArray<string>) => {
+const installFetch = (
+  projectIds: ReadonlyArray<string>,
+  pendingReadCount = 1,
+) => {
   let inboxReads = 0;
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
@@ -85,7 +88,8 @@ const installFetch = (projectIds: ReadonlyArray<string>) => {
     }
     if (url === "/views/inbox-view") {
       inboxReads += 1;
-      const kind = inboxReads === 1 ? "HumanConversation" : "Governance";
+      const kind =
+        inboxReads <= pendingReadCount ? "HumanConversation" : "Governance";
       return new Response(
         JSON.stringify({
           ok: true,
@@ -164,6 +168,31 @@ afterEach(() => {
 });
 
 describe("URL-backed recent project selection", () => {
+  it("refreshes Inbox changes that precede the first authenticated socket connection", async () => {
+    const projectId = "prj_initial_socket";
+    const sockets = installFakeWebSocket();
+    const fixture = installFetch([projectId]);
+    history.replaceState(null, "", `/p/${projectId}/queue`);
+
+    render(
+      <AppProviders>
+        <RouteProbe workspaceId="ws_initial_socket" />
+      </AppProviders>,
+    );
+
+    await waitFor(() =>
+      expect(routeState().inboxKinds).toContain("HumanConversation"),
+    );
+    await waitFor(() => expect(sockets).toHaveLength(1));
+    expect(fixture.inboxReads()).toBe(1);
+    act(() => sockets[0]?.open());
+
+    await waitFor(() =>
+      expect(routeState().inboxKinds).toContain("Governance"),
+    );
+    expect(fixture.inboxReads()).toBe(2);
+  });
+
   it("ignores a stale A response after an A-to-B-to-A route generation", async () => {
     const firstProjectId = "prj_aba_first";
     const secondProjectId = "prj_aba_second";
@@ -232,7 +261,7 @@ describe("URL-backed recent project selection", () => {
   it("selects a valid direct route and refreshes queued Inbox after WS invalidation", async () => {
     const projectId = "prj_direct";
     const sockets = installFakeWebSocket();
-    const fixture = installFetch([projectId]);
+    const fixture = installFetch([projectId], 2);
     history.replaceState(null, "", `/p/${projectId}/queue`);
 
     render(
@@ -243,6 +272,7 @@ describe("URL-backed recent project selection", () => {
 
     await waitFor(() => expect(sockets).toHaveLength(1), { timeout: 1_000 });
     expect(routeState().selectedProjectId).toBe(projectId);
+    await waitFor(() => expect(fixture.inboxReads()).toBe(1));
     sockets[0]?.open();
     await waitFor(() => expect(routeState().freshness).toBe("fresh"));
     const proof = JSON.parse(sockets[0]?.sentFrames[0] ?? "null") as {
@@ -252,7 +282,7 @@ describe("URL-backed recent project selection", () => {
     await waitFor(() =>
       expect(routeState().inboxKinds).toContain("HumanConversation"),
     );
-    expect(fixture.inboxReads()).toBe(1);
+    await waitFor(() => expect(fixture.inboxReads()).toBe(2));
 
     act(() => {
       sockets[0]?.message(
@@ -266,7 +296,7 @@ describe("URL-backed recent project selection", () => {
     await waitFor(() =>
       expect(routeState().inboxKinds).toContain("Governance"),
     );
-    expect(fixture.inboxReads()).toBe(2);
+    expect(fixture.inboxReads()).toBe(3);
     expect(
       fixture.fetchMock.mock.calls.some(([url]) => url === "/projects"),
     ).toBe(true);

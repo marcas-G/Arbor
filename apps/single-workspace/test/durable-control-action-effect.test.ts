@@ -47,7 +47,10 @@ const initialState = () => ({
     updatedAt: "2026-10-17T00:00:00.000Z",
   },
   effects: 0,
-  sessionItems: [] as Array<unknown>,
+  sessionItems: [] as Array<{
+    readonly item: unknown;
+    readonly causalBinding?: unknown;
+  }>,
 });
 type State = ReturnType<typeof initialState>;
 
@@ -121,10 +124,10 @@ describe("P9 direct Control effect commit", () => {
     const sessions = {
       appendItemIdempotent: (
         _sessionId: string,
-        write: { readonly item: unknown },
+        write: { readonly item: unknown; readonly causalBinding?: unknown },
       ) =>
         Effect.sync(() => {
-          getState().sessionItems.push(write.item);
+          getState().sessionItems.push(write);
           return { sequence: 1, inserted: true };
         }),
     };
@@ -200,7 +203,18 @@ describe("P9 direct Control effect commit", () => {
       },
       execution: {
         executionId: "exe_control_commit",
+        projectId: "prj_control_commit",
+        workspaceId: "ws_control_commit",
         sessionId: "ses_control_commit",
+        binding: {
+          _tag: "WorkspaceExecution",
+          workspaceId: "ws_control_commit",
+          episode: {
+            _tag: "WorkEpisode",
+            workId: "wrk_control_commit",
+            targetWorkRevision: 1,
+          },
+        },
       },
       logicalActionId: "lac_control_commit",
       actionContext: {
@@ -253,6 +267,14 @@ describe("P9 direct Control effect commit", () => {
     expect(durable.action.state).toBe("Applied");
     expect(durable.step.nextActionIndex).toBe(1);
     expect(durable.sessionItems).toHaveLength(1);
+    expect(durable.sessionItems[0]?.causalBinding).toMatchObject({
+      projectId: "prj_control_commit",
+      workspaceId: "ws_control_commit",
+      workId: "wrk_control_commit",
+      executionId: "exe_control_commit",
+      episodeBinding: "WorkEpisode",
+      causedByRef: committedTurn,
+    });
 
     await expect(Effect.runPromise(commit())).rejects.toMatchObject({
       _tag: "LeaseFencingRejected",
@@ -355,10 +377,10 @@ describe("P9 direct Control effect commit", () => {
       const sessions = {
         appendItemIdempotent: (
           _sessionId: string,
-          write: { readonly item: unknown },
+          write: { readonly item: unknown; readonly causalBinding?: unknown },
         ) =>
           Effect.sync(() => {
-            state.sessionItems.push(write.item);
+            state.sessionItems.push(write);
             return { sequence: 1, inserted: true };
           }),
       };
@@ -377,7 +399,18 @@ describe("P9 direct Control effect commit", () => {
         },
         execution: {
           executionId: "exe_control_commit",
+          projectId: "prj_control_commit",
+          workspaceId: "ws_control_commit",
           sessionId: "ses_control_commit",
+          binding: {
+            _tag: "WorkspaceExecution",
+            workspaceId: "ws_control_commit",
+            episode: {
+              _tag: "WorkEpisode",
+              workId: "wrk_control_commit",
+              targetWorkRevision: 1,
+            },
+          },
         },
         logicalActionId: "lac_control_commit",
         actionContext: {

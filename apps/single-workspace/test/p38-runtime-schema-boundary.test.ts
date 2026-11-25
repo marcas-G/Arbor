@@ -1,5 +1,10 @@
 import { join } from "node:path";
-import { Duration, Effect, Layer } from "effect";
+import { CommandHandlerRegistry } from "@arbor/application";
+import {
+  WorkspaceSandboxAuthorizationStore,
+  WorkspaceSandboxPolicyBindingPort,
+} from "@arbor/ports";
+import { Duration, Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, describe, expect, it } from "vitest";
 import * as PersistenceSqlite from "../../../adapters/persistence-sqlite/src/index.js";
@@ -80,6 +85,8 @@ const upgradeSchema48FixtureToCurrent = (filename: string) =>
         PersistenceSqlite.P53_CANONICAL_OWNERSHIP_CARVEOUTS_MIGRATION,
         PersistenceSqlite.P54_NATIVE_PROCESS_MODE_NO_EFFECT_DENIAL_MIGRATION,
         PersistenceSqlite.P55_SESSION_CAUSAL_PROVENANCE_MIGRATION,
+        PersistenceSqlite.P56_LINUX_WORKSPACE_NETWORK_V2_MIGRATION,
+        PersistenceSqlite.P57_WORKSPACE_SANDBOX_AUTHORIZATION_MIGRATION,
       ],
       { allowOfflineOnly: true },
     ),
@@ -107,8 +114,8 @@ const readReadiness = (filename: string) => {
   );
 };
 
-describe("schema 55 runtime startup boundary", () => {
-  it.each([38, 48, 51, 52, 53])(
+describe("schema 57 runtime startup boundary", () => {
+  it.each([38, 48, 51, 52, 53, 54, 55, 56])(
     "refuses schema %i during composition before exposing runtime services",
     async (version) => {
       const filename = databaseFile();
@@ -131,14 +138,14 @@ describe("schema 55 runtime startup boundary", () => {
       }
 
       expect(JSON.stringify(failure)).toContain(
-        `database user_version ${version} requires an offline upgrade to schema 55`,
+        `database user_version ${version} requires an offline upgrade to schema 57`,
       );
       expect(await readVersion(filename)).toBe(version);
     },
     60_000,
   );
 
-  it.each([38, 48, 51, 52, 53])(
+  it.each([38, 48, 51, 52, 53, 54, 55, 56])(
     "refuses schema %i on the direct --once path before migration or Web bind",
     async (version) => {
       const filename = databaseFile();
@@ -168,7 +175,7 @@ describe("schema 55 runtime startup boundary", () => {
       }
 
       expect(JSON.stringify(failure)).toContain(
-        `database user_version ${version} requires an offline upgrade to schema 55`,
+        `database user_version ${version} requires an offline upgrade to schema 57`,
       );
       expect(webListening).toBe(false);
       expect(await readVersion(filename)).toBe(version);
@@ -176,7 +183,7 @@ describe("schema 55 runtime startup boundary", () => {
     60_000,
   );
 
-  it("admits exactly schema 55 and makes the production migration hook a no-op", async () => {
+  it("admits schema57, composes mandatory Workspace policy services and keeps runtime migration a no-op", async () => {
     const fixture = await createSchema48TestDatabase();
     const filename = fixture.databaseFilename;
     try {
@@ -186,6 +193,20 @@ describe("schema 55 runtime startup boundary", () => {
           Effect.provide(
             Effect.gen(function* () {
               yield* ProductionDaemonService;
+              yield* WorkspaceSandboxPolicyBindingPort;
+              yield* WorkspaceSandboxAuthorizationStore;
+              const registry = yield* CommandHandlerRegistry;
+              expect(
+                Option.isSome(registry.lookup("BindWorkspaceSandboxPolicy")),
+              ).toBe(true);
+              expect(
+                Option.isSome(registry.lookup("AuthorizeWorkspaceSandbox")),
+              ).toBe(true);
+              expect(
+                Option.isSome(
+                  registry.lookup("RevokeWorkspaceSandboxAuthorization"),
+                ),
+              ).toBe(true);
               return yield* PersistenceSqlite.runMigrations(
                 PersistenceSqlite.CURRENT_MIGRATIONS,
               );
@@ -196,13 +217,13 @@ describe("schema 55 runtime startup boundary", () => {
       );
 
       expect(result).toBe(0);
-      expect(await readVersion(filename)).toBe(55);
+      expect(await readVersion(filename)).toBe(57);
     } finally {
       fixture.cleanup();
     }
   }, 120_000);
 
-  it("completes a real --once daemon startup and Web bind from the schema-55 fixture", async () => {
+  it("completes a real --once daemon startup and Web bind from the schema-57 fixture", async () => {
     const fixture = await createSchema48TestDatabase({
       prefix: ".schema-48-runtime-once-",
     });
@@ -233,7 +254,7 @@ describe("schema 55 runtime startup boundary", () => {
         ),
       );
       expect(listeningPort).toBeGreaterThan(0);
-      expect(await readVersion(fixture.databaseFilename)).toBe(55);
+      expect(await readVersion(fixture.databaseFilename)).toBe(57);
     } finally {
       fixture.cleanup();
     }
@@ -241,7 +262,7 @@ describe("schema 55 runtime startup boundary", () => {
 
   it("rejects schemas newer than the explicit runtime target", async () => {
     const filename = databaseFile();
-    await seedVersion(filename, 56);
+    await seedVersion(filename, 58);
 
     let failure: unknown;
     try {
@@ -260,12 +281,12 @@ describe("schema 55 runtime startup boundary", () => {
     }
 
     expect(JSON.stringify(failure)).toContain(
-      "database user_version 56 is newer than latest migration 55",
+      "database user_version 58 is newer than latest migration 57",
     );
-    expect(await readVersion(filename)).toBe(56);
+    expect(await readVersion(filename)).toBe(58);
   });
 
-  it("marks readiness only when user_version exactly matches schema 55", async () => {
+  it("marks readiness only when user_version exactly matches schema 57", async () => {
     const filename = databaseFile();
     await seedVersion(filename, 41);
     expect(await readReadiness(filename)).toEqual({
@@ -334,14 +355,20 @@ describe("schema 55 runtime startup boundary", () => {
     await seedVersion(filename, 55);
     expect(await readReadiness(filename)).toEqual({
       dbOpen: true,
+      migrationBaseline: false,
+      t1RecoveryComplete: false,
+    });
+    await seedVersion(filename, 57);
+    expect(await readReadiness(filename)).toEqual({
+      dbOpen: true,
       migrationBaseline: true,
       t1RecoveryComplete: false,
     });
   });
 
-  it("keeps P39 maintenance outside the ordinary 40–55 schema suffix", () => {
-    expect(PersistenceSqlite.CURRENT_SCHEMA_VERSION).toBe(55);
-    expect(PersistenceSqlite.CURRENT_MIGRATION_BASELINE).toBe(55);
+  it("keeps P39 maintenance outside the ordinary 40–57 schema suffix", () => {
+    expect(PersistenceSqlite.CURRENT_SCHEMA_VERSION).toBe(57);
+    expect(PersistenceSqlite.CURRENT_MIGRATION_BASELINE).toBe(57);
     expect(PersistenceSqlite.P38_MIGRATIONS.at(-1)?.id).toBe(38);
     expect(PersistenceSqlite.CURRENT_MIGRATIONS.map(({ id }) => id)).toEqual([
       ...PersistenceSqlite.P38_MIGRATIONS.map(({ id }) => id),
@@ -361,6 +388,8 @@ describe("schema 55 runtime startup boundary", () => {
       53,
       54,
       55,
+      56,
+      57,
     ]);
     expect(
       PersistenceSqlite.CURRENT_MIGRATIONS.some(({ id }) => id === 39),

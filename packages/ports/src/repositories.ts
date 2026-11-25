@@ -37,6 +37,9 @@ import type {
 } from "./session-timeline.js";
 
 export interface ProjectRepositoryService {
+  readonly isDirectoryLinked?: (
+    path: string,
+  ) => Effect.Effect<boolean, ProjectRepositoryError, TransactionScope>;
   readonly findById: (
     projectId: ProjectId,
   ) => Effect.Effect<
@@ -334,6 +337,7 @@ export interface SessionRepositoryService {
   readonly listWorkActiveFrontier: (
     sessionId: SessionId,
     currentExecutionId?: ExecutionId,
+    currentWorkId?: WorkId,
   ) => Effect.Effect<
     ReadonlyArray<SessionEntryRecord>,
     SessionRepositoryError,

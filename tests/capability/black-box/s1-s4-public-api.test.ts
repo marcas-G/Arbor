@@ -21,6 +21,7 @@ import {
   stopChildBounded,
   waitForDaemonListening,
 } from "../../functional/support/daemon-process-lifecycle.js";
+import { writeFunctionalProviderConfig } from "../../functional/support/provider-config-isolation.js";
 import { createCurrentSchemaTestDatabaseFactory } from "../../support/schema44-database.js";
 
 const DAEMON_ENTRY = resolve("apps/single-workspace/dist/main.js");
@@ -457,6 +458,11 @@ const startDaemon = async (requestedPort: number) => {
       ARBOR_MODEL_NAME: "scenario-black-box",
       ARBOR_MODEL_API_KEY_VAR: "ARBOR_SCENARIO_TEST_KEY",
       ARBOR_SCENARIO_TEST_KEY: "test-only",
+      ARBOR_CONFIG: writeFunctionalProviderConfig(directory, {
+        ARBOR_MODEL_BASE_URL: `http://127.0.0.1:${provider.port}/v1`,
+        ARBOR_MODEL_NAME: "scenario-black-box",
+        ARBOR_MODEL_API_KEY_VAR: "ARBOR_SCENARIO_TEST_KEY",
+      }),
     },
     stdio: ["ignore", "pipe", "pipe"],
   });

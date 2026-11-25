@@ -36,6 +36,7 @@ import {
   P39RecoveryEvidenceStore,
   type PortableOperationKind,
   ProjectRepository,
+  type ProviderCancellationSignal,
   type ProviderExecutionPolicyOverrides,
   ProviderRuntime,
   ProviderTurnStore,
@@ -248,6 +249,9 @@ export const isPreparedStepAwaitingInitialManifest = (
   persistedManifest === null;
 
 export interface AgentLoopDriverOptions {
+  /** Durable StopExecution is relayed to the active Provider transport through
+   * the standard AbortSignal contract. */
+  readonly cancellationSignal?: ProviderCancellationSignal;
   /** P12 `03` §3: the credential reference the driver binds to a ProviderTurn.
    * Comes from Composition-Root config; the driver never hardcodes a raw ref.
    * The raw credential is resolved by ProviderRuntime at the execution
@@ -374,6 +378,7 @@ export const AgentLoopDriverLive = (
         readonly wakeReason: WakeReason;
         readonly context: import("@arbor/domain").CommandSubmissionContext;
         readonly safetyGate: RuntimeSafetyGateService;
+        readonly cancellationSignal?: ProviderCancellationSignal;
       }): Effect.Effect<ExecutionDriveOutcome, ExecutionDriverError> =>
         Effect.gen(function* () {
           const commitSettlementProposal = (
@@ -1089,6 +1094,14 @@ export const AgentLoopDriverLive = (
                 workspaces,
                 options: {
                   ...options,
+                  ...((input.cancellationSignal ??
+                    options.cancellationSignal) === undefined
+                    ? {}
+                    : {
+                        cancellationSignal:
+                          input.cancellationSignal ??
+                          options.cancellationSignal,
+                      }),
                   ...(resumeExactActionStepIdentity === undefined
                     ? {}
                     : { resumeExactActionStepIdentity }),
@@ -1126,14 +1139,18 @@ export const AgentLoopDriverLive = (
                   inboxOption.value.listUnconsumed(input.execution.workspaceId),
                 )
                 .pipe(Effect.mapError(failure));
-              const workExecution =
+              const workspaceInputExecution =
                 input.execution.binding._tag === "WorkspaceExecution" &&
-                executionEpisode(input.execution)?._tag === "WorkEpisode";
+                (executionEpisode(input.execution)?._tag === "WorkEpisode" ||
+                  executionEpisode(input.execution)?._tag === "InboxEpisode");
               // Child PASS notifications are addressed to the owning Parent
-              // Work. A RootConversation must not consume them before that
-              // Work is admitted; doing so loses the ready result from the
-              // Work's durable frontier.
-              const eligiblePending = workExecution
+              // Workspace. They are consumable by a WorkEpisode or the
+              // InboxEpisode admitted for that Workspace, both of which expose
+              // the placement/accept_result control surface. A
+              // RootConversation must not consume them before a workspace
+              // execution is admitted; doing so loses the ready result from
+              // the Work's durable frontier.
+              const eligiblePending = workspaceInputExecution
                 ? pending
                 : pending.filter(
                     (entry) => !entry.entryKey.startsWith("child-result:"),
@@ -1207,6 +1224,9 @@ export const AgentLoopDriverLive = (
               ...(currentLoopStep === undefined ? {} : { currentLoopStep }),
               ...(loopSteps === undefined ? {} : { loopSteps }),
               ...(providerTurns === undefined ? {} : { providerTurns }),
+              ...(Option.isSome(inboxOption)
+                ? { inboxSequence: inboxOption.value }
+                : {}),
               ...(loopStepFence === undefined ? {} : { loopStepFence }),
               tx,
               sessions,

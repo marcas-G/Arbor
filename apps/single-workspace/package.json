@@ -1,6 +1,7 @@
 {
   "name": "@arbor/single-workspace",
   "version": "0.0.0",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "exports": {
@@ -10,31 +11,38 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "src/transport/network-proxy-helper.ts",
+    "src/transport/network-proxy-helper.mjs"
   ],
   "dependencies": {
-    "@arbor/domain": "workspace:*",
-    "@arbor/ports": "workspace:*",
-    "@arbor/application": "workspace:*",
-    "@arbor/api-contracts": "workspace:*",
-    "@arbor/model-context": "workspace:*",
     "@arbor/agent-runtime": "workspace:*",
-    "@arbor/execution-runtime": "workspace:*",
-    "@arbor/provider-runtime": "workspace:*",
-    "@arbor/tool-runtime": "workspace:*",
-    "@arbor/projection-runtime": "workspace:*",
-    "@arbor/persistence-sqlite": "workspace:*",
+    "@arbor/api-contracts": "workspace:*",
+    "@arbor/application": "workspace:*",
+    "@arbor/blob-local": "workspace:*",
+    "@arbor/domain": "workspace:*",
     "@arbor/environment-resolver-local": "workspace:*",
-    "@arbor/worker-local": "workspace:*",
+    "@arbor/execution-runtime": "workspace:*",
+    "@arbor/model-context": "workspace:*",
+    "@arbor/persistence-sqlite": "workspace:*",
+    "@arbor/ports": "workspace:*",
+    "@arbor/projection-runtime": "workspace:*",
     "@arbor/provider-fake": "workspace:*",
     "@arbor/provider-openai": "workspace:*",
+    "@arbor/provider-runtime": "workspace:*",
     "@arbor/provider-testecho": "workspace:*",
     "@arbor/sandbox-local": "workspace:*",
     "@arbor/sandbox-native-posix": "workspace:*",
     "@arbor/sandbox-windows": "workspace:*",
     "@arbor/secret-env": "workspace:*",
     "@arbor/secret-file": "workspace:*",
-    "@arbor/blob-local": "workspace:*",
+    "@arbor/tool-runtime": "workspace:*",
+    "@arbor/worker-local": "workspace:*",
+    "@peculiar/x509": "3.1.0",
+    "dns-packet": "5.6.1",
+    "effect": "4.0.0-rc.115",
+    "proper-lockfile": "4.1.2",
+    "reflect-metadata": "0.2.2",
     "ws": "8.21.3"
   },
   "scripts": {
@@ -44,6 +52,8 @@
     "sandbox:authority-upgrade": "node dist/transport/sandbox-authority-provisioning-cli.js"
   },
   "devDependencies": {
+    "@types/dns-packet": "5.6.5",
+    "@types/proper-lockfile": "4.1.4",
     "@types/ws": "8.18.1"
   }
 }

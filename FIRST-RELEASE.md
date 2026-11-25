@@ -1,121 +1,79 @@
-# Arbor 本机交付与数据库操作
+# Arbor Linux 首发交付合同
 
-本文说明当前源码树的本机运行、Provider 配置，以及旧数据库升级的安全操作。每次准备交付时，在最终源代码目录记录实际提交，不要在文档中沿用可能过期的候选提交号：
+本文定义 Arbor 首发应当对普通 Linux 用户提供的行为。它不把开发者运行源码的命令伪装成正式安装方式。
 
-```powershell
-git rev-parse HEAD
-```
+## 首发产品
 
-运行环境为 Windows、Node.js 24.21.0、pnpm 12.4.2。首次安装并构建：
+Arbor 是本机单用户 coding agent，首发平台为 Linux。普通用户应能：
 
-```powershell
-pnpm install --frozen-lockfile
-pnpm build
-```
+1. 下载安装包或运行官方安装命令；
+2. 启动 Arbor，浏览器打开本地工作台；
+3. 在首次启动配置一个真实模型并完成连通性检查；
+4. 选择已有项目目录或创建新项目目录；
+5. 让 Agent 读取、修改和验证文件，执行构建和测试；
+6. 在权限、审批、停止、Provider 中断和进程重启后继续工作；
+7. 升级 Arbor 后保留项目、历史、验证记录和附件。
 
-首次启动前，先离线创建 schema 52 数据库，再将 `ARBOR_DB` 指向它并启动 Arbor。当前发布候选只资格化全新、可丢弃的数据库；已保留用户数据库的升级尚不是受支持的发布操作。
+当前仓库还没有满足上述合同的正式发行物，因此不能把当前源码树称为已发布版本。
 
-先创建或选择本机父目录。父目录必须已存在，并通过 P39 的本地卷、owner 和 ACL 保护校验。创建目录本身不保证能通过这些校验：
+## 发行物和安装
 
-```powershell
-New-Item -ItemType Directory -Force -Path 'C:\Arbor Data'
-node '.\apps\single-workspace\dist\schema-upgrade.js' --mode fresh `
-  --database 'C:\Arbor Data\arbor-v52.db' `
-  --p39-report-db 'C:\Arbor Data\arbor-v52-p39-report.db' `
-  --copy-manifest 'C:\Arbor Data\arbor-v52-manifest.jsonl'
-$env:ARBOR_DB = 'C:\Arbor Data\arbor-v52.db'
-pnpm start
-```
+发布物至少需要提供：
 
-daemon 只接受已是 schema 52 的数据库；启动不执行迁移或升级。`pnpm start` 构建 Web 客户端，并以前台方式启动本机 daemon。浏览器打开 `http://127.0.0.1:8787`。按 `Ctrl+C` 停止，重新执行 `pnpm start` 重启。可用 `ARBOR_HTTP_PORT` 更改端口，`ARBOR_DB` 指定 SQLite 文件。PowerShell 路径包含空格时使用单引号。
+- Linux x64 和 arm64 的可运行发行物；
+- 不要求用户预先安装 Node.js 或 pnpm 的启动方式；
+- 首次启动自动创建用户数据目录、SQLite 数据库、Blob 存储和配置入口；
+- `arbor status`、`arbor stop`、重启和诊断命令；
+- 版本、commit SHA、平台和 artifact SHA-256 的发布清单。
 
-```powershell
-$env:ARBOR_DB = 'C:\Users\Example User\Arbor Data\arbor.db'
-pnpm start
-```
+普通用户不应通过 `ARBOR_DB`、`ARBOR_PROJECT_ROOT`、`ARBOR_CONFIG` 或内部端口参数完成正常安装。
 
-## Schema 52 与旧库升级
+## 真实 Provider
 
-当前启动 gate 精确要求 `PRAGMA user_version = 52`。普通启动不应用迁移。未达到 schema 52 的数据库必须先通过离线 `schema:upgrade` 完成升级，不要直接启动。
+未配置真实 Provider 时，界面只提供配置和诊断，不允许开始真实对话、Work 或工具执行。fake Provider 只留给自动化测试和开发夹具。
 
-以下 `copy` / `resume-copy` 流程仅用于可丢弃数据库的开发资格验证，不得用于保留用户数据。资格验证只能针对停止服务后的本机数据库进行。先正常停止 Arbor，并确认没有其他进程使用源库。先创建或选择目标、P39 报告库和 manifest 所在的本机父目录；它必须已存在且通过 P39 本地卷、owner 和 ACL 保护校验。`New-Item -ItemType Directory -Force` 可创建目录，但不保证目录符合这些保护条件。`copy` 支持经验证的 schema 36–38 和 44–52 源库。其他 schema 版本不在本发布候选的支持范围内。整个复制和续跑期间源库必须停机、只读且保持不变。对于新的 `fresh` 或 `copy` 作业，目标、P39 报告库和 manifest 必须各自是独立的新路径；`resume-copy` 必须复用中断作业原有的源、目标、报告和 manifest 路径。严禁把在线数据库交给升级器，也不要把目标路径指向源库。
+首发支持矩阵应包含常见服务：OpenAI、Anthropic、Google Gemini、DeepSeek、Qwen、OpenRouter 和通用 OpenAI-compatible 接口。发布清单必须列出每个实际通过资格的 Provider/模型组合；“协议兼容”本身不能当作已支持证明。
 
-先构建升级器：
+## 用户数据、Blob 和数据库升级
 
-```powershell
-pnpm build
-```
+schema 57 是当前 SQLite 内部格式版本。用户不需要理解或手工操作 schema。
 
-新建空数据库时使用 `fresh`：
+正式用户数据目录必须统一保存：
 
-```powershell
-node '.\apps\single-workspace\dist\schema-upgrade.js' --mode fresh `
-  --database 'C:\Arbor Data\arbor-v52.db' `
-  --p39-report-db 'C:\Arbor Data\arbor-v52-p39-report.db' `
-  --copy-manifest 'C:\Arbor Data\arbor-v52-manifest.jsonl'
-```
+- SQLite 数据库；
+- 对话、验证、附件和 Artifact 等持久 Blob；
+- 项目目录登记；
+- 备份和升级报告。
 
-升级现有库时使用 `copy`。源库保留为原样回滚点，目标是单独的副本：
+持久 Blob 不得使用 `/tmp`。数据库和 Blob 必须一起备份、恢复、迁移和卸载。
 
-```powershell
-node '.\apps\single-workspace\dist\schema-upgrade.js' --mode copy `
-  --source-database 'C:\Arbor Data\arbor-slice.db' `
-  --database 'C:\Arbor Data\arbor-v52-copy.db' `
-  --p39-report-db 'C:\Arbor Data\arbor-v52-copy-p39-report.db' `
-  --copy-manifest 'C:\Arbor Data\arbor-v52-copy-manifest.jsonl'
-```
+第一个公开版本建立升级起点。升级安装前自动备份；公开版本之后的旧数据库自动迁移到当前 schema；迁移失败时保留原数据库并显示恢复入口。未公开的开发 schema 不属于普通用户兼容范围。
 
-若中断，使用 `resume-copy` 并提供完全相同的源库、目标库、报告库和 manifest 路径；源库仍须停机且未改变：
+## Linux coding agent 能力
 
-```powershell
-node '.\apps\single-workspace\dist\schema-upgrade.js' --mode resume-copy `
-  --source-database 'C:\Arbor Data\arbor-slice.db' `
-  --database 'C:\Arbor Data\arbor-v52-copy.db' `
-  --p39-report-db 'C:\Arbor Data\arbor-v52-copy-p39-report.db' `
-  --copy-manifest 'C:\Arbor Data\arbor-v52-copy-manifest.jsonl'
-```
+生产组合必须启用经过资格验证的 Linux 文件和进程执行边界，覆盖：
 
-升级器在成功返回前会验证 P39 report 的结构与证据、manifest 链和摘要，并确认只读重开的目标确为 schema 52。manifest 含本机路径元数据，只在运行升级的本机留存；分享前先脱敏。命令报错或拒绝时，不要切换数据库；保留源库和诊断文件以便检查。成功后保留原库作为回滚点，再显式切换并启动：
+- 项目目录内文件读取、创建、修改和删除；
+- shell、构建、测试和编译器调用；
+- 网络、环境变量、资源限制和子进程树；
+- 停止、超时、进程崩溃和重启接管；
+- 权限、审批、审计和 fail-closed。
 
-```powershell
-$env:ARBOR_DB = 'C:\Arbor Data\arbor-v52-copy.db'
-pnpm start
-```
+没有通过资格的运行组合必须拒绝执行，不能回退到测试用 TrustedLocal，也不能用 fake 结果冒充真实完成。
 
-回滚时先停止 daemon，再把 `ARBOR_DB` 指回原库并重新启动。不要覆盖或删除原库。不要把新副本用于生产，除非升级器完整成功。
+合格 Linux 隔离环境安装并通过精确资格检查后，Project/Workspace 初始化自动建立当前
+Workspace 边界内的 `WorkspaceWrite × Enabled` 基础能力；普通 Work 和重启不重复要求
+用户授权。环境未安装、资格失效或边界/撤权不再有效时，必须在可执行 Work 之前显示
+安装/修复或阻断状态。该默认能力不包含 FullAccess、TrustedLocal、跨 Workspace 访问
+或敏感外部副作用审批。
 
-## Provider 密钥与兼容端点
+## 发布验收
 
-默认 Provider 是本地 deterministic fake。配置真实模型时，将 `apps/single-workspace/arbor.config.example.json` 复制为未跟踪的 `arbor.config.json`。配置字段是 `provider.deploymentId`、`modelRef`、`endpoint`、`wireModelName`、`secret` 和可选的 `executionPolicyOverrides` / `extraHeaders`。示例指向 DeepSeek OpenAI-compatible endpoint；其他兼容服务需填入其 endpoint 与 wire model name。
+同一个候选 Git commit 必须完成：
 
-示例使用环境变量 SecretRef。当前 PowerShell 会话中以隐藏输入设置密钥后启动：
-
-```powershell
-$env:ARBOR_MODEL_API_KEY = [System.Net.NetworkCredential]::new('', (Read-Host 'Provider API key' -AsSecureString)).Password
-$env:ARBOR_CONFIG = (Resolve-Path '.\arbor.config.json').Path
-pnpm start
-```
-
-也可把密钥存入仅当前用户可读的私有 key file，并在配置中使用 `{ "kind": "file", "ref": "C:\\Users\\Example User\\.config\\arbor\\provider.key" }`。不要把真实 key 写入仓库、命令参数、shell 历史或日志。Windows 上显式设置 `$env:ARBOR_CONFIG` 指向私有配置文件，或将未跟踪的 `arbor.config.json` 放在仓库根目录；不要依赖 `$HOME` 回退。配置文件密钥应通过 env 或 file SecretRef 提供，不使用 inline secret。
-
-## 项目资源与人工审批
-
-创建需要文件访问的 Project 前，先配置一个现存、绝对路径的目录：
-
-```powershell
-$env:ARBOR_PROJECT_ROOT = 'C:\Users\Example User\Arbor Work'
-pnpm start
-```
-
-可选的项目资源 profile 字段为 `ARBOR_PROJECT_PROFILE_REF`、`ARBOR_PROJECT_PROFILE_VERSION`、`ARBOR_PROJECT_PROFILE_NAME`。daemon 启动时读取该目录；在界面项目切换器中选择“新建项目”，选择可用资源并提交名称。进入项目根 Workspace 后创建或分配 Work。人工审批入口是项目级“待处理”队列 `/p/{projectId}/queue`；打开具体事项并核对后批准或拒绝。Workspace 的“收件箱”不承载审批。Work 的 Provider 验证结果与人对最终结果的验收是两个步骤。
-
-当前 local sandbox 仅将已批准的路径作为 mounts/boundaries 提供，并向子进程投影允许的环境变量；这不是 OS 级隔离，进程仍具有运行用户的操作系统权限。Native OS Sandbox 尚未实现；不要将本地 mount 边界描述成 OS 沙箱。
-
-## 检查与证据范围
-
-```powershell
+```bash
 pnpm check
 pnpm test:functional
 ```
 
-`pnpm check` 覆盖 lint、类型、架构、核心与 Web 检查。`pnpm test:functional` 构建生产 daemon/Web 客户端，在隔离数据库和受控 Provider 边界上运行公共流程与浏览器/重启旅程。两项结果只证明对应源码版本和实际覆盖的旅程；它们不证明全部 S1–S4 已交付，不替代对具体 Work 的验收，也不构成 Native OS Sandbox 的实现或资格证据。
+并在干净 Linux 环境完成安装、首次配置、真实模型任务、文件修改、进程执行、构建/测试、Verification、Acceptance、重启恢复、数据库升级和备份恢复。每份证据必须记录候选 commit SHA、Provider/模型、平台、是否重试和最终结果。

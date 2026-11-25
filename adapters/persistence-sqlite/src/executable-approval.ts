@@ -471,7 +471,14 @@ export const ExecutableApprovalStoreLive: Layer.Layer<
               `SELECT * FROM action_approvals
                 WHERE route_kind = 'Executable' AND binding_proven = 1
                   AND execution_id = ?
-                  AND state IN ('Approved','Rejected','Expired','Cancelled')
+                  -- Consumed is also a resolved terminal approval state.  It
+                  -- is the important crash-recovery case: P4 may have
+                  -- consumed the human approval in the same transaction as
+                  -- the invocation intent, then the process may die before
+                  -- effect admission/settlement.  Recovery must redispatch
+                  -- the exact execution so the idempotent invocation can
+                  -- finish instead of leaving ActionsInProgress stranded.
+                  AND state IN ('Approved','Rejected','Consumed','Expired','Cancelled')
                 ORDER BY COALESCE(decided_at, cancelled_at, expires_at), approval_id`,
               [executionId],
             ),

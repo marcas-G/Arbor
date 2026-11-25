@@ -230,7 +230,7 @@ interface PublicScenarioState {
   };
   readonly workPromptEvidence?: {
     readonly providerRequestId: string;
-    readonly promptAssetRef: "prompt:base-agent-protocol:base-loop:v2";
+    readonly promptAssetRef: "prompt:base-agent-protocol:base-loop:v3";
     readonly systemPromptSha256: string;
     readonly activeWorkExecutionRoleObserved: true;
     readonly rootConversationActionNotLeaked: true;
@@ -1291,9 +1291,12 @@ it.skipIf(skipReason !== undefined)(realS1TestTitle, async () => {
           revision: number;
           status: string;
         } | null>("current-work", { workspaceId: project.rootWorkspaceId }),
-      (value) =>
-        value?.workId !== undefined &&
-        value.objective?.includes(marker) === true,
+      // The project is disposable and has no prior Work, so the first
+      // current Open Work is the one created by this message. Do not require
+      // the model to copy the human marker verbatim into its normalized
+      // objective; the exact target file, Work id, revision and later public
+      // Verification are the identity oracles for this journey.
+      (value) => value?.workId !== undefined && value.status === "Open",
       remainingJourneyTime(journeyDeadlineAt),
     );
     if (currentWork?.workId === undefined) {
@@ -1329,7 +1332,7 @@ it.skipIf(skipReason !== undefined)(realS1TestTitle, async () => {
       ...state,
       workPromptEvidence: {
         providerRequestId: workProviderTurn.requestId,
-        promptAssetRef: "prompt:base-agent-protocol:base-loop:v2",
+        promptAssetRef: "prompt:base-agent-protocol:base-loop:v3",
         systemPromptSha256: createHash("sha256")
           .update(workSystemPrompt)
           .digest("hex"),
@@ -1419,6 +1422,18 @@ it.skipIf(skipReason !== undefined)(realS1TestTitle, async () => {
       ),
     ).toBe(true);
     state = { ...state, verifierObservationOracle };
+
+    // Verification PASS is not yet human Acceptance. Keep the public
+    // workflow in that deliberate interval long enough for several
+    // scheduler ticks and prove that the same Open revision is held instead
+    // of asking the model to run it again.
+    const providerStartsAfterVerification = startedProviderRequests(
+      readProviderCaptures(capturePath),
+    ).length;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 3_000));
+    expect(
+      startedProviderRequests(readProviderCaptures(capturePath)),
+    ).toHaveLength(providerStartsAfterVerification);
 
     await client.command(project.projectId, "AcceptWorkOutcome", {
       acceptanceId: functionalId("acc"),

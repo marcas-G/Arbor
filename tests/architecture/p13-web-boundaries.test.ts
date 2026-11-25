@@ -90,13 +90,14 @@ describe("p13-web-boundaries", () => {
     }
   });
 
-  it("I3: network URLs are exactly the whitelist (/views/:view, /project-resources GET, /projects, /commands, /ws)", () => {
+  it("I3: network URLs are exactly the whitelist plus the first-run host setup surface", () => {
     const allowed = new Set([
       "/commands",
       "/project-resources",
       "/projects",
       "/ws",
       "/conversation-progress/",
+      "/model-setup",
     ]);
     const urlLiteral = /["'`](\/[a-z][a-z0-9/_-]*)["'`]/g;
     for (const file of sourceFiles) {
@@ -141,6 +142,14 @@ describe("p13-web-boundaries", () => {
     expect(requestInit).toContain("Authorization");
     expect(requestInit).not.toMatch(/\bmethod\s*:/);
     expect(requestInit).not.toMatch(/\bbody\s*:/);
+
+    const setup = readFileSync(
+      join(webRoot, "src", "pages", "ModelSetupGate.tsx"),
+      "utf8",
+    );
+    expect(setup).toContain('fetch("/model-setup"');
+    expect(setup).toContain('method: "POST"');
+    expect(setup).toContain("apiKey");
   });
 
   it("I3/EC-6: mutations go through POST /commands only — no other write verb target exists", () => {

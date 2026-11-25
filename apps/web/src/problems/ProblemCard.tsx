@@ -1,28 +1,40 @@
 /**
  * Problem presentation (`03` §5): category → explicit UI treatment. code /
- * correlationId / safeDetails are always inspectable via ProblemDetail.
+ * correlationId / safeDetails remain available in the collapsed diagnostic
+ * detail without becoming the primary user-facing explanation.
  * Retry affordances follow `retryDisposition`, never guess it client-side.
  */
 import type { Problem } from "@arbor/api-contracts";
 import { Badge } from "../components/Badge.js";
 import { Button } from "../components/Button.js";
 import { Empty } from "../components/Empty.js";
+import { cn } from "../lib/utils.js";
 import { Mono } from "../views/shared.js";
 
 export function ProblemDetail({ problem }: { readonly problem: Problem }) {
   return (
-    <details className="arbor-problem-details">
+    <details
+      className={cn(
+        "arbor-problem-details",
+        "p-ui-2 [border:1px_dashed_var(--arbor-line)] rounded-sm text-muted-foreground text-small [&_summary]:cursor-pointer [&_summary]:font-sans [&_summary]:text-caption",
+      )}
+    >
       <summary>问题详情</summary>
-      <div className="arbor-view-stack">
+      <div className={cn("arbor-view-stack", "flex flex-col gap-ui-3")}>
         <span>
-          <Mono>{`code ${problem.code}`}</Mono>
+          <Mono>{`错误代码：${problem.code}`}</Mono>
         </span>
         {problem.correlationId === null ? null : (
           <span>
-            <Mono>{`correlationId ${problem.correlationId}`}</Mono>
+            <Mono>{`跟踪编号：${problem.correlationId}`}</Mono>
           </span>
         )}
-        <pre className="arbor-problem-pre">
+        <pre
+          className={cn(
+            "arbor-problem-pre",
+            "m-0 p-ui-2 overflow-x-auto border border-solid border-border rounded-sm bg-background whitespace-pre-wrap",
+          )}
+        >
           <Mono>{JSON.stringify(problem.safeDetails, null, 2) ?? "{}"}</Mono>
         </pre>
       </div>
@@ -32,25 +44,37 @@ export function ProblemDetail({ problem }: { readonly problem: Problem }) {
 
 function UnauthenticatedTreatment({ problem }: { readonly problem: Problem }) {
   return (
-    <div className="arbor-problem" role="alert">
-      <h2 className="arbor-problem-title">未认证</h2>
-      <Badge tone="danger">Unauthorized</Badge>
-      <p>请提供访问令牌（token）后重连；内容区已屏蔽。</p>
+    <div
+      className={cn(
+        "arbor-problem",
+        "flex flex-col items-start gap-ui-2 p-ui-4 border border-solid border-border rounded-md bg-card shadow-card",
+      )}
+      role="alert"
+    >
+      <h2 className={cn("arbor-problem-title", "m-0 text-title font-semibold")}>
+        连接已失效
+      </h2>
+      <Badge tone="danger">需要重新连接</Badge>
+      <p>请重新连接 Arbor 后继续。</p>
       <ProblemDetail problem={problem} />
     </div>
   );
 }
 
 function ForbiddenTreatment({ problem }: { readonly problem: Problem }) {
-  const reason = problem.safeDetails.reason;
   return (
-    <div className="arbor-problem arbor-problem-danger" role="alert">
-      <h2 className="arbor-problem-title">权限拒绝</h2>
-      <Badge tone="danger">AuthorityDenied</Badge>
-      <p>
-        <Mono>{problem.code}</Mono>
-      </p>
-      {typeof reason === "string" ? <p>{reason}</p> : null}
+    <div
+      className={cn(
+        "arbor-problem arbor-problem-danger",
+        "flex flex-col items-start gap-ui-2 p-ui-4 border border-solid border-border rounded-md bg-card shadow-card border-destructive [&_.arbor-problem-title]:text-destructive",
+      )}
+      role="alert"
+    >
+      <h2 className={cn("arbor-problem-title", "m-0 text-title font-semibold")}>
+        权限拒绝
+      </h2>
+      <Badge tone="danger">没有操作权限</Badge>
+      <p>当前连接没有执行此操作的权限。</p>
       <ProblemDetail problem={problem} />
     </div>
   );
@@ -64,7 +88,7 @@ function NotFoundTreatment({
   readonly onBack?: (() => void) | undefined;
 }) {
   return (
-    <div className="arbor-view-stack">
+    <div className={cn("arbor-view-stack", "flex flex-col gap-ui-3")}>
       <Empty
         action={
           onBack === undefined ? undefined : (
@@ -83,12 +107,18 @@ function NotFoundTreatment({
 
 function InvalidRequestTreatment({ problem }: { readonly problem: Problem }) {
   return (
-    <div className="arbor-problem" role="alert">
-      <h2 className="arbor-problem-title">请求错误</h2>
-      <Badge tone="attention">Validation</Badge>
-      <p>
-        <Mono>{problem.code}</Mono>
-      </p>
+    <div
+      className={cn(
+        "arbor-problem",
+        "flex flex-col items-start gap-ui-2 p-ui-4 border border-solid border-border rounded-md bg-card shadow-card",
+      )}
+      role="alert"
+    >
+      <h2 className={cn("arbor-problem-title", "m-0 text-title font-semibold")}>
+        请求错误
+      </h2>
+      <Badge tone="attention">请检查输入</Badge>
+      <p>提交的内容无法处理，请检查后重试。</p>
       <ProblemDetail problem={problem} />
     </div>
   );
@@ -102,12 +132,18 @@ function StaleTreatment({
   readonly onRetry?: (() => void) | undefined;
 }) {
   return (
-    <div className="arbor-problem" role="alert">
-      <h2 className="arbor-problem-title">数据滞后</h2>
-      <Badge tone="attention">Stale</Badge>
-      <p>
-        <Badge tone="attention">stale</Badge> 投影尚未追上日志水位。
-      </p>
+    <div
+      className={cn(
+        "arbor-problem",
+        "flex flex-col items-start gap-ui-2 p-ui-4 border border-solid border-border rounded-md bg-card shadow-card",
+      )}
+      role="alert"
+    >
+      <h2 className={cn("arbor-problem-title", "m-0 text-title font-semibold")}>
+        数据滞后
+      </h2>
+      <Badge tone="attention">正在同步</Badge>
+      <p>最新变化仍在同步，请稍后重试。</p>
       {onRetry === undefined ? null : (
         <Button variant="quiet" onClick={onRetry}>
           重试
@@ -131,14 +167,20 @@ function UnavailableTreatment({
     problem.safeDetails.sourceTag ===
       "SandboxPolicyCandidateAuthorityUnavailable";
   return (
-    <div className="arbor-problem" role="alert">
-      <h2 className="arbor-problem-title">
+    <div
+      className={cn(
+        "arbor-problem",
+        "flex flex-col items-start gap-ui-2 p-ui-4 border border-solid border-border rounded-md bg-card shadow-card",
+      )}
+      role="alert"
+    >
+      <h2 className={cn("arbor-problem-title", "m-0 text-title font-semibold")}>
         {sandboxPolicyAuthorityUnavailable
           ? "沙箱策略权威来源不可用"
           : "服务不可用"}
       </h2>
       <Badge tone={retryable ? "attention" : "muted"}>
-        Network / Unavailable
+        {retryable ? "可以重试" : "暂时无法恢复"}
       </Badge>
       {sandboxPolicyAuthorityUnavailable ? (
         <p>
@@ -146,11 +188,7 @@ function UnavailableTreatment({
           TrustedLocal 或绕过权限。
         </p>
       ) : null}
-      <p>
-        <Badge tone={retryable ? "attention" : "muted"}>
-          {problem.retryDisposition}
-        </Badge>
-      </p>
+      <p>{retryable ? "连接暂时中断，请重试。" : "当前请求暂时无法完成。"}</p>
       {retryable && onRetry !== undefined ? (
         <Button variant="quiet" onClick={onRetry}>
           重试
@@ -163,9 +201,17 @@ function UnavailableTreatment({
 
 function UnknownTreatment({ problem }: { readonly problem: Problem }) {
   return (
-    <div className="arbor-problem" role="alert">
-      <h2 className="arbor-problem-title">未知问题</h2>
-      <Badge tone="muted">Unknown Problem</Badge>
+    <div
+      className={cn(
+        "arbor-problem",
+        "flex flex-col items-start gap-ui-2 p-ui-4 border border-solid border-border rounded-md bg-card shadow-card",
+      )}
+      role="alert"
+    >
+      <h2 className={cn("arbor-problem-title", "m-0 text-title font-semibold")}>
+        未知问题
+      </h2>
+      <Badge tone="muted">暂时无法完成</Badge>
       <ProblemDetail problem={problem} />
     </div>
   );

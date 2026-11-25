@@ -1,6 +1,5 @@
 import { useIsFetching, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import styles from "./RefreshingStatus.module.css";
 
 /** Announces server refetches while cached data remains available. */
 export function RefreshingStatus() {
@@ -29,7 +28,11 @@ export function RefreshingStatus() {
     return null;
   }
   return (
-    <span className={styles.status} role="status" aria-live="polite">
+    <span
+      className={"text-muted-foreground text-caption whitespace-nowrap"}
+      role="status"
+      aria-live="polite"
+    >
       正在更新
     </span>
   );

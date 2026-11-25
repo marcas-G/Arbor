@@ -168,6 +168,7 @@ describe("P3 model-family compiler", () => {
       {
         name: "read",
         route: "Executable",
+        stableId: "read",
         version: "1",
         hash: "exec-hash",
       },

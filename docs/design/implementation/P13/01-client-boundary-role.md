@@ -82,7 +82,7 @@ P13 UI 的角色冻结为 **Projection Renderer + Command Initiator**：
 |---|---|---|
 | I1 | `apps/web` 编译期零 domain/application/projection-runtime/adapters/ports imports | architecture test（`06` EC-2） |
 | I2 | 所有 view 数据来自 `/views/:view` 响应；组件不得从 command receipts 或 WS 帧构造 view 内容 | code review + render test fixtures 只含 DTO 形状 |
-| I3 | 所有变更经 `POST /commands`；无其他写路径 | architecture test：`apps/web` 源码 fetch/XHR/WS 调用白名单（`/views/*`、`/commands`） |
+| I3 | 所有领域变更经 `POST /commands`；仅首次本机模型配置可使用受限的 `GET/POST /model-setup` host surface | architecture test：`apps/web` 源码网络白名单（`/views/*`、`/commands`、精确 `/model-setup` 首次配置路径） |
 | I4 | WS 帧不进入 render cache 的写路径（只触发 refetch） | 单元测试 + review |
 | I5 | 未知 DTO 枚举值原样渲染（muted 样式），不映射不丢弃 | render tests 含 unknown-enum fixture |
 
@@ -108,3 +108,20 @@ selection, including the separately confirmed `FullAccess` choice, and submit
 route. UI state, URL parameters, local storage and model output never form or
 expand authority. No new direct store/event path, auth mode or authority
 resolver is added to Web.
+
+## Accepted first-run model setup client boundary (2026-11-14)
+
+The browser may use the exact local host configuration surface defined by P12
+`10` for the first-run model gate. It may `GET /model-setup` to render whether
+the daemon is configured and may `POST /model-setup` with the three visible
+form fields to request the real connection check and save. This is the sole
+additive exception to I3. It is not a domain mutation, command receipt,
+authority grant, Work action or model-facing control.
+
+The page must never render or persist the API key outside the in-memory form,
+must not display provider response text, and must keep business views,
+WebSocket subscriptions and `/commands` blocked until setup succeeds. A
+successful response only says that restart is in progress; the browser waits
+for the ordinary runtime readiness/reload path and then refetches the normal
+views. A failed check leaves the form available and does not enter the
+Workbench. Once `configured` is true, the route cannot replace the provider.

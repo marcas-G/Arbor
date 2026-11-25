@@ -9,11 +9,11 @@ import { type Resolver, useForm } from "react-hook-form";
 import { Button } from "../../components/Button.js";
 import { Card } from "../../components/Card.js";
 import { Field } from "../../components/Field.js";
+import { cn } from "../../lib/utils.js";
 import { steerWorkSchema, zodResolver } from "../schemas.js";
 import type { CommandReceiptView } from "../submitCommand.js";
 import { useCommandSubmission } from "../useCommandSubmission.js";
 import { FormFeedback } from "./FormFeedback.js";
-import "./forms.css";
 
 type SteerValues = {
   workId: string;
@@ -80,11 +80,15 @@ export function SteerWorkForm({
     )();
   };
   const blocked =
-    submissionLocked || (severity === "Critical" && !criticalConfirmed);
+    state.phase === "submitting" ||
+    (severity === "Critical" && !criticalConfirmed);
   return (
     <Card title="调整工作方向">
-      <form className="arbor-command-form" onSubmit={doSubmit}>
-        <p className="arbor-command-static">{objective}</p>
+      <form
+        className={cn("arbor-command-form", "flex flex-col gap-ui-3")}
+        onSubmit={doSubmit}
+      >
+        <p className={cn("arbor-command-static", "text-subtle")}>{objective}</p>
         <Field
           control="textarea"
           label="调整说明"
@@ -97,7 +101,12 @@ export function SteerWorkForm({
           }}
         />
         {formState.errors.guidance ? (
-          <p className="arbor-command-error">
+          <p
+            className={cn(
+              "arbor-command-error",
+              "m-0 text-small text-destructive",
+            )}
+          >
             {formState.errors.guidance.message}
           </p>
         ) : null}
@@ -116,7 +125,12 @@ export function SteerWorkForm({
           ]}
         />
         {severity === "Critical" ? (
-          <label className="arbor-command-check">
+          <label
+            className={cn(
+              "arbor-command-check",
+              "flex items-center gap-ui-2 text-muted-foreground text-small",
+            )}
+          >
             <input
               type="checkbox"
               disabled={submissionLocked}

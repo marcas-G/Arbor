@@ -1096,7 +1096,7 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
         responsibilityRevision: 1 as never,
         boundary: p11Boundary,
         resolvedRegions: [p11Region],
-        primaryManagedGitWorktreeRegion: p11Region,
+        primaryResourceRegion: p11Region,
         ownershipClaims: [],
         policyKind: "TrustedLocalUnconfinedV1",
         profile: "FullAccess",
@@ -1356,7 +1356,7 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
             normalizedRegion: { kind: "GitWorktree", path: worktreePath },
           },
         ],
-        primaryManagedGitWorktreeRegion: {
+        primaryResourceRegion: {
           resourceSpaceId: "filesystem",
           normalizedRegion: { kind: "GitWorktree", path: worktreePath },
         },

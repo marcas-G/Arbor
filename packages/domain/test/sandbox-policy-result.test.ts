@@ -2,19 +2,26 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   CommandId,
+  decodeCanonicalSandboxPolicyDecisionCommittedInternal,
   decodeCanonicalSandboxPolicyDecisionCommittedInternalV1,
+  decodeCanonicalSandboxPolicyDecisionCommittedInternalV2,
+  decodeCanonicalSandboxPolicyDecisionCommittedInternalV3,
   decodeCanonicalSandboxPolicyDecisionCommittedViewV1,
   decodeCanonicalSandboxPolicyPreconditionsV1,
   decodeCanonicalSandboxPolicyStatusViewV1,
   decodeSandboxPolicyStatusViewV1,
   ExecutionId,
   encodeEffectivePolicySummaryV1,
+  encodeEffectivePolicySummaryV2,
   encodeNetworkPolicyV1,
   encodeSandboxPolicyDecisionCommittedInternalV1,
+  encodeSandboxPolicyDecisionCommittedInternalV2,
+  encodeSandboxPolicyDecisionCommittedInternalV3,
   encodeSandboxPolicyDecisionCommittedViewV1,
   encodeSandboxPolicyPreconditionsV1,
   encodeSandboxPolicyStatusViewV1,
   networkBrokerControlsV1ForMode,
+  networkBrokerControlsV2ForMode,
   ProjectId,
   parse,
   sandboxPolicyCommittedViewOf,
@@ -24,6 +31,7 @@ import type {
   EffectivePolicySummaryV1,
   SandboxPolicyDecisionCommittedInternalV1,
 } from "../src/sandbox-policy-result.js";
+import type { SandboxPolicyDecisionCommittedInternalV2 } from "../src/sandbox-policy-result-v2.js";
 
 const hash = (value: string) =>
   createHash("sha256").update(value, "utf8").digest("hex");
@@ -131,6 +139,128 @@ const makeResult = (
 });
 
 describe("SandboxPolicyDecision result and DTO codecs", () => {
+  it("round-trips a Linux V2 snapshot without accepting V1 controls", () => {
+    const snapshot = {
+      ...osSnapshot,
+      version: 2 as const,
+      providerId: "linux-bwrap",
+      networkBrokerControls: networkBrokerControlsV2ForMode("Disabled"),
+    };
+    const result: SandboxPolicyDecisionCommittedInternalV2 = {
+      version: 2,
+      commandId,
+      projectId,
+      workspaceId,
+      executionId,
+      episodeBinding,
+      policyRevision: 1,
+      policyDigest: hash(encodeEffectivePolicySummaryV2(snapshot)),
+      effectivePolicySnapshot: snapshot,
+    };
+    const bytes = encodeSandboxPolicyDecisionCommittedInternalV2(result);
+    expect(
+      decodeCanonicalSandboxPolicyDecisionCommittedInternalV2(bytes, hash),
+    ).toEqual(result);
+    expect(
+      decodeCanonicalSandboxPolicyDecisionCommittedInternalV2(
+        bytes.replace('"version":2', '"version":1'),
+        hash,
+      ),
+    ).toBeUndefined();
+  });
+
+  it("binds V3 to an exact Workspace authorization while preserving frozen V1/V2 rejection", () => {
+    const snapshot = {
+      ...osSnapshot,
+      version: 2 as const,
+      providerId: "linux-bwrap",
+      networkBrokerControls: networkBrokerControlsV2ForMode("Disabled"),
+    };
+    const result = {
+      ...makeResult(osSnapshot),
+      version: 3 as const,
+      workspaceAuthorizationRevision: 4,
+      effectivePolicySnapshot: snapshot,
+      policyDigest: hash(encodeEffectivePolicySummaryV2(snapshot)),
+    };
+    const bytes = encodeSandboxPolicyDecisionCommittedInternalV3(result);
+    expect(
+      decodeCanonicalSandboxPolicyDecisionCommittedInternalV3(bytes, hash),
+    ).toEqual(result);
+    expect(
+      decodeCanonicalSandboxPolicyDecisionCommittedInternal(bytes, hash),
+    ).toEqual(result);
+    expect(
+      decodeCanonicalSandboxPolicyDecisionCommittedInternalV1(bytes, hash),
+    ).toBeUndefined();
+    expect(
+      decodeCanonicalSandboxPolicyDecisionCommittedInternalV2(bytes, hash),
+    ).toBeUndefined();
+    for (const revision of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(
+        decodeCanonicalSandboxPolicyDecisionCommittedInternalV3(
+          encodeSandboxPolicyDecisionCommittedInternalV3({
+            ...result,
+            workspaceAuthorizationRevision: revision,
+          }),
+          hash,
+        ),
+      ).toBeUndefined();
+    }
+    expect(
+      decodeCanonicalSandboxPolicyDecisionCommittedInternalV3(
+        bytes.replace('"workspaceAuthorizationRevision":4,', ""),
+        hash,
+      ),
+    ).toBeUndefined();
+    expect(
+      decodeCanonicalSandboxPolicyDecisionCommittedInternalV3(
+        bytes.replace('"version":3,', '"version":3,"extra":true,'),
+        hash,
+      ),
+    ).toBeUndefined();
+    expect(
+      decodeCanonicalSandboxPolicyDecisionCommittedInternalV3(
+        bytes.replace(result.policyDigest, "0".repeat(64)),
+        hash,
+      ),
+    ).toBeUndefined();
+  });
+
+  it("enforces the complete V3 UTF-8 byte limit including provenance overhead", () => {
+    const snapshot = {
+      ...osSnapshot,
+      version: 2 as const,
+      providerId: "linux-bwrap",
+      networkBrokerControls: networkBrokerControlsV2ForMode("Disabled"),
+      // Multi-byte content distinguishes byte limits from JS string length.
+      osBuild: "测".repeat(64),
+      environmentAllowlist: ["X"],
+    };
+    const make = () => ({
+      ...makeResult(osSnapshot),
+      version: 3 as const,
+      workspaceAuthorizationRevision: 1,
+      effectivePolicySnapshot: snapshot,
+      policyDigest: hash(encodeEffectivePolicySummaryV2(snapshot)),
+    });
+    const initial = encodeSandboxPolicyDecisionCommittedInternalV3(make());
+    snapshot.environmentAllowlist = [
+      "X".repeat(1 + 65_536 - Buffer.byteLength(initial)),
+    ];
+    const exact = encodeSandboxPolicyDecisionCommittedInternalV3(make());
+    expect(Buffer.byteLength(exact)).toBe(65_536);
+    expect(
+      decodeCanonicalSandboxPolicyDecisionCommittedInternalV3(exact, hash),
+    ).toEqual(make());
+    snapshot.environmentAllowlist[0] += "X";
+    const oversized = encodeSandboxPolicyDecisionCommittedInternalV3(make());
+    expect(oversized.length).toBeLessThan(65_536);
+    expect(
+      decodeCanonicalSandboxPolicyDecisionCommittedInternalV3(oversized, hash),
+    ).toBeUndefined();
+  });
+
   it.each([osSnapshot, trustedSnapshot])(
     "round-trips a strict policy snapshot and result of kind %s",
     (snapshot) => {

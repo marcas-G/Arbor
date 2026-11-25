@@ -14,6 +14,7 @@ import {
 const projectId = "prj_018f2b3c-4d5e-7abc-8def-0123456789a1";
 const workspaceId = "ws_018f2b3c-4d5e-7abc-8def-0123456789a1";
 const sessionId = "ses_018f2b3c-4d5e-7abc-8def-0123456789a1";
+const workId = "wrk_018f2b3c-4d5e-7abc-8def-0123456789a1";
 const conversationExecutionId = "exe_018f2b3c-4d5e-7abc-8def-0123456789a2";
 const priorWorkExecutionId = "exe_018f2b3c-4d5e-7abc-8def-0123456789a3";
 const activeWorkExecutionId = "exe_018f2b3c-4d5e-7abc-8def-0123456789a4";
@@ -82,6 +83,250 @@ const seed = Effect.gen(function* () {
 });
 
 describe("Work Session frontier ownership", () => {
+  it("preserves causal Work binding for downstream frontier filtering", async () => {
+    const app = makeApp();
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P21_MIGRATIONS);
+      yield* seed;
+      const sql = yield* SqlClient;
+      yield* sql.unsafe(
+        "ALTER TABLE session_entries ADD COLUMN causal_binding_json TEXT",
+      );
+      const causalBinding = {
+        projectId,
+        workspaceId,
+        executionId: activeWorkExecutionId,
+        workId,
+        episodeBinding: "WorkEpisode",
+        causedByRef: "steer:revision:1",
+      };
+      yield* sql.unsafe(
+        "INSERT INTO session_entries (session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at, source_kind, source_ref, content_hash, causal_binding_json) VALUES (?, 1, 'Input', 'UserMessage', 2, 0, ?, 't', 'InboxEntry', 'steer:revision:1', 'hash-1', ?)",
+        [
+          sessionId,
+          JSON.stringify({
+            _tag: "UserMessage",
+            text: "bounded human direction",
+          }),
+          JSON.stringify(causalBinding),
+        ],
+      );
+
+      const tx = yield* TransactionPort;
+      const sessions = yield* SessionRepository;
+      return yield* tx.transact(
+        sessions.listWorkActiveFrontier(
+          sessionId as never,
+          activeWorkExecutionId as never,
+        ),
+      );
+    });
+
+    const entries = await Effect.runPromise(Effect.provide(program, app));
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.causalBinding).toEqual({
+      projectId,
+      workspaceId,
+      executionId: activeWorkExecutionId,
+      workId,
+      episodeBinding: "WorkEpisode",
+      causedByRef: "steer:revision:1",
+    });
+  });
+
+  it("preserves causal Work binding after a typed checkpoint", async () => {
+    const app = makeApp();
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P21_MIGRATIONS);
+      yield* seed;
+      const sql = yield* SqlClient;
+      yield* sql.unsafe(
+        "ALTER TABLE session_entries ADD COLUMN causal_binding_json TEXT",
+      );
+      const causalBinding = {
+        projectId,
+        workspaceId,
+        executionId: activeWorkExecutionId,
+        workId,
+        episodeBinding: "WorkEpisode",
+        causedByRef: "steer:revision:2",
+      };
+      yield* sql.unsafe(
+        "INSERT INTO session_entries (session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at, source_kind, source_ref, content_hash, causal_binding_json) VALUES (?, 1, 'CheckpointReference', 'CompactionCheckpoint', 2, 0, ?, 't', 'CompactionTurn', 'ptn_checkpoint', 'hash-checkpoint', ?), (?, 2, 'Input', 'UserMessage', 2, 1, ?, 't', 'InboxEntry', 'steer:revision:2', 'hash-2', ?)",
+        [
+          sessionId,
+          JSON.stringify({
+            _tag: "CompactionCheckpoint",
+            implementation: "Summary",
+            fromEpoch: 0,
+            toEpoch: 1,
+            summaryText: "retained Work history",
+          }),
+          JSON.stringify(causalBinding),
+          sessionId,
+          JSON.stringify({
+            _tag: "UserMessage",
+            text: "post-checkpoint human direction",
+          }),
+          JSON.stringify(causalBinding),
+        ],
+      );
+
+      const tx = yield* TransactionPort;
+      const sessions = yield* SessionRepository;
+      return yield* tx.transact(
+        sessions.listWorkActiveFrontier(
+          sessionId as never,
+          activeWorkExecutionId as never,
+        ),
+      );
+    });
+
+    const entries = await Effect.runPromise(Effect.provide(program, app));
+    expect(entries.map((entry) => entry.sequence)).toEqual([1, 2]);
+    expect(entries.map((entry) => entry.causalBinding)).toEqual([
+      {
+        projectId,
+        workspaceId,
+        executionId: activeWorkExecutionId,
+        workId,
+        episodeBinding: "WorkEpisode",
+        causedByRef: "steer:revision:2",
+      },
+      {
+        projectId,
+        workspaceId,
+        executionId: activeWorkExecutionId,
+        workId,
+        episodeBinding: "WorkEpisode",
+        causedByRef: "steer:revision:2",
+      },
+    ]);
+  });
+
+  it("does not use a foreign Work checkpoint as the active frontier root", async () => {
+    const app = makeApp();
+    const foreignWorkId = "wrk_018f2b3c-4d5e-7abc-8def-0123456789af";
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P21_MIGRATIONS);
+      yield* seed;
+      const sql = yield* SqlClient;
+      yield* sql.unsafe(
+        "ALTER TABLE session_entries ADD COLUMN causal_binding_json TEXT",
+      );
+      const checkpoint = (work: string, implementation: string) =>
+        JSON.stringify({
+          _tag: "CompactionCheckpoint",
+          implementation,
+          fromEpoch: 0,
+          toEpoch: 1,
+          retainedFrontierRef: `frontier:${work}`,
+          bindingFingerprint: null,
+        });
+      const binding = (work: string) =>
+        JSON.stringify({
+          projectId,
+          workspaceId,
+          executionId: activeWorkExecutionId,
+          workId: work,
+          episodeBinding: "WorkEpisode",
+          causedByRef: `provider:${work}`,
+        });
+      yield* sql.unsafe(
+        "INSERT INTO session_entries (session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at, source_kind, source_ref, content_hash, causal_binding_json) VALUES (?, 1, 'CheckpointReference', 'CompactionCheckpoint', 2, 1, ?, 't', 'CompactionTurn', 'ptn_current_compact', 'hash-current', ?), (?, 2, 'CheckpointReference', 'CompactionCheckpoint', 2, 1, ?, 't', 'CompactionTurn', 'ptn-foreign-compact', 'hash-foreign', ?)",
+        [
+          sessionId,
+          checkpoint(workId, "Summary"),
+          binding(workId),
+          sessionId,
+          checkpoint(foreignWorkId, "ProviderNative"),
+          binding(foreignWorkId),
+        ],
+      );
+
+      const tx = yield* TransactionPort;
+      const sessions = yield* SessionRepository;
+      return yield* tx.transact(
+        sessions.listWorkActiveFrontier(
+          sessionId as never,
+          activeWorkExecutionId as never,
+          workId as never,
+        ),
+      );
+    });
+
+    const entries = await Effect.runPromise(Effect.provide(program, app));
+    expect(entries.map((entry) => entry.sequence)).toEqual([1]);
+    expect(entries[0]?.payload).toMatchObject({
+      implementation: "Summary",
+      retainedFrontierRef: `frontier:${workId}`,
+    });
+  });
+
+  it("retains bound prior Work actions while excluding unbound and foreign rows", async () => {
+    const app = makeApp();
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P21_MIGRATIONS);
+      yield* seed;
+      const sql = yield* SqlClient;
+      yield* sql.unsafe(
+        "ALTER TABLE session_entries ADD COLUMN causal_binding_json TEXT",
+      );
+      const insert = (
+        sequence: number,
+        payload: unknown,
+        causalBinding?: unknown,
+      ) =>
+        sql.unsafe(
+          "INSERT INTO session_entries (session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at, source_kind, source_ref, content_hash, causal_binding_json) VALUES (?, ?, 'ModelOutput', 'ToolCall', 2, 0, ?, 't', 'ProviderTurnCall', ?, ?, ?)",
+          [
+            sessionId,
+            sequence,
+            JSON.stringify(payload),
+            `ptn_${priorWorkExecutionId}_0:call-${sequence}`,
+            `hash-${sequence}`,
+            causalBinding === undefined ? null : JSON.stringify(causalBinding),
+          ],
+        );
+      const workBinding = {
+        projectId,
+        workspaceId,
+        executionId: priorWorkExecutionId,
+        workId,
+        episodeBinding: "WorkEpisode",
+        causedByRef: "provider:prior",
+      };
+      yield* insert(1, { _tag: "ToolCall", callRef: "bound" }, workBinding);
+      yield* insert(2, { _tag: "ToolCall", callRef: "unbound" });
+      yield* insert(
+        3,
+        { _tag: "ToolCall", callRef: "foreign" },
+        {
+          ...workBinding,
+          workId: "wrk_018f2b3c-4d5e-7abc-8def-0123456789af",
+        },
+      );
+
+      const tx = yield* TransactionPort;
+      const sessions = yield* SessionRepository;
+      return yield* tx.transact(
+        sessions.listWorkActiveFrontier(
+          sessionId as never,
+          activeWorkExecutionId as never,
+          workId as never,
+        ),
+      );
+    });
+
+    const entries = await Effect.runPromise(Effect.provide(program, app));
+    expect(entries.map((entry) => entry.sequence)).toEqual([1]);
+    expect(entries[0]?.causalBinding).toMatchObject({
+      executionId: priorWorkExecutionId,
+      workId,
+      episodeBinding: "WorkEpisode",
+    });
+  });
+
   it("keeps plain prior Work output while excluding prior tool-call causal groups", async () => {
     const app = makeApp();
     const program = Effect.gen(function* () {
@@ -603,5 +848,88 @@ describe("Work Session frontier ownership", () => {
     expect(entries[0]?.payload).toMatchObject({ text: "work-4" });
     expect(entries.some((entry) => entry.sequence <= 3)).toBe(false);
     expect(entries.some((entry) => entry.sequence === 66)).toBe(false);
+  });
+
+  it("drops a result whose call was cut off by the raw latest-64 window", async () => {
+    const app = makeApp();
+    const program = Effect.gen(function* () {
+      yield* runMigrations(P21_MIGRATIONS);
+      yield* seed;
+      const sql = yield* SqlClient;
+      const insertTyped = (
+        sequence: number,
+        itemType: string,
+        sourceKind: string,
+        sourceRef: string,
+        payload: unknown,
+      ) =>
+        sql.unsafe(
+          "INSERT INTO session_entries (session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at, source_kind, source_ref, content_hash) VALUES (?, ?, 'ModelOutput', ?, 2, 0, ?, 't', ?, ?, ?)",
+          [
+            sessionId,
+            sequence,
+            itemType,
+            JSON.stringify(payload),
+            sourceKind,
+            sourceRef,
+            `hash-${sequence}`,
+          ],
+        );
+
+      // Sequence 0 is outside the raw latest-64 window, while sequence 2 is
+      // inside it. The result must not become a synthetic contradictory
+      // timeline entry after its call has been trimmed away.
+      yield* insertTyped(
+        0,
+        "ToolCall",
+        "ProviderTurnCall",
+        "ptn_prior:call-trimmed",
+        {
+          _tag: "ToolCall",
+          providerTurnId: "ptn_prior",
+          callRef: "call-trimmed",
+          toolRef: "read",
+          argumentsJson: "{}",
+        },
+      );
+      yield* insertTyped(1, "UserMessage", "InboxEntry", "input-1", {
+        _tag: "UserMessage",
+        text: "context",
+      });
+      yield* insertTyped(
+        2,
+        "ToolResult",
+        "AgentLoopAction",
+        "observation-trimmed",
+        {
+          _tag: "ToolResult",
+          callRef: "call-trimmed",
+          toolName: "read",
+          status: "Succeeded",
+          outputText: "must not enter the frontier",
+        },
+      );
+      for (let sequence = 3; sequence <= 65; sequence += 1) {
+        yield* insertTyped(
+          sequence,
+          "UserMessage",
+          "InboxEntry",
+          `input-${sequence}`,
+          { _tag: "UserMessage", text: `context-${sequence}` },
+        );
+      }
+
+      const tx = yield* TransactionPort;
+      const sessions = yield* SessionRepository;
+      return yield* tx.transact(
+        sessions.listWorkActiveFrontier(sessionId as never),
+      );
+    });
+
+    const entries = await Effect.runPromise(Effect.provide(program, app));
+    expect(entries.map((entry) => entry.sequence)).toEqual(
+      Array.from({ length: 63 }, (_, index) => index + 3),
+    );
+    expect(entries.some((entry) => entry.sequence === 2)).toBe(false);
   });
 });

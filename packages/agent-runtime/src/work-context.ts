@@ -1,5 +1,6 @@
 import {
   type Execution,
+  type ResourceBoundary,
   type Work,
   type Workspace,
   workEpisode,
@@ -42,6 +43,36 @@ const makeFragment = (value: {
   provenance: CANONICAL_TRUST,
 });
 
+/**
+ * ResourceBoundary is an application-owned fact and its filesystem addresses
+ * are intentionally host paths.  Those paths are useful to the trusted
+ * resolver and sandbox materializer, but they are not a model-facing tool
+ * coordinate: executable tools address the admitted filesystem through the
+ * logical `workspace` mount and a mount-relative path.
+ *
+ * Keeping this projection here also prevents a provider request from leaking
+ * the daemon's database/project layout (and prevents the model from copying
+ * a host path into a shell cwd).  Do not replace this with JSON.stringify on
+ * the domain ResourceBoundary.
+ */
+export const modelResourceBoundary = (
+  boundary: ResourceBoundary,
+): Readonly<Record<string, unknown>> => ({
+  basisResponsibilityRevision: Number(boundary.basisResponsibilityRevision),
+  admittedResourceKinds: (Array.isArray(boundary.addresses)
+    ? boundary.addresses
+    : []
+  ).map((address) =>
+    address._tag === "FileTree" || address._tag === "GitWorktree"
+      ? "filesystem"
+      : address._tag === "DatabaseNamespace"
+        ? "database"
+        : "external",
+  ),
+  executableFilesystemMount: "workspace",
+  pathConvention: "mount-relative",
+});
+
 export const assembleWorkContext = (
   workspace: Workspace,
   work: Work | null,
@@ -64,7 +95,9 @@ export const assembleWorkContext = (
       scope: "resource-boundary",
       authorityRole: "A2" as const,
       contentRef: `resource-boundary:${workspace.workspaceId}:${workspace.resourceBoundaryRevision}`,
-      content: JSON.stringify(workspace.resourceBoundary),
+      content: JSON.stringify(
+        modelResourceBoundary(workspace.resourceBoundary),
+      ),
     },
     ...(work === null
       ? []
@@ -115,7 +148,7 @@ export const assembleWorkContext = (
                   authorityRole: "A3" as const,
                   contentRef: `work-completion-protocol:${work.workId}:${work.revision}`,
                   content:
-                    "This is a Work execution, not a RootConversation. The Work-specific control surface for this turn includes claim_completion and wait, plus the applicable Work inspection and coordination controls such as list_workspaces, read_workspace, update_plan, accept_result, assign_work, send_message, and propose_workspace. Do not say these tools are unavailable unless the actual tool list in this request omits them. When the completion expectation is satisfied, call claim_completion with one bounded claim; do not end the turn with plain text alone. If it is not satisfied, use a supported action or wait only for one concrete persisted condition.",
+                    "This is a Work execution, not a RootConversation. The Work-specific control surface for this turn includes claim_completion and wait, plus the applicable Work inspection and coordination controls such as list_workspaces, read_workspace, update_plan, accept_result, assign_work, send_message, and propose_workspace. Do not say these tools are unavailable unless the actual tool list in this request omits them. When the completion expectation is satisfied, call claim_completion with one bounded claim; do not end the turn with plain text alone. If an executable action is denied because of authority, resource admission, missing permission, or another terminal capability condition and the user can resolve it, the action did not happen: do not retry it, claim completion, or use a plain Yielded wait; call wait with disposition Blocked and a concise request for the required user action. If it is not satisfied, use a supported action or wait only for one concrete persisted condition.",
                 },
               ]
             : []),

@@ -66,3 +66,27 @@ requiring a new human decision; it is never restarted automatically.
 - No AdmitExecution 语义修改（P2）；No agent-runtime/execution-runtime 依赖（§10.4.1）。
 - No Producer Session 复制进 Verifier Context；No verifier 对 Producer 正式结果的写通道。
 - No sub-execution 嵌套实现（留缝，B-9）；No 定时器/超时语义（P2/P12）。
+
+## 2026-11-16 独立验证命令环境补充
+
+治理修订：`IVE-P8-20261116.1`。负责人已明确接受固定临时副本方案；接受编号
+`ACCEPT_INDEPENDENT_VERIFICATION_COMMAND_ENVIRONMENT`。固定提案
+`docs/proposals/2026-11-16-independent-verification-command-environment.md`，
+SHA-256 `a6e85e9e15301cbc377f3468d5bfca706cf3019e42bc28fe712a1947a0d6108d`。
+以下为该提案分配给本文的完整条款；接受与设计落地不等于实现或发行资格。
+
+1. 每个独立 Verifier execution 使用自己的临时验证环境。原项目只能作为获准的
+   只读取材来源；验证命令可写区域只属于当前验证 execution，不得写回 Producer
+   正式资源、Sibling、Parent、其他验证副本或宿主用户目录。
+2. 环境捕获精确 VerificationId、executionId、WorkId/targetWorkRevision、owner
+   Workspace 快照、资源范围和实际输入摘要。必须包含允许读取的当前未提交改动；
+   不得假定 Git HEAD 等于待验收内容。跨边界链接、socket、无法安全捕获的输入或
+   创建期间源变化，必须有界失败/重新捕获，不能扩大取材范围或默默漏文件。
+3. 复用已有隔离执行器和文件工具，不增加第二 Agent 循环、虚构人类角色或长期
+   Workspace。可复用 bubblewrap 的临时 overlay 或现有快照工具；采用哪项实现
+   必须以实际主机能力、输入一致性和停止清理验证为依据，缺少能力不得回退原地执行。
+4. shell 的 cwd 和写入只在副本。读原成果的工具保持只读；验证证据标记真实输入和
+   实际命令，不把 producer 的自述或其他验证环境的输出冒充本次独立观察。
+5. 结论、异常退出、超时和用户停止均收敛临时运行区和进程；需要恢复的 active
+   验证使用可证明的原绑定或明确中断，不从 Session 文字重建目录/授权。不可重建的
+   临时态走已有孤儿验证路径，不能自动 Unknown、Pass 或 Acceptance。

@@ -124,55 +124,78 @@ globalThis.fetch = async (input, init) => {
 
   try {
     const response = await originalFetch(input, init);
-    const clone = response.clone();
     if (candidateResponseGateSelector !== undefined) {
-      const bytes = await clone.arrayBuffer();
-      const rawBodyBase64 = Buffer.from(bytes).toString("base64");
-      const bodyText = safeValue(new TextDecoder().decode(bytes));
-      const safeBodyBase64 = Buffer.from(bodyText).toString("base64");
-      append({
-        ...requestEvidence,
-        event: "response-complete",
-        status: response.status,
-        responseBodyBase64: safeBodyBase64,
-      });
-      if (
-        !providerResponseMatchesSelector(
-          request,
-          candidateResponseGateSelector,
-          rawBodyBase64,
-        )
-      ) {
-        return response;
-      }
-      append({
-        ...requestEvidence,
-        event: "response-held",
-        status: response.status,
-      });
-      const releasePath = join(
-        responseGateDirectory,
-        `release-${base.requestId}`,
-      );
-      const gateDeadline = Date.now() + responseGateTimeoutMs;
-      while (!existsSync(releasePath) && Date.now() < gateDeadline) {
-        await new Promise((resolve) => setTimeout(resolve, 25));
-      }
-      if (!existsSync(releasePath)) {
+      const gatedBody = async () => {
+        const bytes = await response.arrayBuffer();
+        const rawBodyBase64 = Buffer.from(bytes).toString("base64");
+        const bodyText = safeValue(new TextDecoder().decode(bytes));
+        const safeBodyBase64 = Buffer.from(bodyText).toString("base64");
         append({
           ...requestEvidence,
-          event: "request-failed",
-          error: "ResponseGateDeadline",
+          event: "response-complete",
+          status: response.status,
+          responseBodyBase64: safeBodyBase64,
         });
-        throw new Error("real provider response gate deadline exceeded");
-      }
-      append({
-        ...requestEvidence,
-        event: "response-released",
-        status: response.status,
-      });
-      return response;
+        if (
+          !providerResponseMatchesSelector(
+            request,
+            candidateResponseGateSelector,
+            rawBodyBase64,
+          )
+        ) {
+          return bytes;
+        }
+        append({
+          ...requestEvidence,
+          event: "response-held",
+          status: response.status,
+        });
+        const releasePath = join(
+          responseGateDirectory,
+          `release-${base.requestId}`,
+        );
+        const gateDeadline = Date.now() + responseGateTimeoutMs;
+        while (!existsSync(releasePath) && Date.now() < gateDeadline) {
+          if (init?.signal?.aborted) {
+            throw new DOMException("Provider request cancelled", "AbortError");
+          }
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+        if (!existsSync(releasePath)) {
+          append({
+            ...requestEvidence,
+            event: "request-failed",
+            error: "ResponseGateDeadline",
+          });
+          throw new Error("real provider response gate deadline exceeded");
+        }
+        append({
+          ...requestEvidence,
+          event: "response-released",
+          status: response.status,
+        });
+        return bytes;
+      };
+      return new Response(
+        new ReadableStream({
+          async start(controller) {
+            try {
+              const bytes = await gatedBody();
+              controller.enqueue(new Uint8Array(bytes));
+              controller.close();
+            } catch (error) {
+              controller.error(error);
+            }
+          },
+        }),
+        {
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers,
+        },
+      );
     }
+    const clone = response.clone();
     void clone
       .arrayBuffer()
       .then((bytes) => {

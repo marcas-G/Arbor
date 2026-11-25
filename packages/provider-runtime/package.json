@@ -13,7 +13,8 @@
     "dist"
   ],
   "dependencies": {
-    "@arbor/ports": "workspace:*"
+    "@arbor/ports": "workspace:*",
+    "effect": "4.0.0-rc.115"
   },
   "scripts": {
     "build": "tsc -b"

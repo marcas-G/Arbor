@@ -15,6 +15,7 @@ import {
   ID_SCHEMAS,
   type IdTypeName,
   isIsoTimestamp,
+  isPersistentWorkspaceToolPermission,
   NO_EFFECT_DENIAL_CODES,
 } from "@arbor/domain";
 import { Schema } from "effect";
@@ -53,6 +54,10 @@ import type { SendMessagePayload } from "./commands/send-message.js";
 import type { StartVerificationPayload } from "./commands/start-verification.js";
 import type { SteerWorkPayload } from "./commands/steer-work.js";
 import type { SubmitHumanMessagePayload } from "./commands/submit-human-message.js";
+import type {
+  AuthorizeWorkspaceSandboxPayload,
+  RevokeWorkspaceSandboxAuthorizationPayload,
+} from "./commands/workspace-sandbox-authorization.js";
 
 export type RegisteredCommandType =
   | "CreateProject"
@@ -81,6 +86,8 @@ export type RegisteredCommandType =
   | "RetryVerification"
   | "GrantPermission"
   | "DecideSandboxPolicy"
+  | "AuthorizeWorkspaceSandbox"
+  | "RevokeWorkspaceSandboxAuthorization"
   | "RevokePermission"
   | "SubmitHumanMessage"
   | "ResumeConversationResponse"
@@ -108,6 +115,8 @@ export type ExternalOriginPolicy =
   | "reject external; Verification consumer/runtime"
   | "external only when P12 authority resolves the principal"
   | "external authenticated human"
+  | "authenticated human external response retry"
+  | "authenticated human external response cancellation"
   | "reject external unless P17 establishes the route";
 
 export type CommandInputIssueRule =
@@ -174,6 +183,8 @@ export interface ExternalCommandPayloadMap {
   readonly RetryVerification: RetryVerificationPayload;
   readonly GrantPermission: GrantPermissionPayload;
   readonly DecideSandboxPolicy: DecideSandboxPolicyPayload;
+  readonly AuthorizeWorkspaceSandbox: AuthorizeWorkspaceSandboxPayload;
+  readonly RevokeWorkspaceSandboxAuthorization: RevokeWorkspaceSandboxAuthorizationPayload;
   readonly RevokePermission: RevokePermissionPayload;
   readonly SubmitHumanMessage: SubmitHumanMessagePayload;
   readonly ResumeConversationResponse: ResumeConversationResponsePayload;
@@ -870,7 +881,7 @@ const payloadRules: Readonly<Record<RegisteredCommandType, Rule>> = {
     }),
     capability: trimmedNonEmptyString,
     target: trimmedNonEmptyString,
-    expiresAt: isoTimestamp,
+    expiresAt: nullable(isoTimestamp),
   }),
   DecideSandboxPolicy: object({
     projectId: id("ProjectId"),
@@ -894,6 +905,31 @@ const payloadRules: Readonly<Record<RegisteredCommandType, Rule>> = {
     capabilityRevision: optional(positiveSafeInteger),
     networkPolicy: sandboxPolicySelection,
     decisionExpiresAt: isoTimestamp,
+  }),
+  AuthorizeWorkspaceSandbox: object({
+    workspaceId: id("WorkspaceId"),
+    expectedAuthorizationRevision: revision,
+    expectedResourceBoundaryRevision: revision,
+    expectedWorkspacePolicyRevision: revision,
+    profile: enumRule("ReadOnly", "WorkspaceWrite"),
+    providerId: canonicalIdentifier,
+    networkPolicy: object({
+      version: literal(1),
+      mode: enumRule("Disabled", "Restricted", "Enabled"),
+      destinations: array(nonEmptyString),
+    }),
+    expiresAt: nullable(isoTimestamp),
+    source: union("kind", {
+      Human: object({ kind: literal("Human") }),
+      Parent: object({
+        kind: literal("Parent"),
+        expectedParentAuthorizationRevision: positiveSafeInteger,
+      }),
+    }),
+  }),
+  RevokeWorkspaceSandboxAuthorization: object({
+    workspaceId: id("WorkspaceId"),
+    expectedAuthorizationRevision: positiveSafeInteger,
   }),
   RevokePermission: object({ permissionGrantId: id("PermissionGrantId") }),
   SubmitHumanMessage: object({
@@ -943,12 +979,13 @@ const externalOriginPolicies: Readonly<
   RetryVerification: "external authenticated human",
   GrantPermission: "external only when P12 authority resolves the principal",
   DecideSandboxPolicy: "external human governance",
+  AuthorizeWorkspaceSandbox: "external human governance",
+  RevokeWorkspaceSandboxAuthorization: "external human governance",
   RevokePermission: "external only when P12 authority resolves the principal",
   SubmitHumanMessage: "external authenticated human",
-  ResumeConversationResponse:
-    "reject external unless P17 establishes the route",
+  ResumeConversationResponse: "authenticated human external response retry",
   CancelConversationResponse:
-    "reject external unless P17 establishes the route",
+    "authenticated human external response cancellation",
 };
 
 export interface CommandInputContract {
@@ -957,6 +994,9 @@ export interface CommandInputContract {
   readonly externalOriginPolicy: ExternalOriginPolicy;
   readonly externalOriginAllowed: boolean;
   readonly decodePayload: (payload: unknown) => DecodeCommandPayloadResult;
+  readonly decodeInternalPayload: (
+    payload: unknown,
+  ) => DecodeCommandPayloadResult;
 }
 
 export interface CommandInputContractRegistry {
@@ -976,7 +1016,9 @@ export const makeCommandInputContractRegistry = (
   const requiredTypes = COMMAND_TYPES.filter(
     (commandType) =>
       commandType !== "ResolveControlApproval" &&
-      commandType !== "ResolveExecutableApproval",
+      commandType !== "ResolveExecutableApproval" &&
+      commandType !== "AuthorizeWorkspaceSandbox" &&
+      commandType !== "RevokeWorkspaceSandboxAuthorization",
   );
   if (
     registeredSet.size !== registeredHandlerTypes.length ||
@@ -1003,6 +1045,8 @@ export const makeCommandInputContractRegistry = (
           !externalOriginPolicies[commandType].startsWith("reject external"),
         decodePayload: (payload) =>
           decodeCommandPayloadForContract(commandType, payload),
+        decodeInternalPayload: (payload) =>
+          decodeCommandPayloadForContract(commandType, payload, "Internal"),
       },
     ]),
   );
@@ -1062,6 +1106,13 @@ export const decodeCommandPayloadForSchemaVersion = (
   payload: unknown,
 ): DecodeCommandPayloadResult => {
   const decoded = decodeAgainstRule(payloadRules[commandType], payload);
+  if (decoded.ok && commandType === "GrantPermission") {
+    const input = decoded.value as GrantPermissionPayload;
+    if (input.expiresAt === null && schemaVersion === "1") {
+      return { ok: false, issues: [{ path: ["expiresAt"], rule: "type" }] };
+    }
+    return validateGrantPermissionLifetime(input, decoded);
+  }
   if (!decoded.ok || commandType !== "SteerWork") return decoded;
   return validateSteerWorkPayloadVersion(payload, schemaVersion, decoded);
 };
@@ -1098,8 +1149,23 @@ const decodeAgainstRule = (
 function decodeCommandPayloadForContract(
   commandType: RegisteredCommandType,
   payload: unknown,
+  origin: "External" | "Internal" = "External",
 ): DecodeCommandPayloadResult {
   const decoded = decodeAgainstRule(payloadRules[commandType], payload);
+  if (
+    decoded.ok &&
+    origin === "External" &&
+    commandType === "AuthorizeWorkspaceSandbox" &&
+    (decoded.value as AuthorizeWorkspaceSandboxPayload).source.kind !== "Human"
+  ) {
+    return { ok: false, issues: [{ path: ["source", "kind"], rule: "enum" }] };
+  }
+  if (decoded.ok && commandType === "GrantPermission") {
+    return validateGrantPermissionLifetime(
+      decoded.value as GrantPermissionPayload,
+      decoded,
+    );
+  }
   if (!decoded.ok || commandType !== "SteerWork") return decoded;
   const input = payload as {
     readonly steer?: Record<string, unknown>;
@@ -1117,6 +1183,16 @@ function decodeCommandPayloadForContract(
     hasOperation ? "2" : "1",
     decoded,
   );
+}
+
+function validateGrantPermissionLifetime(
+  payload: GrantPermissionPayload,
+  decoded: DecodeCommandPayloadResult,
+): DecodeCommandPayloadResult {
+  return payload.expiresAt === null &&
+    !isPersistentWorkspaceToolPermission(payload)
+    ? { ok: false, issues: [{ path: ["expiresAt"], rule: "format" }] }
+    : decoded;
 }
 
 function validateSteerWorkPayloadVersion(
@@ -1425,9 +1501,12 @@ const decodeEnvelopeWithRegistry = (
   });
   const decoded = decodeAgainstRule(envelopeRule, envelope);
   if (!decoded.ok) return decoded;
-  if (commandType === "SteerWork") {
+  if (
+    commandType === "SteerWork" ||
+    commandType === "AuthorizeWorkspaceSandbox"
+  ) {
     const validatedPayload = decodeCommandPayloadForContract(
-      "SteerWork",
+      commandType,
       envelope.payload,
     );
     if (!validatedPayload.ok) return validatedPayload;

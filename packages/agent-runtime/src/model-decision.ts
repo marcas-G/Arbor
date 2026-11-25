@@ -7,6 +7,7 @@ import type {
 import {
   ContextEpochNumber,
   conversationResponseEpisode,
+  ExecutionId,
   executionEpisode,
   providerTurnOverflowReplacementId as makeOverflowReplacementProviderTurnId,
   ProviderTurnId,
@@ -53,6 +54,7 @@ import type {
   ModelCapability,
   PortableInputItem,
   PortableModelRequestV2,
+  ProviderCancellationSignal,
   ProviderExecutionPolicyOverrides,
   ProviderRunInput,
   ProviderRuntimeProgress,
@@ -119,6 +121,7 @@ import { makeAgentStepContext } from "./step-context.js";
 import { assembleWorkContext } from "./work-context.js";
 
 export interface ModelDecisionOptions {
+  readonly cancellationSignal?: ProviderCancellationSignal;
   readonly secretRef?: SecretRef;
   readonly executionPolicyOverrides?: ProviderExecutionPolicyOverrides;
   readonly providerRef?: string;
@@ -344,6 +347,49 @@ const nativeCompactionProviderTurnId = (value: string): ProviderTurnId | null =>
       return null;
     }
   })();
+
+/**
+ * Return the execution that durably owns an ordinary Native checkpoint.
+ *
+ * A Work Session can carry a checkpoint into a later Work execution.  The
+ * checkpoint's manifest and source step therefore identify the producing
+ * execution, which is deliberately different from the execution currently
+ * rebuilding the Session context.  Malformed evidence is left unknown so the
+ * caller can fail closed instead of treating it as inherited context.
+ */
+const nativeCheckpointOwnerExecutionId = (
+  manifestJson: string,
+): Execution["executionId"] | undefined => {
+  try {
+    const parsed = JSON.parse(manifestJson) as unknown;
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
+      return undefined;
+    }
+    const manifest = parsed as Record<string, unknown>;
+    const source = manifest.sourceAgentLoopStep;
+    if (
+      typeof manifest.executionId !== "string" ||
+      typeof source !== "object" ||
+      source === null ||
+      Array.isArray(source) ||
+      typeof (source as Record<string, unknown>).executionId !== "string" ||
+      (source as Record<string, unknown>).executionId !== manifest.executionId
+    ) {
+      return undefined;
+    }
+    try {
+      return parse(ExecutionId)(manifest.executionId);
+    } catch {
+      return undefined;
+    }
+  } catch {
+    return undefined;
+  }
+};
 
 const decodedProviderTurnId = (value: unknown): ProviderTurnId | null => {
   if (typeof value !== "string") return null;
@@ -809,6 +855,7 @@ export const runModelDecision = (
         ? sessions.listWorkActiveFrontier(
             input.execution.sessionId,
             input.execution.executionId,
+            workEpisode(input.execution)?.workId,
           )
         : sessions.listRecentEntries(
             input.execution.sessionId,
@@ -888,8 +935,30 @@ export const runModelDecision = (
       const startupSession = yield* tx
         .transact(sessions.findById(input.execution.sessionId))
         .pipe(Effect.mapError(failure));
+      let startupCheckpointInherited = false;
+      if (
+        startupCheckpoint?.providerTurnId !== undefined &&
+        Option.isSome(startupSession)
+      ) {
+        const startupNativeTurnId = nativeCompactionProviderTurnId(
+          startupCheckpoint.providerTurnId,
+        );
+        if (startupNativeTurnId !== null) {
+          const startupManifest = yield* tx
+            .transact(providerTurns.findManifestByTurn(startupNativeTurnId))
+            .pipe(Effect.mapError(failure));
+          const ownerExecutionId =
+            startupManifest === null
+              ? undefined
+              : nativeCheckpointOwnerExecutionId(startupManifest.manifestJson);
+          startupCheckpointInherited =
+            ownerExecutionId !== undefined &&
+            ownerExecutionId !== input.execution.executionId;
+        }
+      }
       if (
         startupCheckpoint === undefined &&
+        !startupCheckpointInherited &&
         Option.isSome(startupSession) &&
         loopStepFence !== undefined
       ) {
@@ -1147,6 +1216,7 @@ export const runModelDecision = (
         startupCheckpoint?.providerTurnId !== undefined &&
         startupCheckpoint.fromEpoch !== undefined &&
         Option.isSome(startupSession) &&
+        !startupCheckpointInherited &&
         startupCheckpoint.toEpoch === Number(startupSession.value.contextEpoch)
       ) {
         const startupNativeTurnId = nativeCompactionProviderTurnId(
@@ -3159,6 +3229,7 @@ export const runModelDecision = (
       );
       if (
         projectionDecision._tag === "Blocked" &&
+        projectionDecision.reason === "UnresolvedInvocation" &&
         loopStepFence !== undefined &&
         (yield* tx
           .transact(sessions.supportsTypedTimeline())
@@ -3268,6 +3339,11 @@ export const runModelDecision = (
             .pipe(Effect.mapError(failure));
           if (conversationExecution) {
             recentSessionEntries = conversationTimeline(recentSessionEntries);
+          } else if (workBinding !== null && typedTimeline) {
+            recentSessionEntries = filterEntriesForWork(recentSessionEntries, {
+              executionId: input.execution.executionId,
+              workId: workBinding.workId,
+            });
           }
           reasoningAttachmentBlobs =
             yield* loadReasoningAttachmentBlobs(recentSessionEntries);
@@ -3410,6 +3486,29 @@ export const runModelDecision = (
         ...sessionProjection.contextRefs,
       ];
       const nativeCheckpoint = sessionProjection.nativeCheckpoint;
+      let checkpointOwnerExecutionId: Execution["executionId"] | undefined;
+      let nativeCheckpointIsInherited = false;
+      if (
+        nativeCheckpoint?.providerTurnId !== undefined &&
+        providerTurns !== undefined
+      ) {
+        const nativeProviderTurnId = nativeCompactionProviderTurnId(
+          nativeCheckpoint.providerTurnId,
+        );
+        if (nativeProviderTurnId !== null) {
+          const nativeManifest = yield* tx
+            .transact(providerTurns.findManifestByTurn(nativeProviderTurnId))
+            .pipe(Effect.mapError(failure));
+          const ownerExecutionId =
+            nativeManifest === null
+              ? undefined
+              : nativeCheckpointOwnerExecutionId(nativeManifest.manifestJson);
+          checkpointOwnerExecutionId = ownerExecutionId;
+          nativeCheckpointIsInherited =
+            ownerExecutionId !== undefined &&
+            ownerExecutionId !== input.execution.executionId;
+        }
+      }
       if (nativeCheckpoint !== undefined) {
         if (options.qualificationProbe !== undefined) {
           yield* Effect.promise(
@@ -3495,12 +3594,14 @@ export const runModelDecision = (
               );
         const checkpointManifestJson = checkpointFrontier?.manifest;
         const checkpointSource = checkpointManifestJson?.sourceAgentLoopStep;
+        const expectedCheckpointOwnerExecutionId =
+          checkpointOwnerExecutionId ?? input.execution.executionId;
         const checkpointSourceIdentity =
           typeof checkpointSource === "object" &&
           checkpointSource !== null &&
           !Array.isArray(checkpointSource) &&
           (checkpointSource as Record<string, unknown>).executionId ===
-            input.execution.executionId &&
+            expectedCheckpointOwnerExecutionId &&
           Number.isSafeInteger(
             (checkpointSource as Record<string, unknown>).logicalStepNo,
           ) &&
@@ -3514,7 +3615,7 @@ export const runModelDecision = (
           typeof (checkpointSource as Record<string, unknown>)
             .providerTurnId === "string"
             ? {
-                executionId: input.execution.executionId,
+                executionId: expectedCheckpointOwnerExecutionId,
                 logicalStepNo: Number(
                   (checkpointSource as Record<string, unknown>).logicalStepNo,
                 ),
@@ -3535,7 +3636,7 @@ export const runModelDecision = (
               rawSource !== null &&
               !Array.isArray(rawSource) &&
               (rawSource as Record<string, unknown>).executionId ===
-                input.execution.executionId &&
+                expectedCheckpointOwnerExecutionId &&
               Number.isSafeInteger(
                 (rawSource as Record<string, unknown>).logicalStepNo,
               ) &&
@@ -3574,7 +3675,8 @@ export const runModelDecision = (
           checkpointReceipt.turn.providerTurnId !==
             checkpointNativeProviderTurnId ||
           checkpointReceipt.turn.manifestId !== checkpointManifest.manifestId ||
-          checkpointReceipt.turn.executionId !== input.execution.executionId ||
+          checkpointReceipt.turn.executionId !==
+            expectedCheckpointOwnerExecutionId ||
           checkpointReceipt.turn.sessionId !== input.execution.sessionId ||
           checkpointReceipt.turn.contextEpoch !== nativeCheckpoint.fromEpoch ||
           checkpointReceipt.turn.outputContractRef !==
@@ -3582,7 +3684,8 @@ export const runModelDecision = (
           checkpointReceipt.manifestJson !== checkpointManifest.manifestJson ||
           checkpointManifestJson.providerTurnId !==
             checkpointNativeProviderTurnId ||
-          checkpointManifestJson.executionId !== input.execution.executionId ||
+          checkpointManifestJson.executionId !==
+            expectedCheckpointOwnerExecutionId ||
           checkpointManifestJson.sessionId !== input.execution.sessionId ||
           checkpointManifestJson.contextEpoch !== nativeCheckpoint.fromEpoch ||
           checkpointManifestJson.operationKind !== "CompactionNative" ||
@@ -3619,7 +3722,7 @@ export const runModelDecision = (
         const checkpointSourceStep = checkpointSourceStepOption.value;
         if (
           checkpointSourceStep.identity.executionId !==
-            input.execution.executionId ||
+            expectedCheckpointOwnerExecutionId ||
           checkpointSourceStep.identity.logicalStepNo !==
             checkpointSourceIdentity.logicalStepNo ||
           checkpointSourceStep.identity.repairAttempt !==
@@ -3639,28 +3742,46 @@ export const runModelDecision = (
             failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
           );
         }
-        if (
+        const checkpointSourceStateValid =
           checkpointSourceStep.state === "Prepared" ||
           checkpointSourceStep.state === "ProviderResultAvailable" ||
           checkpointSourceStep.state === "OutputRejected" ||
           checkpointSourceStep.state === "OutputAccepted" ||
-          checkpointSourceStep.state === "ActionsInProgress"
-        ) {
-          turn = checkpointSourceIdentity.logicalStepNo;
-          repairAttempt = checkpointSourceIdentity.repairAttempt;
-        } else if (
+          checkpointSourceStep.state === "ActionsInProgress" ||
           checkpointSourceStep.state === "StepEffectsCommitted" ||
-          checkpointSourceStep.state === "NextStepReady"
-        ) {
+          checkpointSourceStep.state === "NextStepReady";
+        if (!checkpointSourceStateValid) {
+          return yield* Effect.fail(
+            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
+          );
+        }
+        // A checkpoint produced by an earlier Work execution is valid
+        // Session context, but its source step is not this execution's cursor.
+        // The current execution creates its own Prepared step below.
+        if (!nativeCheckpointIsInherited) {
           if (
-            !nativeCheckpoint.bindingMatches ||
-            checkpointSourceStep.successor === undefined
+            checkpointSourceStep.state === "Prepared" ||
+            checkpointSourceStep.state === "ProviderResultAvailable" ||
+            checkpointSourceStep.state === "OutputRejected" ||
+            checkpointSourceStep.state === "OutputAccepted" ||
+            checkpointSourceStep.state === "ActionsInProgress"
           ) {
             turn = checkpointSourceIdentity.logicalStepNo;
             repairAttempt = checkpointSourceIdentity.repairAttempt;
-          } else {
-            turn = checkpointSourceStep.successor.logicalStepNo;
-            repairAttempt = checkpointSourceStep.successor.repairAttempt;
+          } else if (
+            checkpointSourceStep.state === "StepEffectsCommitted" ||
+            checkpointSourceStep.state === "NextStepReady"
+          ) {
+            if (
+              !nativeCheckpoint.bindingMatches ||
+              checkpointSourceStep.successor === undefined
+            ) {
+              turn = checkpointSourceIdentity.logicalStepNo;
+              repairAttempt = checkpointSourceIdentity.repairAttempt;
+            } else {
+              turn = checkpointSourceStep.successor.logicalStepNo;
+              repairAttempt = checkpointSourceStep.successor.repairAttempt;
+            }
           }
         }
         if (options.qualificationProbe !== undefined) {
@@ -3801,13 +3922,13 @@ export const runModelDecision = (
           const sourceStepIdentity =
             sourceLink?.identity ??
             (sourceIdentity !== undefined &&
-            sourceIdentity.executionId === input.execution.executionId &&
+            sourceIdentity.executionId === expectedCheckpointOwnerExecutionId &&
             Number.isSafeInteger(sourceIdentity.logicalStepNo) &&
             Number(sourceIdentity.logicalStepNo) >= 0 &&
             Number.isSafeInteger(sourceIdentity.repairAttempt) &&
             Number(sourceIdentity.repairAttempt) >= 0
               ? {
-                  executionId: input.execution.executionId,
+                  executionId: expectedCheckpointOwnerExecutionId,
                   logicalStepNo: Number(sourceIdentity.logicalStepNo),
                   repairAttempt: Number(sourceIdentity.repairAttempt),
                 }
@@ -3817,7 +3938,7 @@ export const runModelDecision = (
             (sourceLink !== undefined &&
               (sourceLink.providerTurnId !== nativeProviderTurnId ||
                 sourceLink.identity.executionId !==
-                  input.execution.executionId ||
+                  expectedCheckpointOwnerExecutionId ||
                 sourceLink.role !== "OverflowCompaction" ||
                 sourceLink.overflowOrdinal !== 0 ||
                 sourceLink.contextEpoch !== nativeCheckpoint.fromEpoch ||
@@ -3829,7 +3950,9 @@ export const runModelDecision = (
             );
           }
           if (
-            sourceIdentity.executionId !== sourceStepIdentity.executionId ||
+            sourceIdentity.executionId !== expectedCheckpointOwnerExecutionId ||
+            sourceStepIdentity.executionId !==
+              expectedCheckpointOwnerExecutionId ||
             sourceIdentity.logicalStepNo !== sourceStepIdentity.logicalStepNo ||
             sourceIdentity.repairAttempt !== sourceStepIdentity.repairAttempt
           ) {
@@ -3858,7 +3981,8 @@ export const runModelDecision = (
           const sourceInferenceLink = inferenceLinks[0];
           const hasOverflowSource = sourceLink !== undefined;
           if (
-            sourceStep.identity.executionId !== input.execution.executionId ||
+            sourceStep.identity.executionId !==
+              expectedCheckpointOwnerExecutionId ||
             sourceStep.providerTurnId !== sourceIdentity.providerTurnId ||
             (hasOverflowSource
               ? sourceStep.providerTurnId !==
@@ -3894,7 +4018,7 @@ export const runModelDecision = (
                 sourceInferenceLink.providerTurnId ||
               sourceInferenceResult.failureKind !== "ContextLimitExceeded" ||
               sourceInferenceResult.turn.executionId !==
-                input.execution.executionId ||
+                expectedCheckpointOwnerExecutionId ||
               sourceInferenceResult.turn.sessionId !==
                 input.execution.sessionId ||
               sourceInferenceResult.turn.contextEpoch !==
@@ -3907,8 +4031,10 @@ export const runModelDecision = (
           }
           // The Native Manifest carries the exact source identity for ordinary
           // compaction; an overflow link, when present, must agree with it.
-          turn = sourceStepIdentity.logicalStepNo;
-          repairAttempt = sourceStepIdentity.repairAttempt;
+          if (!nativeCheckpointIsInherited) {
+            turn = sourceStepIdentity.logicalStepNo;
+            repairAttempt = sourceStepIdentity.repairAttempt;
+          }
           if (options.qualificationProbe !== undefined) {
             yield* Effect.promise(
               () =>
@@ -3970,7 +4096,8 @@ export const runModelDecision = (
             nativeReceipt.finishReason !== "Stop" ||
             nativeReceipt.evidenceVersion !== "provider-success-v1" ||
             nativeReceipt.turn.providerTurnId !== nativeProviderTurnId ||
-            nativeReceipt.turn.executionId !== input.execution.executionId ||
+            nativeReceipt.turn.executionId !==
+              expectedCheckpointOwnerExecutionId ||
             nativeReceipt.turn.sessionId !== input.execution.sessionId ||
             nativeReceipt.turn.contextEpoch !== nativeCheckpoint.fromEpoch ||
             nativeReceipt.manifestJson !== nativeManifest.manifestJson
@@ -4058,7 +4185,8 @@ export const runModelDecision = (
                 nativeManifestJson.providerTurnId ===
                 nativeCheckpoint.providerTurnId,
               execution:
-                nativeManifestJson.executionId === input.execution.executionId,
+                nativeManifestJson.executionId ===
+                expectedCheckpointOwnerExecutionId,
               session:
                 nativeManifestJson.sessionId === input.execution.sessionId,
               epoch:
@@ -4118,7 +4246,8 @@ export const runModelDecision = (
           if (
             nativeManifestJson.providerTurnId !==
               nativeCheckpoint.providerTurnId ||
-            nativeManifestJson.executionId !== input.execution.executionId ||
+            nativeManifestJson.executionId !==
+              expectedCheckpointOwnerExecutionId ||
             nativeManifestJson.sessionId !== input.execution.sessionId ||
             nativeManifestJson.contextEpoch !== nativeCheckpoint.fromEpoch ||
             nativeManifestJson.operationKind !== "CompactionNative" ||
@@ -4369,6 +4498,23 @@ export const runModelDecision = (
             return yield* Effect.fail(
               failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
             );
+          }
+          if (nativeCheckpointIsInherited) {
+            // The old execution was only the producer of the inherited
+            // checkpoint. Its step must never be transitioned with the new
+            // execution's fence or reused as the new execution's cursor.
+            // Summary has replaced the opaque continuation in the Session;
+            // restart the current execution at its own Prepared step.
+            turn = 0;
+            repairAttempt = 0;
+            compactionAttempts = 0;
+            overflowRecoveryAttempt = 0;
+            replayPersistedContextLimit = false;
+            overflowReplacementProviderTurnId = undefined;
+            resumeOverflowCompactionProviderTurnId = undefined;
+            resumeOverflowNativeCompaction = false;
+            resumeOverflowNativeCompactionInput = undefined;
+            continue;
           }
           if (sourceStep.state === "StepEffectsCommitted") {
             const terminalInboxEpisode = executionEpisode(input.execution);
@@ -5798,6 +5944,9 @@ export const runModelDecision = (
           : {}),
         manifestJson: JSON.stringify(preparation.turn.manifest),
         request: preparation.turn.request,
+        ...(options.cancellationSignal === undefined
+          ? {}
+          : { cancellationSignal: options.cancellationSignal }),
         ...(options.secretRef !== undefined
           ? { secretRef: options.secretRef }
           : {}),

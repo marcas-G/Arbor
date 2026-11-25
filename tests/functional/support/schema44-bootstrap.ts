@@ -21,6 +21,9 @@ import {
   P52_WORK_CONTRACT_REVISION_MIGRATION,
   P53_CANONICAL_OWNERSHIP_CARVEOUTS_MIGRATION,
   P54_NATIVE_PROCESS_MODE_NO_EFFECT_DENIAL_MIGRATION,
+  P55_SESSION_CAUSAL_PROVENANCE_MIGRATION,
+  P56_LINUX_WORKSPACE_NETWORK_V2_MIGRATION,
+  P57_WORKSPACE_SANDBOX_AUTHORIZATION_MIGRATION,
   preflightVerificationEvidenceSnapshot,
   runMigrations,
   splitStatements,
@@ -322,6 +325,36 @@ export const upgradeFunctionalSchema48DatabaseToCurrent = async (
       ),
     ),
   );
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.provide(
+        runMigrations([P55_SESSION_CAUSAL_PROVENANCE_MIGRATION], {
+          allowOfflineOnly: true,
+        }),
+        layer({ filename: databaseFile }),
+      ),
+    ),
+  );
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.provide(
+        runMigrations([P56_LINUX_WORKSPACE_NETWORK_V2_MIGRATION], {
+          allowOfflineOnly: true,
+        }),
+        layer({ filename: databaseFile }),
+      ),
+    ),
+  );
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.provide(
+        runMigrations([P57_WORKSPACE_SANDBOX_AUTHORIZATION_MIGRATION], {
+          allowOfflineOnly: true,
+        }),
+        layer({ filename: databaseFile }),
+      ),
+    ),
+  );
   const currentSchema = new DatabaseSync(databaseFile, { readOnly: true });
   try {
     const currentVersion = Number(
@@ -332,11 +365,11 @@ export const upgradeFunctionalSchema48DatabaseToCurrent = async (
       ).user_version,
     );
     if (
-      currentVersion !== 54 ||
+      currentVersion !== 57 ||
       currentSchema.prepare("PRAGMA foreign_key_check").all().length > 0
     ) {
       throw new Error(
-        `Functional disposable schema upgrade ended at ${currentVersion} or failed foreign_key_check; expected schema 54.`,
+        `Functional disposable schema upgrade ended at ${currentVersion} or failed foreign_key_check; expected schema 57.`,
       );
     }
   } finally {

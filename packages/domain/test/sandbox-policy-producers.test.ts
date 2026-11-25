@@ -6,22 +6,28 @@ import {
   decodeCanonicalSandboxAuthorityBundleV2,
   decodeCanonicalSandboxAuthorityHighWaterV2,
   decodeCanonicalSandboxEnforcementRuleSetV1,
+  decodeCanonicalSandboxEnforcementRuleSetV2,
   decodeCanonicalSandboxOperatorPolicyConfigV1,
   decodeCanonicalSandboxTargetRefV1,
   decodeNetworkBrokerControlsV1,
+  decodeNetworkBrokerControlsV2,
   decodeSandboxOperatorPolicyConfigV1,
   encodeResourceBoundaryDigestInputV1,
   encodeSandboxAuthorityAuditRecordV2,
   encodeSandboxAuthorityBundleV2,
   encodeSandboxAuthorityHighWaterV2,
   encodeSandboxEnforcementRuleSetV1,
+  encodeSandboxEnforcementRuleSetV2,
   encodeSandboxOperatorPolicyConfigV1,
+  encodeSandboxProviderQualificationRegistryV1,
   encodeSandboxTargetRefV1,
   networkBrokerControlsV1ForMode,
+  networkBrokerControlsV2ForMode,
   Principal,
   parse,
   resourceBoundaryDigestOfV1,
   sandboxEnforcementRuleSetV1ForProvider,
+  sandboxEnforcementRuleSetV2ForProvider,
   sandboxTargetRefOfRegionV1,
   targetRefDigestV1,
 } from "../src/index.js";
@@ -77,6 +83,45 @@ const operatorConfig: SandboxOperatorPolicyConfigV1 = {
 };
 
 describe("sandbox policy producer codecs", () => {
+  it("keeps Linux networking V2 closed and distinct from V1", () => {
+    const v1 = sandboxEnforcementRuleSetV1ForProvider("linux-bwrap");
+    const v2 = sandboxEnforcementRuleSetV2ForProvider("linux-bwrap");
+    expect(v1).toBeDefined();
+    expect(v2).toBeDefined();
+    if (v1 === undefined || v2 === undefined) return;
+    expect(encodeSandboxEnforcementRuleSetV2(v2)).toBe(
+      '{"version":2,"networkPolicyCodecVersion":1,"filesystemRuleVersion":1,"environmentRuleVersion":1,"processTreeRuleVersion":1,"resourceLimitRuleVersion":1,"brokerProtocolVersion":2,"addressClassificationSnapshotId":"iana-special-purpose-2025-10-09+sha256:86583d4bbc916863208c3fbb5a75ee3e6500dd12aa4f9bd3a72caaacb4a3da6a","addressFamily":"IPv4OnlyPublicConnect","redirectPolicy":"ReauthorizeEachConnect","tlsPolicy":"ClientVerifiedEndToEnd","localNetwork":"WorkspaceNamespaceTcp","platformPrimitiveSetId":"linux-bwrap-workspace-netns-cgroupv2-connect-v2"}',
+    );
+    expect(
+      decodeCanonicalSandboxEnforcementRuleSetV2(
+        encodeSandboxEnforcementRuleSetV2(v2),
+      ),
+    ).toEqual(v2);
+    expect(
+      decodeCanonicalSandboxEnforcementRuleSetV2(
+        encodeSandboxEnforcementRuleSetV1(v1),
+      ),
+    ).toBeUndefined();
+    expect(
+      decodeNetworkBrokerControlsV2(networkBrokerControlsV2ForMode("Enabled")),
+    ).toEqual(networkBrokerControlsV2ForMode("Enabled"));
+    expect(
+      decodeNetworkBrokerControlsV2({
+        ...networkBrokerControlsV2ForMode("Enabled"),
+        tlsPolicy: "ExactSniHostCertificate",
+      }),
+    ).toBeUndefined();
+    expect(networkBrokerControlsV2ForMode("Restricted").mode).toBe(
+      "Restricted",
+    );
+    expect(networkBrokerControlsV2ForMode("Disabled")).toEqual({
+      version: 2,
+      mode: "Disabled",
+      directNetwork: "Denied",
+      broker: "Disabled",
+      localNetwork: "WorkspaceNamespaceTcp",
+    });
+  });
   it("pins the full canonical Linux rule-set bytes and digest", () => {
     const ruleSet = sandboxEnforcementRuleSetV1ForProvider("linux-bwrap");
     expect(ruleSet).toBeDefined();
@@ -254,6 +299,44 @@ describe("sandbox policy producer codecs", () => {
       decodeCanonicalSandboxAuthorityBundleV2(bundleBytes, ["PATH"], hash)
         ?.bundle,
     ).toEqual(bundle);
+
+    const plusBuildRegistry = {
+      version: 1 as const,
+      revision: 2,
+      entries: [
+        {
+          providerId: "linux-bwrap",
+          providerVersion: "1.0.0",
+          capabilityRevision: 1,
+          osFamily: "Linux" as const,
+          osBuild: "6.12.115+deb13.1-amd64",
+          tuple: {
+            profile: "ReadOnly" as const,
+            networkMode: "Disabled" as const,
+            networkPolicyCodecVersion: 1 as const,
+            enforcementRuleSetDigest: "a".repeat(64),
+          },
+          status: "Experimental" as const,
+          qualificationEvidenceRef: null,
+        },
+      ],
+    };
+    const plusBuildRegistryBytes =
+      encodeSandboxProviderQualificationRegistryV1(plusBuildRegistry);
+    const plusBuildBundle: SandboxAuthorityBundleV2 = {
+      ...bundle,
+      bundleRevision: 4,
+      providerRegistryRevision: plusBuildRegistry.revision,
+      providerRegistryDigest: hash(plusBuildRegistryBytes),
+      providerRegistry: plusBuildRegistry,
+    };
+    expect(
+      decodeCanonicalSandboxAuthorityBundleV2(
+        encodeSandboxAuthorityBundleV2(plusBuildBundle),
+        ["PATH"],
+        hash,
+      )?.bundle.providerRegistry.entries[0]?.osBuild,
+    ).toBe("6.12.115+deb13.1-amd64");
 
     const highWater: SandboxAuthorityHighWaterV2 = {
       version: 2,

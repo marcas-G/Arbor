@@ -27,6 +27,12 @@ export interface TrustedHostConfigurationSourceService {
   readonly appendSandboxAuthorityAudit: (
     canonicalJson: string,
   ) => Effect.Effect<boolean, SandboxAuthorityLoadErrorV1>;
+  /** Read-only qualification evidence lookup. The caller supplies only an
+   * authority-issued blob SHA reference; implementations must not interpret
+   * arbitrary filesystem paths. Absence means V2 qualification is unavailable. */
+  readonly readLinuxSandboxQualificationEvidence?: (
+    ref: `blob:sha256:${string}`,
+  ) => Effect.Effect<string | undefined, SandboxAuthorityLoadErrorV1>;
 }
 
 export class TrustedHostConfigurationSource extends Context.Service<

@@ -1,4 +1,4 @@
-import type { CanonicalResourceRegion } from "@arbor/domain";
+import type { CanonicalResourceRegion, ResourceAddress } from "@arbor/domain";
 import { canonicalRegionString, compareUtf8BytesV1 } from "@arbor/domain";
 import type { WorktreeRecord } from "@arbor/ports";
 import {
@@ -15,6 +15,11 @@ import { Effect, Layer, Option } from "effect";
 
 const failure = (reason: SandboxPolicyCandidateBoundaryReadFailureReasonV1) =>
   ({ _tag: "SandboxPolicyCandidateBoundaryReadFailure", reason }) as const;
+
+type PrimaryResourceAddress = Extract<
+  ResourceAddress,
+  { readonly _tag: "FileTree" | "GitWorktree" }
+>;
 
 const sameGitWorktreeAddress = (
   left: import("@arbor/ports").GitWorktreeAddress,
@@ -108,17 +113,42 @@ export const SandboxPolicyCandidateBoundaryReadPortLive = Layer.effect(
           const activeWorktrees = workspaceWorktrees.filter(
             (record) => record.state === "Active",
           );
-          if (activeWorktrees.length !== 1)
+          if (activeWorktrees.length > 1)
             return yield* Effect.fail(
               failure("PrimaryWorktreeMissingOrAmbiguous"),
             );
-          const primaryWorktree = activeWorktrees[0] as WorktreeRecord;
-          if (
-            primaryWorktree.address?._tag !== "GitWorktree" ||
-            typeof primaryWorktree.address.path !== "string" ||
-            primaryWorktree.address.path.length === 0
-          )
-            return yield* Effect.fail(failure("PrimaryWorktreeForeignOrStale"));
+          const primaryWorktree = activeWorktrees[0] as
+            | WorktreeRecord
+            | undefined;
+          let primaryAddress: PrimaryResourceAddress;
+          if (primaryWorktree !== undefined) {
+            if (
+              primaryWorktree.address?._tag !== "GitWorktree" ||
+              typeof primaryWorktree.address.path !== "string" ||
+              primaryWorktree.address.path.length === 0
+            )
+              return yield* Effect.fail(
+                failure("PrimaryWorktreeForeignOrStale"),
+              );
+            primaryAddress = primaryWorktree.address;
+          } else {
+            // A host-directory project intentionally has no P11 Worktree row.
+            // Its single admitted FileTree is the primary workspace mount.
+            const fileTreeAddresses =
+              workspace.resourceBoundary.addresses.filter(
+                (
+                  address,
+                ): address is Extract<ResourceAddress, { _tag: "FileTree" }> =>
+                  address._tag === "FileTree" &&
+                  typeof address.path === "string" &&
+                  address.path.length > 0,
+              );
+            if (fileTreeAddresses.length !== 1)
+              return yield* Effect.fail(
+                failure("PrimaryWorktreeMissingOrAmbiguous"),
+              );
+            primaryAddress = fileTreeAddresses[0] as PrimaryResourceAddress;
+          }
 
           const observation = yield* resolver
             .observe(workspace.projectId, workspace.resourceBoundary.addresses)
@@ -136,29 +166,37 @@ export const SandboxPolicyCandidateBoundaryReadPortLive = Layer.effect(
             );
 
           const primaryBoundaryAddresses =
-            workspace.resourceBoundary.addresses.filter(
-              (address) =>
-                address._tag === "GitWorktree" &&
-                sameGitWorktreeAddress(address, primaryWorktree.address),
+            workspace.resourceBoundary.addresses.filter((address) =>
+              primaryAddress._tag === "GitWorktree" &&
+              address._tag === "GitWorktree"
+                ? sameGitWorktreeAddress(address, primaryAddress)
+                : primaryAddress._tag === "FileTree" &&
+                  address._tag === "FileTree" &&
+                  address.path === primaryAddress.path,
             );
           if (primaryBoundaryAddresses.length !== 1)
             return yield* Effect.fail(failure("PrimaryWorktreeNotInBoundary"));
-          // The exact active GitWorktree type comes only from P11's durable
-          // WorktreeStore binding. A full-boundary observation may collapse a
-          // same-path FileTree alias as its representative, so do not infer
-          // the primary binding's type from that representative.
-          const primaryManagedGitWorktreeRegion: CanonicalResourceRegion = {
-            resourceSpaceId: "filesystem",
-            normalizedRegion: {
-              kind: "GitWorktree",
-              path: primaryWorktree.address.path,
-            },
-          };
+          const primaryResourceRegion: CanonicalResourceRegion =
+            primaryAddress._tag === "GitWorktree"
+              ? {
+                  resourceSpaceId: "filesystem",
+                  normalizedRegion: {
+                    kind: "GitWorktree",
+                    path: primaryAddress.path,
+                  },
+                }
+              : {
+                  resourceSpaceId: "filesystem",
+                  normalizedRegion: {
+                    kind: "FileTree",
+                    path: primaryAddress.path,
+                  },
+                };
           if (
             !observation.entries.some(
               (entry) =>
                 canonicalRegionString(entry.resolved) ===
-                canonicalRegionString(primaryManagedGitWorktreeRegion),
+                canonicalRegionString(primaryResourceRegion),
             )
           )
             return yield* Effect.fail(
@@ -170,7 +208,7 @@ export const SandboxPolicyCandidateBoundaryReadPortLive = Layer.effect(
             ownershipClaims,
             worktrees: workspaceWorktrees,
             resolvedRegions: observation.entries.map((entry) => entry.resolved),
-            primaryManagedGitWorktreeRegion,
+            primaryResourceRegion,
           };
         }),
     };

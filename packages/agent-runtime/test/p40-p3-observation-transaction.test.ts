@@ -7,8 +7,10 @@ import { fixtureExecutionProviderTurnId } from "./fixtures/provider-turn.js";
 // P3 consumer source test only: the handler stubs the already-decoded P40
 // result. It does not claim or exercise P39 binding authentication.
 const executionId = "exe_00000000-0000-7000-8000-000000000005";
+const projectId = "prj_00000000-0000-7000-8000-000000000005";
 const sessionId = "ses_p40_p3_atomic";
 const workspaceId = "ws_p40_p3_atomic";
+const workId = "wrk_00000000-0000-7000-8000-000000000005";
 const providerTurnId = fixtureExecutionProviderTurnId(executionId);
 const logicalActionId = "lac_p40_p3_atomic";
 const callRef = "call_p40_p3_atomic";
@@ -135,8 +137,21 @@ const makeInput = (
     input: {
       execution: {
         executionId,
+        projectId,
         sessionId,
         workspaceId,
+        binding: {
+          _tag: "WorkspaceExecution",
+          workspaceId,
+          episode: {
+            _tag: "WorkEpisode",
+            workId,
+            targetWorkRevision: 0,
+          },
+        },
+        admittedAt: "2026-10-12T00:00:00.000Z",
+        stopRequestedAt: null,
+        state: { status: "Active", settlement: null },
       } as never,
       context: {} as never,
     },
