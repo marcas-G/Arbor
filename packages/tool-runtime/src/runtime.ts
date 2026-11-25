@@ -1,6 +1,3 @@
-import type {
-  Workspace,
-} from "@arbor/domain";
 import {
   ArtifactService,
   type CanonicalToolObservation,
@@ -41,14 +38,12 @@ import {
   recoveryBindingIdentityMatches,
   recoveryBindingToolDefinitionHashV1,
 } from "./recovery-binding.js";
-import { validateToolInput } from "./validation.js";
 
 import type { PendingReconciliation, ToolExecutionResult, ToolExecutor, ToolRuntimeQualificationProbe } from "./runtime/types.js";
 import {
   bounded,
   denied,
   executableApprovalTerminalDenial,
-  hasCompleteExecutionFence,
   isP39ResourceResolutionStale,
   operationalFailure,
   reconciliationRetryDenialReasonCode,
@@ -65,6 +60,7 @@ import { reconcileAdmittedInvocation } from "./runtime/reconcile-admitted-invoca
 import { claimNewInvocation } from "./runtime/claim-new-invocation.js";
 import { finishPriorInvocation } from "./runtime/finish-prior-invocation.js";
 import { admitNewEffect } from "./runtime/effect-admission.js";
+import { prepareInvocation } from "./runtime/invocation-setup.js";
 
 export {
   recoveryBindingIdentityMatches,
@@ -242,122 +238,14 @@ export const ToolRuntimeLive = (
                         : { factId: input.factId }),
                     }) ?? Promise.resolve(),
                 );
-          const completeFence = hasCompleteExecutionFence(
-            context.executionFence,
+          const setup = yield* prepareInvocation(
+            intent, context, executors, definitions, reconciliationProfiles,
+            p39Recovery, environmentRevisions, workspaces, tx, store,
+            processModeBlocksSpawn, testOnlyAllowTrustedLocalProcessExecution,
+            processUnavailableReason, isIndependentVerificationExecution,
           );
-          if (
-            !completeFence ||
-            context.executionFence.executionId !== context.executionId
-          ) {
-            return yield* Effect.fail<ToolRuntimeError>(
-              operationalFailure(
-                "IntentJournal",
-                String(intent.invocationId),
-              )({
-                _tag: completeFence
-                  ? "ExecutionFenceExecutionMismatch"
-                  : "ExecutionFenceUnavailable",
-              }),
-            );
-          }
-          const definitionOption = yield* definitions.definition(
-            intent.toolName,
-            intent.toolVersion,
-          );
-          if (Option.isNone(definitionOption)) {
-            return denied("InvocationAuthorityDenied");
-          }
-          const definition = definitionOption.value;
-          const trustedProfile =
-            definition.sideEffectSemantics === "Reconcilable" &&
-            Option.isSome(reconciliationProfiles)
-              ? reconciliationProfiles.value.resolve({
-                  toolName: definition.name,
-                  toolVersion: definition.version,
-                  toolDefinitionHash: definition.hash,
-                })
-              : undefined;
-          let trustedEffectKey: string | null = null;
-          if (trustedProfile !== undefined) {
-            try {
-              trustedEffectKey = trustedProfile.effectKey({
-                invocationId: intent.invocationId,
-                argumentsJson: intent.argumentsJson,
-              });
-            } catch {
-              trustedEffectKey = null;
-            }
-            if (
-              typeof trustedEffectKey !== "string" ||
-              trustedEffectKey.trim().length === 0
-            ) {
-              return yield* Effect.fail<ToolRuntimeError>(
-                operationalFailure(
-                  "RecoveryBinding",
-                  String(intent.invocationId),
-                )({ _tag: "ReconciliationEffectIdentityUnavailable" }),
-              );
-            }
-          }
-          const executor = executors.find(
-            (entry) => entry.name === intent.toolName,
-          );
-          if (executor === undefined) {
-            return denied("InvocationAuthorityDenied");
-          }
-          if (
-            executor.processCapability === "SandboxProcess" &&
-            processModeBlocksSpawn &&
-            !testOnlyAllowTrustedLocalProcessExecution &&
-            !isIndependentVerificationExecution(context)
-          ) {
-            const durableInvocation = yield* tx
-              .transact(store.findById(intent.invocationId))
-              .pipe(
-                Effect.mapError(
-                  operationalFailure(
-                    "IntentJournal",
-                    String(intent.invocationId),
-                  ),
-                ),
-              );
-            if (Option.isNone(durableInvocation)) {
-              return denied(processUnavailableReason);
-            }
-          }
-          const p39BindingEnabled = Option.isSome(p39Recovery);
-          if (
-            p39BindingEnabled &&
-            (!recoveryBindingIdentityMatches({
-              identity: context.recoveryBindingIdentity,
-              executionId: context.executionId,
-              invocationId: intent.invocationId,
-              callRef: intent.callRef,
-              ...(context.executableApproval === undefined
-                ? {}
-                : { approvalBinding: context.executableApproval.binding }),
-            }) ||
-              context.recoveryBindingPolicyRevisions === undefined ||
-              !Number.isSafeInteger(
-                context.recoveryBindingPolicyRevisions.workspacePolicyRevision,
-              ) ||
-              context.recoveryBindingPolicyRevisions.workspacePolicyRevision <
-                0 ||
-              !Number.isSafeInteger(
-                context.recoveryBindingPolicyRevisions.projectPolicyRevision,
-              ) ||
-              context.recoveryBindingPolicyRevisions.projectPolicyRevision <
-                0 ||
-              Option.isNone(environmentRevisions) ||
-              Option.isNone(workspaces))
-          ) {
-            return yield* Effect.fail<ToolRuntimeError>(
-              operationalFailure(
-                "RecoveryBinding",
-                String(intent.invocationId),
-              )({ _tag: "RecoveryBindingSourceUnavailable" }),
-            );
-          }
+          if (setup._tag === "Terminal") return setup.observation;
+          const { definition, trustedProfile, trustedEffectKey, executor, p39BindingEnabled } = setup;
           const refreshAfterStale = (
             cause: unknown,
           ): Effect.Effect<CanonicalToolObservation, ToolRuntimeError> =>
@@ -369,64 +257,6 @@ export const ToolRuntimeLive = (
                     String(intent.invocationId),
                   )(cause),
                 );
-
-          const validation = validateToolInput(
-            definition.inputSchemaJson,
-            intent.argumentsJson,
-          );
-          if (validation._tag === "Invalid") {
-            return {
-              _tag: "ExpectedFailure" as const,
-              observation: bounded(validation.reason),
-            };
-          }
-
-          if (p39BindingEnabled && Option.isSome(p39Recovery)) {
-            const priorDenial = yield* tx
-              .transact(store.findById(intent.invocationId))
-              .pipe(
-                Effect.mapError(
-                  operationalFailure(
-                    "IntentJournal",
-                    String(intent.invocationId),
-                  ),
-                ),
-              );
-            if (
-              Option.isSome(priorDenial) &&
-              priorDenial.value.settlement?._tag === "Denied" &&
-              priorDenial.value.settledAt !== null &&
-              priorDenial.value.effectAdmissionState === "NotAdmitted" &&
-              priorDenial.value.resultRef === null &&
-              priorDenial.value.executionId === context.executionId &&
-              priorDenial.value.workspaceId === context.workspaceId &&
-              priorDenial.value.toolName === intent.toolName &&
-              priorDenial.value.toolVersion === intent.toolVersion &&
-              priorDenial.value.sideEffectSemantics ===
-                definition.sideEffectSemantics &&
-              priorDenial.value.argumentsJson === intent.argumentsJson &&
-              priorDenial.value.approvalId ===
-                (context.executableApproval?.approvalId ?? intent.approvalId)
-            ) {
-              const unboundDenial = yield* tx
-                .transact(
-                  p39Recovery.value.findTerminalUnboundDenial(
-                    intent.invocationId,
-                  ),
-                )
-                .pipe(
-                  Effect.mapError(
-                    operationalFailure(
-                      "RecoveryBinding",
-                      String(intent.invocationId),
-                    ),
-                  ),
-                );
-              if (Option.isSome(unboundDenial)) {
-                return denied(priorDenial.value.settlement.reasonCode);
-              }
-            }
-          }
 
           const now = options.now ?? (yield* clock.now());
           const { persistNoEffectInterruption, recordNoEffectDenial } = makeNoEffectSettlement(
@@ -454,8 +284,7 @@ export const ToolRuntimeLive = (
             return resourceResolution.observation;
           }
           const {
-            address, capturedWorkspace, resolved, regions, boundaryRegions,
-            validateCapturedSnapshot, validateCapturedSnapshotAndAdmit,
+            address, capturedWorkspace, resolved, regions,
             checkCapturedSnapshotAndAdmit, region,
           } = resourceResolution;
 
