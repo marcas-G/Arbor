@@ -29,9 +29,13 @@ describe("CAPA control permission and approval architecture", () => {
       "packages/execution-runtime/src/execution-runtime.ts",
     );
     const daemon = source("apps/single-workspace/src/production.ts");
-    expect(
-      actions.indexOf('authorization._tag === "ApprovalRequired"'),
-    ).toBeLessThan(actions.indexOf("controlRegistry.handle"));
+    const approvalGate = actions.indexOf(
+      'authorization._tag === "ApprovalRequired"',
+    );
+    const handlerCall = actions.indexOf("controlRegistry.handle");
+    expect(approvalGate).toBeGreaterThanOrEqual(0);
+    expect(handlerCall).toBeGreaterThanOrEqual(0);
+    expect(approvalGate).toBeLessThan(handlerCall);
     expect(runtime).toContain('outcome._tag === "ApprovalRequired"');
     expect(runtime).toContain("leases.release");
     expect(daemon).toContain("controlApprovals.listResolved()");

@@ -10,14 +10,11 @@ import {
   type OwnershipWriteResult,
   type OwnershipWriteServiceService,
   type PendingDomainEvent,
-  ProjectEnvironmentPort,
   type ResourceOwnershipClaimRecord,
-  ResourceOwnershipRepository,
   type ResourceOwnershipRepositoryError,
   type ResourceResolutionStale,
   resourceRegionComparator,
   type TransactionOperationalFailure,
-  WorkspaceResourceActivationStore,
 } from "@arbor/ports";
 import {
   Effect,

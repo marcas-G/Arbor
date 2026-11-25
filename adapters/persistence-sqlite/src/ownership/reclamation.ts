@@ -14,7 +14,6 @@ import {
   type OwnershipWriteServiceService,
   type PendingDomainEvent,
   type ResourceOwnershipClaimRecord,
-  ResourceOwnershipRepository,
   type ResourceOwnershipRepositoryError,
   type ResourceResolutionStale,
   resourceRegionComparator,
