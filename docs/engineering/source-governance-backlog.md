@@ -192,3 +192,42 @@ standalone `pnpm check:source-lines` and is required on the exact release
 promotion SHA (CONTRIBUTING.md records this). CI runs it as an
 `continue-on-error` advisory step after core tests so the remaining
 violations stay visible without blocking the pipeline.
+
+## Review-fix batch and structure rules — 2026-11-25 (second batch)
+
+Three local commits on top of `bd71bf27` (not yet pushed, batched):
+
+1. `2cd4b7cf` — six verified findings from the parallel audit agents:
+   the `read` tool now enforces the grep-walker 2 MiB single-file
+   ceiling before allocating (previously an approval-free ReadOnly read
+   could buffer an unbounded workspace file into daemon memory);
+   setpriv argv carries an explicit end-of-options `--`; Basic-auth
+   comparison is constant-time; SubmitHumanMessage root resolution fails
+   closed through ProjectRepositoryError instead of a cast-to-never
+   forged WorkspaceId; sandbox-policy resolution failures surface on
+   stderr instead of silently becoming "no policy"; the SettleExecution
+   rejection binding drops its double cast.
+2. `89e2c2ec` — Rule 3 lands: owned step-state predicates in
+   `packages/ports/src/agent-loop-step.ts`, the native-checkpoint-source
+   seam migrated as demonstration, and `tests/architecture/
+   step-state-predicates.test.ts` freezes the hand-written chain
+   inventory at 13 with monotonic shrink required. The HTTP readBody
+   default gains a 10 MiB ceiling.
+3. planning fragment directories consolidated (13 → 9): reviews/,
+   history/, proposals/ absorb behavioral-eval, programming-paradigm,
+   dogfood, handoffs and the single governance manifest; mapping
+   recorded in `planning/history/README.md`.
+
+Verification for the batch: `pnpm typecheck`, `pnpm lint`, `pnpm
+architecture` 41 files / 270 tests (new guard included), tool-runtime
+191, sandbox-native-posix 42 + 6 Windows skips, and the four affected
+single-workspace files in isolation. The full single-workspace suite
+shows parallel-resource flakes for the same four files both with and
+without these changes (verified via stash) — pre-existing contention
+(audit item R05), not regressions.
+
+Deferred on purpose: vitest config relocation to `tests/configs/`
+(config-relative path semantics need per-file verification while CI is
+mid-run on the current layouts); ~1.5k lines of unwired application
+modules (owner decision); FNV-1a approval digest → sha256 (touches the
+approval UI binding chain).
