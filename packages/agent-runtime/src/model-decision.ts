@@ -80,6 +80,7 @@ import {
 } from "./prompt-assets.js";
 import type { ModelDecisionDependencies } from "./decision/contract.js";
 import { recoverStartupDecision } from "./decision/startup-recovery.js";
+import { proposePreparedStepSettlement } from "./decision/settlement.js";
 import { decideRepair } from "./repair.js";
 import { makeAgentStepContext } from "./step-context.js";
 import {
@@ -1397,73 +1398,11 @@ export const runModelDecision = (
         settlement: ExecutionSettlement,
       ): Effect.Effect<ModelDecisionOutcome, ExecutionDriverError> =>
         Effect.gen(function* () {
-          if (
-            loopStep !== undefined &&
-            loopSteps !== undefined &&
-            loopStepFence !== undefined &&
-            loopStep.state === "Prepared"
-          ) {
-            const preparedStep = loopStep;
-            if (
-              settlement._tag === "Failed" &&
-              options.qualificationProbe !== undefined
-            ) {
-              yield* Effect.promise(
-                () =>
-                  options.qualificationProbe?.({
-                    boundary: "AH4BeforeSettlementProposal",
-                    providerTurnId,
-                  }) ?? Promise.resolve(),
-              );
-            }
-            loopStep = yield* tx
-              .transact(
-                Effect.gen(function* () {
-                  if (
-                    settlement._tag === "Failed" &&
-                    settlement.failure.reason.startsWith("ProviderFailure:") &&
-                    providerTurns !== undefined
-                  ) {
-                    const dangling =
-                      yield* providerTurns.findUnsettledByTurn(providerTurnId);
-                    if (dangling !== null) {
-                      yield* providerTurns.failTurn(
-                        providerTurnId,
-                        yield* now(),
-                      );
-                    }
-                  }
-                  return yield* loopSteps.transition(
-                    {
-                      identity: preparedStep.identity,
-                      expectedRevision: preparedStep.revision,
-                      expectedState: "Prepared",
-                      next: {
-                        ...preparedStep,
-                        state: "SettlementProposed",
-                        settlement,
-                        revision: preparedStep.revision + 1,
-                        updatedAt: yield* now(),
-                      },
-                    },
-                    loopStepFence,
-                  );
-                }),
-              )
-              .pipe(Effect.mapError(failure));
-            if (
-              settlement._tag === "Failed" &&
-              options.qualificationProbe !== undefined
-            ) {
-              yield* Effect.promise(
-                () =>
-                  options.qualificationProbe?.({
-                    boundary: "AH4AfterSettlementProposal",
-                    providerTurnId,
-                  }) ?? Promise.resolve(),
-              );
-            }
-          }
+          loopStep = yield* proposePreparedStepSettlement(dependencies, {
+            loopStep,
+            providerTurnId,
+            settlement,
+          });
           return { _tag: "Settle", settlement };
         });
       const conversationContext = yield* loadConversationDecisionContext(
