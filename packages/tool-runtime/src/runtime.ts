@@ -194,7 +194,18 @@ export const ToolRuntimeLive = (
                 return Effect.succeed(undefined);
               }
               return resolver({ now }).pipe(
-                Effect.catch(() => Effect.succeed(undefined)),
+                // The port declares no failure channel, but adapter
+                // implementations can fail. A silent undefined here would
+                // be indistinguishable from "no policy configured"; the
+                // parked action must expose the cause for repair.
+                Effect.catch((cause) =>
+                  Effect.sync(() => {
+                    process.stderr.write(
+                      `sandbox process policy resolution failed: ${JSON.stringify(cause)}\n`,
+                    );
+                    return undefined;
+                  }),
+                ),
                 Effect.tap((resolved) =>
                   Effect.sync(() => {
                     sandboxPolicyResolution = resolved;

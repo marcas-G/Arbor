@@ -72,6 +72,7 @@ import {
   PermissionGrantRepository,
   type PermissionGrantRepositoryService,
   ProjectRepository,
+  type ProjectRepositoryError,
   ProjectResourceProfilePort,
   ProviderTurnStore,
   ResourceOwnershipRepository,
@@ -550,15 +551,24 @@ export const makeSingleWorkspaceCommandHandlerRegistryLive = (
           >,
           inbox: inbox as Pick<InboxProjectionStoreService, "admitUpsert">,
           rootWorkspaceOf: (projectId: ProjectId) =>
-            projects
-              .findById(projectId)
-              .pipe(
-                Effect.map((found) =>
-                  Option.isSome(found)
-                    ? found.value.rootWorkspaceId
-                    : (projectId as unknown as never),
-                ),
+            projects.findById(projectId).pipe(
+              Effect.flatMap((found) =>
+                Option.isSome(found)
+                  ? Effect.succeed(found.value.rootWorkspaceId)
+                  : // A SubmitHumanMessage envelope references a project
+                    // that no longer resolves: fail closed through the
+                    // typed repository error channel instead of forging
+                    // the projectId into a WorkspaceId (the forged value
+                    // could match a crafted payload target and bypass the
+                    // root-binding check in the handler).
+                    Effect.fail<ProjectRepositoryError>({
+                      _tag: "PersistenceCorruption",
+                      repository: "ProjectRepository",
+                      operation: "findById",
+                      reason: "project missing while resolving root workspace",
+                    }),
               ),
+            ),
         }) as unknown as CommandHandler<unknown, unknown>,
         makeResumeConversationResponseHandler({
           jobs: responseJobs,

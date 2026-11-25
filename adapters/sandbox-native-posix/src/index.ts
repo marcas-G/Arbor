@@ -697,6 +697,12 @@ export const buildBwrapPlan = (input: PlanInput): PolicyPlan => {
     "--no-new-privs",
     "--seccomp-filter",
     "/tmp/arbor-command-filter.bpf",
+    // End-of-options: everything after is positional. Without this the
+    // boundary relies on the running util-linux build being compiled for
+    // POSIXLY_CORRECT-style parsing, which is a build choice, not a
+    // contract; a model-controlled executable named like an option must
+    // never be re-parsed as one.
+    "--",
     validated.executable,
     ...input.args,
   );

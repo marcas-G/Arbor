@@ -127,7 +127,11 @@ const daemonEnv = {
   ARBOR_HTTP_PORT: port,
   ARBOR_DB: db,
 };
-const daemon = start(process.execPath, ["apps/single-workspace/dist/main.js"], daemonEnv);
+const daemon = start(
+  process.execPath,
+  ["apps/single-workspace/dist/main.js"],
+  daemonEnv,
+);
 daemon.once("exit", (code) => {
   if (code !== 0 && code !== null) {
     process.stderr.write(`daemon exited with code ${code}\n`);
@@ -140,10 +144,7 @@ daemon.once("exit", (code) => {
 start(
   process.execPath,
   [
-    resolve(
-      root,
-      "apps/web/node_modules/vite/bin/vite.js",
-    ),
+    resolve(root, "apps/web/node_modules/vite/bin/vite.js"),
     "--host",
     "127.0.0.1",
   ],

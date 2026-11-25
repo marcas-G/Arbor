@@ -764,9 +764,8 @@ export const runExecution = (
       );
     }
     if (receipt.resolution._tag === "TerminalRejected") {
-      return yield* Effect.fail(
-        receipt.resolution.error as unknown as CommandRejection,
-      );
+      const rejection: CommandRejection = receipt.resolution.error;
+      return yield* Effect.fail(rejection);
     }
     // P9 `03` §1 soft release: worker-initiated CAS deleting the live lease
     // row's liveness. Release never settles the Execution and never changes
