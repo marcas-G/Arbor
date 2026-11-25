@@ -1,0 +1,39 @@
+# Engineering practices
+
+Scope: repository implementation, review and maintenance. Product semantics remain owned by the frozen design chain. This guide complements, not replaces, AGENTS.md, ARCHITECTURE.md and ENGINEERING_HEALTH.md.
+
+## Module boundaries and code
+
+Use the existing pnpm workspace: packages for domain/ports/application/runtimes/contracts, adapters for replaceable implementations, apps for composition and transport. Do not create a package merely to lower file count. Every materially changed module must have a stated responsibility, owned state and write authority, public API, allowed dependencies, failure/recovery semantics and test boundary. Put that information in the existing architecture map or a nearby module README only if needed; link rather than copy the DID.
+
+Keep pure domain decisions pure; use closed ADTs, branded identifiers and exhaustive matching where appropriate. Preserve narrow Effect A/E/R types and explicit ports/Layers. Decode unknown external data at boundaries. Avoid unsafe casts, hidden mutable globals, service locators, catch-all business failures and nested runtime execution. Use scoped acquisition/release, bounded concurrency, cancellation and retry only when semantics permit. Command identity, idempotency, transaction ownership, fencing, authority and durable evidence are not incidental plumbing. Prompt changes are behavior changes, not ordinary prose edits.
+
+Imports use declared package public APIs; prohibit cross-package relative/deep imports. Maintain the DID package DAG and existing architecture tests. Use the installed Effect version (4.0.0-rc.115 at the audited base); do not mix v3 examples or change dependencies opportunistically. Biome and TypeScript strict configuration are the formatting/type baseline. Keep code understandable; extract coherent responsibilities, not arbitrary line-count chunks. A refactor must preserve public contracts, transaction boundaries, order of side effects, interruption and replay semantics.
+
+## Tests and health
+
+Use the existing proof-level/test manifest strategy. Distinguish pure, port, application, process and public tests. Unit tests do not qualify real providers or native isolation. New tests should express a behavioral invariant rather than mirror implementation details. Include negative, recovery and interruption cases where risk warrants. Preserve historical migration tests and proof fixtures until their consumers and compatibility obligations are understood.
+
+Use existing health metrics as evidence: complexity, duplication, coverage, churn, cycles and change coupling guide hotspot selection, not automatic rewriting. Report both per-function complexity and file-level aggregation when extending the tool. Never lower thresholds, remove tests or relocate code merely to pass a metric. Baseline existing findings and prevent new violations; tighten incrementally. Missing evidence is unknown, not green.
+
+## CI and release
+
+The existing CI workflow uses a self-hosted Linux runner for PRs and requires local filesystem capabilities. Because this is a public repository, untrusted fork code must never run on a persistent host containing credentials or user data. Use hosted runners for untrusted checks, or a reviewed, disposable isolated runner with no persistent credentials/data and strict runner access controls. Require owner review of workflow changes and pin third-party actions to reviewed immutable commits when practical. Do not enable a required check until its execution and failure modes are validated. Do not treat a skipped job as passing qualification. See GitHub's secure-use guidance below.
+
+Maintain the existing check:release contract until an explicitly reviewed replacement exists. A future risk-based CI split may run fast checks on PRs and full qualification on trusted candidate revisions, but cannot waive tests required for safety, recovery, schema changes or release claims.
+
+## Documentation
+
+Current facts live in the existing status documents, design in the existing frozen chain, decisions in decisions records, evidence in verification/planning results. Avoid repeating version numbers or test counts in AGENTS.md. Link to a canonical owner. Use tutorials, how-to, reference and explanation categories for user documentation when needed, without imposing a mass directory rename.
+
+## External precedents
+
+- VS Code source organization: https://github.com/microsoft/vscode/wiki/Source-Code-Organization
+- VS Code coding guidelines: https://github.com/microsoft/vscode/wiki/Coding-Guidelines
+- Google code review standard: https://google.github.io/eng-practices/review/reviewer/standard.html
+- Kubernetes contribution/design process: https://github.com/kubernetes/community/blob/main/sig-multicluster/CONTRIBUTING.md
+- GitHub Actions security: https://docs.github.com/en/actions/reference/security/secure-use
+- Rust RFCs: https://github.com/rust-lang/rfcs
+- Diataxis: https://diataxis.fr/
+
+These sources inform Arbor's practices; none overrides its product contracts.

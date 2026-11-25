@@ -1,5 +1,10 @@
 # Arbor — Agent Guide
 
+Repository-level governance and change workflow (pending owner adoption): see
+[GOVERNANCE.md](GOVERNANCE.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
+Engineering practices and the initial audit are in `docs/engineering/`.
+These additions do not supersede the frozen design or the hard rules below.
+
 Arbor is a Linux-first, single-user coding agent organized around long-lived
 Workspaces and Work items. Read `docs/design/00-problem-goals.md` before
 changing product behavior; the remaining frozen design documents explain the
