@@ -199,7 +199,11 @@ describe("Agent Runtime internal directory ownership", () => {
     return (
       compatibility.has(target) ||
       driverModules.has(target) ||
-      (from.startsWith("checkpoint/") && target.startsWith("decision/"))
+      (from.startsWith("checkpoint/") && target.startsWith("decision/")) ||
+      ((from.startsWith("checkpoint/") || from.startsWith("decision/")) &&
+        target.startsWith("agent-loop-actions/")) ||
+      (from.startsWith("agent-loop-actions/") &&
+        (target.startsWith("checkpoint/") || target.startsWith("decision/")))
     );
   };
 
@@ -209,8 +213,13 @@ describe("Agent Runtime internal directory ownership", () => {
     expect(forbiddenEdge("decision/conversation-context.ts", "../checkpoint/conversation/evidence.js")).toBe(false);
     expect(forbiddenEdge("decision/startup-recovery.ts", "../native-checkpoint-evidence.js")).toBe(true);
 
+    expect(forbiddenEdge("agent-loop-actions/ledger.ts", "../agent-loop-actions.js")).toBe(true);
+    expect(forbiddenEdge("agent-loop-actions/ledger.ts", "./types.js")).toBe(false);
+    expect(forbiddenEdge("agent-loop-actions/executable.ts", "../decision/contract.js")).toBe(true);
+    expect(forbiddenEdge("decision/startup-recovery.ts", "../agent-loop-actions/ledger.js")).toBe(true);
+
     const violations: string[] = [];
-    for (const directory of ["decision", "checkpoint"]) {
+    for (const directory of ["decision", "checkpoint", "agent-loop-actions"]) {
       const entries = readdirSync(join(repoRoot, src, directory), {
         recursive: true,
       });

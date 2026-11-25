@@ -1,13 +1,24 @@
 import type { ExecutionSettlement } from "@arbor/domain";
 import type { ToolInvocation } from "@arbor/model-context";
-import type { AgentLoopStepRecord, AgentLoopStepActionRecord, BoundedObservation, ExecutionDriverError } from "@arbor/ports";
+import type {
+  AgentLoopStepRecord,
+  AgentLoopStepActionRecord,
+  BoundedObservation,
+  ExecutionDriverError,
+} from "@arbor/ports";
 import { Effect } from "effect";
 import { safetyStop, stopRequestedSettlement } from "../agent-loop-policy.js";
 import { isDurableSuccessfulActionProgress } from "../p12-safety-identity.js";
-import { recoveryBindingIdentityFor, recoveryBindingPolicyRevisionsFor } from "../recovery-binding-source.js";
+import {
+  recoveryBindingIdentityFor,
+  recoveryBindingPolicyRevisionsFor,
+} from "../recovery-binding-source.js";
 import { actionRejectionObservation, isLeaseFencingRejected } from "./action-errors.js";
 import type { makeActionLedger } from "./ledger.js";
-import type { AgentLoopActionDependencies, AgentLoopActionOutcome } from "./types.js";
+import type {
+  AgentLoopActionDependencies,
+  AgentLoopActionOutcome,
+} from "./types.js";
 
 type ExecutableActionResult =
   | Exclude<AgentLoopActionOutcome, { readonly _tag: "Completed" }>
@@ -20,12 +31,21 @@ export const executeExecutableAction = (
   actionIndex: number,
   currentLoopStep: AgentLoopStepRecord | undefined,
   loopAction: AgentLoopStepActionRecord | undefined,
-  observations: Array<{ readonly source: "Runtime" | "Tool"; readonly observation: BoundedObservation }>,
+  observations: Array<{
+    readonly source: "Runtime" | "Tool";
+    readonly observation: BoundedObservation;
+  }>,
   durableProgress: boolean,
   ledger: ReturnType<typeof makeActionLedger>,
 ): Effect.Effect<ExecutableActionResult, ExecutionDriverError> => {
-  const { input, preparedTurn, loopStepFence, executableInvocationHandler, failure } = dependencies;
-  const { persistActionRejection, persistActionObservation, persistActionSettlement, persistTerminalAction } = ledger;
+  const { input, preparedTurn, loopStepFence, executableInvocationHandler, failure } =
+    dependencies;
+  const {
+    persistActionRejection,
+    persistActionObservation,
+    persistActionSettlement,
+    persistTerminalAction,
+  } = ledger;
 
   return Effect.gen(function* () {
     if (executableInvocationHandler === undefined) {

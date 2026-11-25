@@ -1,13 +1,7 @@
-import type {
-  Execution,
-} from "@arbor/domain";
 import {
   providerTurnInferenceId,
   workEpisode,
 } from "@arbor/domain";
-import {
-  type ToolInvocation,
-} from "@arbor/model-context";
 import type {
   AgentLoopStepActionRecord,
   BoundedObservation,
@@ -25,16 +19,17 @@ import {
   safetyStop,
   stopRequestedSettlement,
 } from "./agent-loop-policy.js";
-import {
-  classifyToolRoute,
-} from "./control.js";
+import { classifyToolRoute } from "./control.js";
 import { checkFreshness, requirementForAction } from "./freshness.js";
 import {
   agentActionSafetyFingerprint,
   isDurableSuccessfulActionProgress,
 } from "./p12-safety-identity.js";
 
-import type { AgentLoopActionDependencies, AgentLoopActionOutcome } from "./agent-loop-actions/types.js";
+import type {
+  AgentLoopActionDependencies,
+  AgentLoopActionOutcome,
+} from "./agent-loop-actions/types.js";
 import { makeBlockedSettlement } from "./agent-loop-actions/blocked-settlement.js";
 import { verifyCommittedStep } from "./agent-loop-actions/committed-step.js";
 
@@ -48,7 +43,10 @@ export {
 } from "./recovery-binding-source.js";
 export { verifySandboxUnavailableStepActionResume } from "./sandbox-unavailable-recovery.js";
 
-export type { AgentLoopActionDependencies, AgentLoopActionOutcome } from "./agent-loop-actions/types.js";
+export type {
+  AgentLoopActionDependencies,
+  AgentLoopActionOutcome,
+} from "./agent-loop-actions/types.js";
 export { makeBlockedSettlement } from "./agent-loop-actions/blocked-settlement.js";
 
 /**
@@ -117,7 +115,6 @@ export const executeAgentLoopActions = (
         durableProgress,
       };
     }
-
 
     for (const [
       actionIndex,
@@ -226,17 +223,30 @@ export const executeAgentLoopActions = (
       const ledger = makeActionLedger(
         dependencies,
         {
-          get currentLoopStep() { return currentLoopStep; },
-          set currentLoopStep(value) { currentLoopStep = value; },
-          get loopAction() { return loopAction; },
-          set loopAction(value) { loopAction = value; },
+          get currentLoopStep() {
+            return currentLoopStep;
+          },
+          set currentLoopStep(value) {
+            currentLoopStep = value;
+          },
+          get loopAction() {
+            return loopAction;
+          },
+          set loopAction(value) {
+            loopAction = value;
+          },
         },
         invocation,
         actionIndex,
         route,
         causalBinding,
       );
-      const { appendTerminalResult, persistActionSettlement, persistActionRejection, persistActionObservation } = ledger;
+      const {
+        appendTerminalResult,
+        persistActionSettlement,
+        persistActionRejection,
+        persistActionObservation,
+      } = ledger;
 
       const activityDecision = yield* admit(
         {
@@ -272,14 +282,19 @@ export const executeAgentLoopActions = (
 
       if (route._tag === "Executable") {
         const result = yield* executeExecutableAction(
-          dependencies, invocation, actionIndex, currentLoopStep, loopAction,
-          observations, durableProgress, ledger,
+          dependencies,
+          invocation,
+          actionIndex,
+          currentLoopStep,
+          loopAction,
+          observations,
+          durableProgress,
+          ledger,
         );
         if (result._tag !== "Continue") return result;
         durableProgress = result.durableProgress;
         continue;
       }
-
 
       const decodedAction = yield* Effect.match(
         controlRegistry.decode(invocation),

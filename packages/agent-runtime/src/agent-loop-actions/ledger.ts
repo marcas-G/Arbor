@@ -1,4 +1,8 @@
-import type { ExecutionSettlement, TerminalActionDenial, ToolInvocationId } from "@arbor/domain";
+import type {
+  ExecutionSettlement,
+  TerminalActionDenial,
+  ToolInvocationId,
+} from "@arbor/domain";
 import type { ToolInvocation } from "@arbor/model-context";
 import type {
   AgentLoopStepActionRecord,
@@ -30,7 +34,19 @@ export const makeActionLedger = (
   route: ActionRoute,
   causalBinding: ReturnType<typeof sessionCausalBindingForWork> | undefined,
 ) => {
-  const { input, preparedTurn, decodedOutput, loopSteps, loopStepFence, tx, sessions, controlRegistry, recoverExactNotAdmittedAction, failure, now } = dependencies;
+  const {
+    input,
+    preparedTurn,
+    decodedOutput,
+    loopSteps,
+    loopStepFence,
+    tx,
+    sessions,
+    controlRegistry,
+    recoverExactNotAdmittedAction,
+    failure,
+    now,
+  } = dependencies;
 
   const appendTerminalResult = (
     targetInvocation: ToolInvocation,
@@ -764,5 +780,11 @@ export const makeActionLedger = (
       return true;
     });
 
-  return { appendTerminalResult, persistTerminalAction, persistActionSettlement, persistActionRejection, persistActionObservation };
+  return {
+    appendTerminalResult,
+    persistTerminalAction,
+    persistActionSettlement,
+    persistActionRejection,
+    persistActionObservation,
+  };
 };

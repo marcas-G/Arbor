@@ -1,7 +1,13 @@
 import { decodeTurn } from "@arbor/model-context";
-import type { AgentLoopStepActionRecord, AgentLoopStepRecord, ExecutionDriverError } from "@arbor/ports";
-import { SandboxPolicyDecisionStore, SandboxProviderUnavailableStore, sha256Hex } from "@arbor/ports";
-import { type Context, Effect, Option } from "effect";
+import type {
+  AgentLoopStepActionRecord,
+  AgentLoopStepRecord,
+  ExecutionDriverError,
+  SandboxPolicyDecisionStoreService,
+  SandboxProviderUnavailableStoreService,
+} from "@arbor/ports";
+import { sha256Hex } from "@arbor/ports";
+import { Effect, Option } from "effect";
 import { matchesPersistedModelOutput } from "../persisted-model-output.js";
 import { verifySandboxUnavailableStepActionResume } from "../sandbox-unavailable-recovery.js";
 import type { AgentLoopActionDependencies } from "./types.js";
@@ -10,10 +16,21 @@ import type { AgentLoopActionDependencies } from "./types.js";
 export const verifyCommittedStep = (
   dependencies: AgentLoopActionDependencies,
   committedStep: AgentLoopStepRecord,
-  sandboxUnavailableFacts: Option.Option<Context.Tag.Service<typeof SandboxProviderUnavailableStore>>,
-  sandboxPolicyDecisions: Option.Option<Context.Tag.Service<typeof SandboxPolicyDecisionStore>>,
+  sandboxUnavailableFacts: Option.Option<SandboxProviderUnavailableStoreService>,
+  sandboxPolicyDecisions: Option.Option<SandboxPolicyDecisionStoreService>,
 ): Effect.Effect<AgentLoopStepRecord, ExecutionDriverError> => {
-  const { input, loopSteps, loopStepFence, providerTurns, preparedTurn, decodedOutput, tx, sessions, failure, now } = dependencies;
+  const {
+    input,
+    loopSteps,
+    loopStepFence,
+    providerTurns,
+    preparedTurn,
+    decodedOutput,
+    tx,
+    sessions,
+    failure,
+    now,
+  } = dependencies;
   return Effect.gen(function* () {
     if (
       loopSteps === undefined ||
