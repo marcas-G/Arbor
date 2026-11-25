@@ -134,6 +134,18 @@ export const AgentLoopDriverLive = (
   | WorkspaceRepository
   | InboxProjectionStore
   | InputPromotionService
+  | ConversationCheckpointStore
+  | BlobStorePort
+  | ConversationResponseJobStore
+  | ConversationAttemptStore
+  | ExecutionRepository
+  | RecoveryAttentionFactStore
+  | WorkspaceKnowledgePort
+  | WorkspacePlacementPort
+  | LocalPlanStore
+  | DecisionRequestStore
+  | ToolInvocationStore
+  | P39RecoveryEvidenceStore
   | Clock
 > =>
   Layer.effect(
@@ -144,18 +156,16 @@ export const AgentLoopDriverLive = (
       const capabilityPort = yield* ModelCapabilityPort;
       const sessions = yield* SessionRepository;
       const humanMessages = yield* HumanMessageStore;
-      const conversationCheckpointOption = yield* Effect.serviceOption(
-        ConversationCheckpointStore,
-      );
-      const blobStoreOption = yield* Effect.serviceOption(BlobStorePort);
-      const responseJobsOption = yield* Effect.serviceOption(
-        ConversationResponseJobStore,
-      );
-      const responseAttemptsOption = yield* Effect.serviceOption(
-        ConversationAttemptStore,
-      );
-      const executionRepositoryOption =
-        yield* Effect.serviceOption(ExecutionRepository);
+      // E06 normalization (object 1, batch two): every service the
+      // production composition always provides becomes a typed Layer
+      // requirement. Only AgentLoopStepStore/ProviderTurnStore keep their
+      // optionality — their absence carries schema-migration gating that
+      // must stay fail-closed rather than become a type-level demand.
+      const conversationCheckpointStore = yield* ConversationCheckpointStore;
+      const blobStore = yield* BlobStorePort;
+      const responseJobs = yield* ConversationResponseJobStore;
+      const responseAttempts = yield* ConversationAttemptStore;
+      const executions = yield* ExecutionRepository;
       // E06 normalization (architecture-evolution object 1, first seam):
       // inbox draining is production-required — the composition root
       // always provides both services — and a missing pair previously
@@ -164,13 +174,13 @@ export const AgentLoopDriverLive = (
       const inbox = yield* InboxProjectionStore;
       const inputPromotion = yield* InputPromotionService;
       const tx = yield* TransactionPort;
+      const invocationStore = yield* ToolInvocationStore;
+      const p39Recovery = yield* P39RecoveryEvidenceStore;
       const loopStepStoreOption =
         yield* Effect.serviceOption(AgentLoopStepStore);
       const providerTurnStoreOption =
         yield* Effect.serviceOption(ProviderTurnStore);
-      const recoveryAttentionFactStoreOption = yield* Effect.serviceOption(
-        RecoveryAttentionFactStore,
-      );
+      const recoveryAttentionFacts = yield* RecoveryAttentionFactStore;
       const configuredLoopSteps = Option.isSome(loopStepStoreOption)
         ? loopStepStoreOption.value
         : undefined;
@@ -181,15 +191,10 @@ export const AgentLoopDriverLive = (
       const projects = yield* ProjectRepository;
       const workspaces = yield* WorkspaceRepository;
       const works = yield* WorkRepository;
-      const workspaceKnowledgeOption = yield* Effect.serviceOption(
-        WorkspaceKnowledgePort,
-      );
-      const workspacePlacementOption = yield* Effect.serviceOption(
-        WorkspacePlacementPort,
-      );
-      const localPlansOption = yield* Effect.serviceOption(LocalPlanStore);
-      const decisionRequestsOption =
-        yield* Effect.serviceOption(DecisionRequestStore);
+      const _workspaceKnowledge = yield* WorkspaceKnowledgePort;
+      const _workspacePlacement = yield* WorkspacePlacementPort;
+      const localPlans = yield* LocalPlanStore;
+      const decisionRequests = yield* DecisionRequestStore;
       const clock = yield* Clock;
       const controlRegistry =
         options.controlRegistry ?? makeControlToolRegistry();
@@ -236,19 +241,14 @@ export const AgentLoopDriverLive = (
               .pipe(Effect.mapError(failure)))
               ? configuredLoopSteps
               : undefined;
-          const invocationStoreOption =
-            yield* Effect.serviceOption(ToolInvocationStore);
-          const p39RecoveryOption = yield* Effect.serviceOption(
-            P39RecoveryEvidenceStore,
-          );
           const frontier = yield* recoverAgentLoopFrontier(
             input,
             loopSteps,
             providerTurns,
-            invocationStoreOption,
-            p39RecoveryOption,
-            conversationCheckpointOption,
-            decisionRequestsOption,
+            invocationStore,
+            p39Recovery,
+            conversationCheckpointStore,
+            decisionRequests,
             sessions,
             tx,
             failure,
@@ -281,12 +281,6 @@ export const AgentLoopDriverLive = (
               tx,
               projects,
               workspaces,
-              ...(Option.isSome(workspaceKnowledgeOption)
-                ? { workspaceKnowledge: workspaceKnowledgeOption.value }
-                : {}),
-              ...(Option.isSome(workspacePlacementOption)
-                ? { workspacePlacement: workspacePlacementOption.value }
-                : {}),
               works,
               environmentRevisions,
               failure,
@@ -397,32 +391,15 @@ export const AgentLoopDriverLive = (
                 tx,
                 sessions,
                 humanMessages,
-                ...(Option.isSome(conversationCheckpointOption)
-                  ? {
-                      conversationCheckpoints:
-                        conversationCheckpointOption.value,
-                    }
-                  : {}),
-                ...(Option.isSome(blobStoreOption)
-                  ? { blobs: blobStoreOption.value }
-                  : {}),
+                conversationCheckpoints: conversationCheckpointStore,
+                blobs: blobStore,
                 turnProfileResolver,
-                ...(Option.isSome(responseJobsOption)
-                  ? { responseJobs: responseJobsOption.value }
-                  : {}),
-                ...(Option.isSome(responseAttemptsOption)
-                  ? { responseAttempts: responseAttemptsOption.value }
-                  : {}),
-                ...(Option.isSome(executionRepositoryOption)
-                  ? { executions: executionRepositoryOption.value }
-                  : {}),
+                responseJobs,
+                responseAttempts,
+                executions,
                 works,
-                ...(Option.isSome(localPlansOption)
-                  ? { localPlans: localPlansOption.value }
-                  : {}),
-                ...(Option.isSome(decisionRequestsOption)
-                  ? { decisionRequests: decisionRequestsOption.value }
-                  : {}),
+                localPlans,
+                decisionRequests,
                 workspaces,
                 options: {
                   ...options,
@@ -445,12 +422,7 @@ export const AgentLoopDriverLive = (
                 ...(loopSteps === undefined ? {} : { loopSteps }),
                 ...(loopStepFence === undefined ? {} : { loopStepFence }),
                 ...(providerTurns === undefined ? {} : { providerTurns }),
-                ...(Option.isSome(recoveryAttentionFactStoreOption)
-                  ? {
-                      recoveryAttentionFacts:
-                        recoveryAttentionFactStoreOption.value,
-                    }
-                  : {}),
+                recoveryAttentionFacts,
               },
               turn,
               repairAttempt,
@@ -531,9 +503,6 @@ export const AgentLoopDriverLive = (
               ...(loopStepFence === undefined ? {} : { loopStepFence }),
               tx,
               sessions,
-              ...(Option.isSome(blobStoreOption)
-                ? { blobs: blobStoreOption.value }
-                : {}),
               failure,
               now,
               ...(options.qualificationProbe === undefined

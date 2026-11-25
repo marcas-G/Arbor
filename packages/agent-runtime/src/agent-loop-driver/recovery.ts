@@ -35,10 +35,10 @@ export const recoverAgentLoopFrontier = (
   input: { readonly execution: Execution },
   loopSteps: AgentLoopStepStoreService | undefined,
   providerTurns: ProviderTurnStoreService | undefined,
-  invocationStoreOption: Option.Option<ToolInvocationStoreService>,
-  p39RecoveryOption: Option.Option<P39RecoveryEvidenceStoreService>,
-  conversationCheckpointOption: Option.Option<ConversationCheckpointStoreService>,
-  decisionRequestsOption: Option.Option<DecisionRequestStoreService>,
+  invocationStore: ToolInvocationStoreService,
+  p39Recovery: P39RecoveryEvidenceStoreService,
+  conversationCheckpointStore: ConversationCheckpointStoreService,
+  decisionRequests: DecisionRequestStoreService,
   sessions: SessionRepositoryService,
   tx: TransactionPortService,
   failure: (cause: unknown) => ExecutionDriverError,
@@ -74,16 +74,9 @@ export const recoverAgentLoopFrontier = (
       }
       firstLogicalStepNo = cursor.logicalStepNo;
       firstRepairAttempt = cursor.repairAttempt;
-      if (
-        Option.isSome(invocationStoreOption) &&
-        Option.isSome(p39RecoveryOption)
-      ) {
+      {
         const unsettled = yield* tx
-          .transact(
-            invocationStoreOption.value.findUnsettled(
-              input.execution.executionId,
-            ),
-          )
+          .transact(invocationStore.findUnsettled(input.execution.executionId))
           .pipe(Effect.mapError(failure));
         const candidates: (typeof exactNotAdmittedRecovery)[] = [];
         for (const invocation of unsettled) {
@@ -95,9 +88,7 @@ export const recoverAgentLoopFrontier = (
             continue;
           }
           const bindingOption = yield* tx
-            .transact(
-              p39RecoveryOption.value.findBinding(invocation.invocationId),
-            )
+            .transact(p39Recovery.findBinding(invocation.invocationId))
             .pipe(Effect.mapError(failure));
           if (Option.isNone(bindingOption)) {
             continue;
@@ -342,13 +333,10 @@ export const recoverAgentLoopFrontier = (
                 nativeStateRef?._tag === "ContinuationState"
                   ? nativeStateRef.stateRef
                   : undefined;
-              if (
-                episode?._tag === "ConversationResponseEpisode" &&
-                Option.isSome(conversationCheckpointOption)
-              ) {
+              if (episode?._tag === "ConversationResponseEpisode") {
                 const ownerOption = yield* tx
                   .transact(
-                    conversationCheckpointOption.value.findOwner(
+                    conversationCheckpointStore.findOwner(
                       input.execution.workspaceId,
                     ),
                   )
@@ -470,16 +458,10 @@ export const recoverAgentLoopFrontier = (
           | ReturnType<typeof submittedDecisionManifestMismatchOutcome>
           | undefined;
         const episode = executionEpisode(input.execution);
-        if (
-          !manifestBound &&
-          episode?._tag === "DecisionEpisode" &&
-          Option.isSome(decisionRequestsOption)
-        ) {
+        if (!manifestBound && episode?._tag === "DecisionEpisode") {
           const [request, actions, settledResult] = yield* Effect.all(
             [
-              tx.transact(
-                decisionRequestsOption.value.findById(episode.decisionId),
-              ),
+              tx.transact(decisionRequests.findById(episode.decisionId)),
               tx.transact(loopSteps.listActions(current.identity)),
               tx.transact(
                 providerTurns.findSettledResult(current.providerTurnId),

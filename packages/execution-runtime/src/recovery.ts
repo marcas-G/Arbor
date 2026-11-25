@@ -7,7 +7,6 @@ import {
 import {
   CommandId,
   type DomainEvent,
-  type Execution,
   type ExecutionId,
   type ExecutionSettlement,
   executionEpisode,
