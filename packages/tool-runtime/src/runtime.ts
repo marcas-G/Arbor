@@ -3,8 +3,6 @@ import type {
 } from "@arbor/domain";
 import {
   ArtifactId,
-  decodeExecutionEpisodeBinding,
-  encodeExecutionEpisodeBinding,
   parse,
 } from "@arbor/domain";
 import {
@@ -28,18 +26,14 @@ import {
   type SandboxProcessPolicyResolution,
   SandboxProcessPort,
   ToolAuthorityResolver,
-  type ToolDefinition,
   ToolDefinitionStore,
   type ToolExecutionContext,
   type ToolIntent,
-  type ToolInvocationIntent,
-  type ToolInvocationSettlement,
   ToolInvocationStore,
   ToolObservationEvidenceStore,
   ToolObservationReplayAttentionFactStore,
   ToolReconciliationFactStore,
   ToolReconciliationPort,
-  type ToolReconciliationProfile,
   ToolReconciliationProfileRegistry,
   type ToolReconciliationRequest,
   type ToolReconciliationResult,
@@ -52,7 +46,7 @@ import {
   WorkspaceRepository,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
-import { actionDigestOf, matchApproval } from "./approval.js";
+import { matchApproval } from "./approval.js";
 import { checkInvocationAuthority } from "./authority.js";
 import {
   makeRecoveryBindingV1,

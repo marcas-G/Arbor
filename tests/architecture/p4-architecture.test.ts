@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, posix } from "node:path";
+import { parse } from "@babel/parser";
 import { describe, expect, it } from "vitest";
 import { checkEdges, type PackageManifest } from "./package-dag.js";
 
@@ -89,6 +90,36 @@ describe("P4 package DAG", () => {
     ]) {
       expect(runtimeSource).toContain(stage);
     }
+  });
+
+  it("keeps runtime lifecycle modules below the public entry and package barrel", () => {
+    const directory = join(repoRoot, "packages/tool-runtime/src/runtime");
+    const violations: string[] = [];
+    for (const name of readdirSync(directory, { recursive: true }).filter(
+      (entry) => entry.endsWith(".ts"),
+    )) {
+      const file = `runtime/${name.replaceAll("\\", "/")}`;
+      const ast = parse(readFileSync(join(directory, name), "utf8"), {
+        sourceType: "module",
+        plugins: ["typescript"],
+      });
+      for (const statement of ast.program.body) {
+        if (
+          statement.type !== "ImportDeclaration" &&
+          statement.type !== "ExportNamedDeclaration" &&
+          statement.type !== "ExportAllDeclaration"
+        ) continue;
+        const specifier = statement.source?.value;
+        if (specifier === undefined || !specifier.startsWith(".")) continue;
+        const target = posix.normalize(
+          posix.join(posix.dirname(file), specifier),
+        ).replace(/\.(?:js|ts)$/u, "");
+        if (target === "runtime" || target === "index") {
+          violations.push(`${file}: ${specifier}`);
+        }
+      }
+    }
+    expect(violations).toEqual([]);
   });
 
   it("allows the P4 adapters only domain/ports", () => {

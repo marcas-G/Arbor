@@ -287,3 +287,25 @@ The public action entry remains the orchestrator. Committed-step replay, blocked
 Static validation on the pinned implementation: 11/11 direct source assertions passed; 33 literal relative references scanned in nine production files, no forbidden action-submodule back-edge in that scan. External relative targets were not all independently fetched. The P3 ownership test now includes agent-loop-actions/ and prohibits private implementation coupling with decision/ or checkpoint/; CRAC follows the ledger owner. AssignWork's architecture edge exception is limited to its private validator. These are static text checks, not executed Vitest/TypeScript tests, and do not establish repository-wide compliance.
 
 Qualification remains blocked by DNS resolution for local GitHub clone, Node v22.16.0 instead of pinned 24.21.0, and missing pnpm. Run pinned source-line, Biome, TypeScript, architecture, core and process recovery gates before promotion; verify AH7/AH9/AH10, stale control-basis transitions, blocked evidence and committed action replay. Ledger is close to the 800-line limit; split terminal-result projection further if formatting exceeds the cap. Next: Tool Runtime, remaining oversized sources, full repository-wide qualification. No mainline merge or release approval.
+
+## R4 Tool Runtime lifecycle decomposition — partial convergence
+
+Base: 95be4f724e03476ecf88be3486e0b216a8096ae5. Implementation: b98444b5dd09d2379135d3eaae928424d3311016 (contracts, errors, process runner, observation replay); 4f860b17a52dc17213e53264520f1989e4a2d742 (no-effect settlement and resource capture); 3d41975e029051e50e015aaddc2d10efd9e43706 (admitted execution and terminal settlement); f812dd71b30f89d176db1a8f825533b0afc655dd (authority and approval); d010d1fcec739bc603df1b97dee34998c56f58f2 (prior invocation and replay binding).
+
+| Owner relative to packages/tool-runtime/src | Conservative split-line count |
+|---|---:|
+| runtime.ts | 2086 |
+| runtime/types.ts | 97 |
+| runtime/errors.ts | 136 |
+| runtime/process-runner.ts | 340 |
+| runtime/observation-replay.ts | 514 |
+| runtime/no-effect-settlement.ts | 375 |
+| runtime/resources.ts | 330 |
+| runtime/execute-admitted-tool.ts | 140 |
+| runtime/settlement.ts | 557 |
+| runtime/invocation-authority.ts | 403 |
+| runtime/prior-invocation.ts | 252 |
+
+The existing runtime entry retains Layer construction, public exports and invocation sequencing; the ten new modules have no additional package dependencies. Resource and authority phases return Ready or Terminal rather than allowing an early terminal outcome to enter a later execution phase. No-effect settlement, recorded-evidence replay, admitted execution and P40 settlement retain the existing transaction/probe bodies. The original sandbox-policy cleanup bracket remains at the invocation entry. The remaining root still exceeds the mandatory 800-line ceiling: P39 reconciliation, new-effect admission and setup must be separated by state-transition boundaries.
+
+Static evidence on implementation head: 10/10 direct source assertions passed, 43 literal relative references scanned, no private module importing the runtime entry or package barrel. Five external relative paths were identified, not independently fetched in this scan. The follow-up removes seven unused imports and adds a P4 AST-based ownership assertion; the P4 failure-stage/defect checks scan all private lifecycle files as well as the entry. These are source inspections, not executed architecture tests, type checking or runtime equivalence. Full qualification remains blocked: local git ls-remote cannot resolve github.com; Node v22.16.0 rather than pinned v24.21.0, pnpm not installed. Run formatting, strict line limit, TypeScript, architecture and AH7/P38/P39/P40/stop/revocation/unknown outcome/fence/cleanup tests before promotion. No mainline merge or release approval.
