@@ -30,7 +30,9 @@ describe("DID v1.26 model-facing AssignWork action", () => {
   });
 
   it("routes through the P1 command with structural target and provenance binding", () => {
-    const actions = source("apps/single-workspace/src/control-actions/assign-work.ts");
+    const actions = source(
+      "apps/single-workspace/src/control-actions/assign-work.ts",
+    );
     expect(actions).toContain('action: "AssignWork"');
     expect(actions).toContain(
       "target.value.parentWorkspaceId === execution.workspaceId",

@@ -40,7 +40,9 @@ describe("DID v1.31 MAC-P1 Root Conversation work-initiation boundary", () => {
   });
 
   it("keeps historical formation governance exact while MAC-P1 hides its model surface", () => {
-    const controls = source("apps/single-workspace/src/control-actions/workspace.ts");
+    const controls = source(
+      "apps/single-workspace/src/control-actions/workspace.ts",
+    );
     const decision = source(
       "packages/application/src/commands/record-decision.ts",
     );

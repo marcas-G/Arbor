@@ -67,7 +67,10 @@ describe("P3 package DAG", () => {
     expect(decisionTurn).not.toContain("assembleInboxContext");
     expect(decisionTurn).not.toContain("PortableLegacyMessage");
     const conversationContext = readFileSync(
-      join(repoRoot, "packages/agent-runtime/src/conversation-decision-context.ts"),
+      join(
+        repoRoot,
+        "packages/agent-runtime/src/conversation-decision-context.ts",
+      ),
       "utf8",
     );
     expect(decisionTurn).toContain("loadConversationDecisionContext(");
