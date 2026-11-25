@@ -1,6 +1,5 @@
 import {
   ContextEpochNumber,
-  executionEpisode,
   type ExecutionSettlement,
   parse,
   type ProviderTurnId,
@@ -28,29 +27,21 @@ import type {
 import { Effect, Option } from "effect";
 import { type ModelDecisionOutcome, runtimeSafetyFragment, safetyStop } from "../../agent-loop-policy.js";
 import { runConversationCheckpointCompaction } from "../../checkpoint/conversation/compaction.js";
-import { runCompaction, type SummaryCompactionInput } from "../../compaction-coordinator.js";
+import { runCompaction } from "../../compaction-coordinator.js";
 import {
-  GENERIC_INSTRUCTION_ASSETS,
-  instructionAssetFragment,
   workExecutionLoopFragmentsFor,
 } from "../../prompt-assets.js";
 import type { AgentStepContext } from "../../step-context.js";
-import { assembleWorkContext } from "../../work-context.js";
 import type { ModelDecisionDependencies } from "../contract.js";
 import type { ConversationDecisionContextResult } from "../conversation-context.js";
 import type { OverflowRecoveryState } from "../recovery/overflow-state.js";
-import { classifySubmittedDecisionBindingFailure, isPinnedSubmittedDecisionReplay } from "../submitted-replay.js";
+import { assembleDecisionInstructions, type CompactionWorkPinning } from "./instructions.js";
 
 type PreparationDependencies = Pick<
   ModelDecisionDependencies,
   "input" | "agentBinding" | "capability" | "modelContext" | "tx" |
   "loopSteps" | "loopStepFence" | "providerTurns" | "turnProfileResolver" |
   "decisionRequests" | "options" | "failure" | "now" | "conversationCheckpoints" | "blobs"
->;
-
-export type CompactionWorkPinning = Pick<
-  SummaryCompactionInput,
-  "pinnedInstructions" | "pinnedInstructionFragments" | "controlBasis"
 >;
 
 type PreparationResult =
@@ -99,7 +90,7 @@ export const prepareDecisionTurn = (
 ): Effect.Effect<PreparationResult, ExecutionDriverError> => {
   const {
     input, agentBinding, capability, modelContext, tx, loopSteps, loopStepFence,
-    providerTurns, turnProfileResolver, decisionRequests, options, failure, now,
+    providerTurns, turnProfileResolver, options, failure, now,
   } = dependencies;
   const {
     turn, repairAttempt, repairFragments, providerTurnId, loopStep,
@@ -130,183 +121,25 @@ export const prepareDecisionTurn = (
       resumeOverflowNativeCompactionInput,
       overflowReplacementProviderTurnId,
     });
-    const workContext = assembleWorkContext(
-      workspace.value,
+    const instructions = yield* assembleDecisionInstructions(dependencies, {
+      workspace,
       currentWork,
-      input.execution,
-    );
-    const compactionWorkPinning =
-      executionEpisode(input.execution)?._tag === "WorkEpisode"
-        ? {
-            pinnedInstructions: workContext.fragments.map((fragment) => ({
-              slotId: fragment.scope,
-              authorityRole: fragment.authorityRole,
-              text:
-                workContext.contents.get(fragment.contentRef) ??
-                fragment.contentRef,
-            })),
-            pinnedInstructionFragments: workContext.fragments.map(
-              (fragment) => ({
-                identity: fragment.identity,
-                revision: fragment.revision,
-                hash: fragment.hash,
-                source: fragment.source,
-                scope: fragment.scope,
-              }),
-            ),
-            controlBasis,
-          }
-        : {};
-    const conversationActionAsset =
-      GENERIC_INSTRUCTION_ASSETS.rootConversationAction;
-    const conversationActionFragments = conversationExecution
-      ? [
-          instructionAssetFragment(
-            "root-conversation-action",
-            conversationActionAsset,
-          ),
-        ]
-      : [];
-    const workExecutionLoopAsset = GENERIC_INSTRUCTION_ASSETS.baseLoop;
-    const instructionContents = new Map(workContext.contents);
-    if (conversationExecution) {
-      instructionContents.set(
-        conversationActionAsset.contentRef,
-        conversationActionAsset.text,
-      );
-    }
-    const boundEpisode = executionEpisode(input.execution);
-    if (
-      boundEpisode?._tag === "DecisionEpisode" &&
-      decisionRequests !== undefined
-    ) {
-      const request = yield* tx
-        .transact(decisionRequests.findById(boundEpisode.decisionId))
-        .pipe(Effect.mapError(failure));
-      if (Option.isNone(request)) {
-        return yield* proposeSettlement({
-          _tag: "Failed",
-          failure: {
-            _tag: "ExecutionFailure",
-            reason: "DecisionRequestMissingOrSettled",
-          },
-        });
-      }
-      let requestContextRevision = request.value.revision;
-      if (request.value.state._tag !== "Pending") {
-        const pinnedActions =
-          loopStep !== undefined && loopSteps !== undefined
-            ? yield* tx
-                .transact(loopSteps.listActions(loopStep.identity))
-                .pipe(Effect.mapError(failure))
-            : [];
-        const pendingSelectionAction = pinnedActions.find(
-          (action) =>
-            action.actionIndex === loopStep?.nextActionIndex &&
-            action.routeKind === "Control" &&
-            action.actionKind === "select_current_work" &&
-            action.state === "Pending",
-        );
-        const pinnedProviderResult =
-          loopStep !== undefined && providerTurns !== undefined
-            ? yield* tx
-                .transact(
-                  providerTurns.findSettledResult(loopStep.providerTurnId),
-                )
-                .pipe(Effect.mapError(failure))
-            : undefined;
-        const replayingPinnedSelection = isPinnedSubmittedDecisionReplay({
-          executionWorkspaceId: String(input.execution.workspaceId),
-          episode: boundEpisode,
-          request: request.value,
-          workspace: Option.isSome(workspace)
-            ? {
-                currentWorkId:
-                  workspace.value.currentWorkId === null
-                    ? null
-                    : String(workspace.value.currentWorkId),
-                revision: Number(workspace.value.revision),
-              }
-            : undefined,
-          step: loopStep,
-          pendingAction: pendingSelectionAction,
-          providerTurnId: String(providerTurnId),
-          providerResult:
-            pinnedProviderResult?._tag === "SettledSuccess"
-              ? {
-                  _tag: "SettledSuccess",
-                  manifestId: String(pinnedProviderResult.manifestId),
-                }
-              : undefined,
-        });
-        const bindingFailure = classifySubmittedDecisionBindingFailure({
-          executionWorkspaceId: String(input.execution.workspaceId),
-          episode: boundEpisode,
-          request: request.value,
-          workspace: Option.isSome(workspace)
-            ? {
-                currentWorkId:
-                  workspace.value.currentWorkId === null
-                    ? null
-                    : String(workspace.value.currentWorkId),
-                revision: Number(workspace.value.revision),
-              }
-            : undefined,
-          step: loopStep,
-          pendingAction: pendingSelectionAction,
-          providerTurnId: String(providerTurnId),
-          providerResult:
-            pinnedProviderResult?._tag === "SettledSuccess"
-              ? {
-                  _tag: "SettledSuccess",
-                  manifestId: String(pinnedProviderResult.manifestId),
-                }
-              : undefined,
-        });
-        if (
-          bindingFailure !== undefined &&
-          loopStep !== undefined &&
-          pendingSelectionAction !== undefined
-        ) {
-          return {
-            _tag: "SubmittedDecisionBindingMismatch" as const,
-            failureCode: bindingFailure,
-            logicalStepNo: loopStep.identity.logicalStepNo,
-            repairAttempt: loopStep.identity.repairAttempt,
-            providerTurnId: loopStep.providerTurnId,
-            logicalActionId: pendingSelectionAction.logicalActionId,
-          };
-        }
-        if (!replayingPinnedSelection) {
-          return yield* proposeSettlement({
-            _tag: "Failed",
-            failure: {
-              _tag: "ExecutionFailure",
-              reason: "DecisionRequestMissingOrSettled",
-            },
-          });
-        }
-        // The submitted canonical request is the result of this exact
-        // pinned SelectCurrentWork Action. Rebuild its original decision
-        // context only long enough to replay the settled Provider result;
-        // no new Provider request or action is admitted from this snapshot.
-        requestContextRevision = boundEpisode.requestRevision;
-      }
-      inputItems.push({
-        _tag: "ContextUpdate",
-        sourceRef: `decision-request:${boundEpisode.decisionId}`,
-        revision: requestContextRevision,
-        updateKind: "Full",
-        text: JSON.stringify({
-          decisionKind: "SelectCurrentWork",
-          candidateWorkIds: request.value.candidateWorkIds,
-          workspaceRevision: request.value.workspaceRevision,
-        }),
-      });
-      messageContextRefs.push(
-        `decision-request:${boundEpisode.decisionId}:${String(requestContextRevision)}`,
-      );
-    }
+      controlBasis,
+      conversationExecution,
+      loopStep,
+      providerTurnId,
+      inputItems,
+      messageContextRefs,
+      proposeSettlement,
+    });
+    if (instructions._tag !== "Assembled") return instructions;
+    const {
+      workContext,
+      compactionWorkPinning,
+      conversationActionFragments,
+      workExecutionLoopAsset,
+      instructionContents,
+    } = instructions;
     if (resumeOverflowCompactionProviderTurnId !== undefined) {
       if (
         loopStep === undefined ||
