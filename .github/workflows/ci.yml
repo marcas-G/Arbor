@@ -72,6 +72,12 @@ jobs:
       - name: Core tests
         run: pnpm test
 
+      - name: Source-size gate (advisory until baseline closes)
+        id: source-lines
+        if: always()
+        continue-on-error: true
+        run: pnpm check:source-lines
+
       - name: Coverage
         run: pnpm test:coverage
 
