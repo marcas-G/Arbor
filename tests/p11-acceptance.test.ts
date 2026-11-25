@@ -18,8 +18,10 @@ import {
   CommandStoreLive,
   DomainEventJournalLive,
   EnvironmentRevisionStoreLive,
+  ExecutionRepositoryLive,
   HumanMessageStoreLive,
   IdGeneratorLive,
+  InboxProjectionStoreLive,
   layer,
   P16_MIGRATIONS,
   ProjectRepositoryLive,
@@ -77,6 +79,7 @@ import {
   CommandHandlerRegistry,
   FenceStopCheckInertLive,
   type GatewayEnvelope,
+  InputPromotionServiceLive,
   semanticRequestFingerprint,
 } from "../packages/application/src/index.js";
 import {
@@ -271,6 +274,7 @@ const driftAppLayer = (
     ...(reprobe === undefined ? ([] as const) : [reprobe]),
   );
   const rec = Layer.provide(RecordEnvironmentChangeLive, recDeps);
+  const sessions = Layer.provide(SessionRepositoryLive, infra);
   const revisions = Layer.provide(EnvironmentRevisionStoreLive, infra);
   const resolver = Layer.provide(EnvironmentResolverLocalLive, base);
   return Layer.mergeAll(
@@ -529,6 +533,7 @@ const cbMakeApp = () => {
       infra,
     ),
   );
+  const sessions = Layer.provide(SessionRepositoryLive, infra);
   const revisions = Layer.provide(EnvironmentRevisionStoreLive, infra);
   const advancement = Layer.provide(EnvironmentRevisionAdvancementLive, infra);
   const tx = Layer.provide(TransactionPortLive, infra);
@@ -544,6 +549,17 @@ const cbMakeApp = () => {
       Layer.provide(ProjectRepositoryLive, infra),
       Layer.provide(WorkspaceRepositoryLive, infra),
       Layer.provide(WorkRepositoryLive, infra),
+      Layer.provide(InboxProjectionStoreLive, infra),
+      Layer.provide(
+        InputPromotionServiceLive,
+        Layer.mergeAll(
+          infra,
+          tx,
+          sessions,
+          Layer.provide(InboxProjectionStoreLive, infra),
+          Layer.provide(ExecutionRepositoryLive, infra),
+        ),
+      ),
       tx,
       revisions,
     ),

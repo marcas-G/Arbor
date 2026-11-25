@@ -12,6 +12,7 @@ import {
   ExecutionRepositoryLive,
   HumanMessageStoreLive,
   IdGeneratorLive,
+  InboxProjectionStoreLive,
   layer,
   P17_MIGRATIONS,
   P19_MIGRATIONS,
@@ -35,6 +36,7 @@ import {
   type ExecutableInvocationHandler,
   makeControlToolRegistry,
 } from "../packages/agent-runtime/src/index.js";
+import { InputPromotionServiceLive } from "../packages/application/src/index.js";
 import {
   type AgentExecutionState,
   CommandId,
@@ -385,6 +387,17 @@ const makeApp = (
       Layer.provide(ConversationResponseJobStoreLive, infra),
       Layer.provide(ConversationAttemptStoreLive, infra),
       Layer.provide(ConversationCheckpointStoreLive, infra),
+      Layer.provide(InboxProjectionStoreLive, infra),
+      Layer.provide(
+        InputPromotionServiceLive,
+        Layer.mergeAll(
+          infra,
+          Layer.provide(TransactionPortLive, infra),
+          sessions,
+          Layer.provide(InboxProjectionStoreLive, infra),
+          Layer.provide(ExecutionRepositoryLive, infra),
+        ),
+      ),
       environmentRevisions,
     ),
   );

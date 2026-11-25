@@ -10,8 +10,10 @@ import {
 import {
   ClockLive,
   EnvironmentRevisionStoreLive,
+  ExecutionRepositoryLive,
   HumanMessageStoreLive,
   IdGeneratorLive,
+  InboxProjectionStoreLive,
   layer,
   P16_MIGRATIONS,
   ProjectRepositoryLive,
@@ -30,6 +32,7 @@ import {
   checkFreshness,
   makeControlToolRegistry,
 } from "../packages/agent-runtime/src/index.js";
+import { InputPromotionServiceLive } from "../packages/application/src/index.js";
 import {
   type AgentExecutionState,
   type CommandSubmissionContext,
@@ -236,6 +239,17 @@ const makeApp = () => {
       Layer.provide(ProjectRepositoryLive, infra),
       Layer.provide(WorkspaceRepositoryLive, infra),
       Layer.provide(WorkRepositoryLive, infra),
+      Layer.provide(InboxProjectionStoreLive, infra),
+      Layer.provide(
+        InputPromotionServiceLive,
+        Layer.mergeAll(
+          infra,
+          tx,
+          Layer.provide(SessionRepositoryLive, infra),
+          Layer.provide(InboxProjectionStoreLive, infra),
+          Layer.provide(ExecutionRepositoryLive, infra),
+        ),
+      ),
       tx,
       revisions,
     ),

@@ -132,6 +132,8 @@ export const AgentLoopDriverLive = (
   | ProjectRepository
   | WorkRepository
   | WorkspaceRepository
+  | InboxProjectionStore
+  | InputPromotionService
   | Clock
 > =>
   Layer.effect(
@@ -154,10 +156,13 @@ export const AgentLoopDriverLive = (
       );
       const executionRepositoryOption =
         yield* Effect.serviceOption(ExecutionRepository);
-      const inboxOption = yield* Effect.serviceOption(InboxProjectionStore);
-      const inputPromotionOption = yield* Effect.serviceOption(
-        InputPromotionService,
-      );
+      // E06 normalization (architecture-evolution object 1, first seam):
+      // inbox draining is production-required — the composition root
+      // always provides both services — and a missing pair previously
+      // silently disabled workspace input promotion. They are now typed
+      // requirements of the driver Layer.
+      const inbox = yield* InboxProjectionStore;
+      const inputPromotion = yield* InputPromotionService;
       const tx = yield* TransactionPort;
       const loopStepStoreOption =
         yield* Effect.serviceOption(AgentLoopStepStore);
@@ -456,15 +461,9 @@ export const AgentLoopDriverLive = (
             turn < MAX_TURNS;
             turn += 1, repairAttempt = 0
           ) {
-            if (
-              Option.isSome(inboxOption) &&
-              Option.isSome(inputPromotionOption) &&
-              loopStepFence !== undefined
-            ) {
+            if (loopStepFence !== undefined) {
               const pending = yield* tx
-                .transact(
-                  inboxOption.value.listUnconsumed(input.execution.workspaceId),
-                )
+                .transact(inbox.listUnconsumed(input.execution.workspaceId))
                 .pipe(Effect.mapError(failure));
               const workspaceInputExecution =
                 input.execution.binding._tag === "WorkspaceExecution" &&
@@ -488,7 +487,7 @@ export const AgentLoopDriverLive = (
                   freshDrain: turn === 0,
                 },
               )) {
-                yield* inputPromotionOption.value
+                yield* inputPromotion
                   .promoteInbox({
                     workspaceId: input.execution.workspaceId,
                     entryKey: selected.entry.entryKey,
@@ -528,9 +527,7 @@ export const AgentLoopDriverLive = (
                 : { currentLoopStep: modelDecision.loopStep }),
               ...(loopSteps === undefined ? {} : { loopSteps }),
               ...(providerTurns === undefined ? {} : { providerTurns }),
-              ...(Option.isSome(inboxOption)
-                ? { inboxSequence: inboxOption.value }
-                : {}),
+
               ...(loopStepFence === undefined ? {} : { loopStepFence }),
               tx,
               sessions,
@@ -551,9 +548,7 @@ export const AgentLoopDriverLive = (
               ...(currentLoopStep === undefined ? {} : { currentLoopStep }),
               ...(loopSteps === undefined ? {} : { loopSteps }),
               ...(providerTurns === undefined ? {} : { providerTurns }),
-              ...(Option.isSome(inboxOption)
-                ? { inboxSequence: inboxOption.value }
-                : {}),
+              inboxSequence: inbox,
               ...(loopStepFence === undefined ? {} : { loopStepFence }),
               tx,
               sessions,
