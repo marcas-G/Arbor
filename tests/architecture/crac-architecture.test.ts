@@ -27,8 +27,13 @@ describe("DID v1.31 MAC-P1 Root Conversation work-initiation boundary", () => {
   it("keeps conversation action results exact-execution scoped", () => {
     const decision = source("packages/agent-runtime/src/model-decision.ts");
     const actions = source("packages/agent-runtime/src/agent-loop-actions.ts");
-    expect(decision).toContain("belongsToConversationExecution");
-    expect(decision).toContain("providerTurnPrefix");
+    const evidence = source(
+      "packages/agent-runtime/src/conversation-checkpoint-evidence.ts",
+    );
+    expect(decision).toContain("belongsToConversationExecution(");
+    expect(decision).toContain("./conversation-checkpoint-evidence.js");
+    expect(evidence).toContain("providerTurnPrefix");
+    expect(evidence).toContain("export const belongsToConversationExecution");
     expect(actions).toContain(
       ["observation_", "$", "{input.execution.executionId}_"].join(""),
     );
