@@ -114,12 +114,53 @@ describe("P4 package DAG", () => {
         const target = posix.normalize(
           posix.join(posix.dirname(file), specifier),
         ).replace(/\.(?:js|ts)$/u, "");
-        if (target === "runtime" || target === "index") {
+        const recoveryToNewEffectPhase =
+          file.startsWith("runtime/recovery/") &&
+          [
+            "runtime/claim-new-invocation",
+            "runtime/effect-admission",
+            "runtime/execute-admitted-tool",
+            "runtime/settlement",
+          ].includes(target);
+        if (
+          target === "runtime" ||
+          target === "index" ||
+          recoveryToNewEffectPhase
+        ) {
           violations.push(`${file}: ${specifier}`);
         }
       }
     }
     expect(violations).toEqual([]);
+  });
+
+  it("keeps invocation setup, replay, admission, execution and settlement ordered", () => {
+    const runtime = readFileSync(
+      join(repoRoot, "packages/tool-runtime/src/runtime.ts"),
+      "utf8",
+    );
+    const phases = [
+      "prepareInvocation(",
+      "inspectPriorInvocation(",
+      "resolveInvocationResources(",
+      "resolveInvocationAuthority(",
+      "verifyPriorReplayAdmission(",
+      "reconcileAdmittedInvocation(",
+      "finishPriorInvocation(",
+      "claimNewInvocation(",
+      "admitNewEffect(",
+      "executeAdmittedTool(",
+      "settleToolOutcome(",
+    ];
+    let previous = -1;
+    for (const phase of phases) {
+      const current = runtime.indexOf(phase);
+      expect(current, phase).toBeGreaterThan(previous);
+      previous = current;
+    }
+    expect(runtime).toContain(
+      "Effect.ensuring(Effect.suspend(() => sandboxPolicyCleanup))",
+    );
   });
 
   it("allows the P4 adapters only domain/ports", () => {

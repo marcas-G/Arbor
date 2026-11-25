@@ -309,3 +309,34 @@ Base: 95be4f724e03476ecf88be3486e0b216a8096ae5. Implementation: b98444b5dd09d237
 The existing runtime entry retains Layer construction, public exports and invocation sequencing; the ten new modules have no additional package dependencies. Resource and authority phases return Ready or Terminal rather than allowing an early terminal outcome to enter a later execution phase. No-effect settlement, recorded-evidence replay, admitted execution and P40 settlement retain the existing transaction/probe bodies. The original sandbox-policy cleanup bracket remains at the invocation entry. The remaining root still exceeds the mandatory 800-line ceiling: P39 reconciliation, new-effect admission and setup must be separated by state-transition boundaries.
 
 Static evidence on implementation head: 10/10 direct source assertions passed, 43 literal relative references scanned, no private module importing the runtime entry or package barrel. Five external relative paths were identified, not independently fetched in this scan. The follow-up removes seven unused imports and adds a P4 AST-based ownership assertion; the P4 failure-stage/defect checks scan all private lifecycle files as well as the entry. These are source inspections, not executed architecture tests, type checking or runtime equivalence. Full qualification remains blocked: local git ls-remote cannot resolve github.com; Node v22.16.0 rather than pinned v24.21.0, pnpm not installed. Run formatting, strict line limit, TypeScript, architecture and AH7/P38/P39/P40/stop/revocation/unknown outcome/fence/cleanup tests before promotion. No mainline merge or release approval.
+
+## R4 Tool Runtime lifecycle decomposition — source-size convergence
+
+Base of completion: 3589174cfddfea504349a886190a61da7faa0d18. Implementation: badbe9f170f6ab102a3f2fdf0d2874495c118f4a (P39 reconciliation and atomic invocation claim), 9baaa2d443f0acad5c090c1cfd5b28bfcf124b59 (new-effect admission and terminal replay), 993dbb3ad48e51af5ecde64135649187d6391664 (invocation setup), 733f94d2f8225ade955fc538f21769fcc618c2f6 (private recovery directory and replay admission).
+
+| Owner relative to packages/tool-runtime/src | Conservative split-line count |
+|---|---:|
+| runtime.ts | 429 |
+| runtime/types.ts | 97 |
+| runtime/errors.ts | 136 |
+| runtime/process-runner.ts | 340 |
+| runtime/no-effect-settlement.ts | 375 |
+| runtime/resources.ts | 330 |
+| runtime/execute-admitted-tool.ts | 140 |
+| runtime/settlement.ts | 557 |
+| runtime/invocation-authority.ts | 403 |
+| runtime/phase-contracts.ts | 20 |
+| runtime/claim-new-invocation.ts | 330 |
+| runtime/effect-admission.ts | 399 |
+| runtime/invocation-setup.ts | 224 |
+| runtime/recovery/observation-replay.ts | 514 |
+| runtime/recovery/prior-invocation.ts | 252 |
+| runtime/recovery/reconcile-admitted-invocation.ts | 687 |
+| runtime/recovery/finish-prior-invocation.ts | 192 |
+| runtime/recovery/replay-admission.ts | 215 |
+
+The root entry retains Layer construction, invocation-level sandbox-policy cleanup ownership, public exports and the lifecycle branches. Recovery is now organized under runtime/recovery/; four existing private implementations were relocated, not duplicated. Setup, capture, authorization, replay admission, reconciliation, new invocation claim, new-effect admission, execution and terminal settlement have separate owners. Ready/Terminal contracts carry early outcomes without continuing to new effects. The cleanup registration callback updates the existing invocation-owned ensuring bracket immediately when policy materialization succeeds. No new package dependency or durable authority was introduced.
+
+Static validation on 733f94d: 18/18 production source files within the 800-line cap; 8/8 direct source assertions passed, 72 relative import/re-export references scanned, zero forbidden private-to-entry/barrel edges, and all five external relative targets independently fetched. 19 selected operation names had matching literal member-call counts against the original 4,706-line runtime (including 35 TransactionPort.transact call sites, 10 assertCurrentFence, 3 settleOrReadWinner, 2 admitEffect, and one each of recordIntent, consumeApproved, bindClaim and admitRetryAttempt). Counts alone do not prove runtime or transaction-order equivalence. The P4 ownership test additionally forbids recovery importing new-claim, new-effect admission, executor or terminal settlement implementation and adds a source-order check for the root lifecycle plus cleanup bracket. These architecture tests have not been executed.
+
+Qualification remains blocked: a fresh local git ls-remote against github.com failed DNS resolution; Node is v22.16.0 rather than pinned 24.21.0, and pnpm is unavailable. No pinned Biome formatting, TypeScript build/typecheck, architecture Vitest, AH7/P38/P39/P40 crash/recovery or release tests have been executed. Do not promote the branch based on source metrics. Next: inventory remaining oversized files in the full repository and qualify all accumulated refactors. No mainline merge or release approval.
