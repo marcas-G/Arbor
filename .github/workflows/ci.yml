@@ -78,16 +78,38 @@ jobs:
         continue-on-error: true
         run: pnpm check:source-lines
 
+
+      # The functional journey is the slow lane (30+ min real processes);
+      # PR pushes take the fast lane. Full qualification runs on merge
+      # candidates, master pushes, manual dispatch, or when the
+      # `full-qualification` label is present. This is the risk-based CI
+      # split GOVERNANCE.md reserves: no safety/recovery/schema-required
+      # evidence is waived — it moves to the merge gate.
+      - name: Decide full qualification
+        id: lanes
+        run: |
+          if [ "${{ github.event_name }}" = "merge_group" ] \
+            || [ "${{ github.event_name }}" = "push" ] \
+            || [ "${{ github.event_name }}" = "workflow_dispatch" ] \
+            || [ "${{ contains(github.event.pull_request.labels.*.name, 'full-qualification') }}" = "true" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Coverage
+        if: steps.lanes.outputs.run == 'true'
         run: pnpm test:coverage
 
       - name: Web checks
         run: pnpm --filter @arbor/web typecheck && pnpm --filter @arbor/web build && pnpm --filter @arbor/web test
 
       - name: Install functional UI browser
+        if: steps.lanes.outputs.run == 'true'
         run: pnpm exec playwright install --with-deps chromium
 
       - name: Functional release journey
+        if: steps.lanes.outputs.run == 'true'
         run: pnpm test:functional
 
       - name: Dependency audit
