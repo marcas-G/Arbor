@@ -72,6 +72,8 @@ const P9_MODULE_EXPORTS: ReadonlyArray<{
  * Execution settlement. */
 const P9_RECOVERY_ENTRY_MODULES: ReadonlyArray<string> = [
   "packages/execution-runtime/src/recovery.ts",
+  "packages/execution-runtime/src/recovery/submitted-decision-stop-close.ts",
+  "packages/execution-runtime/src/recovery/escalation-recorder.ts",
   "packages/execution-runtime/src/recovery-drive.ts",
   "packages/application/src/provider-turn-recovery.ts",
 ];

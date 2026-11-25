@@ -1,6 +1,6 @@
 # R5 — Source-size governance backlog
 
-Status: partial inventory and three completed structural slices; **not release qualified**.
+Status: partial inventory and ten completed structural slices; **not release qualified**.
 
 Inventory base: `a468eddd439cf04a609c4e4b30f9e543084a9313`.
 Implementation head before architecture/doc follow-up: `e3619eccb003a6e16db3bec5d8e34d55b9d09247`.
@@ -14,25 +14,25 @@ The complete recursive Git tree was fetched at the inventory base (not truncated
 
 | Owner / source path | Inspected lines | R5 disposition |
 |---|---:|---|
-| adapters/persistence-sqlite/src/attention-projection.ts | 3048 | pending |
+| adapters/persistence-sqlite/src/attention-projection.ts | 3048 | decomposed |
 | apps/single-workspace/src/schema-upgrade.ts | 2975 | pending |
-| adapters/persistence-sqlite/src/migrations.ts | 2654 | pending |
+| adapters/persistence-sqlite/src/migrations.ts | 2654 | decomposed |
 | apps/single-workspace/src/projection-query.ts | 2179 | pending |
-| adapters/persistence-sqlite/src/ownership.ts | 1986 | pending |
+| adapters/persistence-sqlite/src/ownership.ts | 1986 | decomposed |
 | adapters/sandbox-native-posix/src/index.ts | 1778 | pending |
 | packages/provider-runtime/src/runtime.ts | 1664 | decomposed |
 | apps/single-workspace/src/composition.ts | 1595 | pending |
 | packages/application/src/external-command-codec.ts | 1594 | decomposed |
 | packages/projection-runtime/src/attention-loader.ts | 1575 | pending |
-| adapters/persistence-sqlite/src/recovery-attention-fact-store.ts | 1553 | pending |
+| adapters/persistence-sqlite/src/recovery-attention-fact-store.ts | 1553 | decomposed |
 | packages/application/src/authority-resolver.ts | 1476 | pending |
 | apps/single-workspace/src/production.ts | 1397 | pending |
 | adapters/persistence-sqlite/src/work-readmission-gate.ts | 1368 | pending |
 | apps/single-workspace/src/transport/composition.ts | 1325 | pending |
-| packages/agent-runtime/src/agent-loop-driver.ts | 1319 | pending |
-| packages/execution-runtime/src/execution-runtime.ts | 1296 | pending |
+| packages/agent-runtime/src/agent-loop-driver.ts | 1319 | decomposed |
+| packages/execution-runtime/src/execution-runtime.ts | 1296 | decomposed |
 | adapters/persistence-sqlite/src/tool-invocations.ts | 1200 | pending |
-| packages/execution-runtime/src/recovery.ts | 1177 | pending |
+| packages/execution-runtime/src/recovery.ts | 1177 | decomposed |
 | apps/single-workspace/src/p6-inbox-rebuild.ts | 1166 | pending |
 | packages/application/src/verification-signal-reconciliation.ts | 1154 | pending |
 | packages/application/src/workflow-signal-consumer.ts | 1135 | pending |
@@ -93,3 +93,23 @@ Static checks: 5/5 per slice (15/15 total); exact generic decoder, payload rules
 ## Qualification limitations
 
 The local checkout is unavailable (fresh git ls-remote fails github.com DNS resolution; Node v22.16.0 vs pinned v24.21.0 and pnpm absent). The existing CI workflow triggers PR, merge group, default-branch push, or manual dispatch; the governance branch has no workflow runs in the checked listing. No PR was opened or mainline merge performed. Do not treat the partial inventory or the 15 static checks as executed Vitest or full qualification. Existing CI and self-hosted runner authorization are unchanged. The strict source-lines gate remains required before final promotion; complete inventory and actual test qualification are still blockers.
+
+## R5 continuation — execution and SQLite ownership
+
+Implementation head before this architecture/doc follow-up: `f2fde82053eb7dd1215b3a30ac2fbc25b870a2b8`.
+
+| Commit | Owner | Conservative split-line count before → after |
+|---|---|---:|
+| 728c44402ee8457bd74fcc2d8576b7a1410e108a | agent-loop-driver.ts | 1320 → 636 |
+| 133f7bf1558335000088e07507ece67a7ef206a8 | execution-runtime/src/execution-runtime.ts | 1297 → 767 |
+| ac71fef533579834470f8f003109593f2e8efbe3 | execution-runtime/src/recovery.ts | 1178 → 716 |
+| d92b6fc1e7cdb5819d185cc062dc317a7ef981f9 | migrations.ts | 2655 → 80 |
+| 0a5e3e63421ea14ea41c1bca1a07eb394841dd85 | attention-projection.ts | 3049 → 35 |
+| d2904a4f99f3bf26d6fc0feb0718e43c52484f90 | recovery-attention-fact-store.ts | 1554 → 35 |
+| f2fde82053eb7dd1215b3a30ac2fbc25b870a2b8 | ownership.ts | 1987 → 64 |
+
+The execution slices are structurally decomposed (12 files, all <=800). The previous direct source assertions reported 15/15, including 19/20/30 transaction call-site counts preserved for Agent Loop Driver/Execution Runtime/Recovery. SQLite slices: 32 production files (6 migration, 11 projection, 7 recovery-fact, 8 ownership), each within the conservative 800-line cap. Migrations use unchanged contiguous declaration bodies and preserve the original current registry and named declarations. The attention projection groups retain the 21 method bodies and their order. The fact store retains all 18 service method keys, with fact-type grouping; ownership retains the four write operation bodies and original repository and environment revision implementations. No migration or SQL schema change was intended. Shared contexts retain captured services and original transaction scopes; extraction introduces no new durable mutation authority.
+
+The architecture ownership test now covers all seven new module groups. Legacy migration source assertions point to the specific version family, the P11 anchor assertion points to its owner, and the P9 recovery prohibition includes the extracted stop-close and escalation modules. The current registry assertions remain on the facade. The EGP negative check also includes driver recovery and cursor modules. These source assertions have not been run via Vitest. This remains a partial inventory; at least 40 of the original 50 inspected oversized files remain, excluding other uninspected violations. P0 remaining: qualification of accumulated changes, and headroom for execution runtime/provider runtime. Next production slices: work-readmission-gate, tool-invocations, session-repository, executable-approval, recovery-binding-store, then schema-upgrade and projection/transport composition.
+
+No full checkout scan, pinned formatter, compiler, runtime regression, migration replay, or CI qualification has been executed. Do not merge or claim full repository compliance until the strict gate and qualification pass.

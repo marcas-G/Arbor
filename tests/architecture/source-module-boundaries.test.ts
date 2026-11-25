@@ -21,6 +21,41 @@ const moduleGroups = [
     directory: "provider",
     facade: "provider",
   },
+  {
+    packageRoot: "packages/agent-runtime/src",
+    directory: "agent-loop-driver",
+    facade: "agent-loop-driver",
+  },
+  {
+    packageRoot: "packages/execution-runtime/src",
+    directory: "execution",
+    facade: "execution-runtime",
+  },
+  {
+    packageRoot: "packages/execution-runtime/src",
+    directory: "recovery",
+    facade: "recovery",
+  },
+  {
+    packageRoot: "adapters/persistence-sqlite/src",
+    directory: "migrations",
+    facade: "migrations",
+  },
+  {
+    packageRoot: "adapters/persistence-sqlite/src",
+    directory: "attention-projection",
+    facade: "attention-projection",
+  },
+  {
+    packageRoot: "adapters/persistence-sqlite/src",
+    directory: "recovery-attention-fact-store",
+    facade: "recovery-attention-fact-store",
+  },
+  {
+    packageRoot: "adapters/persistence-sqlite/src",
+    directory: "ownership",
+    facade: "ownership",
+  },
 ] as const;
 
 describe("R5 module ownership", () => {

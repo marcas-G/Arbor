@@ -39,7 +39,7 @@ describe("CAPA control permission and approval architecture", () => {
   });
 
   it("persists exact approvals and exposes governed MAC-P2 placement", () => {
-    const migrations = source("adapters/persistence-sqlite/src/migrations.ts");
+    const migrations = source("adapters/persistence-sqlite/src/migrations/v21-v30.ts");
     const profile = source("packages/model-context/src/turn-profile.ts");
     expect(migrations).toContain('name: "subject_bound_permission_grants"');
     expect(migrations).toContain('name: "control_action_approvals"');

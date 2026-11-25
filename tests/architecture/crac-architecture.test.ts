@@ -51,7 +51,7 @@ describe("DID v1.31 MAC-P1 Root Conversation work-initiation boundary", () => {
       "packages/application/src/commands/record-decision.ts",
     );
     const drain = source("packages/agent-runtime/src/safe-input-drain.ts");
-    const migrations = source("adapters/persistence-sqlite/src/migrations.ts");
+    const migrations = source("adapters/persistence-sqlite/src/migrations/v21-v30.ts");
     expect(controls).toContain(
       ["gov:", "$", "{record.proposalId}:", "$", "{record.revision}"].join(""),
     );
