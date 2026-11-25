@@ -51,12 +51,7 @@ export class LegacyLegacyDirectiveHandlers extends Context.Service<
   ReadonlyArray<LegacyDirectiveHandler>
 >()("arbor/LegacyLegacyDirectiveHandlers") {}
 
-const MAX_OBSERVATION_CHARS = 2000;
-
-const bounded = (text: string): BoundedObservation =>
-  text.length > MAX_OBSERVATION_CHARS
-    ? { text: text.slice(0, MAX_OBSERVATION_CHARS), truncated: true }
-    : { text, truncated: false };
+import { bounded } from "@arbor/tool-runtime";
 
 const driverError = (cause: unknown): ExecutionDriverError => ({
   _tag: "ExecutionDriverOperationalFailure",

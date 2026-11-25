@@ -25,17 +25,11 @@ import type {
   TransactionPortService,
   WorkspaceRepositoryService,
 } from "@arbor/ports";
+import { bounded } from "@arbor/tool-runtime";
 import { Effect, Option } from "effect";
-
-const MAX_OBSERVATION_CHARS = 2000;
 
 /** P6 `02` §2: bodyRef bounded by the frozen sender upload quota. */
 const MAX_BODY_REF_LENGTH = 4096;
-
-const bounded = (text: string): BoundedObservation =>
-  text.length > MAX_OBSERVATION_CHARS
-    ? { text: text.slice(0, MAX_OBSERVATION_CHARS), truncated: true }
-    : { text, truncated: false };
 
 const driverError = (cause: unknown): ExecutionDriverError => ({
   _tag: "ExecutionDriverOperationalFailure",
