@@ -7,7 +7,7 @@ const source = (path: string) => readFileSync(join(root, path), "utf8");
 
 describe("DID v1.31 MAC architecture", () => {
   it("keeps active LocalPlan cognition outside the core Domain contract", () => {
-    const controls = source("apps/single-workspace/src/control-actions.ts");
+    const controls = source("apps/single-workspace/src/control-actions/work-lifecycle.ts");
     const driver = source("packages/agent-runtime/src/agent-loop-driver.ts");
     const decision = source("packages/agent-runtime/src/model-decision.ts");
     const adapter = source("adapters/persistence-sqlite/src/work-plan.ts");
