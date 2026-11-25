@@ -63,6 +63,7 @@ import { WorkspacePlacementPortLive } from "../apps/single-workspace/src/workspa
 import {
   type AgentActionHandler,
   AgentLoopDriverLive,
+  ControlBasisResolverLive,
   checkFreshness,
   makeControlToolRegistry,
 } from "../packages/agent-runtime/src/index.js";
@@ -579,6 +580,17 @@ const cbMakeApp = () => {
       Layer.provide(ConversationResponseJobStoreLive, infra),
       Layer.provide(ConversationAttemptStoreLive, infra),
       Layer.provide(ConversationCheckpointStoreLive, infra),
+      Layer.provide(
+        ControlBasisResolverLive,
+        Layer.mergeAll(
+          infra,
+          Layer.provide(TransactionPortLive, infra),
+          Layer.provide(ProjectRepositoryLive, infra),
+          Layer.provide(WorkspaceRepositoryLive, infra),
+          Layer.provide(WorkRepositoryLive, infra),
+          revisions,
+        ),
+      ),
       Layer.provide(ExecutionRepositoryLive, infra),
       Layer.provide(
         RecoveryAttentionFactStoreLive,

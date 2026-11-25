@@ -61,7 +61,7 @@ import {
   makeControlToolRegistry,
 } from "./control.js";
 import type { ControlActionAuthorizerService } from "./control-authorization.js";
-import { makeControlBasisResolver } from "./control-basis-resolver.js";
+import { ControlBasisResolver } from "./control-basis-resolver.js";
 import { toExecutionDriverError } from "./execution-driver-failure.js";
 import { runModelDecision } from "./model-decision.js";
 import { recordAcceptedModelOutput } from "./model-output-journal.js";
@@ -147,6 +147,7 @@ export const AgentLoopDriverLive = (
   | DecisionRequestStore
   | ToolInvocationStore
   | P39RecoveryEvidenceStore
+  | ControlBasisResolver
   | Clock
 > =>
   Layer.effect(
@@ -177,6 +178,7 @@ export const AgentLoopDriverLive = (
       const tx = yield* TransactionPort;
       const invocationStore = yield* ToolInvocationStore;
       const p39Recovery = yield* P39RecoveryEvidenceStore;
+      const makeControlBasis = yield* ControlBasisResolver;
       const loopStepStoreOption =
         yield* Effect.serviceOption(AgentLoopStepStore);
       const providerTurnStoreOption =
@@ -188,8 +190,8 @@ export const AgentLoopDriverLive = (
       const providerTurns = Option.isSome(providerTurnStoreOption)
         ? providerTurnStoreOption.value
         : undefined;
-      const environmentRevisions = yield* EnvironmentRevisionStore;
-      const projects = yield* ProjectRepository;
+      const _environmentRevisions = yield* EnvironmentRevisionStore;
+      const _projects = yield* ProjectRepository;
       const workspaces = yield* WorkspaceRepository;
       const works = yield* WorkRepository;
       const _workspaceKnowledge = yield* WorkspaceKnowledgePort;
@@ -306,18 +308,9 @@ export const AgentLoopDriverLive = (
             })
             .pipe(Effect.mapError(failure));
           // DID §8.19 / P3 `06` §4: capture and re-read the full trusted
-          // control basis at every effectful action admission.
-          const currentControlBasis = makeControlBasisResolver(
-            {
-              tx,
-              projects,
-              workspaces,
-              works,
-              environmentRevisions,
-              failure,
-            },
-            input,
-          );
+          // control basis at every effectful action admission. E03: the
+          // assembly is owned by the ControlBasisResolver capability.
+          const currentControlBasis = makeControlBasis(input);
 
           // P12 `08` §7: the driver reports the D1/D3/D4/D5/D6 observation
           // signals at the ProviderTurn / ToolInvocation / Specialist
