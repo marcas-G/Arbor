@@ -88,3 +88,17 @@ Every seam migration appends to this file: the measured before/after
 dependency count and public surface, the contract checks performed, and
 the verification commands run. A migration without before-measurements is
 invalid.
+
+## Seam migration log
+
+| PR | Object | Measurement | Verification |
+|---|---|---|---|
+| #4 | 1 (E03) | Control-basis assembly: driver inline wiring of tx+4 stores → capability Service + Live layer; driver source no longer references the stores for this purpose | agent-runtime 254; p2/p3/p3-integration/p9/p11 89 |
+| #5 | 2 | AgentLoopActionDependencies 21-field flat → three layers (TurnInput/DurableStores/Orchestration) + intersection alias; zero behavior change | agent-runtime 254; p2/p3 65 |
+| #6 | 3 | Invocation-ID scheme: composition-root private helper → ports contract (deriveToolInvocationId/deriveLegacyToolInvocationId), byte-identity verified; PR #4 composition gap repaired (43 runtime failures → 0) | ports 24; single-workspace 585 |
+| #7 | tool ownership | bounded() 4 unlinked copies → executor-side authority imported by the app copies | tool-runtime 191; single-workspace 585 |
+
+Cumulative against the driver baseline audit: E06 hidden-required
+services 18 → 0; ModelDecisionDependencies 30 → 22 fields; the two
+`Effect<void, unknown>` signatures typed; control-basis and invocation-ID
+authorities relocated to their owning packages.
