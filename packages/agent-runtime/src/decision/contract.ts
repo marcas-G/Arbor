@@ -37,7 +37,7 @@ import type {
   WorkspaceRepositoryService,
 } from "@arbor/ports";
 import type { Effect } from "effect";
-import type { AgentLoopQualificationProbe } from "./qualification-probe.js";
+import type { AgentLoopQualificationProbe } from "../qualification-probe.js";
 
 export interface ModelDecisionOptions {
   readonly cancellationSignal?: ProviderCancellationSignal;

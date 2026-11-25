@@ -64,40 +64,40 @@ import {
   runCompaction,
   runSummaryCompaction,
 } from "./compaction-coordinator.js";
-import { runConversationCheckpointCompaction } from "./conversation-checkpoint-compaction.js";
-import { belongsToConversationExecution } from "./conversation-checkpoint-evidence.js";
-import { loadConversationDecisionContext } from "./conversation-decision-context.js";
+import { runConversationCheckpointCompaction } from "./checkpoint/conversation/compaction.js";
+import { belongsToConversationExecution } from "./checkpoint/conversation/evidence.js";
+import { loadConversationDecisionContext } from "./decision/conversation-context.js";
 import {
   containsNativeCheckpointInput,
   decodeUniqueNativePortableFrontier,
   nativeCheckpointOwnerExecutionId,
   nativeCompactionProviderTurnId,
   portableRequestHasNativeCheckpoint,
-} from "./native-checkpoint-evidence.js";
+} from "./checkpoint/native-evidence.js";
 import {
   GENERIC_INSTRUCTION_ASSETS,
   instructionAssetFragment,
   workExecutionLoopFragmentsFor,
 } from "./prompt-assets.js";
-import type { ModelDecisionDependencies } from "./model-decision-contract.js";
+import type { ModelDecisionDependencies } from "./decision/contract.js";
 import { decideRepair } from "./repair.js";
 import { makeAgentStepContext } from "./step-context.js";
 import {
   classifySubmittedDecisionBindingFailure,
   isPinnedSubmittedDecisionReplay,
-} from "./submitted-decision-replay.js";
+} from "./decision/submitted-replay.js";
 import { assembleWorkContext } from "./work-context.js";
 
 export { isValidOverflowCompactionLinkPair } from "./agent-loop-step-recovery.js";
 export type {
   ModelDecisionDependencies,
   ModelDecisionOptions,
-} from "./model-decision-contract.js";
+} from "./decision/contract.js";
 export {
   classifySubmittedDecisionBindingFailure,
   isPinnedSubmittedDecisionReplay,
   type SubmittedDecisionBindingFailureCode,
-} from "./submitted-decision-replay.js";
+} from "./decision/submitted-replay.js";
 
 const decodedProviderTurnId = (value: unknown): ProviderTurnId | null => {
   if (typeof value !== "string") return null;

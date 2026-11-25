@@ -69,7 +69,7 @@ describe("P3 package DAG", () => {
     const conversationContext = readFileSync(
       join(
         repoRoot,
-        "packages/agent-runtime/src/conversation-decision-context.ts",
+        "packages/agent-runtime/src/decision/conversation-context.ts",
       ),
       "utf8",
     );

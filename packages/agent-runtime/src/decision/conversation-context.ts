@@ -17,22 +17,22 @@ import type {
 } from "@arbor/ports";
 import { isValidConversationCheckpointBinding, sha256Hex } from "@arbor/ports";
 import { Effect, Option } from "effect";
-import { type ModelDecisionOutcome, safetyStop } from "./agent-loop-policy.js";
+import { type ModelDecisionOutcome, safetyStop } from "../agent-loop-policy.js";
 import {
   isP20OverflowReplacementManifestBound,
   resolveP20OverflowReplacementChain,
-} from "./agent-loop-step-recovery.js";
-import { conversationCheckpointBindingUse } from "./conversation-checkpoint-binding.js";
-import { runConversationCheckpointCompaction } from "./conversation-checkpoint-compaction.js";
+} from "../agent-loop-step-recovery.js";
+import { conversationCheckpointBindingUse } from "../checkpoint/conversation/binding.js";
+import { runConversationCheckpointCompaction } from "../checkpoint/conversation/compaction.js";
 import {
   belongsToConversationExecution,
   validateConversationCheckpointReceipt,
-} from "./conversation-checkpoint-evidence.js";
+} from "../checkpoint/conversation/evidence.js";
 import {
   type ConversationCheckpointProjection,
   projectConversationCheckpointHistory,
-} from "./conversation-checkpoint-projection.js";
-import type { ModelDecisionDependencies } from "./model-decision-contract.js";
+} from "../checkpoint/conversation/projection.js";
+import type { ModelDecisionDependencies } from "./contract.js";
 
 type ConversationDecisionDependencies = Pick<
   ModelDecisionDependencies,
