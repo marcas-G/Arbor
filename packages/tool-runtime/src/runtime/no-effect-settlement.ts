@@ -16,7 +16,7 @@ import type {
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { bounded, denied, operationalFailure } from "./errors.js";
-import type { makeObservationReplay } from "./observation-replay.js";
+import type { makeObservationReplay } from "./recovery/observation-replay.js";
 import type { ToolRuntimeQualificationProbe } from "./types.js";
 
 type Replay = ReturnType<typeof makeObservationReplay>;

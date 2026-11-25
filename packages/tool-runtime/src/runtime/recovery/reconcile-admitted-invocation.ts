@@ -25,17 +25,17 @@ import {
 } from "@arbor/ports";
 import { ArtifactId, parse } from "@arbor/domain";
 import { Effect, Option } from "effect";
-import { matchApproval } from "../approval.js";
-import { checkInvocationAuthority } from "../authority.js";
+import { matchApproval } from "../../approval.js";
+import { checkInvocationAuthority } from "../../authority.js";
 import {
   bounded,
   isLeaseFencingRejected,
   isP39ResourceResolutionStale,
   operationalFailure,
   reconciliationRetryDenialReasonCode,
-} from "./errors.js";
-import type { ReconciliationProbe, ResourceCapture } from "./phase-contracts.js";
-import type { PendingReconciliation, ToolExecutionResult, ToolExecutor } from "./types.js";
+} from "../errors.js";
+import type { ReconciliationProbe, ResourceCapture } from "../phase-contracts.js";
+import type { PendingReconciliation, ToolExecutionResult, ToolExecutor } from "../types.js";
 
 /** Reconcile one admitted external effect. Fact recording and retry admission remain atomic. */
 export const reconcileAdmittedInvocation = (

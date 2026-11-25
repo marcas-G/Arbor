@@ -3,15 +3,12 @@ import {
   type CanonicalToolObservation,
   Clock,
   canonicalArgumentsDigestV1,
-  canonicalizeRecoveryBindingV1,
   EnvironmentRevisionStore,
   ExecutableApprovalStore,
   type NoEffectDenialCode,
   P39RecoveryEvidenceStore,
   ProjectEnvironmentPort,
-  type RecoveryBindingV1,
   ResourceAdmission,
-  recoveryBindingV1Digest,
   SandboxPort,
   type SandboxProcessPolicyResolution,
   SandboxProcessPort,
@@ -32,35 +29,26 @@ import {
   WorkspaceRepository,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
-import {
-  makeRecoveryBindingV1,
-  recoveryApprovalSnapshotFromRecord,
-  recoveryBindingIdentityMatches,
-  recoveryBindingToolDefinitionHashV1,
-} from "./recovery-binding.js";
 
 import type { PendingReconciliation, ToolExecutionResult, ToolExecutor, ToolRuntimeQualificationProbe } from "./runtime/types.js";
 import {
   bounded,
-  denied,
-  executableApprovalTerminalDenial,
-  isP39ResourceResolutionStale,
   operationalFailure,
-  reconciliationRetryDenialReasonCode,
 } from "./runtime/errors.js";
 import { makeProcessRunner } from "./runtime/process-runner.js";
-import { makeObservationReplay } from "./runtime/observation-replay.js";
-import { inspectPriorInvocation } from "./runtime/prior-invocation.js";
+import { makeObservationReplay } from "./runtime/recovery/observation-replay.js";
+import { inspectPriorInvocation } from "./runtime/recovery/prior-invocation.js";
 import { makeNoEffectSettlement } from "./runtime/no-effect-settlement.js";
 import { resolveInvocationResources } from "./runtime/resources.js";
 import { resolveInvocationAuthority } from "./runtime/invocation-authority.js";
 import { executeAdmittedTool } from "./runtime/execute-admitted-tool.js";
 import { settleToolOutcome } from "./runtime/settlement.js";
-import { reconcileAdmittedInvocation } from "./runtime/reconcile-admitted-invocation.js";
+import { reconcileAdmittedInvocation } from "./runtime/recovery/reconcile-admitted-invocation.js";
 import { claimNewInvocation } from "./runtime/claim-new-invocation.js";
-import { finishPriorInvocation } from "./runtime/finish-prior-invocation.js";
+import { finishPriorInvocation } from "./runtime/recovery/finish-prior-invocation.js";
 import { admitNewEffect } from "./runtime/effect-admission.js";
 import { prepareInvocation } from "./runtime/invocation-setup.js";
+import { verifyPriorReplayAdmission } from "./runtime/recovery/replay-admission.js";
 
 export {
   recoveryBindingIdentityMatches,
@@ -284,8 +272,7 @@ export const ToolRuntimeLive = (
             return resourceResolution.observation;
           }
           const {
-            address, capturedWorkspace, resolved, regions,
-            checkCapturedSnapshotAndAdmit, region,
+            address, regions, region,
           } = resourceResolution;
 
           const authorityResolution = yield* resolveInvocationAuthority(
@@ -297,7 +284,7 @@ export const ToolRuntimeLive = (
           if (authorityResolution._tag === "Terminal") {
             return authorityResolution.observation;
           }
-          const { resolvedAuthority, needsApproval, currentApprovalRecord } = authorityResolution;
+          const { needsApproval } = authorityResolution;
           let { approvalAlreadyConsumedBySelf } = authorityResolution;
 
           let recoveredToolOutcome: ToolExecutionResult | undefined;
@@ -342,157 +329,13 @@ export const ToolRuntimeLive = (
           }
           if (Option.isSome(prior)) {
             const recorded = prior.value;
-            let replayBindingValue: RecoveryBindingV1 | undefined;
-            let replayBindingSha256: string | undefined;
-            const sameIntent =
-              recorded.executionId === context.executionId &&
-              recorded.workspaceId === context.workspaceId &&
-              recorded.toolName === intent.toolName &&
-              recorded.toolVersion === intent.toolVersion &&
-              recorded.sideEffectSemantics === definition.sideEffectSemantics &&
-              recorded.argumentsJson === intent.argumentsJson &&
-              recorded.approvalId === intent.approvalId;
-            if (
-              !sameIntent ||
-              (verifiedReplayBinding === undefined &&
-                JSON.stringify(recorded.resolvedRegions) !==
-                  JSON.stringify(regions))
-            ) {
-              return yield* Effect.fail<ToolRuntimeError>(
-                operationalFailure(
-                  "IntentJournal",
-                  String(intent.invocationId),
-                )({
-                  _tag: "ToolInvocationIdentityConflict",
-                }),
-              );
-            }
-            if (
-              recorded.settlement === null &&
-              recorded.sideEffectSemantics === "Reconcilable" &&
-              recorded.effectAdmissionState !== "NotAdmitted" &&
-              trustedProfile === undefined
-            ) {
-              // Historical shell@2 and any other profile-less legacy row are
-              // ambiguous external effects. Do not synthesize P39 identity or
-              // enter the Executor path during recovery.
-              return {
-                _tag: "OutcomeUnknown" as const,
-                reconciliationRefs: [String(intent.invocationId)],
-              };
-            }
-            if (verifiedReplayBinding !== undefined) {
-              replayBindingValue = verifiedReplayBinding.value;
-              replayBindingSha256 = verifiedReplayBinding.bindingSha256;
-            } else {
-              const replayAdmission = yield* Effect.match(
-                checkCapturedSnapshotAndAdmit(),
-                {
-                  onFailure: (cause) => ({ ok: false as const, cause }),
-                  onSuccess: (value) => ({ ok: true as const, value }),
-                },
-              );
-              if (!replayAdmission.ok) {
-                if (isP39ResourceResolutionStale(replayAdmission.cause)) {
-                  return yield* refreshAfterStale(replayAdmission.cause);
-                }
-                return yield* Effect.fail<ToolRuntimeError>(
-                  replayAdmission.cause as ToolRuntimeError,
-                );
-              }
-              if (replayAdmission.value._tag === "Denied") {
-                return yield* recordNoEffectDenial(
-                  definition.sideEffectSemantics,
-                  regions,
-                  "ResourceAdmissionDenied",
-                );
-              }
-            }
-            if (
-              verifiedReplayBinding === undefined &&
-              p39BindingEnabled &&
-              Option.isSome(p39Recovery)
-            ) {
-              const approvalSnapshot = needsApproval
-                ? recoveryApprovalSnapshotFromRecord(
-                    currentApprovalRecord,
-                    intent.invocationId,
-                  )
-                : null;
-              if (needsApproval && approvalSnapshot === null) {
-                return yield* Effect.fail<ToolRuntimeError>(
-                  operationalFailure(
-                    "RecoveryBinding",
-                    String(intent.invocationId),
-                  )({ _tag: "ConsumedApprovalSourceUnavailable" }),
-                );
-              }
-              let expectedBinding: RecoveryBindingV1;
-              try {
-                expectedBinding = makeRecoveryBindingV1({
-                  context,
-                  intent,
-                  definition,
-                  authority: resolvedAuthority,
-                  regions,
-                  resourceBoundaryRevision:
-                    capturedWorkspace.resourceBoundaryRevision,
-                  environmentRevision: resolved.observedEnvironmentRevision,
-                  approval: approvalSnapshot,
-                  ...(trustedProfile === undefined
-                    ? {}
-                    : {
-                        profile: trustedProfile,
-                        effectKey: trustedEffectKey,
-                      }),
-                });
-              } catch (cause) {
-                return yield* Effect.fail<ToolRuntimeError>(
-                  operationalFailure(
-                    "RecoveryBinding",
-                    String(intent.invocationId),
-                  )(cause),
-                );
-              }
-              const bound = yield* tx
-                .transact(
-                  Effect.gen(function* () {
-                    if (Option.isSome(observationEvidence)) {
-                      yield* observationEvidence.value.assertCurrentFence(
-                        context.executionFence,
-                        yield* clock.now(),
-                      );
-                    }
-                    return yield* p39Recovery.value.findBinding(
-                      intent.invocationId,
-                    );
-                  }),
-                )
-                .pipe(
-                  Effect.mapError(
-                    operationalFailure(
-                      "RecoveryBinding",
-                      String(intent.invocationId),
-                    ),
-                  ),
-                );
-              if (
-                Option.isNone(bound) ||
-                bound.value.canonicalJson !==
-                  canonicalizeRecoveryBindingV1(expectedBinding) ||
-                bound.value.bindingSha256 !==
-                  recoveryBindingV1Digest(expectedBinding)
-              ) {
-                return yield* Effect.fail<ToolRuntimeError>(
-                  operationalFailure(
-                    "RecoveryBinding",
-                    String(intent.invocationId),
-                  )({ _tag: "RecoveryBindingReplayMismatch" }),
-                );
-              }
-              replayBindingValue = bound.value.value;
-              replayBindingSha256 = bound.value.bindingSha256;
-            }
+            const replayAdmission = yield* verifyPriorReplayAdmission(
+              intent, context, definition, recorded, resourceResolution, authorityResolution,
+              verifiedReplayBinding, p39BindingEnabled, p39Recovery, observationEvidence,
+              trustedProfile, trustedEffectKey, tx, clock, recordNoEffectDenial, refreshAfterStale,
+            );
+            if (replayAdmission._tag === "Terminal") return replayAdmission.observation;
+            const { replayBindingValue, replayBindingSha256 } = replayAdmission;
             if (
               recorded.settlement === null &&
               recorded.effectAdmissionState === "MayHaveStarted" &&

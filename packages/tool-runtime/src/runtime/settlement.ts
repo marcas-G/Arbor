@@ -14,7 +14,7 @@ import type {
 import { Effect, Option } from "effect";
 import { matchesAuthenticatedP39Evidence } from "../recovery-binding.js";
 import { denied, isLeaseFencingRejected, operationalFailure } from "./errors.js";
-import type { makeObservationReplay } from "./observation-replay.js";
+import type { makeObservationReplay } from "./recovery/observation-replay.js";
 import type {
   PendingReconciliation,
   ToolExecutionResult,

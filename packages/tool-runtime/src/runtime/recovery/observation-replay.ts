@@ -20,8 +20,8 @@ import {
   type TransactionPortService,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
-import { matchesAuthenticatedP39Evidence, recoveryBindingToolDefinitionHashV1 } from "../recovery-binding.js";
-import { isLeaseFencingRejected, operationalFailure } from "./errors.js";
+import { matchesAuthenticatedP39Evidence, recoveryBindingToolDefinitionHashV1 } from "../../recovery-binding.js";
+import { isLeaseFencingRejected, operationalFailure } from "../errors.js";
 
 /** Read and verify recorded evidence without acquiring a new effect admission. */
 export const makeObservationReplay = (

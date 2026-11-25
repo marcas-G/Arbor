@@ -15,8 +15,8 @@ import {
   type TransactionPortService,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
-import { recoveryBindingToolDefinitionHashV1 } from "../recovery-binding.js";
-import { operationalFailure } from "./errors.js";
+import { recoveryBindingToolDefinitionHashV1 } from "../../recovery-binding.js";
+import { operationalFailure } from "../errors.js";
 import type { makeObservationReplay } from "./observation-replay.js";
 
 type Replay = ReturnType<typeof makeObservationReplay>;
