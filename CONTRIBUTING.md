@@ -28,7 +28,7 @@ The current package scripts are the executable reference:
     node scripts/governance/check-design-chain.mjs
     node --test scripts/governance/check-design-chain.test.mjs
 
-The last two commands are new standalone checks. They do not change the existing required CI. Follow AGENTS.md and docs/ENGINEERING_HEALTH.md for complete gates; use pnpm check:release, packaging and real-provider qualification when claiming release readiness. Test on a clean, authorized environment; never test migrations or destructive operations against preserved user data.
+The last two commands are new standalone checks. They do not change the existing required CI. Follow AGENTS.md and docs/ENGINEERING_HEALTH.md for complete gates; use pnpm check:release, packaging and real-provider qualification when claiming release readiness. `pnpm check:source-lines` is a separate mandatory gate for release promotion: it is not part of `pnpm check` while its baseline is open (GOVERNANCE.md requires a validated baseline before a gate becomes mandatory), but a release candidate must pass it on the exact promotion SHA. Test on a clean, authorized environment; never test migrations or destructive operations against preserved user data.
 
 ## Review
 

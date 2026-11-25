@@ -471,7 +471,7 @@ P1。
 KP-007
 
 **现象**
-`planning/results/**` 和根目录 `findings.md` 保存了多个时间点的 schema、测试数量、开放问题和失败结论。它们是审计证据，但搜索时容易命中已经被后续实现替代的 present-tense 语句。
+`planning/results/**` 和 `planning/history/`（原根目录会话文件）保存了多个时间点的 schema、测试数量、开放问题和失败结论。它们是审计证据，但搜索时容易命中已经被后续实现替代的 present-tense 语句。
 
 **复现步骤**
 
@@ -489,7 +489,7 @@ KP-007
 
 - `planning/results/**`
 - `planning/proposals/**`
-- `findings.md`
+- `planning/history/findings.md`
 - `docs/CURRENT_STATE.md`
 - `docs/KNOWN_PROBLEMS.md`
 

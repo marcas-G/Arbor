@@ -1,8 +1,8 @@
 # 当前状态
 
 更新日期：2026-11-25  
-源码基线：`5068be633bc9b2ee50fb4bcc36d658fa4c036149` 加本工作树中的未提交对齐修改。  
-说明：本文件描述当前可执行实现，不把历史 `planning/results/**` 的阶段标签当成当前事实。
+源码基线：`codex/repository-governance-baseline` 分支（master 之上的治理基线工作；本地完整 lint/typecheck/architecture 263/core 508 文件/web 299 项已在 2026-11-25 通过）。  
+说明：本文件描述当前可执行实现，不把历史 `planning/results/**` 的阶段标签当成当前事实。根目录历史会话文件已移至 `planning/history/`。
 
 ## 2026-11-25 方案 A 修复与发行物启动烟测
 

@@ -42,3 +42,13 @@ Use current documents for current facts; use historical records for provenance. 
 Follow [CONTRIBUTING.md](CONTRIBUTING.md) and [engineering practices](docs/engineering/README.md). Existing package DAG, architecture tests, Biome, strict TypeScript, test manifests and CI remain the primary executable checks. The design-chain checker is initially a standalone check, not a replacement for these checks. Enable any new mandatory gate only after its baseline and negative tests are validated. Security restrictions on CI runner access take precedence over convenience.
 
 Review governance on material architecture, release, or team changes; update the owning source instead of adding competing copies.
+
+## Branch protection — enabled 2026-11-25
+
+`master` now requires a pull request (zero approving reviews for this
+single-owner repository), forbids force pushes and deletion, and does not
+exempt administrators by default so the owner keeps an emergency direct-push
+channel. Required status checks are deliberately not configured yet; enable
+them on the quality/analyze checks once the hosted-CI pipeline is observed
+green on a merge candidate. Direct pushes to `master` and check bypasses
+remain prohibited by policy regardless of tooling state.
