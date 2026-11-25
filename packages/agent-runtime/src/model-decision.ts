@@ -34,9 +34,7 @@ import {
   type TurnProfileResolverService,
 } from "@arbor/model-context";
 import type {
-  AgentLoopStepActionRecord,
   AgentLoopStepFence,
-  AgentLoopStepProviderTurnLink,
   AgentLoopStepRecord,
   AgentLoopStepStoreService,
   BlobStorePortService,
@@ -96,6 +94,7 @@ import {
   decodeExhaustedRepairDisposition,
   hasValidCompiledInferenceRequestHash,
   isP20OverflowReplacementManifestBound,
+  isValidOverflowCompactionLinkPair,
   resolveP20OverflowReplacementChain,
 } from "./agent-loop-step-recovery.js";
 import {
@@ -118,7 +117,18 @@ import {
 import type { AgentLoopQualificationProbe } from "./qualification-probe.js";
 import { decideRepair } from "./repair.js";
 import { makeAgentStepContext } from "./step-context.js";
+import {
+  classifySubmittedDecisionBindingFailure,
+  isPinnedSubmittedDecisionReplay,
+} from "./submitted-decision-replay.js";
 import { assembleWorkContext } from "./work-context.js";
+
+export { isValidOverflowCompactionLinkPair } from "./agent-loop-step-recovery.js";
+export {
+  classifySubmittedDecisionBindingFailure,
+  isPinnedSubmittedDecisionReplay,
+  type SubmittedDecisionBindingFailureCode,
+} from "./submitted-decision-replay.js";
 
 export interface ModelDecisionOptions {
   readonly cancellationSignal?: ProviderCancellationSignal;
@@ -189,152 +199,6 @@ export interface ModelDecisionDependencies {
   readonly failure: (cause: unknown) => ExecutionDriverError;
   readonly now: () => Effect.Effect<string>;
 }
-
-interface SubmittedDecisionReplayInput {
-  readonly executionWorkspaceId: string;
-  readonly episode: {
-    readonly decisionId: string;
-    readonly requestRevision: number;
-  };
-  readonly request: {
-    readonly workspaceId: string;
-    readonly candidateWorkIds: ReadonlyArray<string>;
-    readonly workspaceRevision: number;
-    readonly revision: number;
-    readonly state:
-      | { readonly _tag: "Pending" }
-      | { readonly _tag: "Submitted"; readonly selectedWorkId: string };
-  };
-  readonly workspace:
-    | {
-        readonly currentWorkId: string | null;
-        readonly revision: number;
-      }
-    | undefined;
-  readonly step:
-    | (Omit<
-        Pick<
-          AgentLoopStepRecord,
-          | "providerTurnId"
-          | "state"
-          | "nextActionIndex"
-          | "manifestId"
-          | "decodedOutputHash"
-          | "modelOutputSessionSequence"
-        >,
-        "providerTurnId"
-      > & { readonly providerTurnId: string })
-    | undefined;
-  readonly pendingAction:
-    | Pick<
-        AgentLoopStepActionRecord,
-        "actionIndex" | "routeKind" | "actionKind" | "state"
-      >
-    | undefined;
-  readonly providerTurnId: string;
-  readonly providerResult:
-    | { readonly _tag: "SettledSuccess"; readonly manifestId: string }
-    | undefined;
-}
-
-export type SubmittedDecisionBindingFailureCode =
-  | "DecisionRequestWorkspaceMismatch"
-  | "StepManifestMismatch";
-
-/** Classifies only the two frozen AH10 integrity failures. Other invalid or
- * incomplete replay evidence remains on the existing fail-closed path. */
-export const classifySubmittedDecisionBindingFailure = (
-  input: SubmittedDecisionReplayInput,
-): SubmittedDecisionBindingFailureCode | undefined => {
-  const { request, step, pendingAction, providerResult } = input;
-  if (
-    request.state._tag !== "Submitted" ||
-    step === undefined ||
-    step.providerTurnId !== input.providerTurnId ||
-    step.state !== "ActionsInProgress" ||
-    pendingAction === undefined ||
-    pendingAction.actionIndex !== step.nextActionIndex ||
-    pendingAction.routeKind !== "Control" ||
-    pendingAction.actionKind !== "select_current_work" ||
-    pendingAction.state !== "Pending"
-  ) {
-    return undefined;
-  }
-  if (request.workspaceId !== input.executionWorkspaceId) {
-    return "DecisionRequestWorkspaceMismatch";
-  }
-  if (
-    step.manifestId !== undefined &&
-    providerResult?._tag === "SettledSuccess" &&
-    providerResult.manifestId !== step.manifestId
-  ) {
-    return "StepManifestMismatch";
-  }
-  return undefined;
-};
-
-/** A terminal DecisionRequest may be reused only to recover this exact
- * already-pinned SelectCurrentWork action. All new or otherwise ambiguous
- * DecisionEpisodes remain Pending-only. */
-export const isPinnedSubmittedDecisionReplay = (
-  input: SubmittedDecisionReplayInput,
-): boolean => {
-  const { request, episode, workspace, step, pendingAction, providerResult } =
-    input;
-  const selectedWorkId =
-    request.state._tag === "Submitted"
-      ? request.state.selectedWorkId
-      : undefined;
-  return (
-    request.state._tag === "Submitted" &&
-    request.workspaceId === input.executionWorkspaceId &&
-    request.revision === episode.requestRevision + 1 &&
-    selectedWorkId !== undefined &&
-    request.candidateWorkIds.includes(selectedWorkId) &&
-    workspace?.currentWorkId === selectedWorkId &&
-    workspace.revision === request.workspaceRevision + 1 &&
-    step !== undefined &&
-    step.providerTurnId === input.providerTurnId &&
-    step.state === "ActionsInProgress" &&
-    step.manifestId !== undefined &&
-    step.decodedOutputHash !== undefined &&
-    step.modelOutputSessionSequence !== undefined &&
-    pendingAction !== undefined &&
-    pendingAction.actionIndex === step.nextActionIndex &&
-    pendingAction.routeKind === "Control" &&
-    pendingAction.actionKind === "select_current_work" &&
-    pendingAction.state === "Pending" &&
-    providerResult?._tag === "SettledSuccess" &&
-    providerResult.manifestId === step.manifestId
-  );
-};
-
-export const isValidOverflowCompactionLinkPair = (
-  links: ReadonlyArray<AgentLoopStepProviderTurnLink>,
-  inferenceProviderTurnId: string,
-  expectedCompactionProviderTurnId: string | ReadonlyArray<string>,
-): boolean => {
-  const inferenceLinks = links.filter((link) => link.role === "Inference");
-  const compactionLinks = links.filter(
-    (link) => link.role === "OverflowCompaction",
-  );
-  const inference = inferenceLinks[0];
-  const compaction = compactionLinks[0];
-  return (
-    inferenceLinks.length === 1 &&
-    compactionLinks.length === 1 &&
-    inference !== undefined &&
-    compaction !== undefined &&
-    inference.providerTurnId === inferenceProviderTurnId &&
-    inference.state === "SettledFailure" &&
-    compaction.state === "Prepared" &&
-    inference.contextEpoch === compaction.contextEpoch &&
-    (typeof expectedCompactionProviderTurnId === "string"
-      ? compaction.providerTurnId === expectedCompactionProviderTurnId
-      : expectedCompactionProviderTurnId.includes(compaction.providerTurnId)) &&
-    compaction.predecessorProviderTurnId === inferenceProviderTurnId
-  );
-};
 
 const nativeCompactionProviderTurnId = (value: string): ProviderTurnId | null =>
   (() => {

@@ -381,3 +381,31 @@ export const retryDispositionMatchesSuccessor = (
     target.providerTurnId === successor.providerTurnId
   );
 };
+
+/** Validate the prepared compaction link before resuming a failed inference. */
+export const isValidOverflowCompactionLinkPair = (
+  links: ReadonlyArray<AgentLoopStepProviderTurnLink>,
+  inferenceProviderTurnId: string,
+  expectedCompactionProviderTurnId: string | ReadonlyArray<string>,
+): boolean => {
+  const inferenceLinks = links.filter((link) => link.role === "Inference");
+  const compactionLinks = links.filter(
+    (link) => link.role === "OverflowCompaction",
+  );
+  const inference = inferenceLinks[0];
+  const compaction = compactionLinks[0];
+  return (
+    inferenceLinks.length === 1 &&
+    compactionLinks.length === 1 &&
+    inference !== undefined &&
+    compaction !== undefined &&
+    inference.providerTurnId === inferenceProviderTurnId &&
+    inference.state === "SettledFailure" &&
+    compaction.state === "Prepared" &&
+    inference.contextEpoch === compaction.contextEpoch &&
+    (typeof expectedCompactionProviderTurnId === "string"
+      ? compaction.providerTurnId === expectedCompactionProviderTurnId
+      : expectedCompactionProviderTurnId.includes(compaction.providerTurnId)) &&
+    compaction.predecessorProviderTurnId === inferenceProviderTurnId
+  );
+};
