@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -63,7 +63,19 @@ describe("DID v1.28 Execution Episode / Goal / Plan architecture", () => {
     expect(migrations).toContain(
       "DROP TABLE agent_execution_state_legacy_focus",
     );
-    for (const runtimeSource of [driver, decision, completion, profile]) {
+    const decisionDirectory = "packages/agent-runtime/src/decision";
+    const decisionPhases = readdirSync(join(root, decisionDirectory), {
+      recursive: true,
+    })
+      .filter((entry) => entry.endsWith(".ts"))
+      .map((entry) => source(join(decisionDirectory, entry)));
+    for (const runtimeSource of [
+      driver,
+      decision,
+      completion,
+      profile,
+      ...decisionPhases,
+    ]) {
       expect(runtimeSource).not.toMatch(
         /WorkspaceCoordination|QueryCompleted|CoordinationCompleted/,
       );

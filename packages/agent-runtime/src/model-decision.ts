@@ -1,4 +1,4 @@
-import type { Execution, ExecutionSettlement } from "@arbor/domain";
+import type { ExecutionSettlement } from "@arbor/domain";
 import {
   ContextEpochNumber,
   conversationResponseEpisode,
@@ -20,7 +20,6 @@ import {
 } from "@arbor/model-context";
 import type {
   ExecutionDriverError,
-  PortableInputItem,
   PortableModelRequestV2,
   ProviderRunInput,
   SessionEntryRecord,
@@ -37,7 +36,6 @@ import {
   isProviderExecutionTimeout,
   isProviderFailure,
   isProviderTurnBindingChanged,
-  MAX_TURNS,
   type ModelDecisionOutcome,
   providerExecutionTimeoutSettlement,
   providerFailureSettlement,
@@ -46,10 +44,7 @@ import {
   runtimeSafetyFragment,
   safetyStop,
 } from "./agent-loop-policy.js";
-import {
-  runCompaction,
-  runSummaryCompaction,
-} from "./compaction-coordinator.js";
+import { runCompaction } from "./compaction-coordinator.js";
 import { runConversationCheckpointCompaction } from "./checkpoint/conversation/compaction.js";
 import { loadConversationDecisionContext } from "./decision/conversation-context.js";
 import { loadDecisionSessionContext } from "./decision/context/session.js";

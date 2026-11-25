@@ -53,7 +53,12 @@ describe("P3 package DAG", () => {
       join(repoRoot, "packages/model-context/src/projector.ts"),
       "utf8",
     );
-    expect(decisionTurn).toContain("projectSessionTimeline");
+    const sessionContext = readFileSync(
+      join(repoRoot, "packages/agent-runtime/src/decision/context/session.ts"),
+      "utf8",
+    );
+    expect(decisionTurn).toContain("loadDecisionSessionContext(");
+    expect(sessionContext).toContain("projectSessionTimeline(");
     expect(decisionTurn).toContain("listRecentEntries");
     expect(decisionTurn).toContain("SESSION_TIMELINE_ENTRY_LIMIT");
     expect(
@@ -64,9 +69,11 @@ describe("P3 package DAG", () => {
     expect(
       existsSync(join(repoRoot, "packages/agent-runtime/src/inbox-context.ts")),
     ).toBe(false);
-    expect(decisionTurn).not.toContain("listUnconsumed");
-    expect(decisionTurn).not.toContain("assembleInboxContext");
-    expect(decisionTurn).not.toContain("PortableLegacyMessage");
+    for (const source of [decisionTurn, sessionContext]) {
+      expect(source).not.toContain("listUnconsumed");
+      expect(source).not.toContain("assembleInboxContext");
+      expect(source).not.toContain("PortableLegacyMessage");
+    }
     const conversationContext = readFileSync(
       join(
         repoRoot,
@@ -267,5 +274,36 @@ describe("durable step recovery responsibility", () => {
       const physicalLines = lines.length - (lines.at(-1) === "" ? 1 : 0);
       expect(physicalLines).toBeLessThanOrEqual(800);
     }
+  });
+});
+
+describe("decision context and native rebase ownership", () => {
+  const src = "packages/agent-runtime/src";
+  const read = (path: string) => readFileSync(join(repoRoot, src, path), "utf8");
+
+  it("keeps context construction and native checkpoint recovery behind phases", () => {
+    const driver = read("model-decision.ts");
+    const session = read("decision/context/session.ts");
+    const workspace = read("decision/context/workspace.ts");
+    const recovery = read("decision/recovery/native-rebase.ts");
+    const producer = read("decision/recovery/native-checkpoint-source.ts");
+    const frontier = read("decision/recovery/native-portable-frontier.ts");
+    const committed = read("decision/recovery/committed-rebase-step.ts");
+    const workPlan = read("decision/recovery/work-plan-rebase.ts");
+    expect(driver).toContain("loadDecisionSessionContext(");
+    expect(driver).toContain("loadDecisionWorkspaceContext(");
+    expect(driver).toContain("recoverNativeCheckpointContext(");
+    expect(driver).toContain("rebaseWorkPlanCheckpoint(");
+    expect(driver).toContain('nativeRecovery._tag === "Restart"');
+    expect(driver).toContain('nativeRecovery._tag === "Complete"');
+    expect(session).toContain("makeAgentStepContext(");
+    expect(workspace).toContain("localPlans.findByWork(");
+    expect(recovery).toContain("validateNativeCheckpointSource(");
+    expect(recovery).toContain("reconstructNativePortableFrontier(");
+    expect(recovery).toContain("recoverCommittedRebaseStep(");
+    expect(producer).toContain("checkpointSourceStep");
+    expect(frontier).toContain("postCheckpointProjection");
+    expect(committed).toContain("loopSteps.transition(");
+    expect(workPlan).toContain("runSummaryCompaction(");
   });
 });

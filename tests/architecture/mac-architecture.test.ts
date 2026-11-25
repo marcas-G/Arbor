@@ -18,8 +18,12 @@ describe("DID v1.31 MAC architecture", () => {
     expect(controls).toContain("LocalPlanStore");
     expect(controls).not.toContain("reviseWorkPlan");
     expect(driver).toContain("LocalPlanStore");
-    expect(decision).toContain("localPlans");
-    expect(decision).toContain("local-plan:");
+    const workspaceContext = source(
+      "packages/agent-runtime/src/decision/context/workspace.ts",
+    );
+    expect(decision).toContain("loadDecisionWorkspaceContext(");
+    expect(workspaceContext).toContain("localPlans");
+    expect(workspaceContext).toContain("local-plan:");
     expect(adapter).toContain("LocalPlanStoreLive");
     expect(adapter).toContain("work_plans");
   });
