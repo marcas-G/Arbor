@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { conversationCheckpointBindingUse } from "../src/conversation-checkpoint-binding.js";
+import { conversationCheckpointBindingUse } from "../src/checkpoint/conversation/binding.js";
 
 const fingerprint = `p16fp_${"a".repeat(64)}`;
 const opaqueRef = "provider-native:opaque-old-state";

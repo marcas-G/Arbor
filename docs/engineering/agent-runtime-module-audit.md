@@ -160,3 +160,46 @@ Implementation base: e0cb825dd7bd23d5f34e8df9d095719cbe36fbb2.
 Evidence: the R1 migration script checked coverage of every original non-import line, equality of moved body text after restoring newly required export modifiers, and the original public symbol set. For R2 the extraction script reversed all three control-flow adaptations and checked the resulting body against the original exact text after indentation normalization. These checks are static source-equivalence evidence only, not runtime equivalence or a passing test suite. The full checkout remains blocked by DNS resolution of github.com; local Node v22.16.0 and no installed pnpm/Arbor dependencies differ from the pinned Node 24.21.0/pnpm 12.4.2. No complete TypeScript, Biome, Vitest, architecture or process recovery tests have run. Do not merge until required gates pass.
 
 Required before the next stateful phase: format/check only the changed files under the pinned environment, run pnpm typecheck, pnpm architecture, pnpm test:manifest, pnpm test and the applicable control-command, AH10/AH19/P20 conversation checkpoint and recovery cases. Then run pnpm check; preserve failures and fix them without weakening the contracts. Next implementation boundary: startup/step recovery and settlement proposal, followed by Work/Session context and provider lifecycle. Do not create a second scheduler or move transactions across their existing boundaries.
+
+## R2 directory ownership and startup/settlement phases
+
+Audit and implementation base: c9a75d6a785a0aa78d121bd4183627ba1844b7a8.
+
+Directory ownership (implemented paths, not an aspirational empty directory tree):
+
+```text
+packages/agent-runtime/src/
+├── index.ts                         # package public API
+├── agent-loop-driver.ts             # outer loop and Runtime integration
+├── model-decision.ts                # decision orchestration during convergence
+├── agent-loop-actions.ts             # action orchestration
+├── decision/
+│   ├── contract.ts                  # shared decision input/port types
+│   ├── conversation-context.ts      # exact conversation context phase
+│   ├── startup-recovery.ts          # recover durable cursor before Prepared
+│   ├── submitted-replay.ts          # submitted decision replay predicates
+│   └── settlement.ts                # Prepared step proposal transaction
+└── checkpoint/
+    ├── native-evidence.ts           # native evidence and portable frontier
+    └── conversation/
+        ├── binding.ts
+        ├── compaction.ts
+        ├── evidence.ts
+        └── projection.ts
+```
+
+Eight existing modules were moved (cd60e5a67deed560ac4700a412396e5f9452bffa). The package barrel and decision driver now import canonical owners. Six existing internal paths are temporarily explicit re-export facades for existing deep imports; they contain no second implementation. Direct test imports for the four checkpoint modules are migrated in this follow-up. Remove each facade only after scanning all active source/test imports and running the full gates; historical planning/verification references remain historical, not migration targets.
+
+Startup recovery (eab3b3ee4589b3a62b3ab1806562d999f37127e7) extracts the pre-loop Work native checkpoint recovery and exact-action cursor override into an explicit Ready(cursor) / Complete(outcome) result. The existing two settlement exits are translated to Complete and all other source statements are unchanged. The driver applies the cursor after the phase successfully returns; a failed or interrupted invocation now does not publish the partially recovered process-local cursor to the driver. Re-executing the same failed Effect instance must be checked in the pinned runtime; do not claim complete behavioral equivalence without that regression. Durable writes and transaction/fence calls stay at the original places.
+
+Prepared settlement (e4642c2a0ad0baefea6ab84a8ee02d2e8df81b8c) moves the closure to an explicit phase returning the updated step. The original ProviderFailure dangling-turn close and Prepared CAS remain within one transaction. AH4 before/after probes remain on the same sides of the durable transaction; the driver updates its local cursor after the phase succeeds. Two tests added to the existing settlement-proposal suite verify the absent-step branch and the fenced transition. They have not been executed in the pinned project.
+
+Dependency rule: decision phases may call checkpoint evidence/compaction and existing shared runtime policies/ports; checkpoint implementation may not call decision phases or any runtime driver. Neither directory imports the package barrel, agent-loop driver/actions, model-decision driver or temporary facades. Existing package DAG remains unchanged. The new architecture test walks both directories and inspects static AST import/export edges; computed specifiers and full TS alias resolution are not covered.
+
+Future layout, introduced only when a complete responsibility is moved:
+- `decision/step-recovery.ts`, `decision/session-context.ts`, `decision/turn-preparation.ts`, `decision/provider-lifecycle.ts` (or narrower modules if real transaction owners differ).
+- `actions/` for action ledger, executable/control dispatch, exact action recovery; `control/` for catalog, type contracts, decoder, and authority. Keep `control` as control-action semantics, not all runtime policy. `prompt/` for instruction assets/programs. Reuse existing modules before adding subdirectories.
+- Tool Runtime: invocation, resource, authority/approval, recovery/reconciliation, execution, settlement; keep tool implementations under existing `tools/`. Do not add empty directory skeletons, a generic utils/services dump, parallel state authority, or phase-number folders.
+- Driver entry points remain at the existing root paths until the remaining large phases are qualified; later relocation must retain the supported entry and update architecture checks.
+
+At this point model-decision.ts is 5,175 split lines (643 fewer than this batch's base). Source migration equality and the two startup exit reversals were checked in the extraction scripts; the phase and test changes are still unqualified. DNS clone failure reproduced in the current session; Node v22.16.0, no pnpm, no installed repository dependency graph. No full build, Biome, architecture, Vitest, recovery or release run is claimed. Run the existing full checks and AH4/AH17/AH19/P20 and exact-action recovery cases; verify repeated effect execution and interrupted phase behavior. No master merge or CI authorization.

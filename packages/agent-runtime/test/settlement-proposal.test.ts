@@ -62,7 +62,9 @@ describe("Prepared step settlement phase", () => {
       proposePreparedStepSettlement(
         {
           tx: {
-            transact: (body: Effect.Effect<unknown, unknown, TransactionScope>) =>
+            transact: (
+              body: Effect.Effect<unknown, unknown, TransactionScope>,
+            ) =>
               Effect.gen(function* () {
                 trace.push("transaction");
                 return yield* Effect.provideService(body, TransactionScope, {

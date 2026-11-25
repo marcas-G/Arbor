@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, posix } from "node:path";
+import { parse } from "@babel/parser";
 import { describe, expect, it } from "vitest";
 import { checkEdges, type PackageManifest } from "./package-dag.js";
 
@@ -151,5 +152,91 @@ describe("P3 package DAG", () => {
 
   it("allows the provider-fake adapter only domain/ports", () => {
     expect([...depsOf("provider-fake")].sort()).toEqual(["domain", "ports"]);
+  });
+});
+
+describe("Agent Runtime internal directory ownership", () => {
+  const src = "packages/agent-runtime/src";
+  const compatibility = new Set([
+    "submitted-decision-replay",
+    "native-checkpoint-evidence",
+    "conversation-checkpoint-binding",
+    "conversation-checkpoint-compaction",
+    "conversation-checkpoint-evidence",
+    "conversation-checkpoint-projection",
+  ]);
+  const driverModules = new Set([
+    "index",
+    "model-decision",
+    "agent-loop-driver",
+    "agent-loop-actions",
+  ]);
+  const moduleIdentity = (path: string) =>
+    path.replace(/\.(?:js|ts)$/u, "");
+
+  const forbiddenEdge = (from: string, specifier: string) => {
+    if (!specifier.startsWith(".")) return false;
+    const target = moduleIdentity(
+      posix.normalize(posix.join(posix.dirname(from), specifier)),
+    );
+    return (
+      compatibility.has(target) ||
+      driverModules.has(target) ||
+      (from.startsWith("checkpoint/") && target.startsWith("decision/"))
+    );
+  };
+
+  it("keeps decision phases and checkpoint implementation below the drivers", () => {
+    expect(forbiddenEdge("decision/startup-recovery.ts", "../model-decision.js")).toBe(true);
+    expect(forbiddenEdge("checkpoint/conversation/evidence.ts", "../../decision/contract.js")).toBe(true);
+    expect(forbiddenEdge("decision/conversation-context.ts", "../checkpoint/conversation/evidence.js")).toBe(false);
+    expect(forbiddenEdge("decision/startup-recovery.ts", "../native-checkpoint-evidence.js")).toBe(true);
+
+    const violations: string[] = [];
+    for (const directory of ["decision", "checkpoint"]) {
+      const entries = readdirSync(join(repoRoot, src, directory), {
+        recursive: true,
+      });
+      for (const entry of entries.filter((name) => name.endsWith(".ts"))) {
+        const path = `${directory}/${entry.replaceAll("\\", "/")}`;
+        const ast = parse(readFileSync(join(repoRoot, src, path), "utf8"), {
+          sourceType: "module",
+          plugins: ["typescript"],
+        });
+        for (const statement of ast.program.body) {
+          if (
+            statement.type !== "ImportDeclaration" &&
+            statement.type !== "ExportNamedDeclaration" &&
+            statement.type !== "ExportAllDeclaration"
+          ) continue;
+          const specifier = statement.source?.value;
+          if (specifier !== undefined && forbiddenEdge(path, specifier)) {
+            violations.push(`${path}: ${specifier}`);
+          }
+        }
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+
+  it("keeps startup recovery and prepared settlement as explicit decision phases", () => {
+    const driver = readFileSync(join(repoRoot, src, "model-decision.ts"), "utf8");
+    const startup = readFileSync(
+      join(repoRoot, src, "decision/startup-recovery.ts"),
+      "utf8",
+    );
+    const settlement = readFileSync(
+      join(repoRoot, src, "decision/settlement.ts"),
+      "utf8",
+    );
+    expect(driver).toContain("recoverStartupDecision(dependencies,");
+    expect(driver).toContain("turn = startupRecovery.cursor.turn;");
+    expect(driver).toContain("repairAttempt = startupRecovery.cursor.repairAttempt;");
+    expect(startup).toContain("findNativeCompactionsBySessionEpoch");
+    expect(driver).toContain("proposePreparedStepSettlement(dependencies,");
+    expect(settlement).toContain("loopSteps.transition");
+    expect(settlement).toContain("providerTurns.failTurn");
+    expect(settlement).toContain("AH4BeforeSettlementProposal");
+    expect(settlement).toContain("AH4AfterSettlementProposal");
   });
 });

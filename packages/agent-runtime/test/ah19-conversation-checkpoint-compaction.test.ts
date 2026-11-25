@@ -9,8 +9,8 @@ import { describe, expect, it } from "vitest";
 import {
   conversationCheckpointProviderTurnId,
   runConversationCheckpointCompaction,
-} from "../src/conversation-checkpoint-compaction.js";
-import type { ConversationAnsweredSource } from "../src/conversation-checkpoint-projection.js";
+} from "../src/checkpoint/conversation/compaction.js";
+import type { ConversationAnsweredSource } from "../src/checkpoint/conversation/projection.js";
 
 const workspaceId = "ws_018f2b3c-4d5e-7abc-8def-0123456789a1" as never;
 const projectId = "prj_018f2b3c-4d5e-7abc-8def-0123456789a2" as never;

@@ -7,7 +7,7 @@ import type {
 } from "@arbor/ports";
 import { sha256Hex } from "@arbor/ports";
 import { describe, expect, it } from "vitest";
-import { projectConversationCheckpointHistory } from "../src/conversation-checkpoint-projection.js";
+import { projectConversationCheckpointHistory } from "../src/checkpoint/conversation/projection.js";
 import { fixtureExecutionProviderTurnId } from "./fixtures/provider-turn.js";
 
 const checkpointProducerExecutionId =

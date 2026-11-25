@@ -10,7 +10,7 @@ import {
   nativeCheckpointOwnerExecutionId,
   nativeCompactionProviderTurnId,
   portableRequestHasNativeCheckpoint,
-} from "../src/native-checkpoint-evidence.js";
+} from "../src/checkpoint/native-evidence.js";
 
 const executionId = parse(ExecutionId)(
   "exe_00000000-0000-7000-8000-000000000001",
