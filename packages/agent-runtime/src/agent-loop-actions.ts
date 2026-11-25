@@ -1,7 +1,4 @@
-import {
-  providerTurnInferenceId,
-  workEpisode,
-} from "@arbor/domain";
+import { providerTurnInferenceId, workEpisode } from "@arbor/domain";
 import type {
   AgentLoopStepActionRecord,
   BoundedObservation,
@@ -14,6 +11,18 @@ import {
   sha256Hex,
 } from "@arbor/ports";
 import { Effect } from "effect";
+import { actionRejectionObservation } from "./agent-loop-actions/action-errors.js";
+import { makeBlockedSettlement } from "./agent-loop-actions/blocked-settlement.js";
+import { verifyCommittedStep } from "./agent-loop-actions/committed-step.js";
+import {
+  type ExecutableActionResult,
+  executeExecutableAction,
+} from "./agent-loop-actions/executable.js";
+import { makeActionLedger } from "./agent-loop-actions/ledger.js";
+import type {
+  AgentLoopActionDependencies,
+  AgentLoopActionOutcome,
+} from "./agent-loop-actions/types.js";
 import {
   MAX_TURNS,
   safetyStop,
@@ -26,28 +35,16 @@ import {
   isDurableSuccessfulActionProgress,
 } from "./p12-safety-identity.js";
 
-import type {
+export { makeBlockedSettlement } from "./agent-loop-actions/blocked-settlement.js";
+export type {
   AgentLoopActionDependencies,
   AgentLoopActionOutcome,
 } from "./agent-loop-actions/types.js";
-import { makeBlockedSettlement } from "./agent-loop-actions/blocked-settlement.js";
-import { verifyCommittedStep } from "./agent-loop-actions/committed-step.js";
-
-import { actionRejectionObservation } from "./agent-loop-actions/action-errors.js";
-import { makeActionLedger } from "./agent-loop-actions/ledger.js";
-import { type ExecutableActionResult, executeExecutableAction } from "./agent-loop-actions/executable.js";
-
 export {
   recoveryBindingIdentityFor,
   recoveryBindingPolicyRevisionsFor,
 } from "./recovery-binding-source.js";
 export { verifySandboxUnavailableStepActionResume } from "./sandbox-unavailable-recovery.js";
-
-export type {
-  AgentLoopActionDependencies,
-  AgentLoopActionOutcome,
-} from "./agent-loop-actions/types.js";
-export { makeBlockedSettlement } from "./agent-loop-actions/blocked-settlement.js";
 
 /**
  * Owns one decoded turn's action phase. This boundary deliberately includes
