@@ -125,7 +125,7 @@ function changedPathsSince(base) {
   const tracked = runGit([
     "diff",
     "--name-only",
-    "--diff-filter=ACMR",
+    "--diff-filter=ACMRD",
     "--no-renames",
     base,
     "--",
