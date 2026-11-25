@@ -152,8 +152,18 @@ describe("P3 package DAG", () => {
     expect(errors).toContain("ExecutionDriverInvariantFailure");
     expect(errors).not.toContain('readonly _tag: "ExecutionDriverError"');
     expect(translation).toContain('tag === "LeaseFencingRejected"');
-    expect(decision).toContain("providerFailureSettlement");
-    expect(decision).toContain('reason: "ContextUnsatisfiable"');
+    const invocation = readFileSync(
+      join(repoRoot, "packages/agent-runtime/src/decision/provider/invocation.ts"),
+      "utf8",
+    );
+    const turn = readFileSync(
+      join(repoRoot, "packages/agent-runtime/src/decision/preparation/turn.ts"),
+      "utf8",
+    );
+    expect(decision).toContain("invokePreparedProviderTurn(");
+    expect(decision).toContain("prepareDecisionTurn(");
+    expect(invocation).toContain("providerFailureSettlement");
+    expect(turn).toContain('reason: "ContextUnsatisfiable"');
     expect(preparation).not.toContain("Effect.catchIf");
   });
 
@@ -305,5 +315,42 @@ describe("decision context and native rebase ownership", () => {
     expect(frontier).toContain("postCheckpointProjection");
     expect(committed).toContain("loopSteps.transition(");
     expect(workPlan).toContain("runSummaryCompaction(");
+  });
+});
+
+describe("prepared Provider lifecycle ownership", () => {
+  const src = "packages/agent-runtime/src";
+  const read = (path: string) => readFileSync(join(repoRoot, src, path), "utf8");
+
+  it("prepares and replays before admitting inference", () => {
+    const driver = read("model-decision.ts");
+    const preparation = read("decision/preparation/turn.ts");
+    const instructions = read("decision/preparation/instructions.ts");
+    const resume = read("decision/recovery/resume-overflow-compaction.ts");
+    const replay = read("decision/provider/replay.ts");
+    const invocation = read("decision/provider/invocation.ts");
+    const result = read("decision/provider/result.ts");
+    const prepareAt = driver.indexOf("yield* prepareDecisionTurn(");
+    const replayAt = driver.indexOf("yield* replayPreparedProviderTurn(");
+    const invokeAt = driver.indexOf("yield* invokePreparedProviderTurn(");
+    expect(prepareAt).toBeGreaterThanOrEqual(0);
+    expect(replayAt).toBeGreaterThan(prepareAt);
+    expect(invokeAt).toBeGreaterThan(replayAt);
+    expect(driver).not.toContain("providerRuntime.runTurn(");
+    expect(preparation).toContain("assembleDecisionInstructions(");
+    expect(preparation).toContain("resumePinnedOverflowCompaction(");
+    expect(preparation).toContain("modelContext.prepareTurn(");
+    expect(instructions).toContain("isPinnedSubmittedDecisionReplay(");
+    expect(resume).toContain("loopSteps.ensureProviderTurnLink(");
+    expect(replay).toContain("providerTurns.findSettledResult(");
+    expect(replay).toContain("adoptSettledSuccessEvidence(");
+    expect(replay).not.toContain("providerRuntime.runTurn(");
+    expect(invocation).toContain("admitProviderTurn(");
+    expect(invocation).toContain("providerRuntime.runTurn(");
+    expect(invocation).toContain("processSuccessfulProviderResult(");
+    expect(result).toContain("completeProviderTurn(");
+    expect(result).toContain("decideRepair(");
+    expect(result).toContain("loopSteps.ensureSuccessor(");
+    expect(result).not.toContain("providerRuntime.runTurn(");
   });
 });

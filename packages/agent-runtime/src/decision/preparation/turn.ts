@@ -19,12 +19,10 @@ import type {
   PortableInputItem,
   ProviderRunInput,
 } from "@arbor/ports";
-import { Effect, Option } from "effect";
+import { Effect, type Option } from "effect";
 import { type ModelDecisionOutcome, runtimeSafetyFragment, safetyStop } from "../../agent-loop-policy.js";
 import { runCompaction } from "../../compaction-coordinator.js";
-import {
-  workExecutionLoopFragmentsFor,
-} from "../../prompt-assets.js";
+import { workExecutionLoopFragmentsFor } from "../../prompt-assets.js";
 import type { AgentStepContext } from "../../step-context.js";
 import type { ModelDecisionDependencies } from "../contract.js";
 import type { ConversationDecisionContextResult } from "../conversation-context.js";

@@ -14,22 +14,18 @@ import {
 } from "@arbor/model-context";
 import type {
   ExecutionDriverError,
-  PortableModelRequestV2,
   SessionEntryRecord,
 } from "@arbor/ports";
-import {
-  PROVIDER_REASONING_ATTACHMENT_MEDIA_TYPE,
-} from "@arbor/ports";
+import { PROVIDER_REASONING_ATTACHMENT_MEDIA_TYPE } from "@arbor/ports";
 import { Effect, Option } from "effect";
-import {
-  type ModelDecisionOutcome,
-} from "./agent-loop-policy.js";
+import type { ModelDecisionOutcome } from "./agent-loop-policy.js";
 import { loadConversationDecisionContext } from "./decision/conversation-context.js";
 import { loadDecisionSessionContext } from "./decision/context/session.js";
 import { loadDecisionWorkspaceContext } from "./decision/context/workspace.js";
 import { rebaseWorkPlanCheckpoint } from "./decision/recovery/work-plan-rebase.js";
 import { recoverNativeCheckpointContext } from "./decision/recovery/native-rebase.js";
 import type { ModelDecisionDependencies } from "./decision/contract.js";
+import type { OverflowRecoveryState } from "./decision/recovery/overflow-state.js";
 import { recoverStartupDecision } from "./decision/startup-recovery.js";
 import { recoverDecisionStep } from "./decision/step-recovery.js";
 import { proposePreparedStepSettlement } from "./decision/settlement.js";
@@ -69,8 +65,6 @@ export const runModelDecision = (
     currentControlBasis,
     providerRuntime,
     tx,
-    loopSteps,
-    loopStepFence,
     providerTurns,
     sessions,
     works,
@@ -79,7 +73,6 @@ export const runModelDecision = (
     admitProviderTurn,
     completeProviderTurn,
     failure,
-    now,
   } = dependencies;
   const compactionDependencies = {
     providerRuntime,
@@ -146,21 +139,14 @@ export const runModelDecision = (
   return Effect.gen(function* () {
     let repairAttempt = initialRepairAttempt;
     let compactionAttempts = 0;
-    let overflowRecoveryAttempt = 0;
-    let replayPersistedContextLimit = false;
-    let resumeOverflowCompactionProviderTurnId:
-      | import("@arbor/domain").ProviderTurnId
-      | undefined;
-    let resumeOverflowNativeCompaction = false;
-    let resumeOverflowNativeCompactionInput:
-      | {
-          readonly manifestJson: string;
-          readonly request: PortableModelRequestV2;
-        }
-      | undefined;
-    let overflowReplacementProviderTurnId:
-      | import("@arbor/domain").ProviderTurnId
-      | undefined;
+    let overflow: OverflowRecoveryState = {
+      overflowRecoveryAttempt: 0,
+      replayPersistedContextLimit: false,
+      resumeOverflowCompactionProviderTurnId: undefined,
+      resumeOverflowNativeCompaction: false,
+      resumeOverflowNativeCompactionInput: undefined,
+      overflowReplacementProviderTurnId: undefined,
+    };
     let repairFragments: ReadonlyArray<InstructionFragment> = [];
     const readExecutionTimeline = () =>
       executionEpisode(input.execution)?._tag === "WorkEpisode"
@@ -243,7 +229,7 @@ export const runModelDecision = (
     while (true) {
       const controlBasis = yield* currentControlBasis();
       const providerTurnId =
-        overflowReplacementProviderTurnId ??
+        overflow.overflowReplacementProviderTurnId ??
         (repairAttempt === 0
           ? providerTurnInferenceId(input.execution.executionId, turn)
           : providerTurnRepairInferenceId(
@@ -261,14 +247,7 @@ export const runModelDecision = (
         repairAttempt,
         providerTurnId,
         loopStepIdentity,
-        overflow: {
-          overflowRecoveryAttempt,
-          replayPersistedContextLimit,
-          resumeOverflowCompactionProviderTurnId,
-          resumeOverflowNativeCompaction,
-          resumeOverflowNativeCompactionInput,
-          overflowReplacementProviderTurnId,
-        },
+        overflow,
         isConversationResponseExecution,
         currentBindingFingerprint,
         providerNativeSupported,
@@ -277,12 +256,7 @@ export const runModelDecision = (
         loadWorkCompactionPinning,
       });
       if (stepRecovery._tag === "Complete") return stepRecovery.outcome;
-      overflowRecoveryAttempt = stepRecovery.overflow.overflowRecoveryAttempt;
-      replayPersistedContextLimit = stepRecovery.overflow.replayPersistedContextLimit;
-      resumeOverflowCompactionProviderTurnId = stepRecovery.overflow.resumeOverflowCompactionProviderTurnId;
-      resumeOverflowNativeCompaction = stepRecovery.overflow.resumeOverflowNativeCompaction;
-      resumeOverflowNativeCompactionInput = stepRecovery.overflow.resumeOverflowNativeCompactionInput;
-      overflowReplacementProviderTurnId = stepRecovery.overflow.overflowReplacementProviderTurnId;
+      overflow = stepRecovery.overflow;
       if (stepRecovery._tag === "Restart") continue;
       let loopStep = stepRecovery.loopStep;
       const proposeSettlement = (
@@ -362,26 +336,14 @@ export const runModelDecision = (
           proposeSettlement,
           decodedProviderTurnId,
           compactionAttempts,
-          overflow: {
-            overflowRecoveryAttempt,
-            replayPersistedContextLimit,
-            resumeOverflowCompactionProviderTurnId,
-            resumeOverflowNativeCompaction,
-            resumeOverflowNativeCompactionInput,
-            overflowReplacementProviderTurnId,
-          },
+          overflow,
         },
       );
       if (nativeRecovery._tag === "Complete") return nativeRecovery.outcome;
       turn = nativeRecovery.cursor.turn;
       repairAttempt = nativeRecovery.cursor.repairAttempt;
       compactionAttempts = nativeRecovery.compactionAttempts;
-      overflowRecoveryAttempt = nativeRecovery.overflow.overflowRecoveryAttempt;
-      replayPersistedContextLimit = nativeRecovery.overflow.replayPersistedContextLimit;
-      resumeOverflowCompactionProviderTurnId = nativeRecovery.overflow.resumeOverflowCompactionProviderTurnId;
-      resumeOverflowNativeCompaction = nativeRecovery.overflow.resumeOverflowNativeCompaction;
-      resumeOverflowNativeCompactionInput = nativeRecovery.overflow.resumeOverflowNativeCompactionInput;
-      overflowReplacementProviderTurnId = nativeRecovery.overflow.overflowReplacementProviderTurnId;
+      overflow = nativeRecovery.overflow;
       if (nativeRecovery._tag === "Restart") continue;
       const workspaceContext = yield* loadDecisionWorkspaceContext(
         dependencies,
@@ -409,20 +371,11 @@ export const runModelDecision = (
           loadWorkCompactionPinning,
           proposeSettlement,
           compactionAttempts,
-          overflow: {
-            overflowRecoveryAttempt,
-            replayPersistedContextLimit,
-            resumeOverflowCompactionProviderTurnId,
-            resumeOverflowNativeCompaction,
-            resumeOverflowNativeCompactionInput,
-            overflowReplacementProviderTurnId,
-          },
+          overflow,
         });
         if (planRebase._tag === "Complete") return planRebase.outcome;
         compactionAttempts = planRebase.compactionAttempts;
-        overflowRecoveryAttempt = planRebase.overflow.overflowRecoveryAttempt;
-        overflowReplacementProviderTurnId = planRebase.overflow.overflowReplacementProviderTurnId;
-        replayPersistedContextLimit = planRebase.overflow.replayPersistedContextLimit;
+        overflow = planRebase.overflow;
         continue;
       }
       const turnPreparation = yield* prepareDecisionTurn(dependencies, {
@@ -441,14 +394,7 @@ export const runModelDecision = (
         historyContext,
         inputItems,
         messageContextRefs,
-        overflow: {
-          overflowRecoveryAttempt,
-          replayPersistedContextLimit,
-          resumeOverflowCompactionProviderTurnId,
-          resumeOverflowNativeCompaction,
-          resumeOverflowNativeCompactionInput,
-          overflowReplacementProviderTurnId,
-        },
+        overflow,
         compactionAttempts,
         currentBindingFingerprint,
         providerNativeSupported,
@@ -457,12 +403,7 @@ export const runModelDecision = (
       });
       if (turnPreparation._tag === "Restart") {
         compactionAttempts = turnPreparation.compactionAttempts;
-        overflowRecoveryAttempt = turnPreparation.overflow.overflowRecoveryAttempt;
-        replayPersistedContextLimit = turnPreparation.overflow.replayPersistedContextLimit;
-        resumeOverflowCompactionProviderTurnId = turnPreparation.overflow.resumeOverflowCompactionProviderTurnId;
-        resumeOverflowNativeCompaction = turnPreparation.overflow.resumeOverflowNativeCompaction;
-        resumeOverflowNativeCompactionInput = turnPreparation.overflow.resumeOverflowNativeCompactionInput;
-        overflowReplacementProviderTurnId = turnPreparation.overflow.overflowReplacementProviderTurnId;
+        overflow = turnPreparation.overflow;
         continue;
       }
       if (turnPreparation._tag !== "Prepared") return turnPreparation;
@@ -471,7 +412,7 @@ export const runModelDecision = (
         loopStep,
         preparation,
         conversationExecution,
-        replayPersistedContextLimit,
+        replayPersistedContextLimit: overflow.replayPersistedContextLimit,
       });
       if (replay._tag !== "Proceed") return replay;
       loopStep = replay.loopStep;
@@ -483,14 +424,7 @@ export const runModelDecision = (
         loopStep,
         preparation,
         turnInput,
-        overflow: {
-          overflowRecoveryAttempt,
-          replayPersistedContextLimit,
-          resumeOverflowCompactionProviderTurnId,
-          resumeOverflowNativeCompaction,
-          resumeOverflowNativeCompactionInput,
-          overflowReplacementProviderTurnId,
-        },
+        overflow,
         conversation: conversationContext,
         stepContext,
         inputItems,
@@ -501,9 +435,7 @@ export const runModelDecision = (
         proposeSettlement,
       });
       if (invocation._tag !== "Restart") return invocation;
-      overflowRecoveryAttempt = invocation.overflow.overflowRecoveryAttempt;
-      replayPersistedContextLimit = invocation.overflow.replayPersistedContextLimit;
-      overflowReplacementProviderTurnId = invocation.overflow.overflowReplacementProviderTurnId;
+      overflow = invocation.overflow;
       repairAttempt = invocation.repairAttempt;
       repairFragments = invocation.repairFragments;
     }
