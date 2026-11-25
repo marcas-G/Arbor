@@ -4,6 +4,7 @@ import {
   AgentLoopDriverLive,
   type AgentLoopQualificationProbe,
   ControlActionAuthorizer,
+  ControlBasisResolverLive,
   ControlToolRegistry,
   ControlToolRegistryLive,
 } from "@arbor/agent-runtime";
@@ -1292,6 +1293,7 @@ const buildSingleWorkspaceLayerInternal = (
             workspaceKnowledge,
             workspacePlacement,
             inputPromotion,
+            Layer.provide(ControlBasisResolverLive, repos),
             infra,
           ),
         );

@@ -11,9 +11,9 @@ import type {
   ProviderTurnId,
   ResourceAddress,
   SessionId,
-  ToolInvocationId,
   WorkspaceId,
 } from "@arbor/domain";
+import { parse, ToolInvocationId } from "@arbor/domain";
 import { Context, type Effect, type Option, type Stream } from "effect";
 import type {
   ArtifactError,
@@ -25,6 +25,7 @@ import type {
   ToolRuntimeError,
 } from "./errors.js";
 import type { InvocationRef } from "./execution.js";
+import { sha256Hex } from "./provider-extension.js";
 import type {
   SandboxPolicyRequiredInterruption,
   SandboxProcessPolicy,
@@ -590,3 +591,27 @@ export class ArtifactService extends Context.Service<
 >()("arbor/ArtifactService") {}
 
 export type { ResourceAddress };
+
+// Object 3 relocation: the deterministic invocation-ID scheme was a
+// private helper in the composition root; the derivation contract now
+// lives with the ToolInvocationId type. Byte-for-byte identical output
+// (sha256 over the same JSON shapes, same 12-hex truncation, same fixed
+// timestamp field). The legacy callRef-only derivation is retained for
+// in-flight pre-AH7 replay lookups and must never be assigned to a
+// different Execution.
+export const deriveToolInvocationId = (
+  executionId: string,
+  callRef: string,
+): ToolInvocationId =>
+  parse(ToolInvocationId)(
+    `tin_018f2b3c-4d5e-7abc-8def-${sha256Hex(
+      JSON.stringify({ executionId, callRef }),
+    ).slice(0, 12)}`,
+  );
+
+export const deriveLegacyToolInvocationId = (
+  callRef: string,
+): ToolInvocationId =>
+  parse(ToolInvocationId)(
+    `tin_018f2b3c-4d5e-7abc-8def-${sha256Hex(callRef).slice(0, 12)}`,
+  );
