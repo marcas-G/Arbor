@@ -171,7 +171,7 @@ Project/Workspace 初始化自动建立当前 Workspace 边界内的
 - Web 已按路由拆分页面；本次 production build 的入口 JavaScript chunk 为 487.09 kB，CSS 为 47.39 kB，无默认 chunk-size warning。共享 preload 和异步页面仍另外加载，这不是首屏总传输量或加载耗时测量；KP-008 的原始单 chunk 警告已修复。
 - Web UI 的全部现有页面、表单、读模型视图和错误/连接提示已迁移到 Tailwind utilities；项目内 shadcn 风格原语覆盖 Button、Input、Textarea、Card、Badge、Dialog、DropdownMenu、Tabs。Sheet、移动端“更多”和分工标签页分别使用 Radix Dialog、DropdownMenu、Tabs。运行时不再导入旧 CSS Modules 和五份全局组件样式，仍保留 Arbor reset、tokens 和 reduced-motion 规则。组件生成配置位于 `apps/web/components.json`；具体范围见 `docs/decisions/2026-11-14-frontend-ui-stack.md`。
 - 2026-11-14 前端迁移最终验证：完整浏览器 11/11、Web 37 个文件 / 289 项、架构 197 项、相关 P17 6 项、根/Web typecheck、lint 和 production build 通过。浏览器覆盖 1440/768/390 宽度、分栏、弹窗焦点、菜单/标签键盘、自由选目录、聊天/审批/验收/重启与路由隔离；未重跑完整核心/崩溃/真实 Provider 发布矩阵。记录见 `docs/decisions/2026-11-14-frontend-ui-migration-result.md`。
-- 2026-11-09 的设计合并恢复记录当时所依据的是 Problem & Goals v1.3、Scenarios v1.10、System Design v1.25、DID v1.65；它是该历史检查点的基线，不是当前设计版本。当前冻结链已推进到 Problem & Goals v1.4、Scenarios v1.12、System Design v1.27、DID v1.68，并保留 P36–P41 已接受增量。恢复过程见 `planning/results/design-merge-regression-recovery20261109.result.md`。
+- 2026-11-09 的设计合并恢复记录当时所依据的是 Problem & Goals v1.3、Scenarios v1.10、System Design v1.25、DID v1.65；它是该历史检查点的基线，不是当前设计版本。当前冻结链已推进到 Problem & Goals v1.4、Scenarios v1.12、System Design v1.27、DID v1.68，并保留 P36–P41 已接受增量。恢复过程见 `planning/results/design-merge-regression-recovery-20261109.result.md`。
 - 2026-10-29 的发布候选曾完成 S1、S2、S3、S4-A 真实 Provider 旅程，以及完整功能和浏览器覆盖。
 - 当前 `e7065a7c` 是后续治理分支和功能分支的整合提交，并继续引入 schema 55 等变化；当前整合头尚没有一份新的、同源码基线的完整 `pnpm test:functional` 和真实 Provider 发布资格记录。
 
