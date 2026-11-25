@@ -20,7 +20,7 @@ import type {
   AgentLoopActionOutcome,
 } from "./types.js";
 
-type ExecutableActionResult =
+export type ExecutableActionResult =
   | Exclude<AgentLoopActionOutcome, { readonly _tag: "Completed" }>
   | { readonly _tag: "Continue"; readonly durableProgress: boolean };
 

@@ -17,11 +17,9 @@ import {
 import {
   type AttentionProjectionDbRow,
   type WorkspaceResourceActivationAttentionDbRow,
-  type DeliverReplayAttentionDbRow,
   type ToolObservationReplayAttentionDbRow,
   fromDb,
   activationRowFromDb,
-  deliverReplayRowFromDb,
   toolObservationRowFromDb,
 } from "./row-codecs.js";
 import type { ProjectionContext } from "./context.js";
@@ -29,28 +27,6 @@ import type { ProjectionContext } from "./context.js";
 export const makeObservationActivationRows = (context: ProjectionContext): Pick<AttentionProjectionStoreService, "listVerificationSignalReconciliationFailures" | "listAssignWorkBindingFailures" | "putToolObservationReplayFailure" | "listToolObservationReplayFailures" | "reconcileWorkspaceResourceActivation" | "reconcileStaleWorkRevisionRows" | "listWorkspaceResourceActivationPending"> => {
   const { sql, run, qualificationProbe } = context;
   return {
-          Effect.gen(function* () {
-            yield* TransactionScope;
-            const rows = yield* run(
-              sql.unsafe<DeliverReplayAttentionDbRow>(
-                `SELECT fact.project_id AS project_id,
-                        fact.attention_fact_id AS dedup_key,
-                        fact.target_workspace_id AS target_workspace_id,
-                        fact.failure_code AS failure_code,
-                        fact.first_detected_at AS occurred_at,
-                        fact.event_id AS source_event_id,
-                        fact.attention_fact_id AS source_fact_id,
-                        fact.execution_id AS source_execution_id
-                   FROM deliver_replay_attention_rows AS projected
-                   JOIN deliver_replay_attention_facts AS fact
-                     ON fact.attention_fact_id = projected.attention_fact_id
-                  WHERE fact.project_id = ?
-                  ORDER BY fact.first_detected_at, fact.attention_fact_id`,
-                [projectId],
-              ),
-            );
-            return rows.map(deliverReplayRowFromDb);
-          }),
         listVerificationSignalReconciliationFailures: (projectId) =>
           Effect.gen(function* () {
             yield* TransactionScope;

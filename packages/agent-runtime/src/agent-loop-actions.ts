@@ -35,7 +35,7 @@ import { verifyCommittedStep } from "./agent-loop-actions/committed-step.js";
 
 import { actionRejectionObservation } from "./agent-loop-actions/action-errors.js";
 import { makeActionLedger } from "./agent-loop-actions/ledger.js";
-import { executeExecutableAction } from "./agent-loop-actions/executable.js";
+import { type ExecutableActionResult, executeExecutableAction } from "./agent-loop-actions/executable.js";
 
 export {
   recoveryBindingIdentityFor,
@@ -281,7 +281,7 @@ export const executeAgentLoopActions = (
       }
 
       if (route._tag === "Executable") {
-        const result = yield* executeExecutableAction(
+        const result: ExecutableActionResult = yield* executeExecutableAction(
           dependencies,
           invocation,
           actionIndex,

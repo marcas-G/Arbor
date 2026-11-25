@@ -212,7 +212,8 @@ export const resolveInvocationResources = (
         _tag: "ResourceResolutionStale",
         observed: resolved.observedEnvironmentRevision,
         boundaryObserved: resolvedBoundary.observedEnvironmentRevision,
-      });
+          }),
+      };
     }
     const regions =
       priorModelIdentityMatches &&
@@ -230,8 +231,7 @@ export const resolveInvocationResources = (
         }
         const currentWorkspace = yield* workspaces.value.findById(
           context.workspaceId,
-          ),
-        };
+        );
         if (
           Option.isNone(currentWorkspace) ||
           currentWorkspace.value.projectId !== context.projectId ||

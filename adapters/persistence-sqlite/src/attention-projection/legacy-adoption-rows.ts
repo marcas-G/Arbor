@@ -13,6 +13,8 @@ import {
   Effect,
 } from "effect";
 import {
+  type DeliverReplayAttentionDbRow,
+  deliverReplayRowFromDb,
   type LegacyAdoptionAttentionDbRow,
   legacyAdoptionRowFromDb,
 } from "./row-codecs.js";
@@ -294,5 +296,27 @@ export const makeLegacyAdoptionRows = (context: ProjectionContext): Pick<Attenti
             return rows.map(legacyAdoptionRowFromDb);
           }),
         listDeliverReplayFailures: (projectId) =>
+          Effect.gen(function* () {
+            yield* TransactionScope;
+            const rows = yield* run(
+              sql.unsafe<DeliverReplayAttentionDbRow>(
+                `SELECT fact.project_id AS project_id,
+                        fact.attention_fact_id AS dedup_key,
+                        fact.target_workspace_id AS target_workspace_id,
+                        fact.failure_code AS failure_code,
+                        fact.first_detected_at AS occurred_at,
+                        fact.event_id AS source_event_id,
+                        fact.attention_fact_id AS source_fact_id,
+                        fact.execution_id AS source_execution_id
+                   FROM deliver_replay_attention_rows AS projected
+                   JOIN deliver_replay_attention_facts AS fact
+                     ON fact.attention_fact_id = projected.attention_fact_id
+                  WHERE fact.project_id = ?
+                  ORDER BY fact.first_detected_at, fact.attention_fact_id`,
+                [projectId],
+              ),
+            );
+            return rows.map(deliverReplayRowFromDb);
+          }),
   };
 };

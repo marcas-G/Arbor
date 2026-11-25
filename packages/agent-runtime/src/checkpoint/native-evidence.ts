@@ -57,7 +57,7 @@ export const nativeCheckpointOwnerExecutionId = (
   }
 };
 
-interface NativePortableFrontier {
+export interface NativePortableFrontier {
   readonly manifest: Record<string, unknown>;
   readonly request: PortableModelRequestV2;
   readonly inputFrontier: {
