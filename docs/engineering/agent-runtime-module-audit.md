@@ -243,3 +243,26 @@ Canonical owners: decision/context/session.ts (412 physical lines); decision/con
 Static evidence: inverse checks of moved source text and explicit return/continue adapters; at 2fdc6db the full Git tree was not truncated. Across the seven added modules and driver, 51 literal relative import/re-export edges resolve to tracked paths with no detected new decision-to-driver back-edge. All seven added production files satisfy the 800-physical-line cap. The final follow-up adjusts existing P3, MAC, CRAC, AH19 and EGP architecture assertions to canonical owners; EGP's negative constraint now scans decision subdirectories as well. No architecture assertion is knowingly dropped. This is not an AST/type-resolution or test-suite result.
 
 Qualification blocker: current container git ls-remote against GitHub failed DNS resolution; Node v22.16.0, pnpm missing. The complete project cannot be cloned, built or tested here. Existing branch changes remain unqualified; run the pinned formatting, TypeScript, architecture, manifest, Vitest and relevant AH19/P20 native checkpoint/rebase, terminal response, LocalPlan and Session frontier repair process tests. Strict 800-line check is still expected to fail for remaining oversized files. Next: turn preparation (instructions, profile, manifest), provider admission/replay and result/repair/overflow handling; then shrink the main driver below 800 before moving it to its final canonical directory.
+
+## R2 Model Decision structural convergence — source-size target reached
+
+Base: 55f2256b06f1b692c2ee97ecc2d07571f991b478. Implementation head: 44e3450bc8391da8a4104d40d0f10116013d6a59.
+
+| Commit | Responsibility |
+|---|---|
+| 6449c388abb72ebdf4bf1d7784b22bcb4956e514 | Durable Provider replay, including legacy evidence adoption |
+| 0c7133126c26a902dadd6a4c68f7f00e514004a2 | Provider admission, invocation, overflow and repair continuation |
+| da018498717c21eb6c2fe19dd99dffd140850d68 | Bounded request preparation phase; main entry below 800 |
+| faecfd5c37593ab5ff0ad891856335043f4cd5fc | Canonical instructions and exact DecisionRequest context |
+| f9d9626d6c2b368d0654bb4b32f8bd637c269e08 | Resume pinned overflow compaction in recovery owner |
+| 364990deea2128c57dcc327eb1c2682551bf5e4e | Successful Provider result, completion bracket, decode and repair |
+| 44e3450bc8391da8a4104d40d0f10116013d6a59 | Consolidated immutable continuation values and phase ownership assertions |
+
+Canonical new paths and physical line counts: decision/preparation/instructions.ts 243; decision/preparation/turn.ts 315; decision/recovery/resume-overflow-compaction.ts 255; decision/provider/replay.ts 491; decision/provider/invocation.ts 390; decision/provider/result.ts 290. model-decision.ts is 443 physical lines, down from 1,950 at this batch's base. All 23 tracked TypeScript files currently under decision/ were read from the pinned tree and counted individually. None exceeds 800 physical lines; largest is recovery/work-overflow.ts (692). The root entry remains at its existing path to retain the established interface; no new compatibility facade was added.
+
+Ordering: assemble instructions and exact decision request context, resume pinned compaction if needed, compile the prepared request, inspect settled Provider evidence, then admit/invoke inference only if replay does not produce an outcome. Successful result handling retains the Step availability transition before the existing completion bracket, then decodes or records repair. Legacy adoption, overflow linking, and repair successor transactions retain their original bodies by extraction. The driver assigns the returned immutable OverflowRecoveryState rather than copying six fields repeatedly. No new durable state authority, public contract, package dependency or Schema is introduced.
+
+Validation: source-body inverse checks during extraction; final static scan of 54 literal relative import/re-export edges across this batch's seven production files, with zero missing targets or decision-to-driver back-edges; 22 direct source-marker/order assertions on the pinned GitHub source passed. Existing P3 architecture assertions were redirected to the owning modules and extended with phase ordering and no-inference-in-replay/result checks. These are source checks, not executed Vitest tests or full TypeScript resolution. All 23 decision files plus the root entry satisfy the line cap; this does not establish repository-wide compliance.
+
+Full qualification is blocked: git ls-remote still fails to resolve github.com in the container, Node is v22.16.0 and pnpm is unavailable. The branch has not passed pinned TypeScript, Biome, Vitest, architecture, process recovery or release gates. In particular, verify effect replay/interruption, AH3/AH4/AH14/AH17/AH18/AH19/P20 and submitted-decision recovery before promoting. Keep the current root entry and existing public exports; do not relocate remaining historical compatibility paths before qualification. The next structural target is agent-loop-actions.ts (ledger and exact resume, executable dispatch, control dispatch, settlement), then Tool Runtime. Existing oversized files keep the strict repository-wide gate red. No merge, workflow change or release approval.
+
