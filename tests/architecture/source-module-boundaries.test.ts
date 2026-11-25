@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, posix } from "node:path";
 import { parse } from "@babel/parser";
 import { describe, expect, it } from "vitest";
@@ -56,44 +56,98 @@ const moduleGroups = [
     directory: "ownership",
     facade: "ownership",
   },
+  {
+    packageRoot: "packages/tool-runtime/src",
+    directory: "runtime",
+    facade: "runtime",
+  },
 ] as const;
 
-describe("R5 module ownership", () => {
+const relativeSpecifiers = (source: string): ReadonlyArray<string> => {
+  const ast = parse(source, {
+    sourceType: "module",
+    plugins: ["typescript"],
+  });
+  const specifiers: string[] = [];
+  for (const statement of ast.program.body) {
+    if (
+      statement.type !== "ImportDeclaration" &&
+      statement.type !== "ExportNamedDeclaration" &&
+      statement.type !== "ExportAllDeclaration"
+    ) {
+      continue;
+    }
+    const specifier = statement.source?.value;
+    if (specifier?.startsWith(".")) specifiers.push(specifier);
+  }
+  return specifiers;
+};
+
+const findCycles = (
+  edges: ReadonlyMap<string, ReadonlyArray<string>>,
+): ReadonlyArray<string> => {
+  const visited = new Set<string>();
+  const active: string[] = [];
+  const cycles: string[] = [];
+  const visit = (file: string): void => {
+    const repeated = active.indexOf(file);
+    if (repeated >= 0) {
+      cycles.push([...active.slice(repeated), file].join(" -> "));
+      return;
+    }
+    if (visited.has(file)) return;
+    active.push(file);
+    for (const target of edges.get(file) ?? []) visit(target);
+    active.pop();
+    visited.add(file);
+  };
+  for (const file of edges.keys()) visit(file);
+  return cycles;
+};
+
+describe("module ownership and local dependency DAG", () => {
   for (const group of moduleGroups) {
     it(`keeps ${group.packageRoot}/${group.directory} below its facade and package barrel`, () => {
-      const directory = join(
-        repoRoot,
-        group.packageRoot,
-        group.directory,
+      const packageRoot = join(repoRoot, group.packageRoot);
+      const directory = join(packageRoot, group.directory);
+      const privateFiles = readdirSync(directory, { recursive: true })
+        .filter((entry) => entry.endsWith(".ts"))
+        .map((entry) => posix.join(group.directory, entry.replaceAll("\\", "/")));
+      expect(privateFiles.length).toBeGreaterThan(0);
+      const files = [`${group.facade}.ts`, ...privateFiles];
+      const localFiles = new Set(
+        files.map((file) => file.replace(/\.ts$/u, "")),
       );
       const violations: string[] = [];
-      for (const name of readdirSync(directory, { recursive: true }).filter(
-        (entry) => entry.endsWith(".ts"),
-      )) {
-        const file = posix.join(group.directory, name.replaceAll("\\", "/"));
-        const ast = parse(readFileSync(join(directory, name), "utf8"), {
-          sourceType: "module",
-          plugins: ["typescript"],
-        });
-        for (const statement of ast.program.body) {
+      const edges = new Map<string, string[]>();
+      for (const file of files) {
+        const source = readFileSync(join(packageRoot, file), "utf8");
+        const key = file.replace(/\.ts$/u, "");
+        const dependencies: string[] = [];
+        for (const specifier of relativeSpecifiers(source)) {
+          const resolved = posix.normalize(
+            posix.join(posix.dirname(file), specifier),
+          );
+          const target = resolved.replace(/\.(?:js|ts)$/u, "");
           if (
-            statement.type !== "ImportDeclaration" &&
-            statement.type !== "ExportNamedDeclaration" &&
-            statement.type !== "ExportAllDeclaration"
+            key !== group.facade &&
+            (target === group.facade || target === "index")
           ) {
-            continue;
+            violations.push(`${file}: reverse dependency ${specifier}`);
           }
-          const specifier = statement.source?.value;
-          if (specifier === undefined || !specifier.startsWith(".")) continue;
-          const target = posix
-            .normalize(posix.join(posix.dirname(file), specifier))
-            .replace(/\.(?:js|ts)$/u, "");
-          if (target === group.facade || target === "index") {
-            violations.push(`${file}: ${specifier}`);
+          if (
+            /\.(?:js|ts)$/u.test(resolved) &&
+            !existsSync(join(packageRoot, `${target}.ts`)) &&
+            !existsSync(join(packageRoot, resolved))
+          ) {
+            violations.push(`${file}: missing relative target ${specifier}`);
           }
+          if (localFiles.has(target)) dependencies.push(target);
         }
+        edges.set(key, dependencies);
       }
       expect(violations).toEqual([]);
+      expect(findCycles(edges)).toEqual([]);
     });
   }
 });
