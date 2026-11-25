@@ -1,10 +1,9 @@
-import {
-  type CanonicalResourceRegion,
-  type ProjectId,
-  parse,
-  type ResourceAddress,
-  type ResourceBoundaryRevision,
-  type WorkspaceId,
+import type {
+  CanonicalResourceRegion,
+  ProjectId,
+  ResourceAddress,
+  ResourceBoundaryRevision,
+  WorkspaceId,
 } from "@arbor/domain";
 import type { ResourceOwnershipClaimRecord } from "@arbor/ports";
 

@@ -18,7 +18,7 @@ if (args.length !== 0 && (args.length !== 2 || args[0] !== "--baseline")) {
   throw new Error("Usage: check-source-lines.mjs [--baseline <commit>]");
 }
 const baseline = args.length
-  ? git(["rev-parse", "--verify", args[1] + "^{commit}"]).trim()
+  ? git(["rev-parse", "--verify", `${args[1]}^{commit}`]).trim()
   : null;
 const head = git(["rev-parse", "HEAD"]).trim();
 const before = git(["status", "--porcelain", "-z"]);
@@ -39,7 +39,7 @@ for (const path of paths) {
     if (lineCount(content) <= 800) continue;
     const baselineCount =
       baseline !== null && baselinePaths.has(path)
-        ? lineCount(git(["show", baseline + ":" + path]))
+        ? lineCount(git(["show", `${baseline}:${path}`]))
         : undefined;
     const finding = inspectFile(path, content, baselineCount);
     if (finding) findings.push(finding);

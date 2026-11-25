@@ -4093,7 +4093,9 @@ describe("p9-acceptance mechanical assertions (06 checklist)", () => {
     const surelyOutsideDirectory = (() => {
       const temporary = realpathSync(tmpdir());
       const relation = relative(realpathSync(REPO_ROOT), temporary);
-      return relation === "" || relation === ".." || relation.startsWith(`..${sep}`)
+      return relation === "" ||
+        relation === ".." ||
+        relation.startsWith(`..${sep}`)
         ? temporary
         : dirname(REPO_ROOT);
     })();

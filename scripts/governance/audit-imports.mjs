@@ -93,7 +93,7 @@ for (const path of paths.filter((p) =>
           });
       }
       if (target && target !== from) {
-        const key = from + " -> " + target;
+        const key = `${from} -> ${target}`;
         edges.set(key, (edges.get(key) ?? 0) + 1);
       }
     }

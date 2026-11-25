@@ -5,7 +5,6 @@ import {
   incrementOrdinal,
   isEqualityOnlyCanonicalRegion,
   ownershipRegionsOverlap,
-  parse,
   Revision,
   removeOwnershipExclusion,
 } from "@arbor/domain";

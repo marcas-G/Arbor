@@ -1,4 +1,4 @@
-import type { AgentAction, AgentActionHandler } from "@arbor/agent-runtime";
+import type { AgentActionHandler } from "@arbor/agent-runtime";
 import {
   type CommandGatewayService,
   type CommandHandlerRegistryService,

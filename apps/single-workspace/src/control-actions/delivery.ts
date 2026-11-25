@@ -1,5 +1,4 @@
 import type {
-  AgentAction,
   AgentActionError,
   AgentActionHandler,
 } from "@arbor/agent-runtime";
@@ -10,17 +9,14 @@ import {
   deliverMessagePlan,
   makeSendMessageHandler,
   newUuid7,
-  semanticRequestFingerprint,
   submitDeliver,
 } from "@arbor/application";
 import {
   CommandId,
   type CommandId as CommandIdType,
-  type CommandReceipt,
   type LeaseGeneration,
   MessageId as MessageIdSchema,
   messageEntryKey,
-  type OutboundMessage,
   parse,
 } from "@arbor/domain";
 import {

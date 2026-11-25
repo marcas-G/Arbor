@@ -10,7 +10,6 @@ import {
 } from "@arbor/application";
 import type {
   CommandSubmissionContext,
-  Execution,
   ExecutionId,
   LeaseGeneration,
   Principal,

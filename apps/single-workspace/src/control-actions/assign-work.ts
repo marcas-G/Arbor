@@ -1,5 +1,4 @@
 import type {
-  AgentAction,
   AgentActionError,
   AgentActionHandler,
   AgentLoopQualificationProbe,

@@ -22,15 +22,15 @@ export function checkDesignChain(read) {
     try {
       header = read(path).split(/\r?\n/).slice(0, 35);
     } catch (error) {
-      errors.push(path + ": cannot read: " + String(error));
+      errors.push(`${path}: cannot read: ${String(error)}`);
       return undefined;
     }
     const version = header
       .find((line) => line.startsWith("**Version:**"))
       ?.match(/^\*\*Version:\*\*\s*([0-9]+(?:\.[0-9]+)+)\s*\\?\s*$/)?.[1];
-    if (!version) errors.push(path + ": missing/invalid version header");
+    if (!version) errors.push(`${path}: missing/invalid version header`);
     if (!header.some((line) => /^\*\*Status:\*\*/.test(line))) {
-      errors.push(path + ": missing status header");
+      errors.push(`${path}: missing status header`);
     }
     return { version, header };
   });
@@ -46,7 +46,7 @@ export function checkDesignChain(read) {
     for (const owner of required) {
       const version = versions[owner]?.version;
       if (!version) continue;
-      if (!dependency.includes(titles[owner] + " v" + version + "`")) {
+      if (!dependency.includes(`${titles[owner]} v${version}\``)) {
         errors.push(
           designPaths[index] +
             ": expected dependency " +

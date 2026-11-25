@@ -7,7 +7,6 @@ import {
   IdGenerator,
   ProjectEnvironmentPort,
   ResourceOwnershipRepository,
-  type TransactionOperationalFailure,
   TransactionPort,
   WorkspaceRepository,
   WorkspaceResourceActivationStore,

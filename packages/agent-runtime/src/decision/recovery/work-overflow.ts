@@ -16,7 +16,6 @@ import type {
   SessionRepositoryService,
   SettledProviderTurnResult,
 } from "@arbor/ports";
-import { sha256Hex } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import {
   type ModelDecisionOutcome,
