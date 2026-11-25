@@ -90,12 +90,16 @@ after a merge so a bad merge is visible immediately. The repository settings
 must also require the `merge_group` event when merge queue is enabled; otherwise
 the required checks are not re-run on the temporary merge ref.
 
-The quality job runs on an authorized Linux self-hosted runner because the P39
-SQLite qualification needs the checkout on a canonical, runner-owned local
-filesystem. The runner preflight accepts ext2/3/4, XFS, Btrfs, F2FS, exFAT and
-FAT and rejects overlayfs, tmpfs, symlinked workspaces, and group/world-writable
-workspaces. Configure the runner's workspace on a supported local disk; a
-preflight failure is an environment failure and must be fixed before merge.
+The quality and CodeQL jobs use GitHub-hosted Ubuntu 24.04 runners. P39
+SQLite qualification still requires the checkout on a canonical, runner-owned
+local filesystem. The runner preflight accepts ext2/3/4, XFS, Btrfs, F2FS,
+exFAT and FAT and rejects overlayfs, tmpfs, symlinked workspaces, and
+group/world-writable workspaces. A preflight failure is an environment
+failure and must be fixed before merge. The functional journey installs
+Playwright Chromium and its dependencies before execution. Hosted CI is not
+by itself evidence of a qualified deployment-specific Native OS tuple or
+real-provider acceptance; those claims require the existing exact-context
+qualification evidence.
 
 Complexity and duplication are trend metrics. A reduction is not allowed to
 weaken behavior, remove required tests or move logic into a less visible file.

@@ -8,13 +8,17 @@ on:
     branches: [master]
   workflow_dispatch:
 
+concurrency:
+  group: arbor-codeql-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   security-events: write
 
 jobs:
   analyze:
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - name: Checkout full history

@@ -28,13 +28,13 @@ The current package scripts are the executable reference:
     node scripts/governance/check-design-chain.mjs
     node --test scripts/governance/check-design-chain.test.mjs
 
-The last two commands are new standalone checks. They do not change the existing required CI. Follow AGENTS.md and ENGINEERING_HEALTH.md for complete gates; use pnpm check:release, packaging and real-provider qualification when claiming release readiness. Test on a clean, authorized environment; never test migrations or destructive operations against preserved user data.
+The last two commands are new standalone checks. They do not change the existing required CI. Follow AGENTS.md and docs/ENGINEERING_HEALTH.md for complete gates; use pnpm check:release, packaging and real-provider qualification when claiming release readiness. Test on a clean, authorized environment; never test migrations or destructive operations against preserved user data.
 
 ## Review
 
 Review semantic correctness, responsibility and dependency direction, error/interrupt paths, transaction and recovery behavior, authority/secret boundaries, tests and truthful documentation. Avoid approving changes simply because line counts or aggregate health scores improve. Refuse scope creep, duplicated authority and evidence inflation. Report existing defects even when they block a release; do not punish disclosure as though it introduced the defect.
 
-Public fork code must not execute on a persistent self-hosted runner. Establish a trusted isolated runner strategy before enabling the current CI as a required check. See [engineering practices](docs/engineering/README.md).
+PR quality and CodeQL use ephemeral GitHub-hosted Linux runners. Public fork code must not execute on a persistent self-hosted runner. Environment-specific qualification outside hosted CI requires an authorized isolated environment and separate evidence. See [engineering practices](docs/engineering/README.md).
 
 ## References
 

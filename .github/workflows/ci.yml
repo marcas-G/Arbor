@@ -18,9 +18,9 @@ permissions:
 
 jobs:
   quality:
-    # The project requires Linux-native SQLite and sandbox checks. Register
-    # the local machine as a GitHub self-hosted runner with these labels.
-    runs-on: [self-hosted, linux, x64]
+    # Ephemeral GitHub-hosted Linux VM; the storage preflight below remains
+    # mandatory for SQLite and sandbox tests.
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
       - name: Checkout full history
@@ -77,6 +77,9 @@ jobs:
 
       - name: Web checks
         run: pnpm --filter @arbor/web typecheck && pnpm --filter @arbor/web build && pnpm --filter @arbor/web test
+
+      - name: Install functional UI browser
+        run: pnpm exec playwright install --with-deps chromium
 
       - name: Functional release journey
         run: pnpm test:functional

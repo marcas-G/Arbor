@@ -168,9 +168,10 @@ Additional rules:
   pnpm check:release
   ```
 
-- The CI source of truth is the repository workflow. It may use an authorized
-  local/self-hosted Linux runner, but every result must be attached to the
-  exact commit and recorded as reproducible evidence.
+- The CI source of truth is the repository workflow. PR quality checks and
+  CodeQL run on GitHub-hosted Linux. Environment-specific qualification may
+  use an authorized isolated Linux runner when required, but every result
+  must be attached to the exact commit and recorded as reproducible evidence.
 - Missing tooling or dependencies are not completion evidence. Install the
   required tool in the authorized workspace and continue. Report actual test
   failures, security findings and unresolved product decisions separately.
@@ -185,7 +186,7 @@ Additional rules:
 - Develop on a branch and deliver changes through a pull request. Do not push
   directly to the protected default branch or merge around required CI checks.
   Every PR must run the health snapshot, security audit and relevant tests on
-  the self-hosted Linux runner; fix failures before merge.
+  the GitHub-hosted Linux runner; fix failures before merge.
 
 ## Core vocabulary
 
