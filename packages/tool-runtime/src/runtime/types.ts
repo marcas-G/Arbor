@@ -10,6 +10,8 @@ import type {
   ToolIntent,
   ToolInvocationSettlement,
   ToolRuntimeError,
+  ToolReconciliationRequest,
+  ToolReconciliationResult,
 } from "@arbor/ports";
 import type { Effect } from "effect";
 
@@ -79,3 +81,16 @@ export type ToolRuntimeQualificationProbe = (
   event: ToolRuntimeQualificationEvent,
 ) => Promise<void>;
 
+/** Exact reconciliation selection to be persisted atomically with settlement. */
+export interface PendingReconciliation {
+  readonly request: ToolReconciliationRequest;
+  readonly result: Exclude<
+    ToolReconciliationResult,
+    { readonly _tag: "StillUnknown" }
+  >;
+  readonly observedAt: string;
+  readonly selection: {
+    readonly attemptNo: 0 | 1;
+    readonly factId: string;
+  };
+}
