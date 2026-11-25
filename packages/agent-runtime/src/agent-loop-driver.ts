@@ -205,6 +205,10 @@ export const AgentLoopDriverLive = (
           | WorkspaceKnowledgePort
           | WorkspacePlacementPort
           | RecoveryAttentionFactStore
+          | HumanMessageStore
+          | ConversationResponseJobStore
+          | ConversationAttemptStore
+          | ExecutionRepository
         >,
       ): Effect.Effect<A, E> =>
         effect.pipe(
@@ -215,6 +219,10 @@ export const AgentLoopDriverLive = (
             RecoveryAttentionFactStore,
             recoveryAttentionFacts,
           ),
+          Effect.provideService(HumanMessageStore, humanMessages),
+          Effect.provideService(ConversationResponseJobStore, responseJobs),
+          Effect.provideService(ConversationAttemptStore, responseAttempts),
+          Effect.provideService(ExecutionRepository, executions),
         );
       const decisionRequests = yield* DecisionRequestStore;
       const clock = yield* Clock;
@@ -413,13 +421,9 @@ export const AgentLoopDriverLive = (
                   providerRuntime,
                   tx,
                   sessions,
-                  humanMessages,
                   conversationCheckpoints: conversationCheckpointStore,
                   blobs: blobStore,
                   turnProfileResolver,
-                  responseJobs,
-                  responseAttempts,
-                  executions,
                   works,
                   decisionRequests,
                   workspaces,

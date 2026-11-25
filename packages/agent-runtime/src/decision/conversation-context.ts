@@ -15,7 +15,14 @@ import type {
   PortableInputItem,
   SessionRepositoryService,
 } from "@arbor/ports";
-import { isValidConversationCheckpointBinding, sha256Hex } from "@arbor/ports";
+import {
+  ConversationAttemptStore,
+  ConversationResponseJobStore,
+  ExecutionRepository,
+  HumanMessageStore,
+  isValidConversationCheckpointBinding,
+  sha256Hex,
+} from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { type ModelDecisionOutcome, safetyStop } from "../agent-loop-policy.js";
 import {
@@ -42,11 +49,7 @@ type ConversationDecisionDependencies = Pick<
   | "loopSteps"
   | "loopStepFence"
   | "providerTurns"
-  | "humanMessages"
   | "conversationCheckpoints"
-  | "responseJobs"
-  | "responseAttempts"
-  | "executions"
   | "blobs"
   | "options"
   | "failure"
@@ -97,7 +100,15 @@ export const loadConversationDecisionContext = (
       settlement: ExecutionSettlement,
     ) => Effect.Effect<ModelDecisionOutcome, ExecutionDriverError>;
   },
-): Effect.Effect<ConversationDecisionContextResult, ExecutionDriverError> => {
+): Effect.Effect<
+  ConversationDecisionContextResult,
+  ExecutionDriverError,
+  // E05 sink: conversation evidence capabilities acquired directly.
+  | HumanMessageStore
+  | ConversationResponseJobStore
+  | ConversationAttemptStore
+  | ExecutionRepository
+> => {
   const {
     input,
     capability,
@@ -105,8 +116,6 @@ export const loadConversationDecisionContext = (
     loopSteps,
     loopStepFence,
     providerTurns,
-    humanMessages,
-    responseJobs,
     options,
     failure,
     now,
@@ -121,6 +130,11 @@ export const loadConversationDecisionContext = (
     proposeSettlement,
   } = phase;
   return Effect.gen(function* () {
+    // E05 sink: conversation evidence capabilities acquired directly.
+    const humanMessages = yield* HumanMessageStore;
+    const responseJobs = yield* ConversationResponseJobStore;
+    const responseAttempts = yield* ConversationAttemptStore;
+    const executions = yield* ExecutionRepository;
     // EGP: only an exact ConversationResponseEpisode can open conversation
     // history. A generic Workspace execution never implies conversation.
     const conversationMessages: Array<{
@@ -146,7 +160,6 @@ export const loadConversationDecisionContext = (
     if (conversationExecution) {
       if (
         dependencies.conversationCheckpoints === undefined ||
-        responseJobs === undefined ||
         loopStepFence === undefined
       ) {
         return yield* Effect.fail(
@@ -193,14 +206,6 @@ export const loadConversationDecisionContext = (
           }),
         );
       }
-      if (
-        dependencies.responseAttempts === undefined ||
-        dependencies.executions === undefined
-      ) {
-        return yield* Effect.fail(
-          failure({ _tag: "ConversationCheckpointEvidenceStoreUnavailable" }),
-        );
-      }
       const conversationAttempts: import("@arbor/ports").ConversationAttempt[] =
         [];
       const conversationExecutions: Execution[] = [input.execution];
@@ -212,7 +217,7 @@ export const loadConversationDecisionContext = (
           continue;
         }
         const attempts = yield* tx
-          .transact(dependencies.responseAttempts.list(job.messageId))
+          .transact(responseAttempts.list(job.messageId))
           .pipe(Effect.mapError(failure));
         conversationAttempts.push(...attempts);
         const wantedExecutionId = job.state.executionId;
@@ -230,9 +235,7 @@ export const loadConversationDecisionContext = (
           !seenExecutionIds.has(String(exactAttempt.executionId))
         ) {
           const found = yield* tx
-            .transact(
-              dependencies.executions.findById(exactAttempt.executionId),
-            )
+            .transact(executions.findById(exactAttempt.executionId))
             .pipe(Effect.mapError(failure));
           if (Option.isSome(found)) {
             conversationExecutions.push(found.value);

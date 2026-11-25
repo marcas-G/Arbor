@@ -12,21 +12,16 @@ import type {
   AgentLoopStepFence,
   AgentLoopStepStoreService,
   BlobStorePortService,
-  ConversationAttemptStoreService,
   ConversationCheckpointStoreService,
-  ConversationResponseJobStoreService,
   DecisionRequestStoreService,
   ExecutionActivity,
   ExecutionDriverError,
-  ExecutionRepositoryService,
-  HumanMessageStoreService,
   ModelCapability,
   ProviderCancellationSignal,
   ProviderExecutionPolicyOverrides,
   ProviderRuntimeProgress,
   ProviderRuntimeService,
   ProviderTurnStoreService,
-  RecoveryAttentionFactStoreService,
   SecretRef,
   SessionRepositoryService,
   TransactionPortService,
@@ -73,16 +68,9 @@ export interface ModelDecisionDependencies {
   readonly loopStepFence?: AgentLoopStepFence;
   readonly providerTurns?: ProviderTurnStoreService;
   readonly sessions: SessionRepositoryService;
-  readonly humanMessages: HumanMessageStoreService;
   readonly conversationCheckpoints?: ConversationCheckpointStoreService;
   readonly blobs?: Pick<BlobStorePortService, "put" | "get">;
   readonly turnProfileResolver: TurnProfileResolverService;
-  readonly responseJobs?: Pick<
-    ConversationResponseJobStoreService,
-    "findByExecution" | "listForWorkspace"
-  >;
-  readonly responseAttempts?: Pick<ConversationAttemptStoreService, "list">;
-  readonly executions?: Pick<ExecutionRepositoryService, "findById">;
   readonly works: WorkRepositoryService;
   readonly decisionRequests?: Pick<DecisionRequestStoreService, "findById">;
   readonly workspaces: WorkspaceRepositoryService;

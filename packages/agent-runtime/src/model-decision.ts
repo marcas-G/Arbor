@@ -13,7 +13,11 @@ import {
   SESSION_TIMELINE_ENTRY_LIMIT,
 } from "@arbor/model-context";
 import type {
+  ConversationAttemptStore,
+  ConversationResponseJobStore,
   ExecutionDriverError,
+  ExecutionRepository,
+  HumanMessageStore,
   LocalPlanStore,
   RecoveryAttentionFactStore,
   SessionEntryRecord,
@@ -70,6 +74,10 @@ export const runModelDecision = (
   | WorkspaceKnowledgePort
   | WorkspacePlacementPort
   | RecoveryAttentionFactStore
+  | HumanMessageStore
+  | ConversationResponseJobStore
+  | ConversationAttemptStore
+  | ExecutionRepository
 > => {
   const {
     input,
