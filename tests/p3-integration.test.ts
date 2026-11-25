@@ -42,6 +42,7 @@ import { WorkspaceKnowledgePortLive } from "../apps/single-workspace/src/workspa
 import { WorkspacePlacementPortLive } from "../apps/single-workspace/src/workspace-placement.js";
 import {
   AgentLoopDriverLive,
+  ControlBasisResolverLive,
   makeControlToolRegistry,
 } from "../packages/agent-runtime/src/index.js";
 import {
@@ -188,6 +189,17 @@ const makeApp = () => {
       repos,
       infra,
       Layer.provide(EnvironmentRevisionStoreLive, infra),
+      Layer.provide(
+        ControlBasisResolverLive,
+        Layer.mergeAll(
+          infra,
+          Layer.provide(TransactionPortLive, infra),
+          Layer.provide(ProjectRepositoryLive, infra),
+          Layer.provide(WorkspaceRepositoryLive, infra),
+          Layer.provide(WorkRepositoryLive, infra),
+          Layer.provide(EnvironmentRevisionStoreLive, infra),
+        ),
+      ),
       // E06: the driver Layer now requires these typed services.
       Layer.provide(InboxProjectionStoreLive, infra),
       Layer.provide(

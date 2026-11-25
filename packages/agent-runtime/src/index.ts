@@ -5,6 +5,7 @@ export * from "./checkpoint/conversation/projection.js";
 export * from "./compaction-coordinator.js";
 export * from "./control.js";
 export * from "./control-authorization.js";
+export * from "./control-basis-resolver.js";
 export * from "./execution-driver-failure.js";
 export * from "./freshness.js";
 export * from "./legacy-directive.js";

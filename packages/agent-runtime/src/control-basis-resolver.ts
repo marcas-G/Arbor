@@ -1,16 +1,22 @@
 import type { CommandSubmissionContext, Execution } from "@arbor/domain";
 import { workEpisode } from "@arbor/domain";
 import type { ControlBasis } from "@arbor/model-context";
-import type {
-  EnvironmentRevisionStoreService,
-  ExecutionDriverError,
-  ProjectRepositoryService,
-  TransactionPortService,
-  WorkRepositoryService,
-  WorkspaceRepositoryService,
+import {
+  EnvironmentRevisionStore,
+  type EnvironmentRevisionStoreService,
+  type ExecutionDriverError,
+  ProjectRepository,
+  type ProjectRepositoryService,
+  sha256Hex,
+  TransactionPort,
+  type TransactionPortService,
+  WorkRepository,
+  type WorkRepositoryService,
+  WorkspaceRepository,
+  type WorkspaceRepositoryService,
 } from "@arbor/ports";
-import { sha256Hex } from "@arbor/ports";
-import { Effect, Option } from "effect";
+import { Context, Effect, Layer, Option } from "effect";
+import { toExecutionDriverError } from "./execution-driver-failure.js";
 
 export interface ControlBasisResolverDependencies {
   readonly tx: TransactionPortService;
@@ -98,3 +104,42 @@ export const makeControlBasisResolver = (
       )
       .pipe(Effect.mapError(failure));
 };
+
+// E03 (architecture-evolution object 1): the assembly of the trusted
+// control-basis resolver out of four repositories used to live inline in
+// the driver's per-drive body — the orchestrator knowing exactly which
+// stores back the capability. It is now a capability Service: the Live
+// layer owns the assembly, the driver consumes the capability.
+export class ControlBasisResolver extends Context.Service<
+  ControlBasisResolver,
+  (input: {
+    readonly execution: Execution;
+    readonly context: CommandSubmissionContext;
+  }) => () => Effect.Effect<ControlBasis, ExecutionDriverError>
+>()("arbor/ControlBasisResolver") {}
+
+export const ControlBasisResolverLive: Layer.Layer<
+  ControlBasisResolver,
+  never,
+  | TransactionPort
+  | ProjectRepository
+  | WorkspaceRepository
+  | WorkRepository
+  | EnvironmentRevisionStore
+> = Layer.effect(
+  ControlBasisResolver,
+  Effect.gen(function* () {
+    const tx = yield* TransactionPort;
+    const projects = yield* ProjectRepository;
+    const workspaces = yield* WorkspaceRepository;
+    const works = yield* WorkRepository;
+    const environmentRevisions = yield* EnvironmentRevisionStore;
+    const failure = toExecutionDriverError;
+    return ControlBasisResolver.of((input) =>
+      makeControlBasisResolver(
+        { tx, projects, workspaces, works, environmentRevisions, failure },
+        input,
+      ),
+    );
+  }),
+);
