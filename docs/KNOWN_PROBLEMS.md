@@ -1118,3 +1118,32 @@ P2 gate 对所有 failure kind 的完整链测试通过；真实 Scheduler 在�
 重启和 Provider 失败后都只保留一个同 revision Execution；Steer 后只创建一个新
 revision Execution；Attention/Work Detail 显示安全的 failure kind，且不泄露 Provider
 原始响应、凭据或请求内容。
+
+## KP-021：AH7 reconcilable approval-drift 用例非确定性失败，随机阻塞功能批次
+
+**问题编号**
+KP-021
+
+**现象**
+`tests/functional/process/agent-action-ah7-reconcilable.functional.test.ts` 的 "rejects NotOccurred retry after approval drift during reconciliation I/O" 在同一提交上多次运行结果不稳定（2026-11-25 实测同 SHA 三连跑 pass/fail/pass）。失败断言为 `targetProviderCalls` 期望 ≤2，实际观测 3 与 5 浮动——崩溃注入与 reconciliation I/O 的交错存在竞争窗口，provider 调用计数随之波动。完整功能套件单轮 25 分钟且 bail=1，该 flake 命中时整轮作废。
+
+**复现步骤**
+
+1. 在任一提交上连续运行：
+   `pnpm exec vitest run --config vitest.functional.config.ts --no-file-parallelism -t "rejects NotOccurred retry after approval drift" tests/functional/process/agent-action-ah7-reconcilable.functional.test.ts`
+2. 观察多次运行中 pass/fail 交替。
+
+**影响范围**
+`pnpm test:functional` 的零 retry 发布口径、CI quality 的 Functional release journey 步骤、以及任何依赖该文件的功能资格声明。
+
+**可能原因**
+崩溃注入点与 approval-drift reconciliation 的相对时序未固定；计数 oracle 未区分合法 successor 调用与竞争引入的额外调用。bisect 曾指向仅含 CI yaml 差异的提交对（086bb1c1 通过 / 31689121 失败），证明失败与产品代码无关。
+
+**涉及文件**
+- `tests/functional/process/agent-action-ah7-reconcilable.functional.test.ts`（oracle 与注入时序）
+
+**优先级**
+P1 — 发布口径阻断（零 retry 下随机红）。
+
+**建议修复方式**
+固定注入交错（确定性调度或消息序号栅栏），或把计数 oracle 改为对合法调用集合的精确断言；修复前资格运行命中该 flake 应整轮重跑并分开记录。
