@@ -11,3 +11,17 @@ see `docs/CURRENT_STATE.md` for the maintained present-tense assessment and
 | `task_plan.md` | The recovery plan phases 1–40 with completion state |
 | `progress.md` | Dated progress log of that session |
 | `findings.md` | The frontend/architecture audit snapshot (self-declared historical) |
+
+Additional session materials consolidated here on 2026-11-25:
+
+| Former path | Now |
+|---|---|
+| `planning/dogfood/quant-research-phase1.md` | `dogfood-quant-research-phase1.md` |
+| `planning/handoffs/2026-10-24-stop-handoff.md` | `handoff-2026-10-24-stop.md` |
+
+Review-methodology materials moved to `planning/reviews/`
+(`behavioral-eval-*` prefix from `planning/behavioral-eval/`,
+`paradigm-*` prefix from `planning/programming-paradigm/`); the governance
+package manifest moved to `planning/proposals/`. Historical result records
+that mention the old paths are snapshots and are intentionally not
+rewritten.
