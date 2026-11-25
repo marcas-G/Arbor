@@ -29,34 +29,42 @@ import {
   WorkspaceRepository,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
-
-import type { PendingReconciliation, ToolExecutionResult, ToolExecutor, ToolRuntimeQualificationProbe } from "./runtime/types.js";
-import {
-  bounded,
-  operationalFailure,
-} from "./runtime/errors.js";
+import { claimNewInvocation } from "./runtime/claim-new-invocation.js";
+import { admitNewEffect } from "./runtime/effect-admission.js";
+import { bounded, operationalFailure } from "./runtime/errors.js";
+import { executeAdmittedTool } from "./runtime/execute-admitted-tool.js";
+import { resolveInvocationAuthority } from "./runtime/invocation-authority.js";
+import { prepareInvocation } from "./runtime/invocation-setup.js";
+import { makeNoEffectSettlement } from "./runtime/no-effect-settlement.js";
 import { makeProcessRunner } from "./runtime/process-runner.js";
+import { finishPriorInvocation } from "./runtime/recovery/finish-prior-invocation.js";
 import { makeObservationReplay } from "./runtime/recovery/observation-replay.js";
 import { inspectPriorInvocation } from "./runtime/recovery/prior-invocation.js";
-import { makeNoEffectSettlement } from "./runtime/no-effect-settlement.js";
-import { resolveInvocationResources } from "./runtime/resources.js";
-import { resolveInvocationAuthority } from "./runtime/invocation-authority.js";
-import { executeAdmittedTool } from "./runtime/execute-admitted-tool.js";
-import { settleToolOutcome } from "./runtime/settlement.js";
 import { reconcileAdmittedInvocation } from "./runtime/recovery/reconcile-admitted-invocation.js";
-import { claimNewInvocation } from "./runtime/claim-new-invocation.js";
-import { finishPriorInvocation } from "./runtime/recovery/finish-prior-invocation.js";
-import { admitNewEffect } from "./runtime/effect-admission.js";
-import { prepareInvocation } from "./runtime/invocation-setup.js";
 import { verifyPriorReplayAdmission } from "./runtime/recovery/replay-admission.js";
+import { resolveInvocationResources } from "./runtime/resources.js";
+import { settleToolOutcome } from "./runtime/settlement.js";
+import type {
+  PendingReconciliation,
+  ToolExecutionResult,
+  ToolExecutor,
+  ToolRuntimeQualificationProbe,
+} from "./runtime/types.js";
 
 export {
   recoveryBindingIdentityMatches,
   recoveryBindingToolDefinitionHashV1,
 } from "./recovery-binding.js";
-
-export type { ToolExecutionResult, ToolExecutor, ToolRuntimeQualificationEvent, ToolRuntimeQualificationProbe } from "./runtime/types.js";
-export { executableApprovalTerminalDenial, reconciliationRetryDenialReasonCode } from "./runtime/errors.js";
+export {
+  executableApprovalTerminalDenial,
+  reconciliationRetryDenialReasonCode,
+} from "./runtime/errors.js";
+export type {
+  ToolExecutionResult,
+  ToolExecutor,
+  ToolRuntimeQualificationEvent,
+  ToolRuntimeQualificationProbe,
+} from "./runtime/types.js";
 
 export const ToolRuntimeLive = (
   executors: ReadonlyArray<ToolExecutor>,
@@ -227,13 +235,29 @@ export const ToolRuntimeLive = (
                     }) ?? Promise.resolve(),
                 );
           const setup = yield* prepareInvocation(
-            intent, context, executors, definitions, reconciliationProfiles,
-            p39Recovery, environmentRevisions, workspaces, tx, store,
-            processModeBlocksSpawn, testOnlyAllowTrustedLocalProcessExecution,
-            processUnavailableReason, isIndependentVerificationExecution,
+            intent,
+            context,
+            executors,
+            definitions,
+            reconciliationProfiles,
+            p39Recovery,
+            environmentRevisions,
+            workspaces,
+            tx,
+            store,
+            processModeBlocksSpawn,
+            testOnlyAllowTrustedLocalProcessExecution,
+            processUnavailableReason,
+            isIndependentVerificationExecution,
           );
           if (setup._tag === "Terminal") return setup.observation;
-          const { definition, trustedProfile, trustedEffectKey, executor, p39BindingEnabled } = setup;
+          const {
+            definition,
+            trustedProfile,
+            trustedEffectKey,
+            executor,
+            p39BindingEnabled,
+          } = setup;
           const refreshAfterStale = (
             cause: unknown,
           ): Effect.Effect<CanonicalToolObservation, ToolRuntimeError> =>
@@ -247,38 +271,83 @@ export const ToolRuntimeLive = (
                 );
 
           const now = options.now ?? (yield* clock.now());
-          const { persistNoEffectInterruption, recordNoEffectDenial } = makeNoEffectSettlement(
-            intent, context, now, options, tx, clock, store,
-            observationEvidence, artifactService, findInvocationFenced,
-            decodeRecordedEvidence, resolveReplaySandboxPolicy,
-          );
+          const { persistNoEffectInterruption, recordNoEffectDenial } =
+            makeNoEffectSettlement(
+              intent,
+              context,
+              now,
+              options,
+              tx,
+              clock,
+              store,
+              observationEvidence,
+              artifactService,
+              findInvocationFenced,
+              decodeRecordedEvidence,
+              resolveReplaySandboxPolicy,
+            );
           const priorInspection = yield* inspectPriorInvocation(
-            intent, context, definition, trustedProfile, trustedEffectKey, tx, clock,
-            p39Recovery, p39RecoveryEvidence, observationEvidence, reconciliationPort,
-            reconciliationFacts, findInvocationFenced, decodeRecordedEvidenceResult,
+            intent,
+            context,
+            definition,
+            trustedProfile,
+            trustedEffectKey,
+            tx,
+            clock,
+            p39Recovery,
+            p39RecoveryEvidence,
+            observationEvidence,
+            reconciliationPort,
+            reconciliationFacts,
+            findInvocationFenced,
+            decodeRecordedEvidenceResult,
             resolveReplaySandboxPolicy,
           );
           if (priorInspection._tag === "Terminal") {
             return priorInspection.observation;
           }
-          const { prior, priorRecord, priorModelIdentityMatches, verifiedReplayBinding } = priorInspection;
+          const {
+            prior,
+            priorRecord,
+            priorModelIdentityMatches,
+            verifiedReplayBinding,
+          } = priorInspection;
           const resourceResolution = yield* resolveInvocationResources(
-            intent, context, definition, executor, tx, workspaces, environment,
-            environmentRevisions, admission, p39BindingEnabled,
-            priorModelIdentityMatches, priorRecord, verifiedReplayBinding !== undefined,
-            recordNoEffectDenial, refreshAfterStale,
+            intent,
+            context,
+            definition,
+            executor,
+            tx,
+            workspaces,
+            environment,
+            environmentRevisions,
+            admission,
+            p39BindingEnabled,
+            priorModelIdentityMatches,
+            priorRecord,
+            verifiedReplayBinding !== undefined,
+            recordNoEffectDenial,
+            refreshAfterStale,
           );
           if (resourceResolution._tag === "Terminal") {
             return resourceResolution.observation;
           }
-          const {
-            address, regions, region,
-          } = resourceResolution;
+          const { address, regions, region } = resourceResolution;
 
           const authorityResolution = yield* resolveInvocationAuthority(
-            intent, context, definition, executor, regions, now, options,
-            authorityResolver, executableApprovals, tx, store,
-            p39BindingEnabled, verifiedReplayBinding !== undefined,
+            intent,
+            context,
+            definition,
+            executor,
+            regions,
+            now,
+            options,
+            authorityResolver,
+            executableApprovals,
+            tx,
+            store,
+            p39BindingEnabled,
+            verifiedReplayBinding !== undefined,
             recordNoEffectDenial,
           );
           if (authorityResolution._tag === "Terminal") {
@@ -330,11 +399,25 @@ export const ToolRuntimeLive = (
           if (Option.isSome(prior)) {
             const recorded = prior.value;
             const replayAdmission = yield* verifyPriorReplayAdmission(
-              intent, context, definition, recorded, resourceResolution, authorityResolution,
-              verifiedReplayBinding, p39BindingEnabled, p39Recovery, observationEvidence,
-              trustedProfile, trustedEffectKey, tx, clock, recordNoEffectDenial, refreshAfterStale,
+              intent,
+              context,
+              definition,
+              recorded,
+              resourceResolution,
+              authorityResolution,
+              verifiedReplayBinding,
+              p39BindingEnabled,
+              p39Recovery,
+              observationEvidence,
+              trustedProfile,
+              trustedEffectKey,
+              tx,
+              clock,
+              recordNoEffectDenial,
+              refreshAfterStale,
             );
-            if (replayAdmission._tag === "Terminal") return replayAdmission.observation;
+            if (replayAdmission._tag === "Terminal")
+              return replayAdmission.observation;
             const { replayBindingValue, replayBindingSha256 } = replayAdmission;
             if (
               recorded.settlement === null &&
@@ -342,11 +425,29 @@ export const ToolRuntimeLive = (
               recorded.sideEffectSemantics === "Reconcilable"
             ) {
               const recovery = yield* reconcileAdmittedInvocation(
-                intent, context, definition, executor, resourceResolution, needsApproval,
-                trustedProfile, trustedEffectKey, replayBindingValue, replayBindingSha256,
-                tx, clock, store, admission, p39Recovery, reconciliationPort, reconciliationFacts,
-                observationEvidence, artifactService, authorityResolver, executableApprovals,
-                options, probeReconciliation,
+                intent,
+                context,
+                definition,
+                executor,
+                resourceResolution,
+                needsApproval,
+                trustedProfile,
+                trustedEffectKey,
+                replayBindingValue,
+                replayBindingSha256,
+                tx,
+                clock,
+                store,
+                admission,
+                p39Recovery,
+                reconciliationPort,
+                reconciliationFacts,
+                observationEvidence,
+                artifactService,
+                authorityResolver,
+                executableApprovals,
+                options,
+                probeReconciliation,
               );
               if (recovery._tag === "Terminal") return recovery.observation;
               recoveredToolOutcome = recovery.recoveredToolOutcome;
@@ -354,16 +455,39 @@ export const ToolRuntimeLive = (
               retryAdmitted = recovery.retryAdmitted;
             }
             const terminalReplay = yield* finishPriorInvocation(
-              intent, context, recorded, recoveredToolOutcome, retryAdmitted,
-              options, tx, clock, store, observationEvidence, artifactService,
-              decodeRecordedEvidence, resolveReplaySandboxPolicy,
+              intent,
+              context,
+              recorded,
+              recoveredToolOutcome,
+              retryAdmitted,
+              options,
+              tx,
+              clock,
+              store,
+              observationEvidence,
+              artifactService,
+              decodeRecordedEvidence,
+              resolveReplaySandboxPolicy,
             );
             if (terminalReplay !== undefined) return terminalReplay;
           } else {
             const claim = yield* claimNewInvocation(
-              intent, context, definition, resourceResolution, authorityResolution, now,
-              trustedProfile, trustedEffectKey, tx, store, p39Recovery, p39BindingEnabled,
-              executableApprovals, options, recordNoEffectDenial, refreshAfterStale,
+              intent,
+              context,
+              definition,
+              resourceResolution,
+              authorityResolution,
+              now,
+              trustedProfile,
+              trustedEffectKey,
+              tx,
+              store,
+              p39Recovery,
+              p39BindingEnabled,
+              executableApprovals,
+              options,
+              recordNoEffectDenial,
+              refreshAfterStale,
             );
             if (claim._tag === "Terminal") return claim.observation;
             approvalAlreadyConsumedBySelf = claim.approvalAlreadyConsumedBySelf;
@@ -399,24 +523,65 @@ export const ToolRuntimeLive = (
           let processExecutionContext = context;
           if (recoveredToolOutcome === undefined) {
             const gate = yield* admitNewEffect(
-              intent, context, definition, executor, resourceResolution,
-              needsApproval, approvalAlreadyConsumedBySelf, recoveredToolOutcome,
-              prior, retryAdmitted, p39BindingEnabled, p39Recovery, authorityResolver,
-              tx, clock, store, options, recordNoEffectDenial, persistNoEffectInterruption,
-              resolveSandboxPolicyOnce, (dispose) => { sandboxPolicyCleanup = dispose; },
+              intent,
+              context,
+              definition,
+              executor,
+              resourceResolution,
+              needsApproval,
+              approvalAlreadyConsumedBySelf,
+              recoveredToolOutcome,
+              prior,
+              retryAdmitted,
+              p39BindingEnabled,
+              p39Recovery,
+              authorityResolver,
+              tx,
+              clock,
+              store,
+              options,
+              recordNoEffectDenial,
+              persistNoEffectInterruption,
+              resolveSandboxPolicyOnce,
+              (dispose) => {
+                sandboxPolicyCleanup = dispose;
+              },
             );
             if (gate._tag === "Terminal") return gate.observation;
             processExecutionContext = gate.processExecutionContext;
           }
 
           const outcome = yield* executeAdmittedTool(
-            intent, context, processExecutionContext, definition, executor, sandbox,
-            address, region, regions, recoveredToolOutcome, runProcessFor,
+            intent,
+            context,
+            processExecutionContext,
+            definition,
+            executor,
+            sandbox,
+            address,
+            region,
+            regions,
+            recoveredToolOutcome,
+            runProcessFor,
           );
           return yield* settleToolOutcome(
-            intent, context, executor, outcome, recoveredToolOutcome, pendingReconciliation,
-            now, options, tx, clock, store, p39RecoveryEvidence, observationEvidence,
-            artifactService, findInvocationFenced, recordReplayFailure, replayFailureCode,
+            intent,
+            context,
+            executor,
+            outcome,
+            recoveredToolOutcome,
+            pendingReconciliation,
+            now,
+            options,
+            tx,
+            clock,
+            store,
+            p39RecoveryEvidence,
+            observationEvidence,
+            artifactService,
+            findInvocationFenced,
+            recordReplayFailure,
+            replayFailureCode,
           );
         }).pipe(Effect.ensuring(Effect.suspend(() => sandboxPolicyCleanup)));
       };

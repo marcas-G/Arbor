@@ -31,7 +31,9 @@ describe("DID v1.28 Execution Episode / Goal / Plan architecture", () => {
   });
 
   it("migration 0024 stores episode identity, plan, and decision request", () => {
-    const migrations = source("adapters/persistence-sqlite/src/migrations/v21-v30.ts");
+    const migrations = source(
+      "adapters/persistence-sqlite/src/migrations/v21-v30.ts",
+    );
     for (const marker of [
       "episode_kind",
       "episode_ref",
@@ -45,14 +47,18 @@ describe("DID v1.28 Execution Episode / Goal / Plan architecture", () => {
   });
 
   it("migration 0025 physically retires legacy focus columns", () => {
-    const migrations = source("adapters/persistence-sqlite/src/migrations/v21-v30.ts");
+    const migrations = source(
+      "adapters/persistence-sqlite/src/migrations/v21-v30.ts",
+    );
     expect(migrations).toContain('name: "execution_episode_only"');
     expect(migrations).toContain("DROP TABLE executions_legacy_focus");
     expect(migrations).toContain("LegacyAmbiguousEpisode");
   });
 
   it("migration 0026 retires agent-state focus and active runtime has no Coordination branch", () => {
-    const migrations = source("adapters/persistence-sqlite/src/migrations/v21-v30.ts");
+    const migrations = source(
+      "adapters/persistence-sqlite/src/migrations/v21-v30.ts",
+    );
     const driver = source("packages/agent-runtime/src/agent-loop-driver.ts");
     const decision = source("packages/agent-runtime/src/model-decision.ts");
     const completion = source(
@@ -66,6 +72,7 @@ describe("DID v1.28 Execution Episode / Goal / Plan architecture", () => {
     const decisionDirectory = "packages/agent-runtime/src/decision";
     const decisionPhases = readdirSync(join(root, decisionDirectory), {
       recursive: true,
+      encoding: "utf8",
     })
       .filter((entry) => entry.endsWith(".ts"))
       .map((entry) => source(join(decisionDirectory, entry)));

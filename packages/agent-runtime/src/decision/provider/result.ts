@@ -1,5 +1,12 @@
-import { type ProviderTurnId, providerTurnRepairInferenceId } from "@arbor/domain";
-import { decodeTurn, type InstructionFragment, type TurnPreparation } from "@arbor/model-context";
+import {
+  type ProviderTurnId,
+  providerTurnRepairInferenceId,
+} from "@arbor/domain";
+import {
+  decodeTurn,
+  type InstructionFragment,
+  type TurnPreparation,
+} from "@arbor/model-context";
 import type {
   AgentLoopStepRecord,
   ExecutionActivity,
@@ -7,15 +14,26 @@ import type {
   ProviderRunResult,
 } from "@arbor/ports";
 import { Effect } from "effect";
-import { type ModelDecisionOutcome, REPAIR_POLICY, safetyStop } from "../../agent-loop-policy.js";
+import {
+  type ModelDecisionOutcome,
+  REPAIR_POLICY,
+  safetyStop,
+} from "../../agent-loop-policy.js";
 import { decideRepair } from "../../repair.js";
 import type { ModelDecisionDependencies } from "../contract.js";
 import type { OverflowRecoveryState } from "../recovery/overflow-state.js";
 
 type ResultDependencies = Pick<
   ModelDecisionDependencies,
-  "input" | "tx" | "loopSteps" | "loopStepFence" | "providerTurns" |
-  "options" | "completeProviderTurn" | "failure" | "now"
+  | "input"
+  | "tx"
+  | "loopSteps"
+  | "loopStepFence"
+  | "providerTurns"
+  | "options"
+  | "completeProviderTurn"
+  | "failure"
+  | "now"
 >;
 
 export type ProviderDecisionResult =
@@ -38,18 +56,32 @@ export const processSuccessfulProviderResult = (
     readonly loopStep: AgentLoopStepRecord | undefined;
     readonly preparation: Extract<TurnPreparation, { readonly _tag: "Ready" }>;
     readonly providerRun: ProviderRunResult;
-    readonly providerAdmission: { readonly activity: ExecutionActivity } | undefined;
+    readonly providerAdmission:
+      | { readonly activity: ExecutionActivity }
+      | undefined;
     readonly conversationExecution: boolean;
     readonly overflow: OverflowRecoveryState;
   },
 ): Effect.Effect<ProviderDecisionResult, ExecutionDriverError> => {
   const {
-    input, tx, loopSteps, loopStepFence, providerTurns, options,
-    completeProviderTurn, failure, now,
+    input,
+    tx,
+    loopSteps,
+    loopStepFence,
+    providerTurns,
+    options,
+    completeProviderTurn,
+    failure,
+    now,
   } = dependencies;
   const {
-    turn, repairAttempt, providerTurnId, preparation, providerRun,
-    providerAdmission, conversationExecution,
+    turn,
+    repairAttempt,
+    providerTurnId,
+    preparation,
+    providerRun,
+    providerAdmission,
+    conversationExecution,
   } = phase;
   return Effect.gen(function* () {
     let loopStep = phase.loopStep;

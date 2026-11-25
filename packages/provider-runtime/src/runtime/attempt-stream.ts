@@ -1,9 +1,32 @@
-import { cacheUsageGateViolation, canonicalUsageOfEvent, UNKNOWN_USAGE, type CanonicalProviderEvent, type ProviderAttemptObservation, type ProviderCancellationSignal, type ProviderContinuationCheckpoint, type ProviderExecutionContext, type ProviderExecutionTimeout, type ProviderFailure, type ProviderRunInput, type ProviderRuntimeExecutionPolicy, type RuntimeClockService, type TransactionOperationalFailure } from "@arbor/ports";
+import {
+  type CanonicalProviderEvent,
+  cacheUsageGateViolation,
+  canonicalUsageOfEvent,
+  type ProviderAttemptObservation,
+  type ProviderCancellationSignal,
+  type ProviderContinuationCheckpoint,
+  type ProviderExecutionContext,
+  type ProviderExecutionTimeout,
+  type ProviderFailure,
+  type ProviderRunInput,
+  type ProviderRuntimeExecutionPolicy,
+  type RuntimeClockService,
+  type TransactionOperationalFailure,
+  UNKNOWN_USAGE,
+} from "@arbor/ports";
 import { Cause, Effect, Result, Stream } from "effect";
 import { mergeAttemptObservation } from "../policy.js";
 import type { ProviderRuntimeConfig } from "./config.js";
-import { cancelledFailure, protocolFailure, unknownFailure } from "./failures.js";
-import { decodeContinuationPrefix, observationForContinuation, semanticOutputVisible } from "./continuation-evidence.js";
+import {
+  decodeContinuationPrefix,
+  observationForContinuation,
+  semanticOutputVisible,
+} from "./continuation-evidence.js";
+import {
+  cancelledFailure,
+  protocolFailure,
+  unknownFailure,
+} from "./failures.js";
 
 type AttemptResult =
   | {
@@ -374,4 +397,3 @@ export const consumeAttempt = (
       };
     }),
   );
-

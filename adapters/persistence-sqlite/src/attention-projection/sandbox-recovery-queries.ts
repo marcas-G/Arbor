@@ -1,6 +1,4 @@
-import type {
-  ProjectId,
-} from "@arbor/domain";
+import type { ProjectId } from "@arbor/domain";
 import {
   type AttentionProjectionStoreService,
   canonicalArgumentsDigestV1,
@@ -10,36 +8,37 @@ import {
   targetResourceIdentityDigestV1,
   verifyRecoveryBindingV1,
 } from "@arbor/ports";
+import { Effect } from "effect";
+import { persistenceCorruption } from "../repository-error.js";
+import type { ProjectionContext } from "./context.js";
 import {
-  Effect,
-} from "effect";
-import {
-  persistenceCorruption,
-} from "../repository-error.js";
-import {
-  type SandboxRecoveryBindingDbRow,
   canonicalUtcText,
+  type SandboxRecoveryBindingDbRow,
   sandboxRecoveryBindingAttentionId,
 } from "./row-codecs.js";
-import type { ProjectionContext } from "./context.js";
 
-export const makeSandboxRecoveryQueries = (context: ProjectionContext): Pick<AttentionProjectionStoreService, "listSandboxRecoveryBindingFailures" | "listSandboxPolicyDecisionRequired"> => {
+export const makeSandboxRecoveryQueries = (
+  context: ProjectionContext,
+): Pick<
+  AttentionProjectionStoreService,
+  "listSandboxRecoveryBindingFailures" | "listSandboxPolicyDecisionRequired"
+> => {
   const { sql, run } = context;
   return {
-        listSandboxRecoveryBindingFailures: (projectId, now) =>
-          Effect.gen(function* () {
-            if (!canonicalUtcText(now)) {
-              return yield* Effect.fail(
-                persistenceCorruption(
-                  "AttentionProjectionStore",
-                  "sandbox-recovery-binding-read",
-                  "query time is not canonical UTC",
-                ),
-              );
-            }
-            const rows = yield* run(
-              sql.unsafe<SandboxRecoveryBindingDbRow>(
-                `SELECT e.project_id, e.execution_id, e.workspace_id,
+    listSandboxRecoveryBindingFailures: (projectId, now) =>
+      Effect.gen(function* () {
+        if (!canonicalUtcText(now)) {
+          return yield* Effect.fail(
+            persistenceCorruption(
+              "AttentionProjectionStore",
+              "sandbox-recovery-binding-read",
+              "query time is not canonical UTC",
+            ),
+          );
+        }
+        const rows = yield* run(
+          sql.unsafe<SandboxRecoveryBindingDbRow>(
+            `SELECT e.project_id, e.execution_id, e.workspace_id,
                         i.invocation_id, i.intent_at, i.recovery_binding_state,
                         i.recovery_binding_sha256, i.effect_admission_state,
                         i.settled_at, i.tool_name, i.tool_version,
@@ -90,105 +89,104 @@ export const makeSandboxRecoveryQueries = (context: ProjectionContext): Pick<Att
                                  THEN json_extract(b.canonical_binding_json, '$.profileId')
                                  ELSE NULL END IS NOT NULL)
                   ORDER BY e.execution_id, i.intent_at, i.invocation_id`,
-                [projectId],
+            [projectId],
+          ),
+        );
+        const failures: SandboxRecoveryBindingFailureProjectionRow[] = [];
+        for (const row of rows) {
+          if (
+            typeof row.recovery_binding_sha256 === "string" &&
+            !/^[0-9a-f]{64}$/u.test(row.recovery_binding_sha256)
+          ) {
+            return yield* Effect.fail(
+              persistenceCorruption(
+                "AttentionProjectionStore",
+                "sandbox-recovery-binding-read",
+                "stored binding digest is malformed",
               ),
             );
-            const failures: SandboxRecoveryBindingFailureProjectionRow[] = [];
-            for (const row of rows) {
-              if (
-                typeof row.recovery_binding_sha256 === "string" &&
-                !/^[0-9a-f]{64}$/u.test(row.recovery_binding_sha256)
-              ) {
-                return yield* Effect.fail(
-                  persistenceCorruption(
-                    "AttentionProjectionStore",
-                    "sandbox-recovery-binding-read",
-                    "stored binding digest is malformed",
-                  ),
+          }
+          if (!canonicalUtcText(row.intent_at)) {
+            return yield* Effect.fail(
+              persistenceCorruption(
+                "AttentionProjectionStore",
+                "sandbox-recovery-binding-read",
+                "invocation intent timestamp is malformed",
+              ),
+            );
+          }
+          const verified =
+            row.binding_version === 1 &&
+            row.canonical_binding_json !== null &&
+            row.binding_sha256 !== null
+              ? verifyRecoveryBindingV1({
+                  invocationId: row.invocation_id as never,
+                  canonicalJson: row.canonical_binding_json,
+                  bindingSha256: row.binding_sha256,
+                })
+              : null;
+          const valid =
+            row.recovery_binding_state === "Bound" &&
+            row.recovery_binding_sha256 !== null &&
+            row.recovery_binding_sha256 === row.binding_sha256 &&
+            verified !== null &&
+            verified.value.executionId === row.execution_id &&
+            verified.value.invocationId === row.invocation_id &&
+            verified.value.toolName === row.tool_name &&
+            verified.value.toolVersion === row.tool_version &&
+            verified.value.sideEffectSemantics === row.side_effect_semantics &&
+            verified.value.profileId !== null &&
+            verified.value.profileId === row.profile_id &&
+            row.action_state === "Pending" &&
+            row.action_input_hash === sha256Hex(row.arguments_json) &&
+            row.action_kind === row.tool_name &&
+            row.p3_logical_action_id === verified.value.logicalActionId &&
+            row.p3_action_index === verified.value.actionIndex &&
+            row.p3_call_ref === verified.value.callRef &&
+            row.p3_provider_turn_id === verified.value.providerTurnId &&
+            row.p3_step_state === "ActionsInProgress" &&
+            (() => {
+              try {
+                return (
+                  verified.value.canonicalArgumentsDigest ===
+                  canonicalArgumentsDigestV1(
+                    JSON.parse(row.arguments_json) as unknown,
+                  )
                 );
+              } catch {
+                return false;
               }
-              if (!canonicalUtcText(row.intent_at)) {
-                return yield* Effect.fail(
-                  persistenceCorruption(
-                    "AttentionProjectionStore",
-                    "sandbox-recovery-binding-read",
-                    "invocation intent timestamp is malformed",
-                  ),
-                );
-              }
-              const verified =
-                row.binding_version === 1 &&
-                row.canonical_binding_json !== null &&
-                row.binding_sha256 !== null
-                  ? verifyRecoveryBindingV1({
-                      invocationId: row.invocation_id as never,
-                      canonicalJson: row.canonical_binding_json,
-                      bindingSha256: row.binding_sha256,
-                    })
-                  : null;
-              const valid =
-                row.recovery_binding_state === "Bound" &&
-                row.recovery_binding_sha256 !== null &&
-                row.recovery_binding_sha256 === row.binding_sha256 &&
-                verified !== null &&
-                verified.value.executionId === row.execution_id &&
-                verified.value.invocationId === row.invocation_id &&
-                verified.value.toolName === row.tool_name &&
-                verified.value.toolVersion === row.tool_version &&
-                verified.value.sideEffectSemantics ===
-                  row.side_effect_semantics &&
-                verified.value.profileId !== null &&
-                verified.value.profileId === row.profile_id &&
-                row.action_state === "Pending" &&
-                row.action_input_hash === sha256Hex(row.arguments_json) &&
-                row.action_kind === row.tool_name &&
-                row.p3_logical_action_id === verified.value.logicalActionId &&
-                row.p3_action_index === verified.value.actionIndex &&
-                row.p3_call_ref === verified.value.callRef &&
-                row.p3_provider_turn_id === verified.value.providerTurnId &&
-                row.p3_step_state === "ActionsInProgress" &&
-                (() => {
-                  try {
-                    return (
-                      verified.value.canonicalArgumentsDigest ===
-                      canonicalArgumentsDigestV1(
-                        JSON.parse(row.arguments_json) as unknown,
-                      )
-                    );
-                  } catch {
-                    return false;
-                  }
-                })();
-              if (valid) continue;
-              failures.push({
-                projectId: row.project_id as ProjectId,
-                executionId: row.execution_id,
-                invocationId: row.invocation_id,
-                workspaceId: row.workspace_id as never,
-                attentionFactId: sandboxRecoveryBindingAttentionId(
-                  row.execution_id,
-                  row.invocation_id,
-                  row.recovery_binding_sha256,
-                ),
-                intentAt: row.intent_at,
-              });
-            }
-            return failures;
-          }),
-        listSandboxPolicyDecisionRequired: (projectId, now) =>
-          Effect.gen(function* () {
-            if (!canonicalUtcText(now)) {
-              return yield* Effect.fail(
-                persistenceCorruption(
-                  "AttentionProjectionStore",
-                  "sandbox-policy-decision-required-read",
-                  "query time is not canonical UTC",
-                ),
-              );
-            }
-            const rows = yield* run(
-              sql.unsafe<SandboxRecoveryBindingDbRow>(
-                `SELECT e.project_id, e.execution_id, e.workspace_id,
+            })();
+          if (valid) continue;
+          failures.push({
+            projectId: row.project_id as ProjectId,
+            executionId: row.execution_id,
+            invocationId: row.invocation_id,
+            workspaceId: row.workspace_id as never,
+            attentionFactId: sandboxRecoveryBindingAttentionId(
+              row.execution_id,
+              row.invocation_id,
+              row.recovery_binding_sha256,
+            ),
+            intentAt: row.intent_at,
+          });
+        }
+        return failures;
+      }),
+    listSandboxPolicyDecisionRequired: (projectId, now) =>
+      Effect.gen(function* () {
+        if (!canonicalUtcText(now)) {
+          return yield* Effect.fail(
+            persistenceCorruption(
+              "AttentionProjectionStore",
+              "sandbox-policy-decision-required-read",
+              "query time is not canonical UTC",
+            ),
+          );
+        }
+        const rows = yield* run(
+          sql.unsafe<SandboxRecoveryBindingDbRow>(
+            `SELECT e.project_id, e.execution_id, e.workspace_id,
                         i.invocation_id, i.intent_at, i.recovery_binding_state,
                         i.recovery_binding_sha256, i.effect_admission_state,
                         i.settled_at, i.tool_name, i.tool_version,
@@ -250,104 +248,102 @@ export const makeSandboxRecoveryQueries = (context: ProjectionContext): Pick<Att
                          AND d.expires_at > ?
                     )
                   ORDER BY e.execution_id, i.intent_at, i.invocation_id`,
-                [projectId, now],
+            [projectId, now],
+          ),
+        );
+        const pending: SandboxPolicyDecisionRequiredProjectionRow[] = [];
+        for (const row of rows) {
+          if (!canonicalUtcText(row.intent_at)) {
+            return yield* Effect.fail(
+              persistenceCorruption(
+                "AttentionProjectionStore",
+                "sandbox-policy-decision-required-read",
+                "pending invocation timestamp is malformed",
               ),
             );
-            const pending: SandboxPolicyDecisionRequiredProjectionRow[] = [];
-            for (const row of rows) {
-              if (!canonicalUtcText(row.intent_at)) {
-                return yield* Effect.fail(
-                  persistenceCorruption(
-                    "AttentionProjectionStore",
-                    "sandbox-policy-decision-required-read",
-                    "pending invocation timestamp is malformed",
-                  ),
-                );
-              }
-              if (
-                typeof row.recovery_binding_sha256 === "string" &&
-                !/^[0-9a-f]{64}$/u.test(row.recovery_binding_sha256)
-              ) {
-                return yield* Effect.fail(
-                  persistenceCorruption(
-                    "AttentionProjectionStore",
-                    "sandbox-policy-decision-required-read",
-                    "stored binding digest is malformed",
-                  ),
-                );
-              }
-              const verified =
-                row.binding_version === 1 &&
-                row.canonical_binding_json !== null &&
-                row.binding_sha256 !== null
-                  ? verifyRecoveryBindingV1({
-                      invocationId: row.invocation_id as never,
-                      canonicalJson: row.canonical_binding_json,
-                      bindingSha256: row.binding_sha256,
-                    })
-                  : null;
-              const binding = verified?.value;
-              let validRegions = false;
+          }
+          if (
+            typeof row.recovery_binding_sha256 === "string" &&
+            !/^[0-9a-f]{64}$/u.test(row.recovery_binding_sha256)
+          ) {
+            return yield* Effect.fail(
+              persistenceCorruption(
+                "AttentionProjectionStore",
+                "sandbox-policy-decision-required-read",
+                "stored binding digest is malformed",
+              ),
+            );
+          }
+          const verified =
+            row.binding_version === 1 &&
+            row.canonical_binding_json !== null &&
+            row.binding_sha256 !== null
+              ? verifyRecoveryBindingV1({
+                  invocationId: row.invocation_id as never,
+                  canonicalJson: row.canonical_binding_json,
+                  bindingSha256: row.binding_sha256,
+                })
+              : null;
+          const binding = verified?.value;
+          let validRegions = false;
+          try {
+            const regions = JSON.parse(
+              row.resolved_regions_json ?? "null",
+            ) as ReadonlyArray<import("@arbor/domain").CanonicalResourceRegion>;
+            validRegions =
+              Array.isArray(regions) &&
+              JSON.stringify(regions) === row.resolved_regions_json &&
+              binding?.targetResourceIdentityDigest ===
+                targetResourceIdentityDigestV1(regions);
+          } catch {
+            validRegions = false;
+          }
+          const valid =
+            row.recovery_binding_state === "Bound" &&
+            row.recovery_binding_sha256 !== null &&
+            row.recovery_binding_sha256 === row.binding_sha256 &&
+            binding !== undefined &&
+            binding !== null &&
+            binding.executionId === row.execution_id &&
+            binding.invocationId === row.invocation_id &&
+            binding.toolName === row.tool_name &&
+            binding.toolVersion === row.tool_version &&
+            binding.sideEffectSemantics === row.side_effect_semantics &&
+            binding.profileId !== null &&
+            binding.profileId === row.profile_id &&
+            row.action_state === "Pending" &&
+            row.action_input_hash === sha256Hex(row.arguments_json) &&
+            row.action_kind === row.tool_name &&
+            row.p3_logical_action_id === binding.logicalActionId &&
+            row.p3_action_index === binding.actionIndex &&
+            row.p3_call_ref === binding.callRef &&
+            row.p3_provider_turn_id === binding.providerTurnId &&
+            row.p3_step_state === "ActionsInProgress" &&
+            row.p3_step_next_action_index === binding.actionIndex &&
+            validRegions &&
+            (() => {
               try {
-                const regions = JSON.parse(
-                  row.resolved_regions_json ?? "null",
-                ) as ReadonlyArray<
-                  import("@arbor/domain").CanonicalResourceRegion
-                >;
-                validRegions =
-                  Array.isArray(regions) &&
-                  JSON.stringify(regions) === row.resolved_regions_json &&
-                  binding?.targetResourceIdentityDigest ===
-                    targetResourceIdentityDigestV1(regions);
+                return (
+                  binding.canonicalArgumentsDigest ===
+                  canonicalArgumentsDigestV1(
+                    JSON.parse(row.arguments_json) as unknown,
+                  )
+                );
               } catch {
-                validRegions = false;
+                return false;
               }
-              const valid =
-                row.recovery_binding_state === "Bound" &&
-                row.recovery_binding_sha256 !== null &&
-                row.recovery_binding_sha256 === row.binding_sha256 &&
-                binding !== undefined &&
-                binding !== null &&
-                binding.executionId === row.execution_id &&
-                binding.invocationId === row.invocation_id &&
-                binding.toolName === row.tool_name &&
-                binding.toolVersion === row.tool_version &&
-                binding.sideEffectSemantics === row.side_effect_semantics &&
-                binding.profileId !== null &&
-                binding.profileId === row.profile_id &&
-                row.action_state === "Pending" &&
-                row.action_input_hash === sha256Hex(row.arguments_json) &&
-                row.action_kind === row.tool_name &&
-                row.p3_logical_action_id === binding.logicalActionId &&
-                row.p3_action_index === binding.actionIndex &&
-                row.p3_call_ref === binding.callRef &&
-                row.p3_provider_turn_id === binding.providerTurnId &&
-                row.p3_step_state === "ActionsInProgress" &&
-                row.p3_step_next_action_index === binding.actionIndex &&
-                validRegions &&
-                (() => {
-                  try {
-                    return (
-                      binding.canonicalArgumentsDigest ===
-                      canonicalArgumentsDigestV1(
-                        JSON.parse(row.arguments_json) as unknown,
-                      )
-                    );
-                  } catch {
-                    return false;
-                  }
-                })();
-              if (!valid) continue;
-              pending.push({
-                projectId: row.project_id as ProjectId,
-                executionId: row.execution_id,
-                invocationId: row.invocation_id,
-                workspaceId: row.workspace_id as never,
-                attentionFactId: `sandbox-policy-decision-required:${row.execution_id}:${row.invocation_id}`,
-                intentAt: row.intent_at,
-              });
-            }
-            return pending;
-          }),
+            })();
+          if (!valid) continue;
+          pending.push({
+            projectId: row.project_id as ProjectId,
+            executionId: row.execution_id,
+            invocationId: row.invocation_id,
+            workspaceId: row.workspace_id as never,
+            attentionFactId: `sandbox-policy-decision-required:${row.execution_id}:${row.invocation_id}`,
+            intentAt: row.intent_at,
+          });
+        }
+        return pending;
+      }),
   };
 };

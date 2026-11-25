@@ -19,14 +19,19 @@ type NativeSourceDependencies = Pick<
 export const validateNativeCheckpointSource = (
   dependencies: NativeSourceDependencies,
   phase: {
-    readonly nativeCheckpoint: NonNullable<SessionTimelineProjection["nativeCheckpoint"]>;
-    readonly sessionRecord: { readonly value: { readonly contextEpoch: number } };
+    readonly nativeCheckpoint: NonNullable<
+      SessionTimelineProjection["nativeCheckpoint"]
+    >;
+    readonly sessionRecord: {
+      readonly value: { readonly contextEpoch: number };
+    };
     readonly checkpointOwnerExecutionId: Execution["executionId"] | undefined;
     readonly nativeCheckpointIsInherited: boolean;
     readonly cursor: DecisionCursor;
   },
 ) => {
-  const { input, options, providerTurns, loopSteps, tx, failure } = dependencies;
+  const { input, options, providerTurns, loopSteps, tx, failure } =
+    dependencies;
   const {
     nativeCheckpoint,
     sessionRecord,
@@ -137,8 +142,8 @@ export const validateNativeCheckpointSource = (
       ) &&
       Number((checkpointSource as Record<string, unknown>).repairAttempt) >=
         0 &&
-      typeof (checkpointSource as Record<string, unknown>)
-        .providerTurnId === "string"
+      typeof (checkpointSource as Record<string, unknown>).providerTurnId ===
+        "string"
         ? {
             executionId: expectedCheckpointOwnerExecutionId,
             logicalStepNo: Number(
@@ -165,13 +170,11 @@ export const validateNativeCheckpointSource = (
           Number.isSafeInteger(
             (rawSource as Record<string, unknown>).logicalStepNo,
           ) &&
-          Number((rawSource as Record<string, unknown>).logicalStepNo) >=
-            0 &&
+          Number((rawSource as Record<string, unknown>).logicalStepNo) >= 0 &&
           Number.isSafeInteger(
             (rawSource as Record<string, unknown>).repairAttempt,
           ) &&
-          Number((rawSource as Record<string, unknown>).repairAttempt) >=
-            0 &&
+          Number((rawSource as Record<string, unknown>).repairAttempt) >= 0 &&
           typeof (rawSource as Record<string, unknown>).providerTurnId ===
             "string";
       } catch {
@@ -220,8 +223,7 @@ export const validateNativeCheckpointSource = (
         nativeCheckpoint.bindingFingerprint ||
       checkpointManifestJson.compiledRequestHash !==
         sha256Hex(checkpointManifest.portableRequestJson) ||
-      checkpointFrontier.request.modelRef !==
-        checkpointManifestJson.modelRef ||
+      checkpointFrontier.request.modelRef !== checkpointManifestJson.modelRef ||
       checkpointReceipt.turn.modelRef !== checkpointManifestJson.modelRef ||
       checkpointFrontier.request.operationKind !== "CompactionNative" ||
       checkpointFrontier.request.outputContractRef !==

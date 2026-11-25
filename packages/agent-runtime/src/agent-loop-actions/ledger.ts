@@ -24,7 +24,9 @@ export interface ActionLedgerCursor {
   loopAction: AgentLoopStepActionRecord | undefined;
 }
 
-type ActionRoute = { readonly _tag: "Executable" } | { readonly _tag: "Control" };
+type ActionRoute =
+  | { readonly _tag: "Executable" }
+  | { readonly _tag: "Control" };
 
 export const makeActionLedger = (
   dependencies: AgentLoopActionDependencies,
@@ -50,9 +52,7 @@ export const makeActionLedger = (
 
   const appendTerminalResult = (
     targetInvocation: ToolInvocation,
-    targetRoute:
-      | { readonly _tag: "Executable" }
-      | { readonly _tag: "Control" },
+    targetRoute: { readonly _tag: "Executable" } | { readonly _tag: "Control" },
     terminal: {
       readonly status: import("@arbor/ports").PortableToolResultStatus;
       readonly disposition: string;
@@ -239,8 +239,7 @@ export const makeActionLedger = (
               const persistedAction = persistedActions.find(
                 (candidate) =>
                   candidate.actionIndex === pendingAction.actionIndex &&
-                  candidate.logicalActionId ===
-                    pendingAction.logicalActionId &&
+                  candidate.logicalActionId === pendingAction.logicalActionId &&
                   candidate.callRef === pendingAction.callRef,
               );
               if (
@@ -252,8 +251,7 @@ export const makeActionLedger = (
                     () =>
                       dependencies.qualificationProbe?.({
                         boundary: "AH7StaleDirectControlEffectSuppressed",
-                        providerTurnId:
-                          preparedTurn.manifest.providerTurnId,
+                        providerTurnId: preparedTurn.manifest.providerTurnId,
                         executionId: input.execution.executionId,
                         logicalActionId: pendingAction.logicalActionId,
                         actionKind: invocation.toolName,
@@ -409,8 +407,7 @@ export const makeActionLedger = (
                     resultRef: skippedResult.resultRef,
                     settlementRef,
                     disposition: { _tag: "SkippedEarlySettlement" },
-                    observationSourceRef:
-                      skippedResult.observationSourceRef,
+                    observationSourceRef: skippedResult.observationSourceRef,
                     revision: pending.revision + 1,
                     updatedAt: yield* now(),
                   },

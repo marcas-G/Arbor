@@ -29,7 +29,9 @@ describe("AH19 deployment-binding identity wiring", () => {
     );
     expect(modelDecision).toContain("loadDecisionSessionContext(");
     expect(sessionContext).toContain("makeAgentStepContext(");
-    expect(sessionContext).toContain("bindingFingerprint: currentBindingFingerprint");
+    expect(sessionContext).toContain(
+      "bindingFingerprint: currentBindingFingerprint",
+    );
     expect(modelDecision).toContain("capability.bindingFingerprint");
     expect(modelDecision).toContain('"CompactionNative"');
     expect(compiler).toMatch(

@@ -58,7 +58,9 @@ export const P39_RESOURCE_RESOLUTION_STALE = {
   _tag: "P39ResourceResolutionStale",
 } as const;
 
-export const denied = (reasonCode: NoEffectDenialCode): CanonicalToolObservation => ({
+export const denied = (
+  reasonCode: NoEffectDenialCode,
+): CanonicalToolObservation => ({
   _tag: "Denied",
   reasonCode,
   reason: denialReason(reasonCode),
@@ -132,4 +134,3 @@ export const operationalFailure =
     invocationRef,
     cause,
   });
-

@@ -27,7 +27,9 @@ describe("MAC-P4 final active-runtime convergence", () => {
 
   it("switches current production to one physical approval ledger", () => {
     const migrations = source("adapters/persistence-sqlite/src/migrations.ts");
-    const approvalMigrations = source("adapters/persistence-sqlite/src/migrations/v31-v39-and-v41.ts");
+    const approvalMigrations = source(
+      "adapters/persistence-sqlite/src/migrations/v31-v39-and-v41.ts",
+    );
     const composition = source("apps/single-workspace/src/composition.ts");
     const production = source("apps/single-workspace/src/production.ts");
     expect(approvalMigrations).toContain("CREATE TABLE action_approvals");
@@ -48,7 +50,9 @@ describe("MAC-P4 final active-runtime convergence", () => {
     expect(migrations).toMatch(
       /export const CURRENT_MIGRATIONS:[\s\S]*?\.\.\.P38_MIGRATIONS,[\s\S]*?P40_TOOL_OBSERVATION_REPLAY_MIGRATION,[\s\S]*?P41_SUBMITTED_DECISION_BINDING_ATTENTION_MIGRATION,[\s\S]*?P42_PROJECT_RESOURCE_SOURCE_MIGRATION,[\s\S]*?P43_MIGRATION,[\s\S]*?P44_APPROVAL_REJECTED_NO_EFFECT_DENIAL_MIGRATION,[\s\S]*?P45_RETRY_VERIFICATION_ORIGIN_MIGRATION,[\s\S]*?P46_VERIFICATION_EVIDENCE_SNAPSHOT_MIGRATION,[\s\S]*?P47_AH14_LEGACY_ADOPTION_ATTENTION_MIGRATION,[\s\S]*?P48_AH19_CONVERSATION_CHECKPOINT_OWNER_MIGRATION,[\s\S]*?P49_SANDBOX_POLICY_AND_GRANT_PROVENANCE_MIGRATION,[\s\S]*?P50_SANDBOX_PROVIDER_UNAVAILABLE_FACT_MIGRATION,[\s\S]*?P51_VERIFICATION_V2_CONSUMER_RECONCILIATION_MIGRATION,[\s\S]*?P52_WORK_CONTRACT_REVISION_MIGRATION/,
     );
-    expect(approvalMigrations).toContain("export const P39_MAINTENANCE_MIGRATIONS:");
+    expect(approvalMigrations).toContain(
+      "export const P39_MAINTENANCE_MIGRATIONS:",
+    );
     const currentRegistryStart = migrations.indexOf(
       "export const CURRENT_MIGRATIONS:",
     );

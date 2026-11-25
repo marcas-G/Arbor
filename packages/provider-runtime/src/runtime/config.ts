@@ -1,4 +1,7 @@
-import type { ProviderRuntimeExecutionPolicy, ProviderFailure } from "@arbor/ports";
+import type {
+  ProviderFailure,
+  ProviderRuntimeExecutionPolicy,
+} from "@arbor/ports";
 
 export interface ProviderRuntimeConfig {
   readonly systemDefault?: ProviderRuntimeExecutionPolicy;
@@ -57,4 +60,3 @@ export interface ProviderRuntimeConfig {
         },
   ) => Promise<void>;
 }
-

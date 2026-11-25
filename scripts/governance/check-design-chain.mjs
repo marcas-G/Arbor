@@ -34,15 +34,26 @@ export function checkDesignChain(read) {
     }
     return { version, header };
   });
-  for (const [index, required] of [[1, [0]], [2, [0, 1]], [3, [2]]]) {
+  for (const [index, required] of [
+    [1, [0]],
+    [2, [0, 1]],
+    [3, [2]],
+  ]) {
     const current = versions[index];
     if (!current) continue;
-    const dependency = current.header.find((line) => line.startsWith("**Depends on:**")) ?? "";
+    const dependency =
+      current.header.find((line) => line.startsWith("**Depends on:**")) ?? "";
     for (const owner of required) {
       const version = versions[owner]?.version;
       if (!version) continue;
       if (!dependency.includes(titles[owner] + " v" + version + "`")) {
-        errors.push(designPaths[index] + ": expected dependency " + titles[owner] + " v" + version);
+        errors.push(
+          designPaths[index] +
+            ": expected dependency " +
+            titles[owner] +
+            " v" +
+            version,
+        );
       }
     }
   }
@@ -51,7 +62,9 @@ export function checkDesignChain(read) {
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const root = fileURLToPath(new URL("../../", import.meta.url));
-  const result = checkDesignChain((path) => readFileSync(join(root, path), "utf8"));
+  const result = checkDesignChain((path) =>
+    readFileSync(join(root, path), "utf8"),
+  );
   console.log(JSON.stringify(result, null, 2));
   if (result.errors.length) process.exitCode = 1;
 }

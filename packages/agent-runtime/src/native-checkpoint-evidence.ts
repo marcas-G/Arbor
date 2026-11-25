@@ -1,8 +1,8 @@
 // Compatibility for existing internal/test imports. New code uses the owning module.
 export {
-  nativeCompactionProviderTurnId,
-  nativeCheckpointOwnerExecutionId,
   containsNativeCheckpointInput,
-  portableRequestHasNativeCheckpoint,
   decodeUniqueNativePortableFrontier,
+  nativeCheckpointOwnerExecutionId,
+  nativeCompactionProviderTurnId,
+  portableRequestHasNativeCheckpoint,
 } from "./checkpoint/native-evidence.js";

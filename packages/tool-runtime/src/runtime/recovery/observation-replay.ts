@@ -1,10 +1,12 @@
 import type { CanonicalResourceRegion } from "@arbor/domain";
-import { decodeExecutionEpisodeBinding, encodeExecutionEpisodeBinding } from "@arbor/domain";
 import {
-  canonicalArgumentsDigestV1,
-  targetResourceIdentityDigestV1,
+  decodeExecutionEpisodeBinding,
+  encodeExecutionEpisodeBinding,
+} from "@arbor/domain";
+import {
   type CanonicalToolObservation,
   type ClockService,
+  canonicalArgumentsDigestV1,
   type P39RecoveryEvidenceStoreService,
   type SandboxProcessPolicyResolution,
   type SelectedP39RecoveryEvidence,
@@ -18,9 +20,13 @@ import {
   type ToolReconciliationProfile,
   type ToolRuntimeError,
   type TransactionPortService,
+  targetResourceIdentityDigestV1,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
-import { matchesAuthenticatedP39Evidence, recoveryBindingToolDefinitionHashV1 } from "../../recovery-binding.js";
+import {
+  matchesAuthenticatedP39Evidence,
+  recoveryBindingToolDefinitionHashV1,
+} from "../../recovery-binding.js";
 import { isLeaseFencingRejected, operationalFailure } from "../errors.js";
 
 /** Read and verify recorded evidence without acquiring a new effect admission. */
@@ -314,13 +320,11 @@ export const makeObservationReplay = (
             binding.approvalId === recorded.approvalId &&
             binding.approvalId === intent.approvalId &&
             (context.executableApproval === undefined ||
-              context.executableApproval.approvalId ===
-                recorded.approvalId) &&
+              context.executableApproval.approvalId === recorded.approvalId) &&
             binding.profileId === terminalP39Receipt.profile.profileId &&
             binding.profileVersion ===
               terminalP39Receipt.profile.profileVersion &&
-            binding.profileHash ===
-              terminalP39Receipt.profile.profileHash &&
+            binding.profileHash === terminalP39Receipt.profile.profileHash &&
             binding.profileProtocol ===
               terminalP39Receipt.profile.profileProtocol &&
             binding.effectKey === terminalP39Receipt.effectKey &&
@@ -332,8 +336,7 @@ export const makeObservationReplay = (
               terminalP39Receipt.profile.profileHash &&
             selectedEvidence.attempt.profileProtocol ===
               terminalP39Receipt.profile.profileProtocol &&
-            selectedEvidence.attempt.effectKey ===
-              terminalP39Receipt.effectKey;
+            selectedEvidence.attempt.effectKey === terminalP39Receipt.effectKey;
           const observationMatchesReceipt =
             expectedP39Outcome === "NotOccurred"
               ? observation._tag === "ReconciledNoEffect" &&
@@ -346,8 +349,7 @@ export const makeObservationReplay = (
                   observation._tag === "ExpectedFailure") &&
                 recorded.settlement?._tag === observation._tag &&
                 (observation._tag === "Success"
-                  ? observation.resultRef ===
-                      selectedEvidence.fact.resultRef &&
+                  ? observation.resultRef === selectedEvidence.fact.resultRef &&
                     recorded.resultRef === selectedEvidence.fact.resultRef
                   : recorded.resultRef === null &&
                     selectedEvidence.fact.resultRef !== null);
@@ -378,9 +380,7 @@ export const makeObservationReplay = (
         const currentEpisode =
           context.executionEpisodeBinding === undefined
             ? undefined
-            : decodeExecutionEpisodeBinding(
-                context.executionEpisodeBinding,
-              );
+            : decodeExecutionEpisodeBinding(context.executionEpisodeBinding);
         if (
           policy === undefined ||
           policy.kind === "IndependentVerificationProcessPolicyV1" ||
@@ -440,9 +440,7 @@ export const makeObservationReplay = (
     intent: ToolIntent,
     context: ToolExecutionContext,
     recorded: Parameters<typeof decodeRecordedEvidenceResult>[2],
-    resolveSandboxPolicy?: Parameters<
-      typeof decodeRecordedEvidenceResult
-    >[4],
+    resolveSandboxPolicy?: Parameters<typeof decodeRecordedEvidenceResult>[4],
   ): Effect.Effect<CanonicalToolObservation, ToolRuntimeError> =>
     decodeRecordedEvidenceResult(
       intent,

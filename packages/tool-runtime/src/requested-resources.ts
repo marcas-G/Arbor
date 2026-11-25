@@ -1,7 +1,9 @@
 import { isAbsolute, relative, resolve } from "node:path";
 import type { ResourceAddress } from "@arbor/domain";
 
-export const requestedMountRefs = (argumentsJson: string): ReadonlyArray<string> => {
+export const requestedMountRefs = (
+  argumentsJson: string,
+): ReadonlyArray<string> => {
   try {
     const parsed = JSON.parse(argumentsJson) as {
       target?: { readonly mount?: unknown };

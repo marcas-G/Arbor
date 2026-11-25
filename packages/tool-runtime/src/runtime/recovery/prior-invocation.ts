@@ -1,8 +1,6 @@
 import {
-  canonicalArgumentsDigestV1,
-  targetResourceIdentityDigestV1,
-  verifyRecoveryBindingV1,
   type ClockService,
+  canonicalArgumentsDigestV1,
   type P39RecoveryEvidenceStoreService,
   type ToolDefinition,
   type ToolExecutionContext,
@@ -13,6 +11,8 @@ import {
   type ToolReconciliationProfile,
   type ToolRuntimeError,
   type TransactionPortService,
+  targetResourceIdentityDigestV1,
+  verifyRecoveryBindingV1,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { recoveryBindingToolDefinitionHashV1 } from "../../recovery-binding.js";
@@ -37,7 +37,9 @@ export const inspectPriorInvocation = (
   reconciliationFacts: Option.Option<ToolReconciliationFactStoreService>,
   findInvocationFenced: Replay["findInvocationFenced"],
   decodeRecordedEvidenceResult: Replay["decodeRecordedEvidenceResult"],
-  resolveReplaySandboxPolicy: Parameters<Replay["decodeRecordedEvidenceResult"]>[4],
+  resolveReplaySandboxPolicy: Parameters<
+    Replay["decodeRecordedEvidenceResult"]
+  >[4],
 ) =>
   Effect.gen(function* () {
     const prior = yield* findInvocationFenced(
@@ -53,8 +55,7 @@ export const inspectPriorInvocation = (
       priorRecord.workspaceId === context.workspaceId &&
       priorRecord.toolName === intent.toolName &&
       priorRecord.toolVersion === intent.toolVersion &&
-      priorRecord.sideEffectSemantics ===
-        definition.sideEffectSemantics &&
+      priorRecord.sideEffectSemantics === definition.sideEffectSemantics &&
       priorRecord.argumentsJson === intent.argumentsJson &&
       priorRecord.approvalId === intent.approvalId &&
       (context.executableApproval === undefined ||
@@ -141,16 +142,10 @@ export const inspectPriorInvocation = (
         )
         .pipe(
           Effect.mapError(
-            operationalFailure(
-              "RecoveryBinding",
-              String(intent.invocationId),
-            ),
+            operationalFailure("RecoveryBinding", String(intent.invocationId)),
           ),
         );
-      if (
-        Option.isNone(stored.binding) ||
-        Option.isNone(stored.attempt)
-      ) {
+      if (Option.isNone(stored.binding) || Option.isNone(stored.attempt)) {
         return yield* Effect.fail<ToolRuntimeError>(
           operationalFailure(
             "RecoveryBinding",
@@ -167,9 +162,7 @@ export const inspectPriorInvocation = (
       const binding = verified?.value;
       const expectedArgumentsDigest = (() => {
         try {
-          return canonicalArgumentsDigestV1(
-            JSON.parse(intent.argumentsJson),
-          );
+          return canonicalArgumentsDigestV1(JSON.parse(intent.argumentsJson));
         } catch {
           return null;
         }

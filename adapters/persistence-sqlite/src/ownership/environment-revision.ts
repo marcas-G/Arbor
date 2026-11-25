@@ -3,20 +3,10 @@ import {
   EnvironmentRevisionStore,
   TransactionScope,
 } from "@arbor/ports";
-import {
-  Effect,
-  Layer,
-  Option,
-} from "effect";
-import {
-  SqlClient,
-} from "effect/unstable/sql/SqlClient";
-import type {
-  SqlError,
-} from "effect/unstable/sql/SqlError";
-import {
-  repositoryFailure,
-} from "../repository-error.js";
+import { Effect, Layer, Option } from "effect";
+import { SqlClient } from "effect/unstable/sql/SqlClient";
+import type { SqlError } from "effect/unstable/sql/SqlError";
+import { repositoryFailure } from "../repository-error.js";
 
 export const EnvironmentRevisionStoreLive: Layer.Layer<
   EnvironmentRevisionStore,
@@ -81,4 +71,3 @@ export const EnvironmentRevisionStoreLive: Layer.Layer<
     });
   }),
 );
-

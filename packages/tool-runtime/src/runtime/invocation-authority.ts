@@ -1,8 +1,8 @@
 import type { CanonicalResourceRegion } from "@arbor/domain";
 import {
-  executableApprovalBindingMatches,
   type ExecutableApprovalRecord,
   type ExecutableApprovalStoreService,
+  executableApprovalBindingMatches,
   type ToolAuthorityResolverService,
   type ToolDefinition,
   type ToolExecutionContext,
@@ -15,7 +15,11 @@ import { Effect, Option } from "effect";
 import { actionDigestOf, matchApproval } from "../approval.js";
 import { checkInvocationAuthority } from "../authority.js";
 import { recoveryBindingIdentityMatches } from "../recovery-binding.js";
-import { approvalDenialCode, executableApprovalTerminalDenial, operationalFailure } from "./errors.js";
+import {
+  approvalDenialCode,
+  executableApprovalTerminalDenial,
+  operationalFailure,
+} from "./errors.js";
 import type { makeNoEffectSettlement } from "./no-effect-settlement.js";
 import type { ToolExecutor } from "./types.js";
 
@@ -34,7 +38,9 @@ export const resolveInvocationAuthority = (
   store: ToolInvocationStoreService,
   p39BindingEnabled: boolean,
   hasVerifiedReplayBinding: boolean,
-  recordNoEffectDenial: ReturnType<typeof makeNoEffectSettlement>["recordNoEffectDenial"],
+  recordNoEffectDenial: ReturnType<
+    typeof makeNoEffectSettlement
+  >["recordNoEffectDenial"],
 ) =>
   Effect.gen(function* () {
     const resolvedAuthorityFromCurrent = Option.isSome(authorityResolver)
@@ -65,9 +71,9 @@ export const resolveInvocationAuthority = (
       return {
         _tag: "Terminal" as const,
         observation: yield* recordNoEffectDenial(
-        definition.sideEffectSemantics,
-        regions,
-        "InvocationAuthorityDenied",
+          definition.sideEffectSemantics,
+          regions,
+          "InvocationAuthorityDenied",
         ),
       };
     }
@@ -95,16 +101,13 @@ export const resolveInvocationAuthority = (
       now,
       maxDelegationDepth: options.maxDelegationDepth ?? 1,
     });
-    if (
-      authority._tag === "Denied" &&
-      !hasVerifiedReplayBinding
-    ) {
+    if (authority._tag === "Denied" && !hasVerifiedReplayBinding) {
       return {
         _tag: "Terminal" as const,
         observation: yield* recordNoEffectDenial(
-        definition.sideEffectSemantics,
-        regions,
-        "InvocationAuthorityDenied",
+          definition.sideEffectSemantics,
+          regions,
+          "InvocationAuthorityDenied",
         ),
       };
     }
@@ -123,9 +126,9 @@ export const resolveInvocationAuthority = (
       return {
         _tag: "Terminal" as const,
         observation: yield* recordNoEffectDenial(
-        definition.sideEffectSemantics,
-        regions,
-        "ApprovalMismatch",
+          definition.sideEffectSemantics,
+          regions,
+          "ApprovalMismatch",
         ),
       };
     }
@@ -136,9 +139,9 @@ export const resolveInvocationAuthority = (
           return {
             _tag: "Terminal" as const,
             observation: yield* recordNoEffectDenial(
-            definition.sideEffectSemantics,
-            regions,
-            "ApprovalMismatch",
+              definition.sideEffectSemantics,
+              regions,
+              "ApprovalMismatch",
             ),
           };
         }
@@ -147,14 +150,14 @@ export const resolveInvocationAuthority = (
             _tag: "Terminal" as const,
             observation: {
               _tag: "ApprovalRequired" as const,
-            authority: resolvedAuthority,
-            targetResourceSpaceIds: regions.map(
-              (region) => region.resourceSpaceId,
-            ),
-            actionDigest: actionDigestOf(intent),
-            requestedCapabilities: definition.capabilityMetadata,
-            sideEffectSemantics: definition.sideEffectSemantics,
-            controlBasisDigest: context.controlBasisDigest,
+              authority: resolvedAuthority,
+              targetResourceSpaceIds: regions.map(
+                (region) => region.resourceSpaceId,
+              ),
+              actionDigest: actionDigestOf(intent),
+              requestedCapabilities: definition.capabilityMetadata,
+              sideEffectSemantics: definition.sideEffectSemantics,
+              controlBasisDigest: context.controlBasisDigest,
             },
           };
         }
@@ -162,19 +165,16 @@ export const resolveInvocationAuthority = (
           .transact(store.findApproval(legacyApprovalId))
           .pipe(
             Effect.mapError(
-              operationalFailure(
-                "ApprovalLookup",
-                String(intent.invocationId),
-              ),
+              operationalFailure("ApprovalLookup", String(intent.invocationId)),
             ),
           );
         if (Option.isNone(legacyApproval)) {
           return {
             _tag: "Terminal" as const,
             observation: yield* recordNoEffectDenial(
-            definition.sideEffectSemantics,
-            regions,
-            "ApprovalNotFound",
+              definition.sideEffectSemantics,
+              regions,
+              "ApprovalNotFound",
             ),
           };
         }
@@ -193,9 +193,9 @@ export const resolveInvocationAuthority = (
             return {
               _tag: "Terminal" as const,
               observation: yield* recordNoEffectDenial(
-              definition.sideEffectSemantics,
-              regions,
-              "ApprovalConsumedByOtherInvocation",
+                definition.sideEffectSemantics,
+                regions,
+                "ApprovalConsumedByOtherInvocation",
               ),
             };
           }
@@ -214,9 +214,9 @@ export const resolveInvocationAuthority = (
           return {
             _tag: "Terminal" as const,
             observation: yield* recordNoEffectDenial(
-            definition.sideEffectSemantics,
-            regions,
-            approvalDenialCode(matched.reason),
+              definition.sideEffectSemantics,
+              regions,
+              approvalDenialCode(matched.reason),
             ),
           };
         }
@@ -225,9 +225,9 @@ export const resolveInvocationAuthority = (
           return {
             _tag: "Terminal" as const,
             observation: yield* recordNoEffectDenial(
-            definition.sideEffectSemantics,
-            regions,
-            "ApprovalMismatch",
+              definition.sideEffectSemantics,
+              regions,
+              "ApprovalMismatch",
             ),
           };
         }
@@ -249,10 +249,7 @@ export const resolveInvocationAuthority = (
           )
           .pipe(
             Effect.mapError(
-              operationalFailure(
-                "ApprovalLookup",
-                String(intent.invocationId),
-              ),
+              operationalFailure("ApprovalLookup", String(intent.invocationId)),
             ),
           );
         if (Option.isSome(exactExecutableApproval)) {
@@ -271,9 +268,9 @@ export const resolveInvocationAuthority = (
               return {
                 _tag: "Terminal" as const,
                 observation: yield* recordNoEffectDenial(
-                definition.sideEffectSemantics,
-                regions,
-                "ApprovalMismatch",
+                  definition.sideEffectSemantics,
+                  regions,
+                  "ApprovalMismatch",
                 ),
               };
             }
@@ -281,19 +278,22 @@ export const resolveInvocationAuthority = (
               _tag: "Terminal" as const,
               observation: {
                 _tag: "ApprovalRequired" as const,
-              authority: resolvedAuthority,
-              targetResourceSpaceIds: regions.map(
-                (region) => region.resourceSpaceId,
-              ),
-              actionDigest: actionDigestOf(intent),
-              requestedCapabilities: definition.capabilityMetadata,
-              sideEffectSemantics: definition.sideEffectSemantics,
-              controlBasisDigest: context.controlBasisDigest,
+                authority: resolvedAuthority,
+                targetResourceSpaceIds: regions.map(
+                  (region) => region.resourceSpaceId,
+                ),
+                actionDigest: actionDigestOf(intent),
+                requestedCapabilities: definition.capabilityMetadata,
+                sideEffectSemantics: definition.sideEffectSemantics,
+                controlBasisDigest: context.controlBasisDigest,
               },
             };
           }
           if (currentApproval.state === "Cancelled") {
-            return { _tag: "Terminal" as const, observation: { _tag: "Interrupted" as const } };
+            return {
+              _tag: "Terminal" as const,
+              observation: { _tag: "Interrupted" as const },
+            };
           }
           const terminalDenial = executableApprovalTerminalDenial(
             currentApproval,
@@ -303,9 +303,9 @@ export const resolveInvocationAuthority = (
             return {
               _tag: "Terminal" as const,
               observation: yield* recordNoEffectDenial(
-              definition.sideEffectSemantics,
-              regions,
-              terminalDenial,
+                definition.sideEffectSemantics,
+                regions,
+                terminalDenial,
               ),
             };
           }
@@ -352,12 +352,12 @@ export const resolveInvocationAuthority = (
           return {
             _tag: "Terminal" as const,
             observation: yield* recordNoEffectDenial(
-            definition.sideEffectSemantics,
-            regions,
-            exactExecutableApproval._tag === "Some" &&
-              exactExecutableApproval.value.expiresAt <= now
-              ? "ApprovalExpired"
-              : "ApprovalMismatch",
+              definition.sideEffectSemantics,
+              regions,
+              exactExecutableApproval._tag === "Some" &&
+                exactExecutableApproval.value.expiresAt <= now
+                ? "ApprovalExpired"
+                : "ApprovalMismatch",
             ),
           };
         }
@@ -365,9 +365,9 @@ export const resolveInvocationAuthority = (
           return {
             _tag: "Terminal" as const,
             observation: yield* recordNoEffectDenial(
-            definition.sideEffectSemantics,
-            regions,
-            "ApprovalMismatch",
+              definition.sideEffectSemantics,
+              regions,
+              "ApprovalMismatch",
             ),
           };
         }

@@ -5,7 +5,12 @@ import type {
   ExecutionId,
   WakeReason,
 } from "@arbor/domain";
-import type { AgentExecutionStateStoreService, ClockService, LeaseServiceService, TransactionPortService } from "@arbor/ports";
+import type {
+  AgentExecutionStateStoreService,
+  ClockService,
+  LeaseServiceService,
+  TransactionPortService,
+} from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { LOCAL_WORKER_INCARNATION_ID } from "../process-identity.js";
 import type { ExecutionLeaseQualificationProbe } from "./lease.js";

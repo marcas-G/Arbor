@@ -44,27 +44,25 @@ import {
   WorkspaceSandboxAuthorizationStore,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
-
-import { recordSubmittedDecisionBindingFailure } from "./submitted-decision-binding-failure.js";
-
-import {
-  LEASE_RENEW_INTERVAL_MS,
-  renewLeaseOnce,
-  type ExecutionLeaseQualificationProbe,
-} from "./execution/lease.js";
-import { checkExecutionPolicyBeforeDispatch } from "./execution/pre-dispatch-policy.js";
 import { claimExecutionLease } from "./execution/claim-lease.js";
 import { driveWithLease } from "./execution/drive-with-lease.js";
+import {
+  type ExecutionLeaseQualificationProbe,
+  LEASE_RENEW_INTERVAL_MS,
+  renewLeaseOnce,
+} from "./execution/lease.js";
+import { checkExecutionPolicyBeforeDispatch } from "./execution/pre-dispatch-policy.js";
+import { recordSubmittedDecisionBindingFailure } from "./submitted-decision-binding-failure.js";
 
 export {
-  LEASE_TTL_MS,
+  type ExecutionLeaseQualificationProbe,
   LEASE_RENEW_INTERVAL_MS,
-  STOP_REQUEST_POLL_INTERVAL_MS,
+  LEASE_TTL_MS,
+  type LeaseLost,
   leaseRenewalLoop,
   renewLeaseOnce,
+  STOP_REQUEST_POLL_INTERVAL_MS,
   stopRequestLoop,
-  type LeaseLost,
-  type ExecutionLeaseQualificationProbe,
 } from "./execution/lease.js";
 
 /** Test-only process-local seam. Production composition leaves it absent. */
@@ -159,9 +157,18 @@ export const runExecution = (
       return yield* Effect.fail({ _tag: "ExecutionNotFound" as const });
     }
     const policyBlock = yield* checkExecutionPolicyBeforeDispatch(
-      execution.value, executionId, tx, clock, sandboxPolicyRequirements,
-      currentAuthoritySnapshotPort, sandboxPolicyDecisions, workspaceAuthorizations,
-      policyWorkspaces, attentionProjection, p39RecoveryEvidence, sandboxUnavailableStore,
+      execution.value,
+      executionId,
+      tx,
+      clock,
+      sandboxPolicyRequirements,
+      currentAuthoritySnapshotPort,
+      sandboxPolicyDecisions,
+      workspaceAuthorizations,
+      policyWorkspaces,
+      attentionProjection,
+      p39RecoveryEvidence,
+      sandboxUnavailableStore,
     );
     if (policyBlock !== undefined) return policyBlock;
     // P2 `06` §10: Pending approval is a durable nonterminal pause. Every
@@ -186,7 +193,13 @@ export const runExecution = (
       workerKind: "Agent",
     });
     const { lease, agentExecutionState } = yield* claimExecutionLease(
-      execution.value, executionId, wakeReason, tx, leases, states, clock,
+      execution.value,
+      executionId,
+      wakeReason,
+      tx,
+      leases,
+      states,
+      clock,
       leaseQualificationProbe,
     );
     const submittedDecisionEpisode = executionEpisode(execution.value);
@@ -227,8 +240,16 @@ export const runExecution = (
       return { _tag: "RecoveryBlocked" as const };
     }
     const outcome = yield* driveWithLease(
-      execution.value, executionId, agentExecutionState, wakeReason, principal,
-      lease, driver, safety, renewIntervalMs, leaseQualificationProbe,
+      execution.value,
+      executionId,
+      agentExecutionState,
+      wakeReason,
+      principal,
+      lease,
+      driver,
+      safety,
+      renewIntervalMs,
+      leaseQualificationProbe,
     );
 
     if (outcome._tag === "StopRequestedByControl") {

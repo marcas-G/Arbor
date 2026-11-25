@@ -25,8 +25,8 @@ import type {
 } from "@arbor/ports";
 import { sha256Hex } from "@arbor/ports";
 import { Effect } from "effect";
-import type { ConversationAnsweredSource } from "./projection.js";
 import type { AgentLoopQualificationProbe } from "../../qualification-probe.js";
+import type { ConversationAnsweredSource } from "./projection.js";
 
 export const conversationCheckpointProviderTurnId = (
   executionId: string,

@@ -108,12 +108,17 @@ describe("pinned Submitted DecisionRequest replay guard", () => {
       { ...original, workspace: undefined },
       { ...original, step: undefined },
       { ...original, pendingAction: undefined },
-      { ...original, pendingAction: { ...original.pendingAction, actionIndex: 1 } },
+      {
+        ...original,
+        pendingAction: { ...original.pendingAction, actionIndex: 1 },
+      },
       { ...original, providerResult: undefined },
     ];
     for (const candidate of invalid) {
       expect(isPinnedSubmittedDecisionReplay(candidate)).toBe(false);
-      expect(classifySubmittedDecisionBindingFailure(candidate)).toBeUndefined();
+      expect(
+        classifySubmittedDecisionBindingFailure(candidate),
+      ).toBeUndefined();
     }
   });
 });
@@ -252,11 +257,10 @@ describe("overflow compaction recovery link guard", () => {
       ),
     ).toBe(true);
     expect(
-      isValidOverflowCompactionLinkPair(
-        links,
-        recoveryInferenceId,
-        [otherRecoveryInferenceId, recoveryCompactionId],
-      ),
+      isValidOverflowCompactionLinkPair(links, recoveryInferenceId, [
+        otherRecoveryInferenceId,
+        recoveryCompactionId,
+      ]),
     ).toBe(true);
     expect(
       isValidOverflowCompactionLinkPair(

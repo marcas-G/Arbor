@@ -60,15 +60,23 @@ describe("P39/P40 production tool-runtime composition", () => {
 
   it("retains the optional low-level fallback and missing-evidence failures", () => {
     const runtime = sourceOf("packages/tool-runtime/src/runtime.ts");
+    const invocationSetup = sourceOf(
+      "packages/tool-runtime/src/runtime/invocation-setup.ts",
+    );
+    const settlement = sourceOf(
+      "packages/tool-runtime/src/runtime/settlement.ts",
+    );
 
     expect(runtime).toContain("Effect.serviceOption(P39RecoveryEvidenceStore)");
-    expect(runtime).toContain(
+    expect(invocationSetup).toContain(
       "const p39BindingEnabled = Option.isSome(p39Recovery)",
     );
     expect(runtime).toMatch(
       /Effect\.serviceOption\(\s*ToolObservationEvidenceStore,/,
     );
-    expect(runtime).toContain('_tag: "P40ObservationEvidenceStoreUnavailable"');
-    expect(runtime).toContain("store.settle(");
+    expect(settlement).toContain(
+      '_tag: "P40ObservationEvidenceStoreUnavailable"',
+    );
+    expect(settlement).toContain("store.settle(");
   });
 });

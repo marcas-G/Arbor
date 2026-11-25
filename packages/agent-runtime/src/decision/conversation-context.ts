@@ -62,10 +62,14 @@ export type ConversationDecisionContextResult =
       }>;
       readonly conversationContextRefs: ReadonlyArray<string>;
       readonly conversationCheckpointItems: ReadonlyArray<PortableInputItem>;
-      readonly exactConversation: ReturnType<typeof conversationResponseEpisode>;
+      readonly exactConversation: ReturnType<
+        typeof conversationResponseEpisode
+      >;
       readonly conversationExecution: boolean;
       readonly conversationOwner: ConversationCheckpointOwner | undefined;
-      readonly conversationProjection: ConversationCheckpointProjection | undefined;
+      readonly conversationProjection:
+        | ConversationCheckpointProjection
+        | undefined;
       readonly conversationCurrentJob: ConversationResponseJob | undefined;
       readonly placementExecution: boolean;
     }
@@ -132,9 +136,7 @@ export const loadConversationDecisionContext = (
     let conversationCurrentJob: ConversationResponseJob | undefined;
     const history = conversationExecution
       ? yield* tx
-          .transact(
-            humanMessages.listForWorkspace(input.execution.workspaceId),
-          )
+          .transact(humanMessages.listForWorkspace(input.execution.workspaceId))
           .pipe(Effect.mapError(failure))
       : [];
     let claimed = undefined as (typeof history)[number] | undefined;
@@ -433,9 +435,11 @@ export const loadConversationDecisionContext = (
           ).pipe(Effect.mapError(failure));
           if ("_tag" in compacted) {
             return {
-            _tag: "Complete" as const,
-            outcome: yield* proposeSettlement(safetyStop("RuntimeSafetyStop")),
-          };
+              _tag: "Complete" as const,
+              outcome: yield* proposeSettlement(
+                safetyStop("RuntimeSafetyStop"),
+              ),
+            };
           }
           if (
             compacted.checkpointKind !== "Summary" ||
@@ -558,15 +562,12 @@ export const loadConversationDecisionContext = (
               failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
             );
           }
-          const decodedOutput = decodeTurn(
-            replacementReceipt.canonicalEvents,
-          );
+          const decodedOutput = decodeTurn(replacementReceipt.canonicalEvents);
           if (
             !decodedOutput.ok ||
             decodedOutput.output.toolInvocations.length !== 0 ||
             decodedOutput.output.text !== outputPayload.text ||
-            decodedOutput.output.finishReason !==
-              outputPayload.finishReason ||
+            decodedOutput.output.finishReason !== outputPayload.finishReason ||
             sha256Hex(
               JSON.stringify({
                 providerTurnId: p20Chain.replacement.providerTurnId,

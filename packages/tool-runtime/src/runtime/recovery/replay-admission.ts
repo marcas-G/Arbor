@@ -1,9 +1,9 @@
 import {
-  canonicalizeRecoveryBindingV1,
-  recoveryBindingV1Digest,
   type ClockService,
+  canonicalizeRecoveryBindingV1,
   type P39RecoveryEvidenceStoreService,
   type RecoveryBindingV1,
+  recoveryBindingV1Digest,
   type ToolDefinition,
   type ToolExecutionContext,
   type ToolIntent,
@@ -47,8 +47,14 @@ export const verifyPriorReplayAdmission = (
   refreshAfterStale: RefreshAfterStale,
 ) =>
   Effect.gen(function* () {
-    const { regions, capturedWorkspace, resolved, checkCapturedSnapshotAndAdmit } = resources;
-    const { needsApproval, currentApprovalRecord, resolvedAuthority } = authority;
+    const {
+      regions,
+      capturedWorkspace,
+      resolved,
+      checkCapturedSnapshotAndAdmit,
+    } = resources;
+    const { needsApproval, currentApprovalRecord, resolvedAuthority } =
+      authority;
     let replayBindingValue: RecoveryBindingV1 | undefined;
     let replayBindingSha256: string | undefined;
     const sameIntent =
@@ -62,8 +68,7 @@ export const verifyPriorReplayAdmission = (
     if (
       !sameIntent ||
       (verifiedReplayBinding === undefined &&
-        JSON.stringify(recorded.resolvedRegions) !==
-          JSON.stringify(regions))
+        JSON.stringify(recorded.resolvedRegions) !== JSON.stringify(regions))
     ) {
       return yield* Effect.fail<ToolRuntimeError>(
         operationalFailure(
@@ -104,7 +109,10 @@ export const verifyPriorReplayAdmission = (
       );
       if (!replayAdmission.ok) {
         if (isP39ResourceResolutionStale(replayAdmission.cause)) {
-          return { _tag: "Terminal" as const, observation: yield* refreshAfterStale(replayAdmission.cause) };
+          return {
+            _tag: "Terminal" as const,
+            observation: yield* refreshAfterStale(replayAdmission.cause),
+          };
         }
         return yield* Effect.fail<ToolRuntimeError>(
           replayAdmission.cause as ToolRuntimeError,
@@ -114,9 +122,9 @@ export const verifyPriorReplayAdmission = (
         return {
           _tag: "Terminal" as const,
           observation: yield* recordNoEffectDenial(
-          definition.sideEffectSemantics,
-          regions,
-          "ResourceAdmissionDenied",
+            definition.sideEffectSemantics,
+            regions,
+            "ResourceAdmissionDenied",
           ),
         };
       }
@@ -148,8 +156,7 @@ export const verifyPriorReplayAdmission = (
           definition,
           authority: resolvedAuthority,
           regions,
-          resourceBoundaryRevision:
-            capturedWorkspace.resourceBoundaryRevision,
+          resourceBoundaryRevision: capturedWorkspace.resourceBoundaryRevision,
           environmentRevision: resolved.observedEnvironmentRevision,
           approval: approvalSnapshot,
           ...(trustedProfile === undefined
@@ -176,25 +183,19 @@ export const verifyPriorReplayAdmission = (
                 yield* clock.now(),
               );
             }
-            return yield* p39Recovery.value.findBinding(
-              intent.invocationId,
-            );
+            return yield* p39Recovery.value.findBinding(intent.invocationId);
           }),
         )
         .pipe(
           Effect.mapError(
-            operationalFailure(
-              "RecoveryBinding",
-              String(intent.invocationId),
-            ),
+            operationalFailure("RecoveryBinding", String(intent.invocationId)),
           ),
         );
       if (
         Option.isNone(bound) ||
         bound.value.canonicalJson !==
           canonicalizeRecoveryBindingV1(expectedBinding) ||
-        bound.value.bindingSha256 !==
-          recoveryBindingV1Digest(expectedBinding)
+        bound.value.bindingSha256 !== recoveryBindingV1Digest(expectedBinding)
       ) {
         return yield* Effect.fail<ToolRuntimeError>(
           operationalFailure(

@@ -1,11 +1,14 @@
 import {
   type ExecutionSettlement,
+  providerTurnOverflowReplacementId as makeOverflowReplacementProviderTurnId,
   type ProviderTurnId,
   providerTurnNativeCompactionId,
-  providerTurnOverflowReplacementId as makeOverflowReplacementProviderTurnId,
   providerTurnSummaryCompactionId,
 } from "@arbor/domain";
-import type { InstructionFragment, TurnPreparation } from "@arbor/model-context";
+import type {
+  InstructionFragment,
+  TurnPreparation,
+} from "@arbor/model-context";
 import type {
   AgentLoopStepRecord,
   ExecutionDriverError,
@@ -25,18 +28,35 @@ import {
   safetyStop,
 } from "../../agent-loop-policy.js";
 import { runConversationCheckpointCompaction } from "../../checkpoint/conversation/compaction.js";
-import { runCompaction, type SummaryCompactionInput } from "../../compaction-coordinator.js";
+import {
+  runCompaction,
+  type SummaryCompactionInput,
+} from "../../compaction-coordinator.js";
 import type { AgentStepContext } from "../../step-context.js";
 import type { ModelDecisionDependencies } from "../contract.js";
 import type { ConversationDecisionContextResult } from "../conversation-context.js";
 import type { OverflowRecoveryState } from "../recovery/overflow-state.js";
-import { processSuccessfulProviderResult, type ProviderDecisionResult } from "./result.js";
+import {
+  type ProviderDecisionResult,
+  processSuccessfulProviderResult,
+} from "./result.js";
 
 type InvocationDependencies = Pick<
   ModelDecisionDependencies,
-  "input" | "capability" | "providerRuntime" | "tx" | "loopSteps" |
-  "loopStepFence" | "providerTurns" | "options" | "admitProviderTurn" |
-  "completeProviderTurn" | "failure" | "now" | "conversationCheckpoints" | "blobs"
+  | "input"
+  | "capability"
+  | "providerRuntime"
+  | "tx"
+  | "loopSteps"
+  | "loopStepFence"
+  | "providerTurns"
+  | "options"
+  | "admitProviderTurn"
+  | "completeProviderTurn"
+  | "failure"
+  | "now"
+  | "conversationCheckpoints"
+  | "blobs"
 >;
 
 /** Admit the exact prepared request, bracket the call, and recover its result.
@@ -52,7 +72,10 @@ export const invokePreparedProviderTurn = (
     readonly preparation: Extract<TurnPreparation, { readonly _tag: "Ready" }>;
     readonly turnInput: ProviderRunInput;
     readonly overflow: OverflowRecoveryState;
-    readonly conversation: Extract<ConversationDecisionContextResult, { readonly _tag: "Ready" }>;
+    readonly conversation: Extract<
+      ConversationDecisionContextResult,
+      { readonly _tag: "Ready" }
+    >;
     readonly stepContext: AgentStepContext;
     readonly inputItems: ReadonlyArray<PortableInputItem>;
     readonly messageContextRefs: ReadonlyArray<string>;
@@ -68,27 +91,52 @@ export const invokePreparedProviderTurn = (
   },
 ): Effect.Effect<ProviderDecisionResult, ExecutionDriverError> => {
   const {
-    input, capability, providerRuntime, tx, loopSteps, loopStepFence,
-    providerTurns, options, admitProviderTurn, completeProviderTurn, failure, now,
+    input,
+    capability,
+    providerRuntime,
+    tx,
+    loopSteps,
+    loopStepFence,
+    providerTurns,
+    options,
+    admitProviderTurn,
+    completeProviderTurn,
+    failure,
+    now,
   } = dependencies;
   const {
-    turn, repairAttempt, repairFragments, providerTurnId, preparation, turnInput,
-    stepContext, inputItems, messageContextRefs, currentBindingFingerprint,
-    compactionDependencies, compactionWorkPinning, proposeSettlement,
+    turn,
+    repairAttempt,
+    repairFragments,
+    providerTurnId,
+    preparation,
+    turnInput,
+    stepContext,
+    inputItems,
+    messageContextRefs,
+    currentBindingFingerprint,
+    compactionDependencies,
+    compactionWorkPinning,
+    proposeSettlement,
   } = phase;
   const {
-    conversationExecution, conversationOwner, conversationProjection,
-    conversationCurrentJob, exactConversation,
+    conversationExecution,
+    conversationOwner,
+    conversationProjection,
+    conversationCurrentJob,
+    exactConversation,
   } = phase.conversation;
   return Effect.gen(function* () {
     const loopStep = phase.loopStep;
     let {
-      overflowRecoveryAttempt, replayPersistedContextLimit,
+      overflowRecoveryAttempt,
+      replayPersistedContextLimit,
       overflowReplacementProviderTurnId,
     } = phase.overflow;
     const recoveryState = (): OverflowRecoveryState => ({
       ...phase.overflow,
-      overflowRecoveryAttempt, replayPersistedContextLimit,
+      overflowRecoveryAttempt,
+      replayPersistedContextLimit,
       overflowReplacementProviderTurnId,
     });
     const providerAdmission = replayPersistedContextLimit
@@ -122,9 +170,7 @@ export const invokePreparedProviderTurn = (
         }
       }
       if (isProviderTurnBindingChanged(providerResult.cause)) {
-        return yield* proposeSettlement(
-          providerTurnBindingChangedSettlement(),
-        );
+        return yield* proposeSettlement(providerTurnBindingChangedSettlement());
       }
       if (
         isProviderFailure(providerResult.cause) &&
@@ -366,7 +412,12 @@ export const invokePreparedProviderTurn = (
           .pipe(Effect.mapError(failure));
         overflowRecoveryAttempt = 1;
         replayPersistedContextLimit = false;
-        return { _tag: "Restart" as const, overflow: recoveryState(), repairAttempt, repairFragments };
+        return {
+          _tag: "Restart" as const,
+          overflow: recoveryState(),
+          repairAttempt,
+          repairFragments,
+        };
       }
       if (isProviderFailure(providerResult.cause)) {
         return yield* proposeSettlement(

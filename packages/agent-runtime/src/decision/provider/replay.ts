@@ -1,4 +1,4 @@
-import { executionEpisode, type ExecutionSettlement } from "@arbor/domain";
+import { type ExecutionSettlement, executionEpisode } from "@arbor/domain";
 import { decodeTurn, type TurnPreparation } from "@arbor/model-context";
 import type { AgentLoopStepRecord, ExecutionDriverError } from "@arbor/ports";
 import {
@@ -12,13 +12,23 @@ import type { ModelDecisionDependencies } from "../contract.js";
 
 type ReplayDependencies = Pick<
   ModelDecisionDependencies,
-  "input" | "tx" | "loopSteps" | "loopStepFence" | "providerTurns" |
-  "recoveryAttentionFacts" | "options" | "failure" | "now"
+  | "input"
+  | "tx"
+  | "loopSteps"
+  | "loopStepFence"
+  | "providerTurns"
+  | "recoveryAttentionFacts"
+  | "options"
+  | "failure"
+  | "now"
 >;
 
 type ReplayResult =
   | ModelDecisionOutcome
-  | { readonly _tag: "Proceed"; readonly loopStep: AgentLoopStepRecord | undefined };
+  | {
+      readonly _tag: "Proceed";
+      readonly loopStep: AgentLoopStepRecord | undefined;
+    };
 
 /** Resolve durable Provider evidence before admitting any new call. Legacy
  * adoption and the corresponding Step transition retain their transaction. */
@@ -31,9 +41,18 @@ export const replayPreparedProviderTurn = (
     readonly replayPersistedContextLimit: boolean;
   },
 ): Effect.Effect<ReplayResult, ExecutionDriverError> => {
-  const { input, tx, loopSteps, loopStepFence, providerTurns, options, failure, now } =
-    dependencies;
-  const { preparation, conversationExecution, replayPersistedContextLimit } = phase;
+  const {
+    input,
+    tx,
+    loopSteps,
+    loopStepFence,
+    providerTurns,
+    options,
+    failure,
+    now,
+  } = dependencies;
+  const { preparation, conversationExecution, replayPersistedContextLimit } =
+    phase;
   return Effect.gen(function* () {
     let loopStep = phase.loopStep;
     if (
@@ -75,8 +94,7 @@ export const replayPreparedProviderTurn = (
           persistedManifest.sessionId !== settled.turn.sessionId ||
           persistedManifest.contextEpoch !== settled.turn.contextEpoch ||
           persistedManifest.modelRef !== settled.turn.modelRef ||
-          persistedManifest.outputContractRef !==
-            settled.turn.outputContractRef
+          persistedManifest.outputContractRef !== settled.turn.outputContractRef
         ) {
           return yield* Effect.fail(
             failure({
@@ -116,8 +134,7 @@ export const replayPreparedProviderTurn = (
             return yield* Effect.fail(
               failure({
                 _tag: "LegacyProviderResultRequiresAttention",
-                reason:
-                  "legacy action disposition cannot be safely inspected",
+                reason: "legacy action disposition cannot be safely inspected",
               }),
             );
           }
@@ -139,8 +156,7 @@ export const replayPreparedProviderTurn = (
               return yield* Effect.fail(
                 failure({
                   _tag: "LegacyProviderResultRequiresAttention",
-                  reason:
-                    "legacy action route identity is not uniquely bound",
+                  reason: "legacy action route identity is not uniquely bound",
                 }),
               );
             }
@@ -252,8 +268,7 @@ export const replayPreparedProviderTurn = (
                     yield* Effect.promise(
                       () =>
                         options.qualificationProbe?.({
-                          boundary:
-                            "AH14BeforeLegacyAdoptionResolutionCommit",
+                          boundary: "AH14BeforeLegacyAdoptionResolutionCommit",
                           providerTurnId: settled.turn.providerTurnId,
                           executionId: input.execution.executionId,
                           logicalActionId: resolved.value.resolutionFactId,

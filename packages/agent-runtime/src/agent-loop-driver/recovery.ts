@@ -1,7 +1,9 @@
-import { executionEpisode, type Execution } from "@arbor/domain";
-import { projectSessionTimeline, SESSION_TIMELINE_ENTRY_LIMIT } from "@arbor/model-context";
+import { type Execution, executionEpisode } from "@arbor/domain";
 import {
-  sha256Hex,
+  projectSessionTimeline,
+  SESSION_TIMELINE_ENTRY_LIMIT,
+} from "@arbor/model-context";
+import {
   type AgentLoopStepStoreService,
   type ConversationCheckpointStoreService,
   type DecisionRequestStoreService,
@@ -9,6 +11,7 @@ import {
   type P39RecoveryEvidenceStoreService,
   type ProviderTurnStoreService,
   type SessionRepositoryService,
+  sha256Hex,
   type ToolInvocationStoreService,
   type TransactionPortService,
 } from "@arbor/ports";
@@ -93,9 +96,7 @@ export const recoverAgentLoopFrontier = (
           }
           const bindingOption = yield* tx
             .transact(
-              p39RecoveryOption.value.findBinding(
-                invocation.invocationId,
-              ),
+              p39RecoveryOption.value.findBinding(invocation.invocationId),
             )
             .pipe(Effect.mapError(failure));
           if (Option.isNone(bindingOption)) {
@@ -114,8 +115,7 @@ export const recoverAgentLoopFrontier = (
             source === undefined ||
             (source.state !== "NextStepReady" &&
               source.state !== "ActionsInProgress") ||
-            (source.state === "NextStepReady" &&
-              source.successor === undefined)
+            (source.state === "NextStepReady" && source.successor === undefined)
           ) {
             continue;
           }
@@ -129,8 +129,7 @@ export const recoverAgentLoopFrontier = (
               candidate.callRef === binding.callRef,
           );
           if (
-            (action?.state !== "Applied" &&
-              action?.state !== "Pending") ||
+            (action?.state !== "Applied" && action?.state !== "Pending") ||
             action.routeKind !== "Executable" ||
             action.actionKind !== binding.toolName
           ) {
@@ -147,7 +146,10 @@ export const recoverAgentLoopFrontier = (
           });
         }
         if (candidates.length > 1) {
-          return { _tag: "Terminal" as const, outcome: { _tag: "RecoveryBlocked" as const } };
+          return {
+            _tag: "Terminal" as const,
+            outcome: { _tag: "RecoveryBlocked" as const },
+          };
         }
         exactNotAdmittedRecovery = candidates[0];
         if (exactNotAdmittedRecovery !== undefined) {
@@ -175,9 +177,7 @@ export const recoverAgentLoopFrontier = (
           );
         }
         const priorManifest = yield* tx
-          .transact(
-            providerTurns.findManifestByTurn(current.providerTurnId),
-          )
+          .transact(providerTurns.findManifestByTurn(current.providerTurnId))
           .pipe(Effect.mapError(failure));
         let manifestBound = isAgentLoopStepManifestBound(
           current,
@@ -270,17 +270,15 @@ export const recoverAgentLoopFrontier = (
               compactionManifest?.manifestJson ?? null,
             );
             const nativeSourceStep = parseManifest(
-              JSON.stringify(
-                nativeManifest?.sourceAgentLoopStep ?? null,
-              ) ?? null,
+              JSON.stringify(nativeManifest?.sourceAgentLoopStep ?? null) ??
+                null,
             );
             const nativeRequest = parseManifest(
               compactionManifest?.portableRequestJson ?? null,
             );
             const nativeSuccess =
               sourceInferenceReceipt._tag === "SettledFailure" &&
-              sourceInferenceReceipt.failureKind ===
-                "ContextLimitExceeded" &&
+              sourceInferenceReceipt.failureKind === "ContextLimitExceeded" &&
               sourceInferenceReceipt.turn.providerTurnId ===
                 chain.inference.providerTurnId &&
               sourceInferenceReceipt.turn.executionId ===
@@ -291,19 +289,16 @@ export const recoverAgentLoopFrontier = (
                 chain.inference.contextEpoch &&
               compactionManifest !== null &&
               compactionReceipt._tag === "SettledSuccess" &&
-              compactionReceipt.evidenceVersion ===
-                "provider-success-v1" &&
+              compactionReceipt.evidenceVersion === "provider-success-v1" &&
               compactionReceipt.finishReason === "Stop" &&
-              compactionReceipt.manifestId ===
-                compactionManifest.manifestId &&
+              compactionReceipt.manifestId === compactionManifest.manifestId &&
               compactionReceipt.manifestJson ===
                 compactionManifest.manifestJson &&
               compactionReceipt.turn.providerTurnId ===
                 chain.compaction.providerTurnId &&
               compactionReceipt.turn.executionId ===
                 input.execution.executionId &&
-              compactionReceipt.turn.sessionId ===
-                input.execution.sessionId &&
+              compactionReceipt.turn.sessionId === input.execution.sessionId &&
               compactionReceipt.turn.contextEpoch ===
                 chain.compaction.contextEpoch &&
               compactionReceipt.turn.outputContractRef ===
@@ -312,13 +307,10 @@ export const recoverAgentLoopFrontier = (
               nativeRequest !== undefined &&
               nativeManifest?.providerTurnId ===
                 chain.compaction.providerTurnId &&
-              nativeManifest.executionId ===
-                input.execution.executionId &&
+              nativeManifest.executionId === input.execution.executionId &&
               nativeManifest.sessionId === input.execution.sessionId &&
-              nativeManifest.logicalStepNo ===
-                current.identity.logicalStepNo &&
-              nativeManifest.contextEpoch ===
-                chain.compaction.contextEpoch &&
+              nativeManifest.logicalStepNo === current.identity.logicalStepNo &&
+              nativeManifest.contextEpoch === chain.compaction.contextEpoch &&
               nativeManifest.operationKind === "CompactionNative" &&
               nativeManifest.outputContractRef ===
                 "provider-native-compaction-v1" &&
@@ -343,10 +335,9 @@ export const recoverAgentLoopFrontier = (
               compactionReceipt._tag === "SettledSuccess"
             ) {
               const episode = executionEpisode(input.execution);
-              const nativeStateRef =
-                compactionReceipt.canonicalEvents.find(
-                  (event) => event._tag === "ContinuationState",
-                );
+              const nativeStateRef = compactionReceipt.canonicalEvents.find(
+                (event) => event._tag === "ContinuationState",
+              );
               const nativeStateRefValue =
                 nativeStateRef?._tag === "ContinuationState"
                   ? nativeStateRef.stateRef
@@ -364,18 +355,14 @@ export const recoverAgentLoopFrontier = (
                   .pipe(Effect.mapError(failure));
                 if (Option.isSome(ownerOption)) {
                   const owner = ownerOption.value;
-                  const ownerSource = parseManifest(
-                    owner.sourceManifestJson,
-                  );
+                  const ownerSource = parseManifest(owner.sourceManifestJson);
                   const nested = parseManifest(
                     JSON.stringify(nativeManifest.conversationCheckpoint),
                   );
                   checkpointOwnerCurrent =
-                    owner.contextEpoch ===
-                      chain.replacement.contextEpoch &&
+                    owner.contextEpoch === chain.replacement.contextEpoch &&
                     owner.checkpointKind === "ProviderNative" &&
-                    owner.producerExecutionId ===
-                      input.execution.executionId &&
+                    owner.producerExecutionId === input.execution.executionId &&
                     owner.producerProviderTurnId ===
                       chain.compaction.providerTurnId &&
                     typeof owner.bindingFingerprint === "string" &&
@@ -387,8 +374,7 @@ export const recoverAgentLoopFrontier = (
                     ownerSource !== undefined &&
                     ownerSource.rootWorkspaceId ===
                       input.execution.workspaceId &&
-                    ownerSource.fromEpoch ===
-                      chain.compaction.contextEpoch &&
+                    ownerSource.fromEpoch === chain.compaction.contextEpoch &&
                     ownerSource.toEpoch === owner.contextEpoch &&
                     ownerSource.currentMessageId === episode.messageId &&
                     ownerSource.producerExecutionId ===
@@ -396,12 +382,10 @@ export const recoverAgentLoopFrontier = (
                     ownerSource.producerProviderTurnId ===
                       chain.compaction.providerTurnId &&
                     nested !== undefined &&
-                    nested.rootWorkspaceId ===
-                      ownerSource.rootWorkspaceId &&
+                    nested.rootWorkspaceId === ownerSource.rootWorkspaceId &&
                     nested.fromEpoch === ownerSource.fromEpoch &&
                     nested.toEpoch === ownerSource.toEpoch &&
-                    nested.currentMessageId ===
-                      ownerSource.currentMessageId &&
+                    nested.currentMessageId === ownerSource.currentMessageId &&
                     JSON.stringify(nested.coveredSources) ===
                       JSON.stringify(ownerSource.coveredSources) &&
                     JSON.stringify(nested.coveredThrough) ===
@@ -424,8 +408,7 @@ export const recoverAgentLoopFrontier = (
                     current.identity.logicalStepNo &&
                   nativeSourceStep.repairAttempt ===
                     current.identity.repairAttempt &&
-                  nativeSourceStep.providerTurnId ===
-                    current.providerTurnId;
+                  nativeSourceStep.providerTurnId === current.providerTurnId;
                 const sessionOption = yield* tx
                   .transact(sessions.findById(input.execution.sessionId))
                   .pipe(Effect.mapError(failure));
@@ -440,9 +423,7 @@ export const recoverAgentLoopFrontier = (
                     .pipe(Effect.mapError(failure));
                   const projection = projectSessionTimeline(
                     timeline,
-                    String(
-                      nativeManifest.resolvedModelBindingFingerprint,
-                    ),
+                    String(nativeManifest.resolvedModelBindingFingerprint),
                     true,
                   );
                   const checkpoint = projection.nativeCheckpoint;
@@ -547,13 +528,13 @@ export const recoverAgentLoopFrontier = (
           // Return the typed outcome directly to ExecutionRuntime's
           // existing P9 fact transaction before context, Provider, or
           // action replay can observe the corrupted Step manifest.
-          return { _tag: "Terminal" as const, outcome: submittedDecisionBindingMismatch };
+          return {
+            _tag: "Terminal" as const,
+            outcome: submittedDecisionBindingMismatch,
+          };
         }
         if (
-          !isPreparedStepAwaitingInitialManifest(
-            current,
-            priorManifest,
-          ) &&
+          !isPreparedStepAwaitingInitialManifest(current, priorManifest) &&
           !manifestBound
         ) {
           return yield* Effect.fail(

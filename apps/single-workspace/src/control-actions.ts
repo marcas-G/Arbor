@@ -43,10 +43,6 @@ import {
   hasAnyProducerEvidence,
 } from "./any-producer-evidence.js";
 import {
-  type ResolveWorkBlockerActionDependencies,
-  resolveWorkBlockerHandler,
-} from "./resolve-work-blocker-action.js";
-import {
   type AssignWorkBindingAttentionQualificationProbe,
   type AssignWorkDependencies,
   assignWorkHandler,
@@ -58,8 +54,8 @@ import {
 } from "./control-actions/delivery.js";
 import {
   type DeclareDependencyDependencies,
-  type ProduceDeliverableDependencies,
   declareDependencyHandler,
+  type ProduceDeliverableDependencies,
   produceDeliverableHandler,
 } from "./control-actions/dependency-deliverable.js";
 import {
@@ -67,31 +63,35 @@ import {
   sendMessageHandler,
 } from "./control-actions/send-message.js";
 import {
-  type VerificationWaitEligibilityDependencies,
-  type VerificationActionDependencies,
-  verificationWaitEligibilityHandler,
-  recordVerificationEvidenceHandler,
   concludeVerificationHandler,
+  recordVerificationEvidenceHandler,
+  type VerificationActionDependencies,
+  type VerificationWaitEligibilityDependencies,
+  verificationWaitEligibilityHandler,
 } from "./control-actions/verification.js";
 import {
-  type ClaimCompletionDependencies,
   type AcceptResultDependencies,
-  type UpdatePlanDependencies,
-  type SelectCurrentWorkDependencies,
   acceptResultHandler,
-  updatePlanHandler,
-  selectCurrentWorkHandler,
+  type ClaimCompletionDependencies,
   claimCompletionHandler,
+  type SelectCurrentWorkDependencies,
+  selectCurrentWorkHandler,
+  type UpdatePlanDependencies,
+  updatePlanHandler,
 } from "./control-actions/work-lifecycle.js";
 import {
-  type WorkspacePlacementDependencies,
   type AllocateWorkspaceSandboxDependencies,
-  type ProposeChildDependencies,
   allocateWorkspaceSandboxHandler,
   listWorkspacesHandler,
-  readWorkspaceHandler,
+  type ProposeChildDependencies,
   proposeChildWorkspaceHandler,
+  readWorkspaceHandler,
+  type WorkspacePlacementDependencies,
 } from "./control-actions/workspace.js";
+import {
+  type ResolveWorkBlockerActionDependencies,
+  resolveWorkBlockerHandler,
+} from "./resolve-work-blocker-action.js";
 
 export {
   type AssignWorkBindingAttentionQualificationEvent,
@@ -100,38 +100,34 @@ export {
   assignWorkHandler,
 } from "./control-actions/assign-work.js";
 export {
-  type WorkspacePlacementDependencies,
-  type AllocateWorkspaceSandboxDependencies,
-  type ProposeChildDependencies,
-  allocateWorkspaceSandboxHandler,
-} from "./control-actions/workspace.js";
-export {
-  type ClaimCompletionDependencies,
-  type AcceptResultDependencies,
-  type UpdatePlanDependencies,
-  type SelectCurrentWorkDependencies,
-  acceptResultHandler,
-  updatePlanHandler,
-  selectCurrentWorkHandler,
-} from "./control-actions/work-lifecycle.js";
-export {
-  type SendMessageDependencies,
-} from "./control-actions/send-message.js";
+  type DeliverActionDependencies,
+  type DeliverReplayQualificationEvent,
+  type DeliverReplayQualificationProbe,
+  deliverHandler,
+  deliverMessageGatewayHandler,
+} from "./control-actions/delivery.js";
 export {
   type DeclareDependencyDependencies,
   type ProduceDeliverableDependencies,
   produceDeliverableHandler,
 } from "./control-actions/dependency-deliverable.js";
+export type { SendMessageDependencies } from "./control-actions/send-message.js";
+export type { VerificationActionDependencies } from "./control-actions/verification.js";
 export {
-  type DeliverActionDependencies,
-  type DeliverReplayQualificationEvent,
-  type DeliverReplayQualificationProbe,
-  deliverMessageGatewayHandler,
-  deliverHandler,
-} from "./control-actions/delivery.js";
+  type AcceptResultDependencies,
+  acceptResultHandler,
+  type ClaimCompletionDependencies,
+  type SelectCurrentWorkDependencies,
+  selectCurrentWorkHandler,
+  type UpdatePlanDependencies,
+  updatePlanHandler,
+} from "./control-actions/work-lifecycle.js";
 export {
-  type VerificationActionDependencies,
-} from "./control-actions/verification.js";
+  type AllocateWorkspaceSandboxDependencies,
+  allocateWorkspaceSandboxHandler,
+  type ProposeChildDependencies,
+  type WorkspacePlacementDependencies,
+} from "./control-actions/workspace.js";
 
 export class SingleWorkspaceControlActionHandlers extends Context.Service<
   SingleWorkspaceControlActionHandlers,

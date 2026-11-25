@@ -1,27 +1,27 @@
 import { NO_EFFECT_DENIAL_CODES } from "@arbor/domain";
-import type { RegisteredCommandType } from "./types.js";
 import {
-  string,
-  nonEmptyString,
-  trimmedNonEmptyString,
-  isoTimestamp,
-  boundedString,
-  opaqueIdentifier,
-  boolean,
-  integer,
-  positiveSafeInteger,
-  canonicalIdentifier,
-  record,
-  id,
   actor,
-  literal,
-  nullable,
-  optional,
   array,
+  boolean,
+  boundedString,
+  canonicalIdentifier,
+  id,
+  integer,
+  isoTimestamp,
+  literal,
+  nonEmptyString,
+  nullable,
   object,
-  union,
+  opaqueIdentifier,
+  optional,
+  positiveSafeInteger,
   type Rule,
+  record,
+  string,
+  trimmedNonEmptyString,
+  union,
 } from "./rules.js";
+import type { RegisteredCommandType } from "./types.js";
 
 const stringArray = array(string);
 const workRevision = integer;
@@ -677,4 +677,3 @@ export const payloadRules: Readonly<Record<RegisteredCommandType, Rule>> = {
     expectedJobRevision: revision,
   }),
 };
-

@@ -205,4 +205,3 @@ export type SemanticExternalCommand = {
     readonly payload: ExternalCommandPayloadMap[K];
   };
 }[RegisteredCommandType];
-

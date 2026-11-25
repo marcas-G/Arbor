@@ -50,8 +50,7 @@ export const makeNoEffectSettlement = (
         context,
         "IntentJournal",
       );
-      if (Option.isNone(current))
-        return { _tag: "Interrupted" as const };
+      if (Option.isNone(current)) return { _tag: "Interrupted" as const };
       const currentRecord = current.value;
       if (currentRecord.settlement !== null) {
         if (currentRecord.settlement._tag === "Denied") {
@@ -86,10 +85,7 @@ export const makeNoEffectSettlement = (
           reconciliationRefs: [String(intent.invocationId)],
         };
       }
-      if (
-        Option.isSome(observationEvidence) &&
-        invocation !== undefined
-      ) {
+      if (Option.isSome(observationEvidence) && invocation !== undefined) {
         const winner = yield* tx
           .transact(
             observationEvidence.value.settleOrReadWinner({
@@ -149,8 +145,7 @@ export const makeNoEffectSettlement = (
         context,
         "IntentJournal",
       );
-      if (Option.isNone(winner))
-        return { _tag: "Interrupted" as const };
+      if (Option.isNone(winner)) return { _tag: "Interrupted" as const };
       if (winner.value.settlement?._tag === "Denied") {
         return denied(winner.value.settlement.reasonCode);
       }
@@ -249,9 +244,7 @@ export const makeNoEffectSettlement = (
             if (Option.isSome(bytes)) {
               return {
                 _tag: "Success" as const,
-                observation: bounded(
-                  new TextDecoder().decode(bytes.value),
-                ),
+                observation: bounded(new TextDecoder().decode(bytes.value)),
                 resultRef: record.resultRef,
               };
             }
@@ -282,11 +275,8 @@ export const makeNoEffectSettlement = (
                 argumentsJson: intent.argumentsJson,
                 resolvedRegions,
                 approvalId:
-                  context.executableApproval?.approvalId ??
-                  intent.approvalId,
-                intentAt: Option.isSome(current)
-                  ? current.value.intentAt
-                  : now,
+                  context.executableApproval?.approvalId ?? intent.approvalId,
+                intentAt: Option.isSome(current) ? current.value.intentAt : now,
               },
               reasonCode,
               settledAt,
@@ -319,10 +309,7 @@ export const makeNoEffectSettlement = (
         )
         .pipe(
           Effect.mapError(
-            operationalFailure(
-              "IntentJournal",
-              String(intent.invocationId),
-            ),
+            operationalFailure("IntentJournal", String(intent.invocationId)),
           ),
         );
       if (
@@ -337,8 +324,7 @@ export const makeNoEffectSettlement = (
               executionId: context.executionId,
               invocationId: intent.invocationId,
               callRef: intent.callRef,
-              logicalActionId:
-                context.recoveryBindingIdentity?.logicalActionId,
+              logicalActionId: context.recoveryBindingIdentity?.logicalActionId,
               denialReasonCode: reasonCode,
             }) ?? Promise.resolve(),
         );
@@ -356,8 +342,7 @@ export const makeNoEffectSettlement = (
                 argumentsJson: intent.argumentsJson,
                 resolvedRegions,
                 approvalId:
-                  context.executableApproval?.approvalId ??
-                  intent.approvalId,
+                  context.executableApproval?.approvalId ?? intent.approvalId,
                 intentAt: current.value.intentAt,
               }
             : undefined,

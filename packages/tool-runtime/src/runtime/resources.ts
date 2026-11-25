@@ -43,8 +43,12 @@ export const resolveInvocationResources = (
   priorModelIdentityMatches: boolean,
   priorRecord: ToolInvocationRecord | undefined,
   hasVerifiedReplayBinding: boolean,
-  recordNoEffectDenial: ReturnType<typeof makeNoEffectSettlement>["recordNoEffectDenial"],
-  refreshAfterStale: (cause: unknown) => Effect.Effect<CanonicalToolObservation, ToolRuntimeError>,
+  recordNoEffectDenial: ReturnType<
+    typeof makeNoEffectSettlement
+  >["recordNoEffectDenial"],
+  refreshAfterStale: (
+    cause: unknown,
+  ) => Effect.Effect<CanonicalToolObservation, ToolRuntimeError>,
 ) =>
   Effect.gen(function* () {
     const mountRefs = requestedMountRefs(intent.argumentsJson);
@@ -59,9 +63,9 @@ export const resolveInvocationResources = (
         return {
           _tag: "Terminal" as const,
           observation: yield* recordNoEffectDenial(
-          definition.sideEffectSemantics,
-          [],
-          "ResourceResolutionDenied",
+            definition.sideEffectSemantics,
+            [],
+            "ResourceResolutionDenied",
           ),
         };
       }
@@ -69,9 +73,9 @@ export const resolveInvocationResources = (
         return {
           _tag: "Terminal" as const,
           observation: yield* recordNoEffectDenial(
-          definition.sideEffectSemantics,
-          [],
-          "ResourceResolutionDenied",
+            definition.sideEffectSemantics,
+            [],
+            "ResourceResolutionDenied",
           ),
         };
       }
@@ -79,19 +83,16 @@ export const resolveInvocationResources = (
         .transact(workspaces.value.findById(context.workspaceId))
         .pipe(
           Effect.mapError(
-            operationalFailure(
-              "WorkspaceLookup",
-              String(intent.invocationId),
-            ),
+            operationalFailure("WorkspaceLookup", String(intent.invocationId)),
           ),
         );
       if (Option.isNone(workspace)) {
         return {
           _tag: "Terminal" as const,
           observation: yield* recordNoEffectDenial(
-          definition.sideEffectSemantics,
-          [],
-          "ResourceResolutionDenied",
+            definition.sideEffectSemantics,
+            [],
+            "ResourceResolutionDenied",
           ),
         };
       }
@@ -103,9 +104,9 @@ export const resolveInvocationResources = (
         return {
           _tag: "Terminal" as const,
           observation: yield* recordNoEffectDenial(
-          definition.sideEffectSemantics,
-          [],
-          "ResourceResolutionDenied",
+            definition.sideEffectSemantics,
+            [],
+            "ResourceResolutionDenied",
           ),
         };
       }
@@ -120,9 +121,9 @@ export const resolveInvocationResources = (
         return {
           _tag: "Terminal" as const,
           observation: yield* recordNoEffectDenial(
-          definition.sideEffectSemantics,
-          [],
-          "ResourceResolutionDenied",
+            definition.sideEffectSemantics,
+            [],
+            "ResourceResolutionDenied",
           ),
         };
       }
@@ -137,9 +138,9 @@ export const resolveInvocationResources = (
         return {
           _tag: "Terminal" as const,
           observation: yield* recordNoEffectDenial(
-          definition.sideEffectSemantics,
-          [],
-          "ResourceResolutionDenied",
+            definition.sideEffectSemantics,
+            [],
+            "ResourceResolutionDenied",
           ),
         };
       }
@@ -147,10 +148,7 @@ export const resolveInvocationResources = (
         .transact(workspaces.value.findById(context.workspaceId))
         .pipe(
           Effect.mapError(
-            operationalFailure(
-              "WorkspaceLookup",
-              String(intent.invocationId),
-            ),
+            operationalFailure("WorkspaceLookup", String(intent.invocationId)),
           ),
         );
       if (
@@ -160,9 +158,9 @@ export const resolveInvocationResources = (
         return {
           _tag: "Terminal" as const,
           observation: yield* recordNoEffectDenial(
-          definition.sideEffectSemantics,
-          [],
-          "ResourceResolutionDenied",
+            definition.sideEffectSemantics,
+            [],
+            "ResourceResolutionDenied",
           ),
         };
       }
@@ -173,9 +171,9 @@ export const resolveInvocationResources = (
       return {
         _tag: "Terminal" as const,
         observation: yield* recordNoEffectDenial(
-        definition.sideEffectSemantics,
-        [],
-        "ResourceResolutionDenied",
+          definition.sideEffectSemantics,
+          [],
+          "ResourceResolutionDenied",
         ),
       };
     }
@@ -190,10 +188,7 @@ export const resolveInvocationResources = (
         ),
       );
     const resolvedBoundary = yield* environment
-      .resolve(
-        context.projectId,
-        capturedWorkspace.resourceBoundary.addresses,
-      )
+      .resolve(context.projectId, capturedWorkspace.resourceBoundary.addresses)
       .pipe(
         Effect.mapError(
           operationalFailure(
@@ -207,12 +202,12 @@ export const resolveInvocationResources = (
       resolvedBoundary.observedEnvironmentRevision
     ) {
       return {
-          _tag: "Terminal" as const,
-          observation: yield* refreshAfterStale({
-        _tag: "ResourceResolutionStale",
-        observed: resolved.observedEnvironmentRevision,
-        boundaryObserved: resolvedBoundary.observedEnvironmentRevision,
-          }),
+        _tag: "Terminal" as const,
+        observation: yield* refreshAfterStale({
+          _tag: "ResourceResolutionStale",
+          observed: resolved.observedEnvironmentRevision,
+          boundaryObserved: resolvedBoundary.observedEnvironmentRevision,
+        }),
       };
     }
     const regions =
@@ -237,9 +232,7 @@ export const resolveInvocationResources = (
           currentWorkspace.value.projectId !== context.projectId ||
           currentWorkspace.value.resourceBoundaryRevision !==
             capturedWorkspace.resourceBoundaryRevision ||
-          JSON.stringify(
-            currentWorkspace.value.resourceBoundary.addresses,
-          ) !==
+          JSON.stringify(currentWorkspace.value.resourceBoundary.addresses) !==
             JSON.stringify(capturedWorkspace.resourceBoundary.addresses)
         ) {
           return yield* Effect.fail(P39_RESOURCE_RESOLUTION_STALE);
@@ -307,9 +300,9 @@ export const resolveInvocationResources = (
       return {
         _tag: "Terminal" as const,
         observation: yield* recordNoEffectDenial(
-        definition.sideEffectSemantics,
-        [],
-        "ResourceResolutionDenied",
+          definition.sideEffectSemantics,
+          [],
+          "ResourceResolutionDenied",
         ),
       };
     }

@@ -1,11 +1,18 @@
-import { executionEpisode, workEpisode, type Work } from "@arbor/domain";
+import { executionEpisode, type Work, workEpisode } from "@arbor/domain";
 import type { PortableInputItem } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import type { ModelDecisionDependencies } from "../contract.js";
 
 type WorkspaceContextDependencies = Pick<
   ModelDecisionDependencies,
-  "input" | "tx" | "workspaces" | "workspaceKnowledge" | "workspacePlacement" | "works" | "localPlans" | "failure"
+  | "input"
+  | "tx"
+  | "workspaces"
+  | "workspaceKnowledge"
+  | "workspacePlacement"
+  | "works"
+  | "localPlans"
+  | "failure"
 >;
 
 /** Read the bound workspace, accepted knowledge, placement and work plan.
@@ -15,8 +22,14 @@ export const loadDecisionWorkspaceContext = (
   placementExecution: boolean,
 ) => {
   const {
-    input, tx, workspaces, workspaceKnowledge, workspacePlacement,
-    works, localPlans, failure,
+    input,
+    tx,
+    workspaces,
+    workspaceKnowledge,
+    workspacePlacement,
+    works,
+    localPlans,
+    failure,
   } = dependencies;
   return Effect.gen(function* () {
     const inputItems: PortableInputItem[] = [];

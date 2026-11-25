@@ -1,24 +1,17 @@
+import type { DomainEvent, ProjectId } from "@arbor/domain";
 import type {
-  DomainEvent,
-  ProjectId,
-} from "@arbor/domain";
-import {
-  type AssignWorkBindingAttentionFact,
-  type AttentionProjectionStoreService,
-  type ConsumerOffsetStoreError,
-  type ProjectionStoreService,
-  type RecoveryAttentionFactStoreService,
-  type SandboxProviderUnavailableAttentionQueueService,
-  type SandboxProviderUnavailableStoreService,
-  type ToolObservationReplayAttentionFactStoreService,
-  type WorkspaceResourceActivationStoreService,
+  AssignWorkBindingAttentionFact,
+  AttentionProjectionStoreService,
+  ConsumerOffsetStoreError,
+  ProjectionStoreService,
+  RecoveryAttentionFactStoreService,
+  SandboxProviderUnavailableAttentionQueueService,
+  SandboxProviderUnavailableStoreService,
+  ToolObservationReplayAttentionFactStoreService,
+  WorkspaceResourceActivationStoreService,
 } from "@arbor/ports";
-import {
-  Effect,
-  Option,
-} from "effect";
+import { Effect, Option } from "effect";
 import { payloadRecord, projectionFailure } from "./consumer-errors.js";
-
 
 /** Bind the shared P1 ProjectionStore face to one P10 project. `pollOnce`
  * will call `apply` and advance that consumer's offset in its existing single
@@ -774,4 +767,3 @@ export const makeProjectAttentionProjectionStore = (
         .pipe(Effect.mapError(projectionFailure));
     }),
 });
-

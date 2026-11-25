@@ -14,7 +14,12 @@ import type {
 import { Effect, Option } from "effect";
 import { recoveryBindingIdentityMatches } from "../recovery-binding.js";
 import { validateToolInput } from "../validation.js";
-import { bounded, denied, hasCompleteExecutionFence, operationalFailure } from "./errors.js";
+import {
+  bounded,
+  denied,
+  hasCompleteExecutionFence,
+  operationalFailure,
+} from "./errors.js";
 import type { ToolExecutor } from "./types.js";
 
 /** Validate invocation identity, resolve the executor, and reject invalid input before admission. */
@@ -32,12 +37,12 @@ export const prepareInvocation = (
   processModeBlocksSpawn: boolean,
   testOnlyAllowTrustedLocalProcessExecution: boolean,
   processUnavailableReason: NoEffectDenialCode,
-  isIndependentVerificationExecution: (context: ToolExecutionContext) => boolean,
+  isIndependentVerificationExecution: (
+    context: ToolExecutionContext,
+  ) => boolean,
 ) =>
   Effect.gen(function* () {
-    const completeFence = hasCompleteExecutionFence(
-      context.executionFence,
-    );
+    const completeFence = hasCompleteExecutionFence(context.executionFence);
     if (
       !completeFence ||
       context.executionFence.executionId !== context.executionId
@@ -58,7 +63,10 @@ export const prepareInvocation = (
       intent.toolVersion,
     );
     if (Option.isNone(definitionOption)) {
-      return { _tag: "Terminal" as const, observation: denied("InvocationAuthorityDenied") };
+      return {
+        _tag: "Terminal" as const,
+        observation: denied("InvocationAuthorityDenied"),
+      };
     }
     const definition = definitionOption.value;
     const trustedProfile =
@@ -92,11 +100,12 @@ export const prepareInvocation = (
         );
       }
     }
-    const executor = executors.find(
-      (entry) => entry.name === intent.toolName,
-    );
+    const executor = executors.find((entry) => entry.name === intent.toolName);
     if (executor === undefined) {
-      return { _tag: "Terminal" as const, observation: denied("InvocationAuthorityDenied") };
+      return {
+        _tag: "Terminal" as const,
+        observation: denied("InvocationAuthorityDenied"),
+      };
     }
     if (
       executor.processCapability === "SandboxProcess" &&
@@ -108,14 +117,14 @@ export const prepareInvocation = (
         .transact(store.findById(intent.invocationId))
         .pipe(
           Effect.mapError(
-            operationalFailure(
-              "IntentJournal",
-              String(intent.invocationId),
-            ),
+            operationalFailure("IntentJournal", String(intent.invocationId)),
           ),
         );
       if (Option.isNone(durableInvocation)) {
-        return { _tag: "Terminal" as const, observation: denied(processUnavailableReason) };
+        return {
+          _tag: "Terminal" as const,
+          observation: denied(processUnavailableReason),
+        };
       }
     }
     const p39BindingEnabled = Option.isSome(p39Recovery);
@@ -134,13 +143,11 @@ export const prepareInvocation = (
         !Number.isSafeInteger(
           context.recoveryBindingPolicyRevisions.workspacePolicyRevision,
         ) ||
-        context.recoveryBindingPolicyRevisions.workspacePolicyRevision <
-          0 ||
+        context.recoveryBindingPolicyRevisions.workspacePolicyRevision < 0 ||
         !Number.isSafeInteger(
           context.recoveryBindingPolicyRevisions.projectPolicyRevision,
         ) ||
-        context.recoveryBindingPolicyRevisions.projectPolicyRevision <
-          0 ||
+        context.recoveryBindingPolicyRevisions.projectPolicyRevision < 0 ||
         Option.isNone(environmentRevisions) ||
         Option.isNone(workspaces))
     ) {
@@ -170,10 +177,7 @@ export const prepareInvocation = (
         .transact(store.findById(intent.invocationId))
         .pipe(
           Effect.mapError(
-            operationalFailure(
-              "IntentJournal",
-              String(intent.invocationId),
-            ),
+            operationalFailure("IntentJournal", String(intent.invocationId)),
           ),
         );
       if (
@@ -194,9 +198,7 @@ export const prepareInvocation = (
       ) {
         const unboundDenial = yield* tx
           .transact(
-            p39Recovery.value.findTerminalUnboundDenial(
-              intent.invocationId,
-            ),
+            p39Recovery.value.findTerminalUnboundDenial(intent.invocationId),
           )
           .pipe(
             Effect.mapError(
@@ -207,7 +209,10 @@ export const prepareInvocation = (
             ),
           );
         if (Option.isSome(unboundDenial)) {
-          return { _tag: "Terminal" as const, observation: denied(priorDenial.value.settlement.reasonCode) };
+          return {
+            _tag: "Terminal" as const,
+            observation: denied(priorDenial.value.settlement.reasonCode),
+          };
         }
       }
     }

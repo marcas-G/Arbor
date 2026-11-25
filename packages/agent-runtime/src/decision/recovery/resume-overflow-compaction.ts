@@ -1,16 +1,27 @@
 import {
   ContextEpochNumber,
   type ExecutionSettlement,
+  providerTurnOverflowReplacementId as makeOverflowReplacementProviderTurnId,
   parse,
   providerTurnNativeCompactionId,
-  providerTurnOverflowReplacementId as makeOverflowReplacementProviderTurnId,
   providerTurnSummaryCompactionId,
 } from "@arbor/domain";
-import type { AgentLoopStepIdentity, AgentLoopStepRecord, ExecutionDriverError, PortableInputItem } from "@arbor/ports";
+import type {
+  AgentLoopStepIdentity,
+  AgentLoopStepRecord,
+  ExecutionDriverError,
+  PortableInputItem,
+} from "@arbor/ports";
 import { Effect } from "effect";
-import { type ModelDecisionOutcome, safetyStop } from "../../agent-loop-policy.js";
+import {
+  type ModelDecisionOutcome,
+  safetyStop,
+} from "../../agent-loop-policy.js";
 import { runConversationCheckpointCompaction } from "../../checkpoint/conversation/compaction.js";
-import { runCompaction, type SummaryCompactionInput } from "../../compaction-coordinator.js";
+import {
+  runCompaction,
+  type SummaryCompactionInput,
+} from "../../compaction-coordinator.js";
 import type { AgentStepContext } from "../../step-context.js";
 import type { ModelDecisionDependencies } from "../contract.js";
 import type { ConversationDecisionContextResult } from "../conversation-context.js";
@@ -18,8 +29,17 @@ import type { OverflowRecoveryState } from "./overflow-state.js";
 
 type ResumeDependencies = Pick<
   ModelDecisionDependencies,
-  "input" | "capability" | "tx" | "loopSteps" | "loopStepFence" |
-  "providerTurns" | "options" | "failure" | "now" | "conversationCheckpoints" | "blobs"
+  | "input"
+  | "capability"
+  | "tx"
+  | "loopSteps"
+  | "loopStepFence"
+  | "providerTurns"
+  | "options"
+  | "failure"
+  | "now"
+  | "conversationCheckpoints"
+  | "blobs"
 >;
 
 type ResumeResult =
@@ -39,14 +59,20 @@ export const resumePinnedOverflowCompaction = (
     readonly turn: number;
     readonly loopStepIdentity: AgentLoopStepIdentity;
     readonly loopStep: AgentLoopStepRecord | undefined;
-    readonly conversation: Extract<ConversationDecisionContextResult, { readonly _tag: "Ready" }>;
+    readonly conversation: Extract<
+      ConversationDecisionContextResult,
+      { readonly _tag: "Ready" }
+    >;
     readonly stepContext: AgentStepContext;
     readonly inputItems: ReadonlyArray<PortableInputItem>;
     readonly messageContextRefs: ReadonlyArray<string>;
     readonly currentBindingFingerprint: string;
     readonly providerNativeSupported: boolean;
     readonly compactionDependencies: Parameters<typeof runCompaction>[1];
-    readonly compactionWorkPinning: Pick<SummaryCompactionInput, "pinnedInstructions" | "pinnedInstructionFragments" | "controlBasis">;
+    readonly compactionWorkPinning: Pick<
+      SummaryCompactionInput,
+      "pinnedInstructions" | "pinnedInstructionFragments" | "controlBasis"
+    >;
     readonly compactionAttempts: number;
     readonly overflow: OverflowRecoveryState;
     readonly proposeSettlement: (
@@ -54,15 +80,37 @@ export const resumePinnedOverflowCompaction = (
     ) => Effect.Effect<ModelDecisionOutcome, ExecutionDriverError>;
   },
 ): Effect.Effect<ResumeResult, ExecutionDriverError> => {
-  const { input, capability, tx, loopSteps, loopStepFence, providerTurns, options, failure, now } = dependencies;
   const {
-    turn, loopStepIdentity, loopStep, stepContext, inputItems, messageContextRefs,
-    currentBindingFingerprint, providerNativeSupported, compactionDependencies,
-    compactionWorkPinning, compactionAttempts, proposeSettlement,
+    input,
+    capability,
+    tx,
+    loopSteps,
+    loopStepFence,
+    providerTurns,
+    options,
+    failure,
+    now,
+  } = dependencies;
+  const {
+    turn,
+    loopStepIdentity,
+    loopStep,
+    stepContext,
+    inputItems,
+    messageContextRefs,
+    currentBindingFingerprint,
+    providerNativeSupported,
+    compactionDependencies,
+    compactionWorkPinning,
+    compactionAttempts,
+    proposeSettlement,
   } = phase;
   const {
-    conversationExecution, conversationOwner, conversationProjection,
-    conversationCurrentJob, exactConversation,
+    conversationExecution,
+    conversationOwner,
+    conversationProjection,
+    conversationCurrentJob,
+    exactConversation,
   } = phase.conversation;
   return Effect.gen(function* () {
     let {
@@ -230,8 +278,7 @@ export const resumePinnedOverflowCompaction = (
               overflowOrdinal: 0,
               role: "OverflowReplacement",
               providerTurnId: replacementProviderTurnId,
-              predecessorProviderTurnId:
-                resumeOverflowCompactionProviderTurnId,
+              predecessorProviderTurnId: resumeOverflowCompactionProviderTurnId,
               contextEpoch: parse(ContextEpochNumber)(
                 Number(stepContext.contextEpoch) + 1,
               ),
@@ -248,7 +295,11 @@ export const resumePinnedOverflowCompaction = (
       resumeOverflowNativeCompaction = false;
       resumeOverflowNativeCompactionInput = undefined;
       resumeOverflowCompactionProviderTurnId = undefined;
-      return { _tag: "Restart" as const, overflow: recoveryState(), compactionAttempts };
+      return {
+        _tag: "Restart" as const,
+        overflow: recoveryState(),
+        compactionAttempts,
+      };
     }
     return { _tag: "Proceed" as const };
   });

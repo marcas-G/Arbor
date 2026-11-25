@@ -17,12 +17,7 @@ import {
   SecretStorePort,
   TransactionPort,
 } from "@arbor/ports";
-import {
-  Effect,
-  Layer,
-  Option,
-  Result,
-} from "effect";
+import { Effect, Layer, Option, Result } from "effect";
 import {
   DEFAULT_PROVIDER_EXECUTION_POLICY,
   decideProviderRetry,
@@ -31,14 +26,17 @@ import {
   resolveProviderExecutionPolicy,
   unknownAttemptObservation,
 } from "./policy.js";
-
-import type { ProviderRuntimeConfig } from "./runtime/config.js";
-import { awaitAbort, consumeAttempt, initialAttemptObservation } from "./runtime/attempt-stream.js";
-import { parseManifestIdentity, semanticOutputVisible } from "./runtime/continuation-evidence.js";
 import {
-  timeoutFailure,
-  unknownFailure,
-} from "./runtime/failures.js";
+  awaitAbort,
+  consumeAttempt,
+  initialAttemptObservation,
+} from "./runtime/attempt-stream.js";
+import type { ProviderRuntimeConfig } from "./runtime/config.js";
+import {
+  parseManifestIdentity,
+  semanticOutputVisible,
+} from "./runtime/continuation-evidence.js";
+import { timeoutFailure, unknownFailure } from "./runtime/failures.js";
 import { discoverProviderRecovery } from "./runtime/recovery.js";
 
 export type { ProviderRuntimeConfig } from "./runtime/config.js";
@@ -748,4 +746,3 @@ export const ProviderRuntimeLive = (
       return ProviderRuntime.of({ runTurn });
     }),
   );
-

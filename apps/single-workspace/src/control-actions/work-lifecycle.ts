@@ -36,16 +36,14 @@ import {
   type WorkWaitStoreService,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
-import {
-  commitDurableControlActionEffect,
-} from "../durable-control-action-effect.js";
+import { commitDurableControlActionEffect } from "../durable-control-action-effect.js";
 import {
   actionError,
   actionOperationalFailure,
+  findPriorCommandReceipt,
   generationScopedCommandId,
   legacySelectCurrentWorkCommandId,
   selectCurrentWorkCommandId,
-  findPriorCommandReceipt,
 } from "./command-receipts.js";
 
 export interface ClaimCompletionDependencies {

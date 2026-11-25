@@ -12,9 +12,17 @@ import type {
   TransactionPortService,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
-import { bounded, denied, isLeaseFencingRejected, operationalFailure } from "../errors.js";
+import {
+  bounded,
+  denied,
+  isLeaseFencingRejected,
+  operationalFailure,
+} from "../errors.js";
+import type {
+  ToolExecutionResult,
+  ToolRuntimeQualificationProbe,
+} from "../types.js";
 import type { makeObservationReplay } from "./observation-replay.js";
-import type { ToolExecutionResult, ToolRuntimeQualificationProbe } from "../types.js";
 
 type Replay = ReturnType<typeof makeObservationReplay>;
 
@@ -170,8 +178,7 @@ export const finishPriorInvocation = (
           ) {
             return {
               _tag: "OutcomeUnknown" as const,
-              reconciliationRefs:
-                canonical.value.settlement.reconciliationRefs,
+              reconciliationRefs: canonical.value.settlement.reconciliationRefs,
             };
           }
         }

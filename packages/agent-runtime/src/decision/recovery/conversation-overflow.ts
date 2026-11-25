@@ -51,7 +51,14 @@ export const recoverConversationOverflow = (
   ExecutionDriverError
 > => {
   const {
-    input, capability, tx, loopSteps, loopStepFence, providerTurns, failure, now,
+    input,
+    capability,
+    tx,
+    loopSteps,
+    loopStepFence,
+    providerTurns,
+    failure,
+    now,
   } = dependencies;
   const {
     turn,
@@ -97,9 +104,7 @@ export const recoverConversationOverflow = (
         ),
       )
       .pipe(Effect.mapError(failure));
-    const owner = Option.isSome(ownerOption)
-      ? ownerOption.value
-      : undefined;
+    const owner = Option.isSome(ownerOption) ? ownerOption.value : undefined;
     const ownerEpoch = Number(owner?.contextEpoch ?? 0);
     const inference = originalInference.turn;
     if (
@@ -136,25 +141,22 @@ export const recoverConversationOverflow = (
             turn,
             inference.contextEpoch,
           );
-      const [compactionReceipt, replacementReceipt] =
-        yield* Effect.all(
-          [
-            tx.transact(
-              providerTurns.findSettledResult(
-                compactionProviderTurnId,
+      const [compactionReceipt, replacementReceipt] = yield* Effect.all(
+        [
+          tx.transact(
+            providerTurns.findSettledResult(compactionProviderTurnId),
+          ),
+          tx.transact(
+            providerTurns.findSettledResult(
+              makeOverflowReplacementProviderTurnId(
+                input.execution.executionId,
+                turn,
               ),
             ),
-            tx.transact(
-              providerTurns.findSettledResult(
-                makeOverflowReplacementProviderTurnId(
-                  input.execution.executionId,
-                  turn,
-                ),
-              ),
-            ),
-          ],
-          { concurrency: 1 },
-        ).pipe(Effect.mapError(failure));
+          ),
+        ],
+        { concurrency: 1 },
+      ).pipe(Effect.mapError(failure));
       if (
         compactionReceipt._tag !== "NotFound" ||
         replacementReceipt._tag !== "NotFound"
@@ -186,8 +188,7 @@ export const recoverConversationOverflow = (
                 overflowOrdinal: 0,
                 role: "OverflowCompaction",
                 providerTurnId: compactionProviderTurnId,
-                predecessorProviderTurnId:
-                  activeLoopStep.providerTurnId,
+                predecessorProviderTurnId: activeLoopStep.providerTurnId,
                 contextEpoch: inference.contextEpoch,
                 state: "Prepared",
                 createdAt,
@@ -201,8 +202,7 @@ export const recoverConversationOverflow = (
       const inferenceLink = inferenceLinks[0];
       const compactionLink = compactionLinks[0];
       if (
-        (providerTurnLinks.length !== 2 &&
-          providerTurnLinks.length !== 3) ||
+        (providerTurnLinks.length !== 2 && providerTurnLinks.length !== 3) ||
         replacementLinks.length > 1 ||
         inferenceLinks.length !== 1 ||
         compactionLinks.length !== 1 ||
@@ -224,8 +224,7 @@ export const recoverConversationOverflow = (
             ),
           ],
         ) ||
-        Number(compactionLink.contextEpoch) !==
-          Number(inference.contextEpoch)
+        Number(compactionLink.contextEpoch) !== Number(inference.contextEpoch)
       ) {
         return yield* Effect.fail(
           failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
@@ -235,24 +234,21 @@ export const recoverConversationOverflow = (
     }
     if (ownerEpoch === Number(inference.contextEpoch) + 1) {
       if (
-        owner?.producerProviderTurnId !==
-          linkedCompactionProviderTurnId ||
+        owner?.producerProviderTurnId !== linkedCompactionProviderTurnId ||
         owner.producerExecutionId !== input.execution.executionId
       ) {
         return yield* Effect.fail(
           failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
         );
       }
-      const replacementProviderTurnId =
-        makeOverflowReplacementProviderTurnId(
-          input.execution.executionId,
-          turn,
-        );
+      const replacementProviderTurnId = makeOverflowReplacementProviderTurnId(
+        input.execution.executionId,
+        turn,
+      );
       const existingReplacement = replacementLinks[0];
       if (
         existingReplacement !== undefined &&
-        (existingReplacement.providerTurnId !==
-          replacementProviderTurnId ||
+        (existingReplacement.providerTurnId !== replacementProviderTurnId ||
           existingReplacement.predecessorProviderTurnId !==
             linkedCompactionProviderTurnId ||
           Number(existingReplacement.contextEpoch) !== ownerEpoch)
@@ -269,8 +265,7 @@ export const recoverConversationOverflow = (
               overflowOrdinal: 0,
               role: "OverflowReplacement",
               providerTurnId: replacementProviderTurnId,
-              predecessorProviderTurnId:
-                linkedCompactionProviderTurnId,
+              predecessorProviderTurnId: linkedCompactionProviderTurnId,
               contextEpoch: owner.contextEpoch,
               state: "Prepared",
               createdAt: yield* now(),
@@ -295,17 +290,11 @@ export const recoverConversationOverflow = (
     }
     const compactionManifest = yield* tx
       .transact(
-        providerTurns.findManifestByTurn(
-          linkedCompactionProviderTurnId,
-        ),
+        providerTurns.findManifestByTurn(linkedCompactionProviderTurnId),
       )
       .pipe(Effect.mapError(failure));
     const compactionReceipt = yield* tx
-      .transact(
-        providerTurns.findSettledResult(
-          linkedCompactionProviderTurnId,
-        ),
-      )
+      .transact(providerTurns.findSettledResult(linkedCompactionProviderTurnId))
       .pipe(Effect.mapError(failure));
     const existingContract =
       compactionReceipt._tag === "Unsettled" ||
@@ -313,10 +302,7 @@ export const recoverConversationOverflow = (
       compactionReceipt._tag === "SettledFailure"
         ? compactionReceipt.turn.outputContractRef
         : undefined;
-    if (
-      compactionManifest !== null &&
-      compactionReceipt._tag === "NotFound"
-    ) {
+    if (compactionManifest !== null && compactionReceipt._tag === "NotFound") {
       return yield* Effect.fail(
         failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
       );
@@ -324,8 +310,7 @@ export const recoverConversationOverflow = (
     resumeOverflowNativeCompaction =
       existingContract === "provider-native-compaction-v1" ||
       (existingContract === undefined && nativeSupported);
-    resumeOverflowCompactionProviderTurnId =
-      linkedCompactionProviderTurnId;
+    resumeOverflowCompactionProviderTurnId = linkedCompactionProviderTurnId;
     replayPersistedContextLimit = true;
     return { _tag: "Restart" as const, overflow: recoveryState() };
   });

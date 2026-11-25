@@ -31,14 +31,12 @@ import type {
   WorkspaceSandboxAuthorizationStoreService,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
-import {
-  commitDurableControlActionEffect,
-} from "../durable-control-action-effect.js";
+import { commitDurableControlActionEffect } from "../durable-control-action-effect.js";
 import {
   actionError,
   actionOperationalFailure,
-  generationScopedCommandId,
   findPriorCommandReceipt,
+  generationScopedCommandId,
 } from "./command-receipts.js";
 
 export interface WorkspacePlacementDependencies {

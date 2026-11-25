@@ -3,10 +3,18 @@ import {
   verifyBlockedActionRefs,
   workBlockerIdentity,
 } from "@arbor/application";
-import type { BlockedActionRef, ExecutionSettlement, WorkRevision } from "@arbor/domain";
+import type {
+  BlockedActionRef,
+  ExecutionSettlement,
+  WorkRevision,
+} from "@arbor/domain";
 import { workEpisode as exactWorkEpisode } from "@arbor/domain";
-import type { AgentLoopStepActionRecord, AgentLoopStepRecord, ExecutionDriverError } from "@arbor/ports";
-import { Effect, Option } from "effect";
+import type {
+  AgentLoopStepActionRecord,
+  AgentLoopStepRecord,
+  ExecutionDriverError,
+} from "@arbor/ports";
+import { Effect, type Option } from "effect";
 import type { AgentLoopActionDependencies } from "./types.js";
 
 const terminalDenialOf = (
@@ -233,4 +241,3 @@ export const makeBlockedSettlement = (
       },
     };
   });
-

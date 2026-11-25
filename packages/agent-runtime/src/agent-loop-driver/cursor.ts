@@ -169,4 +169,3 @@ export const isPreparedStepAwaitingInitialManifest = (
   step.state === "Prepared" &&
   step.manifestId === undefined &&
   persistedManifest === null;
-

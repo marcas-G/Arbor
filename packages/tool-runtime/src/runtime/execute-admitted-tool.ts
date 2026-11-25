@@ -62,9 +62,7 @@ export const executeAdmittedTool = (
                             ref: "workspace",
                             address,
                             region,
-                            access: executor.write
-                              ? "ReadWrite"
-                              : "ReadOnly",
+                            access: executor.write ? "ReadWrite" : "ReadOnly",
                           },
                         ],
                       },

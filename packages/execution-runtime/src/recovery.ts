@@ -34,9 +34,14 @@ import {
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { RECOVERY_WORKER_INCARNATION_ID } from "./process-identity.js";
-import { recordSubmittedDecisionBindingFailure } from "./submitted-decision-binding-failure.js";
-import { RECOVERY_WORKER_ID, fencedTakeover, type SubmittedDecisionRecoveryQualificationEvent, type SubmittedDecisionRecoveryQualificationProbe } from "./recovery/common.js";
+import {
+  fencedTakeover,
+  RECOVERY_WORKER_ID,
+  type SubmittedDecisionRecoveryQualificationEvent,
+  type SubmittedDecisionRecoveryQualificationProbe,
+} from "./recovery/common.js";
 import { closeSubmittedDecisionForStop } from "./recovery/submitted-decision-stop-close.js";
+import { recordSubmittedDecisionBindingFailure } from "./submitted-decision-binding-failure.js";
 
 export type {
   SubmittedDecisionRecoveryQualificationEvent,
@@ -546,9 +551,19 @@ export const runRecovery = (
       let submittedBindingRecoveryLease: LeaseRecord | undefined;
       if (submittedDecisionBindingFact !== undefined) {
         const closed = yield* closeSubmittedDecisionForStop(
-          execution, submittedDecisionBindingFact, now, tx, repository, leases,
-          reconciliation, loopSteps, providerTurns, sessions, recoveryAttentionFacts,
-          decisionRequests, reportP41,
+          execution,
+          submittedDecisionBindingFact,
+          now,
+          tx,
+          repository,
+          leases,
+          reconciliation,
+          loopSteps,
+          providerTurns,
+          sessions,
+          recoveryAttentionFacts,
+          decisionRequests,
+          reportP41,
         );
         if (closed._tag === "Blocked") {
           escalated.push(execution.executionId);

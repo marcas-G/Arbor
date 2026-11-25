@@ -1,4 +1,13 @@
 import type { MigrationFile } from "./migrate.js";
+import {
+  P38_MIGRATIONS,
+  P41_SUBMITTED_DECISION_BINDING_ATTENTION_MIGRATION,
+} from "./migrations/v31-v39-and-v41.js";
+import {
+  P40_TOOL_OBSERVATION_REPLAY_MIGRATION,
+  P44_APPROVAL_REJECTED_NO_EFFECT_DENIAL_MIGRATION,
+  P54_NATIVE_PROCESS_MODE_NO_EFFECT_DENIAL_MIGRATION,
+} from "./migrations/v40-v44-v54-observation-guards.js";
 import { P42_PROJECT_RESOURCE_SOURCE_MIGRATION } from "./p42-project-resource-source-migration.js";
 import { P43_BLOCKED_WORKEPISODE_MIGRATION } from "./p43-blocked-workepisode-migration.js";
 import { P45_RETRY_VERIFICATION_ORIGIN_MIGRATION } from "./p45-retry-verification-origin-migration.js";
@@ -11,8 +20,6 @@ import { P51_VERIFICATION_V2_CONSUMER_RECONCILIATION_MIGRATION } from "./p51-ver
 import { P52_WORK_CONTRACT_REVISION_MIGRATION } from "./p52-work-contract-revision-migration.js";
 import { P53_CANONICAL_OWNERSHIP_CARVEOUTS_MIGRATION } from "./p53-canonical-ownership-carveouts-migration.js";
 import { P57_WORKSPACE_SANDBOX_AUTHORIZATION_MIGRATION } from "./p57-workspace-sandbox-authorization-migration.js";
-import { P38_MIGRATIONS, P41_SUBMITTED_DECISION_BINDING_ATTENTION_MIGRATION } from "./migrations/v31-v39-and-v41.js";
-import { P40_TOOL_OBSERVATION_REPLAY_MIGRATION, P44_APPROVAL_REJECTED_NO_EFFECT_DENIAL_MIGRATION, P54_NATIVE_PROCESS_MODE_NO_EFFECT_DENIAL_MIGRATION } from "./migrations/v40-v44-v54-observation-guards.js";
 
 export * from "./migrations/v01-v10.js";
 export * from "./migrations/v11-v20.js";

@@ -1,8 +1,8 @@
 import type { ExecutionSettlement } from "@arbor/domain";
 import type { ToolInvocation } from "@arbor/model-context";
 import type {
-  AgentLoopStepRecord,
   AgentLoopStepActionRecord,
+  AgentLoopStepRecord,
   BoundedObservation,
   ExecutionDriverError,
 } from "@arbor/ports";
@@ -13,7 +13,10 @@ import {
   recoveryBindingIdentityFor,
   recoveryBindingPolicyRevisionsFor,
 } from "../recovery-binding-source.js";
-import { actionRejectionObservation, isLeaseFencingRejected } from "./action-errors.js";
+import {
+  actionRejectionObservation,
+  isLeaseFencingRejected,
+} from "./action-errors.js";
 import type { makeActionLedger } from "./ledger.js";
 import type {
   AgentLoopActionDependencies,
@@ -38,8 +41,13 @@ export const executeExecutableAction = (
   durableProgress: boolean,
   ledger: ReturnType<typeof makeActionLedger>,
 ): Effect.Effect<ExecutableActionResult, ExecutionDriverError> => {
-  const { input, preparedTurn, loopStepFence, executableInvocationHandler, failure } =
-    dependencies;
+  const {
+    input,
+    preparedTurn,
+    loopStepFence,
+    executableInvocationHandler,
+    failure,
+  } = dependencies;
   const {
     persistActionRejection,
     persistActionObservation,
@@ -64,8 +72,9 @@ export const executeExecutableAction = (
       actionIndex,
       callRef: invocation.callRef,
     });
-    const recoveryBindingPolicyRevisions =
-      recoveryBindingPolicyRevisionsFor(preparedTurn.manifest.controlBasis);
+    const recoveryBindingPolicyRevisions = recoveryBindingPolicyRevisionsFor(
+      preparedTurn.manifest.controlBasis,
+    );
     const executed = yield* Effect.match(
       executableInvocationHandler.handle({
         invocation,
@@ -133,18 +142,13 @@ export const executeExecutableAction = (
         }
         // A persisted corrective failure is model-visible, but it is not
         // successful progress for the shared P12 D2/D4 signal.
-    return { _tag: "Continue", durableProgress };
+        return { _tag: "Continue", durableProgress };
       }
       const settlement = safetyStop("ExecutableToolInvocationRejected");
-      yield* persistActionRejection(
-        settlement,
-        "HandlerRejected",
-        "Denied",
-        {
-          _tag: "HandlerRejected",
-          routeKind: "Executable",
-        },
-      );
+      yield* persistActionRejection(settlement, "HandlerRejected", "Denied", {
+        _tag: "HandlerRejected",
+        routeKind: "Executable",
+      });
       return {
         _tag: "Settle",
         settlement,
@@ -206,8 +210,7 @@ export const executeExecutableAction = (
         _tag: "Interrupted",
         result: { _tag: "StopRequested" },
       };
-      const disposition =
-        executed.outcome.disposition ?? "ExecutionStopping";
+      const disposition = executed.outcome.disposition ?? "ExecutionStopping";
       yield* persistActionRejection(settlement, disposition, "Interrupted");
       return { _tag: "Settle", settlement };
     }

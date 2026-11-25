@@ -24,8 +24,8 @@ import { Effect, Option } from "effect";
 import {
   actionError,
   actionOperationalFailure,
-  generationScopedCommandId,
   findPriorCommandReceipt,
+  generationScopedCommandId,
 } from "./command-receipts.js";
 
 export interface SendMessageDependencies {

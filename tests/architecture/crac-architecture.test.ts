@@ -26,7 +26,9 @@ describe("DID v1.31 MAC-P1 Root Conversation work-initiation boundary", () => {
 
   it("keeps conversation action results exact-execution scoped", () => {
     const decision = source("packages/agent-runtime/src/model-decision.ts");
-    const actions = source("packages/agent-runtime/src/agent-loop-actions/ledger.ts");
+    const actions = source(
+      "packages/agent-runtime/src/agent-loop-actions/ledger.ts",
+    );
     const evidence = source(
       "packages/agent-runtime/src/checkpoint/conversation/evidence.ts",
     );
@@ -35,7 +37,9 @@ describe("DID v1.31 MAC-P1 Root Conversation work-initiation boundary", () => {
     );
     expect(decision).toContain("loadDecisionSessionContext(");
     expect(sessionContext).toContain("belongsToConversationExecution(");
-    expect(sessionContext).toContain("../../checkpoint/conversation/evidence.js");
+    expect(sessionContext).toContain(
+      "../../checkpoint/conversation/evidence.js",
+    );
     expect(evidence).toContain("providerTurnPrefix");
     expect(evidence).toContain("export const belongsToConversationExecution");
     expect(actions).toContain(
@@ -51,7 +55,9 @@ describe("DID v1.31 MAC-P1 Root Conversation work-initiation boundary", () => {
       "packages/application/src/commands/record-decision.ts",
     );
     const drain = source("packages/agent-runtime/src/safe-input-drain.ts");
-    const migrations = source("adapters/persistence-sqlite/src/migrations/v21-v30.ts");
+    const migrations = source(
+      "adapters/persistence-sqlite/src/migrations/v21-v30.ts",
+    );
     expect(controls).toContain(
       ["gov:", "$", "{record.proposalId}:", "$", "{record.revision}"].join(""),
     );

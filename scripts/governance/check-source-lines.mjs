@@ -25,18 +25,22 @@ const before = git(["status", "--porcelain", "-z"]);
 const paths = [...new Set(git(["ls-files", "-z"]).split("\0").filter(Boolean))]
   .filter(isSource)
   .sort();
-const baselinePaths = baseline === null
-  ? new Set()
-  : new Set(git(["ls-tree", "-r", "--name-only", "-z", baseline]).split("\0"));
+const baselinePaths =
+  baseline === null
+    ? new Set()
+    : new Set(
+        git(["ls-tree", "-r", "--name-only", "-z", baseline]).split("\0"),
+      );
 const findings = [];
 const errors = [];
 for (const path of paths) {
   try {
     const content = readFileSync(join(root, path), "utf8");
     if (lineCount(content) <= 800) continue;
-    const baselineCount = baseline !== null && baselinePaths.has(path)
-      ? lineCount(git(["show", baseline + ":" + path]))
-      : undefined;
+    const baselineCount =
+      baseline !== null && baselinePaths.has(path)
+        ? lineCount(git(["show", baseline + ":" + path]))
+        : undefined;
     const finding = inspectFile(path, content, baselineCount);
     if (finding) findings.push(finding);
   } catch (error) {
@@ -47,16 +51,27 @@ findings.sort((a, b) => b.lines - a.lines || a.path.localeCompare(b.path));
 const changed =
   git(["rev-parse", "HEAD"]).trim() !== head ||
   git(["status", "--porcelain", "-z"]) !== before;
-const blocking = findings.filter((finding) => baseline === null || !finding.legacy);
-console.log(JSON.stringify({
-  schema: "arbor/source-lines/v1",
-  maxLines: 800,
-  mode: baseline === null ? "strict" : "transition",
-  baseline, head, dirty: Boolean(before), changed,
-  scanned: paths.length,
-  overLimit: findings.length,
-  blocking: blocking.length,
-  findings,
-  errors,
-}, null, 2));
+const blocking = findings.filter(
+  (finding) => baseline === null || !finding.legacy,
+);
+console.log(
+  JSON.stringify(
+    {
+      schema: "arbor/source-lines/v1",
+      maxLines: 800,
+      mode: baseline === null ? "strict" : "transition",
+      baseline,
+      head,
+      dirty: Boolean(before),
+      changed,
+      scanned: paths.length,
+      overLimit: findings.length,
+      blocking: blocking.length,
+      findings,
+      errors,
+    },
+    null,
+    2,
+  ),
+);
 if (blocking.length || errors.length || changed) process.exitCode = 1;

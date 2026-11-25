@@ -1,4 +1,9 @@
-import { type Execution, parse, ProviderTurnId, workEpisode } from "@arbor/domain";
+import {
+  type Execution,
+  ProviderTurnId,
+  parse,
+  workEpisode,
+} from "@arbor/domain";
 import {
   type ControlBasis,
   decideSessionProjection,
@@ -28,13 +33,23 @@ import type { ConversationDecisionContextResult } from "../conversation-context.
 
 type SessionContextDependencies = Pick<
   ModelDecisionDependencies,
-  "input" | "tx" | "sessions" | "loopSteps" | "loopStepFence" | "providerTurns" | "failure" | "now"
+  | "input"
+  | "tx"
+  | "sessions"
+  | "loopSteps"
+  | "loopStepFence"
+  | "providerTurns"
+  | "failure"
+  | "now"
 >;
 
 type ConversationInput = Pick<
   Extract<ConversationDecisionContextResult, { readonly _tag: "Ready" }>,
-  "conversationExecution" | "conversationOwner" | "conversationMessages" |
-  "conversationCheckpointItems" | "conversationContextRefs"
+  | "conversationExecution"
+  | "conversationOwner"
+  | "conversationMessages"
+  | "conversationCheckpointItems"
+  | "conversationContextRefs"
 >;
 
 /** Project the exact Session frontier and repair only the existing,
@@ -49,20 +64,43 @@ export const loadDecisionSessionContext = (
     readonly controlBasis: ControlBasis;
     readonly currentBindingFingerprint: string;
     readonly providerNativeSupported: boolean;
-    readonly reasoningProjectionBinding: Parameters<typeof projectSessionTimeline>[3];
+    readonly reasoningProjectionBinding: Parameters<
+      typeof projectSessionTimeline
+    >[3];
     readonly loadReasoningAttachmentBlobs: (
       entries: ReadonlyArray<SessionEntryRecord>,
     ) => Effect.Effect<ReadonlyMap<string, Uint8Array>, ExecutionDriverError>;
-    readonly readExecutionTimeline: () => ReturnType<SessionRepositoryService["listRecentEntries"]>;
+    readonly readExecutionTimeline: () => ReturnType<
+      SessionRepositoryService["listRecentEntries"]
+    >;
   },
 ) => {
-  const { input, tx, sessions, loopSteps, loopStepFence, providerTurns, failure, now } = dependencies;
   const {
-    turn, repairAttempt, providerTurnId, loopStep, controlBasis,
-    currentBindingFingerprint, providerNativeSupported, reasoningProjectionBinding,
-    loadReasoningAttachmentBlobs, readExecutionTimeline,
-    conversationExecution, conversationOwner, conversationMessages,
-    conversationCheckpointItems, conversationContextRefs,
+    input,
+    tx,
+    sessions,
+    loopSteps,
+    loopStepFence,
+    providerTurns,
+    failure,
+    now,
+  } = dependencies;
+  const {
+    turn,
+    repairAttempt,
+    providerTurnId,
+    loopStep,
+    controlBasis,
+    currentBindingFingerprint,
+    providerNativeSupported,
+    reasoningProjectionBinding,
+    loadReasoningAttachmentBlobs,
+    readExecutionTimeline,
+    conversationExecution,
+    conversationOwner,
+    conversationMessages,
+    conversationCheckpointItems,
+    conversationContextRefs,
   } = phase;
   return Effect.gen(function* () {
     // A Human Conversation has its own durable history above. The primary
@@ -80,15 +118,10 @@ export const loadDecisionSessionContext = (
       .transact(sessions.supportsTypedTimeline())
       .pipe(Effect.mapError(failure));
     const workBinding = workEpisode(input.execution);
-    const conversationTimeline = (
-      entries: ReadonlyArray<SessionEntryRecord>,
-    ) =>
+    const conversationTimeline = (entries: ReadonlyArray<SessionEntryRecord>) =>
       entries.filter(
         (entry) =>
-          belongsToConversationExecution(
-            entry,
-            input.execution.executionId,
-          ) &&
+          belongsToConversationExecution(entry, input.execution.executionId) &&
           entry.entryKind !== "CheckpointReference" &&
           entry.source?.kind !== "CompactionTurn",
       );
@@ -292,7 +325,10 @@ export const loadDecisionSessionContext = (
             )
             .pipe(Effect.mapError(failure));
         }
-        return { _tag: "Complete" as const, outcome: { _tag: "Settle" as const, settlement } };
+        return {
+          _tag: "Complete" as const,
+          outcome: { _tag: "Settle" as const, settlement },
+        };
       }
     } else {
       sessionProjection = projectionDecision.projection;
@@ -332,9 +368,7 @@ export const loadDecisionSessionContext = (
         (_, index) =>
           `conversation-checkpoint:${input.execution.workspaceId}:${conversationOwner?.contextEpoch ?? 0}:${index}`,
       ),
-      ...conversationMessages.map(
-        (_, index) => `conversation-input:${index}`,
-      ),
+      ...conversationMessages.map((_, index) => `conversation-input:${index}`),
       ...sessionProjection.inputItems.map(
         (_, index) =>
           sessionProjection.contextRefs[index] ??

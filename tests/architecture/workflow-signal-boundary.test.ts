@@ -8,7 +8,10 @@ const source = (path: string) => readFileSync(join(root, path), "utf8");
 
 const controlDirectory = "apps/single-workspace/src/control-actions";
 const controlModules = () =>
-  readdirSync(join(root, controlDirectory), { recursive: true })
+  readdirSync(join(root, controlDirectory), {
+    recursive: true,
+    encoding: "utf8",
+  })
     .filter((entry) => entry.endsWith(".ts"))
     .map((entry) => `${controlDirectory}/${entry.replaceAll("\\", "/")}`)
     .sort();
@@ -25,14 +28,14 @@ function forbiddenControlEdge(from: string, specifier: string): boolean {
   if (
     moduleIdentity(from) === `${controlDirectory}/assign-work` &&
     target === `${controlDirectory}/assign-work/receipt-binding`
-  ) return false;
+  )
+    return false;
   return (
     target.startsWith(`${controlDirectory}/`) &&
     (target !== `${controlDirectory}/command-receipts` ||
       moduleIdentity(from) === target)
   );
 }
-
 
 describe("workflow signal boundary", () => {
   it("has one typed application consumer and one offset-driven production daemon", () => {
@@ -56,10 +59,7 @@ describe("workflow signal boundary", () => {
   });
 
   it("keeps verification wake delivery out of the synchronous control handler", () => {
-    const controls = [
-      `${controlDirectory}.ts`,
-      ...controlModules(),
-    ];
+    const controls = [`${controlDirectory}.ts`, ...controlModules()];
     for (const path of controls) {
       const handler = source(path);
       expect(handler).not.toContain("channel1Release");
@@ -74,13 +74,25 @@ describe("control action capability boundary", () => {
     const from = `${controlDirectory}/assign-work.ts`;
     expect(forbiddenControlEdge(from, "../control-actions.js")).toBe(true);
     expect(forbiddenControlEdge(from, "./delivery.js")).toBe(true);
-    expect(forbiddenControlEdge(from, "./assign-work/receipt-binding.js")).toBe(false);
-    expect(forbiddenControlEdge(`${controlDirectory}/delivery.ts`, "./assign-work/receipt-binding.js")).toBe(true);
-    expect(forbiddenControlEdge(`${controlDirectory}/assign-work/receipt-binding.ts`, "../assign-work.js")).toBe(true);
-    expect(forbiddenControlEdge(from, "./command-receipts.js")).toBe(false);
-    expect(forbiddenControlEdge(from, "../durable-control-action-effect.js")).toBe(
+    expect(forbiddenControlEdge(from, "./assign-work/receipt-binding.js")).toBe(
       false,
     );
+    expect(
+      forbiddenControlEdge(
+        `${controlDirectory}/delivery.ts`,
+        "./assign-work/receipt-binding.js",
+      ),
+    ).toBe(true);
+    expect(
+      forbiddenControlEdge(
+        `${controlDirectory}/assign-work/receipt-binding.ts`,
+        "../assign-work.js",
+      ),
+    ).toBe(true);
+    expect(forbiddenControlEdge(from, "./command-receipts.js")).toBe(false);
+    expect(
+      forbiddenControlEdge(from, "../durable-control-action-effect.js"),
+    ).toBe(false);
     expect(
       forbiddenControlEdge(
         `${controlDirectory}/command-receipts.ts`,

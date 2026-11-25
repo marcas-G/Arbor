@@ -4,17 +4,33 @@ import { inspectFile, isSource, lineCount } from "./source-lines-lib.mjs";
 
 test("physical lines count comments and blank lines without a phantom trailing line", () => {
   for (const [input, count] of [
-    ["", 0], ["a\n", 1], ["a\r\nb\r\n", 2],
-    ["a\n\n", 2], ["a\r", 1], ["a", 1],
+    ["", 0],
+    ["a\n", 1],
+    ["a\r\nb\r\n", 2],
+    ["a\n\n", 2],
+    ["a\r", 1],
+    ["a", 1],
     ["// comment\n\nconst x = 1;\n", 3],
-  ]) assert.equal(lineCount(input), count);
+  ])
+    assert.equal(lineCount(input), count);
 });
 
 test("includes implementation, tests and scripts; excludes non-source assets", () => {
-  for (const path of ["packages/a/src/x.ts", "tests/x.test.ts", "scripts/x.mjs", "a.py", "a.sql"]) {
+  for (const path of [
+    "packages/a/src/x.ts",
+    "tests/x.test.ts",
+    "scripts/x.mjs",
+    "a.py",
+    "a.sql",
+  ]) {
     assert.equal(isSource(path), true);
   }
-  for (const path of ["pnpm-lock.yaml", "docs/x.md", "a/dist/x.js", "node_modules/x/index.js"]) {
+  for (const path of [
+    "pnpm-lock.yaml",
+    "docs/x.md",
+    "a/dist/x.js",
+    "node_modules/x/index.js",
+  ]) {
     assert.equal(isSource(path), false);
   }
 });

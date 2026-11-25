@@ -8,7 +8,10 @@ import type {
 import { Effect, Option } from "effect";
 import type { ModelDecisionOutcome } from "../agent-loop-policy.js";
 import { decodeExhaustedRepairDisposition } from "../agent-loop-step-recovery.js";
-import type { runSummaryCompaction, SummaryCompactionInput } from "../compaction-coordinator.js";
+import type {
+  runSummaryCompaction,
+  SummaryCompactionInput,
+} from "../compaction-coordinator.js";
 import type { ModelDecisionDependencies } from "./contract.js";
 import { recoverConversationOverflow } from "./recovery/conversation-overflow.js";
 import type { OverflowRecoveryState } from "./recovery/overflow-state.js";
@@ -144,7 +147,10 @@ export const recoverDecisionStep = (
             ),
           )
           .pipe(Effect.mapError(failure));
-        return { _tag: "Complete" as const, outcome: { _tag: "Settle" as const, settlement } };
+        return {
+          _tag: "Complete" as const,
+          outcome: { _tag: "Settle" as const, settlement },
+        };
       }
       if (
         overflow.overflowRecoveryAttempt === 0 &&
@@ -189,7 +195,10 @@ export const recoverDecisionStep = (
                 now,
                 ...(dependencies.conversationCheckpoints === undefined
                   ? {}
-                  : { conversationCheckpoints: dependencies.conversationCheckpoints }),
+                  : {
+                      conversationCheckpoints:
+                        dependencies.conversationCheckpoints,
+                    }),
               },
               {
                 turn,

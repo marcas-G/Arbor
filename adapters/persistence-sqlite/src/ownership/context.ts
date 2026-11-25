@@ -1,7 +1,4 @@
-import {
-  Actor,
-  parse,
-} from "@arbor/domain";
+import { Actor, parse } from "@arbor/domain";
 import {
   Clock,
   DomainEventJournal,
@@ -15,17 +12,13 @@ import {
   WorkspaceRepository,
   WorkspaceResourceActivationStore,
 } from "@arbor/ports";
-import {
-  Effect,
-} from "effect";
-import {
-  SqlClient,
-} from "effect/unstable/sql/SqlClient";
-import {
-  type WorkspaceResourceActivationQualificationProbe,
-} from "./claim-codec.js";
+import { Effect } from "effect";
+import { SqlClient } from "effect/unstable/sql/SqlClient";
+import type { WorkspaceResourceActivationQualificationProbe } from "./claim-codec.js";
 
-export const makeOwnershipContext = (qualificationProbe?: WorkspaceResourceActivationQualificationProbe) =>
+export const makeOwnershipContext = (
+  qualificationProbe?: WorkspaceResourceActivationQualificationProbe,
+) =>
   Effect.gen(function* () {
     const environment = yield* ProjectEnvironmentPort;
     const environmentResolver = yield* Effect.serviceOption(
@@ -52,6 +45,23 @@ export const makeOwnershipContext = (qualificationProbe?: WorkspaceResourceActiv
       "system:workspace-resource-activation",
     );
 
-    return { environment, environmentResolver, tx, sql, runOwnershipQuery, repository, revisions, clock, workspaces, activationIntents, journal, ids, activationActor, qualificationProbe };
+    return {
+      environment,
+      environmentResolver,
+      tx,
+      sql,
+      runOwnershipQuery,
+      repository,
+      revisions,
+      clock,
+      workspaces,
+      activationIntents,
+      journal,
+      ids,
+      activationActor,
+      qualificationProbe,
+    };
   });
-export type OwnershipContext = Effect.Success<ReturnType<typeof makeOwnershipContext>>;
+export type OwnershipContext = Effect.Success<
+  ReturnType<typeof makeOwnershipContext>
+>;

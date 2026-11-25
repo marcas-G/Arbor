@@ -19,4 +19,3 @@ export const isLeaseFencingRejected = (
   cause !== null &&
   "_tag" in cause &&
   cause._tag === "LeaseFencingRejected";
-

@@ -1,7 +1,11 @@
 import { Actor, ID_SCHEMAS, isIsoTimestamp } from "@arbor/domain";
 import { Schema } from "effect";
-import type { CommandInputIssue, CommandInputIssueRule, DecodeCommandPayloadResult } from "./types.js";
 import type { Rule } from "./rules.js";
+import type {
+  CommandInputIssue,
+  CommandInputIssueRule,
+  DecodeCommandPayloadResult,
+} from "./types.js";
 
 const INVALID = Symbol("invalid command input");
 type Invalid = typeof INVALID;
@@ -300,4 +304,3 @@ const decodeJson = (
   }
   return output;
 };
-

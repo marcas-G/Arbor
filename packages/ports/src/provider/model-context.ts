@@ -1,4 +1,9 @@
-import type { AgentBinding, ContextEpochNumber, SessionId, WorkspaceId } from "@arbor/domain";
+import type {
+  AgentBinding,
+  ContextEpochNumber,
+  SessionId,
+  WorkspaceId,
+} from "@arbor/domain";
 import { Context, type Effect } from "effect";
 import type { ModelCapabilityError, SkillRegistryError } from "../errors.js";
 import type { SideEffectSemantics } from "../tool.js";

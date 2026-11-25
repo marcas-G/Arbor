@@ -3,16 +3,19 @@ import { workEpisode } from "@arbor/domain";
 import type {
   AssignWorkBindingFailureCode,
   AssignWorkTargetBinding,
+  ControlApprovalStoreService,
   DomainEventJournalService,
   PermissionGrantRepositoryService,
-  ControlApprovalStoreService,
   TransactionPortService,
   WorkRepositoryService,
   WorkspaceRepositoryService,
 } from "@arbor/ports";
 import { sha256Hex } from "@arbor/ports";
 import { Effect, Option } from "effect";
-import { actionOperationalFailure, type PriorCommittedCommandReceipt } from "../command-receipts.js";
+import {
+  actionOperationalFailure,
+  type PriorCommittedCommandReceipt,
+} from "../command-receipts.js";
 
 export const validateAssignWorkReceiptBinding = (input: {
   readonly binding: AssignWorkTargetBinding;
@@ -216,4 +219,3 @@ export const validateAssignWorkReceiptBinding = (input: {
   }).pipe(
     Effect.mapError(actionOperationalFailure("AssignWork.bindingValidation")),
   );
-

@@ -1,33 +1,33 @@
 import {
-  Clock,
-  DomainEventJournal,
-  EnvironmentRevisionStore,
-  IdGenerator,
+  type Clock,
+  type DomainEventJournal,
+  type EnvironmentRevisionStore,
+  type IdGenerator,
   OwnershipWriteService,
-  ProjectEnvironmentPort,
-  ResourceOwnershipRepository,
-  TransactionPort,
-  WorkspaceRepository,
-  WorkspaceResourceActivationStore,
+  type ProjectEnvironmentPort,
+  type ResourceOwnershipRepository,
+  type TransactionPort,
+  type WorkspaceRepository,
+  type WorkspaceResourceActivationStore,
 } from "@arbor/ports";
-import {
-  Effect,
-  Layer,
-} from "effect";
-import {
-  SqlClient,
-} from "effect/unstable/sql/SqlClient";
+import { Effect, Layer } from "effect";
+import type { SqlClient } from "effect/unstable/sql/SqlClient";
+import { makeActivationWrites } from "./ownership/activation.js";
 import type { WorkspaceResourceActivationQualificationProbe } from "./ownership/claim-codec.js";
 import { makeOwnershipContext } from "./ownership/context.js";
-import { makeActivationWrites } from "./ownership/activation.js";
 import { makeDelegationWrites } from "./ownership/delegation.js";
 import { makeReclamationWrites } from "./ownership/reclamation.js";
 
-export type { WorkspaceResourceActivationQualificationEvent, WorkspaceResourceActivationQualificationProbe } from "./ownership/claim-codec.js";
-export { ResourceOwnershipRepositoryLive } from "./ownership/repository.js";
+export type {
+  WorkspaceResourceActivationQualificationEvent,
+  WorkspaceResourceActivationQualificationProbe,
+} from "./ownership/claim-codec.js";
 export { EnvironmentRevisionStoreLive } from "./ownership/environment-revision.js";
+export { ResourceOwnershipRepositoryLive } from "./ownership/repository.js";
 
-const makeOwnershipWriteServiceEffect = (qualificationProbe?: WorkspaceResourceActivationQualificationProbe) =>
+const makeOwnershipWriteServiceEffect = (
+  qualificationProbe?: WorkspaceResourceActivationQualificationProbe,
+) =>
   Effect.gen(function* () {
     const context = yield* makeOwnershipContext(qualificationProbe);
     return OwnershipWriteService.of({
@@ -60,4 +60,3 @@ export const OwnershipWriteServiceWithQualificationProbe = (
 
 export const OwnershipWriteServiceLive =
   OwnershipWriteServiceWithQualificationProbe();
-

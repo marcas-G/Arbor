@@ -69,8 +69,9 @@ export const generationScopedCommandId = (
   return parse(CommandId)(`cmd_${newUuid7(namespace, seed)}`);
 };
 
-export const legacySelectCurrentWorkCommandId = (decisionId: string): CommandIdType =>
-  parse(CommandId)(`cmd_${decisionId.slice("dec_".length)}`);
+export const legacySelectCurrentWorkCommandId = (
+  decisionId: string,
+): CommandIdType => parse(CommandId)(`cmd_${decisionId.slice("dec_".length)}`);
 
 export const selectCurrentWorkCommandId = (
   decisionId: string,

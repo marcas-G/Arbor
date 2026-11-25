@@ -1,8 +1,15 @@
-import { type Execution, ExecutionId, ProviderTurnId, parse } from "@arbor/domain";
+import {
+  type Execution,
+  ExecutionId,
+  ProviderTurnId,
+  parse,
+} from "@arbor/domain";
 import type { PortableInputItem, PortableModelRequestV2 } from "@arbor/ports";
 import { sha256Hex } from "@arbor/ports";
 
-export const nativeCompactionProviderTurnId = (value: string): ProviderTurnId | null =>
+export const nativeCompactionProviderTurnId = (
+  value: string,
+): ProviderTurnId | null =>
   (() => {
     try {
       const decoded = parse(ProviderTurnId)(value);
@@ -81,7 +88,9 @@ export const containsNativeCheckpointInput = (
       item.implementation === "ProviderNative",
   );
 
-export const portableRequestHasNativeCheckpoint = (portableRequestJson: string) => {
+export const portableRequestHasNativeCheckpoint = (
+  portableRequestJson: string,
+) => {
   try {
     const value = JSON.parse(portableRequestJson) as unknown;
     if (

@@ -1,6 +1,4 @@
-import type {
-  ProjectId,
-} from "@arbor/domain";
+import type { ProjectId } from "@arbor/domain";
 import {
   decodeCanonicalSandboxPolicyDecisionCommittedInternal,
   encodeExecutionEpisodeBinding,
@@ -14,46 +12,48 @@ import {
   sha256Hex,
   verifyRecoveryBindingV1,
 } from "@arbor/ports";
-import {
-  Effect,
-} from "effect";
-import {
-  persistenceCorruption,
-} from "../repository-error.js";
-import {
-  type SandboxProviderUnavailableAttentionDbRow,
-  type ProcessExecutionUnavailableDbRow,
-  canonicalUtcText,
-} from "./row-codecs.js";
+import { Effect } from "effect";
+import { persistenceCorruption } from "../repository-error.js";
 import type { ProjectionContext } from "./context.js";
+import {
+  canonicalUtcText,
+  type ProcessExecutionUnavailableDbRow,
+  type SandboxProviderUnavailableAttentionDbRow,
+} from "./row-codecs.js";
 
-export const makeSandboxUnavailableQueries = (context: ProjectionContext): Pick<AttentionProjectionStoreService, "listProjectedSandboxProviderUnavailableFailures" | "listProjectedProcessExecutionUnavailable"> => {
+export const makeSandboxUnavailableQueries = (
+  context: ProjectionContext,
+): Pick<
+  AttentionProjectionStoreService,
+  | "listProjectedSandboxProviderUnavailableFailures"
+  | "listProjectedProcessExecutionUnavailable"
+> => {
   const { sql, run } = context;
   return {
-        listProjectedSandboxProviderUnavailableFailures: (projectId, now) =>
-          Effect.gen(function* () {
-            if (!canonicalUtcText(now)) {
-              return yield* Effect.fail(
-                persistenceCorruption(
-                  "AttentionProjectionStore",
-                  "sandbox-provider-unavailable-read",
-                  "query time is not canonical UTC",
-                ),
-              );
-            }
-            const policyColumns = yield* run(
-              sql.unsafe<{ readonly name: string }>(
-                "PRAGMA table_info(sandbox_policy_decisions)",
-              ),
-            );
-            const provenanceColumns = policyColumns.some(
-              (column) => column.name === "authority_kind",
-            )
-              ? "d.authority_kind, d.workspace_authorization_revision"
-              : "'LegacyHumanGrant' AS authority_kind, NULL AS workspace_authorization_revision";
-            const rows = yield* run(
-              sql.unsafe<SandboxProviderUnavailableAttentionDbRow>(
-                `SELECT f.project_id, f.attention_fact_id, f.workspace_id,
+    listProjectedSandboxProviderUnavailableFailures: (projectId, now) =>
+      Effect.gen(function* () {
+        if (!canonicalUtcText(now)) {
+          return yield* Effect.fail(
+            persistenceCorruption(
+              "AttentionProjectionStore",
+              "sandbox-provider-unavailable-read",
+              "query time is not canonical UTC",
+            ),
+          );
+        }
+        const policyColumns = yield* run(
+          sql.unsafe<{ readonly name: string }>(
+            "PRAGMA table_info(sandbox_policy_decisions)",
+          ),
+        );
+        const provenanceColumns = policyColumns.some(
+          (column) => column.name === "authority_kind",
+        )
+          ? "d.authority_kind, d.workspace_authorization_revision"
+          : "'LegacyHumanGrant' AS authority_kind, NULL AS workspace_authorization_revision";
+        const rows = yield* run(
+          sql.unsafe<SandboxProviderUnavailableAttentionDbRow>(
+            `SELECT f.project_id, f.attention_fact_id, f.workspace_id,
                         f.execution_id, f.policy_revision, f.first_detected_at,
                         f.provider_version, f.probe_evidence_ref, f.failure_code,
                         d.policy_digest, d.profile_id, d.provider_id,
@@ -105,145 +105,142 @@ export const makeSandboxUnavailableQueries = (context: ProjectionContext): Pick<
                          AND d2.episode_binding_json = s.episode_json
                     )
                   ORDER BY f.first_detected_at, f.attention_fact_id`,
-                [projectId],
+            [projectId],
+          ),
+        );
+        for (const row of rows) {
+          if (!canonicalUtcText(row.first_detected_at)) {
+            return yield* Effect.fail(
+              persistenceCorruption(
+                "AttentionProjectionStore",
+                "sandbox-provider-unavailable-read",
+                "fact timestamp is not canonical UTC",
               ),
             );
-            for (const row of rows) {
-              if (!canonicalUtcText(row.first_detected_at)) {
-                return yield* Effect.fail(
-                  persistenceCorruption(
-                    "AttentionProjectionStore",
-                    "sandbox-provider-unavailable-read",
-                    "fact timestamp is not canonical UTC",
-                  ),
-                );
-              }
-              const committed =
-                row.command_resolution === "Committed" &&
-                (row.command_schema_version === "1" ||
-                  row.command_schema_version === "2") &&
-                row.command_project_id === row.project_id &&
-                row.command_result_json !== null
-                  ? decodeCanonicalSandboxPolicyDecisionCommittedInternal(
-                      row.command_result_json,
-                      sha256Hex,
-                    )
-                  : undefined;
-              if (
-                committed === undefined ||
-                (row.authority_kind === "WorkspaceAuthorization"
-                  ? row.command_schema_version !== "1" ||
-                    committed.version !== 3 ||
-                    committed.workspaceAuthorizationRevision !==
-                      row.workspace_authorization_revision
-                  : row.authority_kind !== "LegacyHumanGrant" ||
-                    row.workspace_authorization_revision !== null ||
-                    committed.version === 3 ||
-                    (row.command_schema_version === "1" &&
-                      committed.version !== 1)) ||
-                committed.commandId !== row.decision_command_id ||
-                committed.projectId !== row.project_id ||
-                committed.workspaceId !== row.workspace_id ||
-                committed.executionId !== row.execution_id ||
-                committed.policyRevision !== row.policy_revision ||
-                committed.policyDigest !== row.policy_digest ||
-                encodeExecutionEpisodeBinding(committed.episodeBinding) !==
-                  row.episode_binding_json ||
-                row.episode_binding_json !== row.active_episode_json ||
-                committed.effectivePolicySnapshot.kind !== "OsEnforced" ||
-                committed.effectivePolicySnapshot.profile !== row.profile_id ||
-                committed.effectivePolicySnapshot.providerId !==
-                  row.provider_id ||
-                committed.effectivePolicySnapshot.providerVersion !==
-                  row.provider_version
-              ) {
-                return yield* Effect.fail(
-                  persistenceCorruption(
-                    "AttentionProjectionStore",
-                    "sandbox-provider-unavailable-read",
-                    "committed policy result does not match the P9 fact binding",
-                  ),
-                );
-              }
-              const disposition = JSON.parse(row.disposition_json) as Record<
-                string,
-                unknown
-              >;
-              if (
-                disposition._tag !== "SandboxUnavailableV1" ||
-                disposition.attentionFactId !== row.attention_fact_id ||
-                disposition.policyRevision !== row.policy_revision ||
-                disposition.policyDigest !== row.policy_digest ||
-                disposition.profile !== row.profile_id ||
-                disposition.providerId !== row.provider_id ||
-                disposition.providerVersion !== row.provider_version ||
-                disposition.capabilityRevision !==
-                  String(
-                    committed.effectivePolicySnapshot.capabilityRevision,
-                  ) ||
-                disposition.probeEvidenceRef !== row.probe_evidence_ref ||
-                disposition.failureCode !== row.failure_code
-              ) {
-                return yield* Effect.fail(
-                  persistenceCorruption(
-                    "AttentionProjectionStore",
-                    "sandbox-provider-unavailable-read",
-                    "P3 terminal disposition does not match the P9 unavailable fact",
-                  ),
-                );
-              }
-              const factRows = yield* run(
-                sql.unsafe<{
-                  readonly policy_digest: string;
-                  readonly profile_id: string;
-                  readonly provider_id: string;
-                  readonly provider_version: string;
-                  readonly probe_evidence_ref: string | null;
-                  readonly failure_code: string;
-                }>(
-                  `SELECT policy_digest, profile_id, provider_id,
+          }
+          const committed =
+            row.command_resolution === "Committed" &&
+            (row.command_schema_version === "1" ||
+              row.command_schema_version === "2") &&
+            row.command_project_id === row.project_id &&
+            row.command_result_json !== null
+              ? decodeCanonicalSandboxPolicyDecisionCommittedInternal(
+                  row.command_result_json,
+                  sha256Hex,
+                )
+              : undefined;
+          if (
+            committed === undefined ||
+            (row.authority_kind === "WorkspaceAuthorization"
+              ? row.command_schema_version !== "1" ||
+                committed.version !== 3 ||
+                committed.workspaceAuthorizationRevision !==
+                  row.workspace_authorization_revision
+              : row.authority_kind !== "LegacyHumanGrant" ||
+                row.workspace_authorization_revision !== null ||
+                committed.version === 3 ||
+                (row.command_schema_version === "1" &&
+                  committed.version !== 1)) ||
+            committed.commandId !== row.decision_command_id ||
+            committed.projectId !== row.project_id ||
+            committed.workspaceId !== row.workspace_id ||
+            committed.executionId !== row.execution_id ||
+            committed.policyRevision !== row.policy_revision ||
+            committed.policyDigest !== row.policy_digest ||
+            encodeExecutionEpisodeBinding(committed.episodeBinding) !==
+              row.episode_binding_json ||
+            row.episode_binding_json !== row.active_episode_json ||
+            committed.effectivePolicySnapshot.kind !== "OsEnforced" ||
+            committed.effectivePolicySnapshot.profile !== row.profile_id ||
+            committed.effectivePolicySnapshot.providerId !== row.provider_id ||
+            committed.effectivePolicySnapshot.providerVersion !==
+              row.provider_version
+          ) {
+            return yield* Effect.fail(
+              persistenceCorruption(
+                "AttentionProjectionStore",
+                "sandbox-provider-unavailable-read",
+                "committed policy result does not match the P9 fact binding",
+              ),
+            );
+          }
+          const disposition = JSON.parse(row.disposition_json) as Record<
+            string,
+            unknown
+          >;
+          if (
+            disposition._tag !== "SandboxUnavailableV1" ||
+            disposition.attentionFactId !== row.attention_fact_id ||
+            disposition.policyRevision !== row.policy_revision ||
+            disposition.policyDigest !== row.policy_digest ||
+            disposition.profile !== row.profile_id ||
+            disposition.providerId !== row.provider_id ||
+            disposition.providerVersion !== row.provider_version ||
+            disposition.capabilityRevision !==
+              String(committed.effectivePolicySnapshot.capabilityRevision) ||
+            disposition.probeEvidenceRef !== row.probe_evidence_ref ||
+            disposition.failureCode !== row.failure_code
+          ) {
+            return yield* Effect.fail(
+              persistenceCorruption(
+                "AttentionProjectionStore",
+                "sandbox-provider-unavailable-read",
+                "P3 terminal disposition does not match the P9 unavailable fact",
+              ),
+            );
+          }
+          const factRows = yield* run(
+            sql.unsafe<{
+              readonly policy_digest: string;
+              readonly profile_id: string;
+              readonly provider_id: string;
+              readonly provider_version: string;
+              readonly probe_evidence_ref: string | null;
+              readonly failure_code: string;
+            }>(
+              `SELECT policy_digest, profile_id, provider_id,
                           provider_version, probe_evidence_ref, failure_code
                      FROM sandbox_provider_unavailable_facts
                     WHERE project_id = ? AND attention_fact_id = ?`,
-                  [projectId, row.attention_fact_id],
-                ),
-              );
-              const fact = factRows[0];
-              if (
-                fact === undefined ||
-                fact.policy_digest !== row.policy_digest ||
-                fact.profile_id !== row.profile_id ||
-                fact.provider_id !== row.provider_id ||
-                fact.provider_version !== row.provider_version ||
-                fact.probe_evidence_ref !== row.probe_evidence_ref ||
-                fact.failure_code !== row.failure_code
-              ) {
-                return yield* Effect.fail(
-                  persistenceCorruption(
-                    "AttentionProjectionStore",
-                    "sandbox-provider-unavailable-read",
-                    "current policy decision conflicts with its immutable source fact",
-                  ),
-                );
-              }
-            }
-            return rows.map(
-              (row) =>
-                ({
-                  projectId: row.project_id as ProjectId,
-                  attentionFactId: row.attention_fact_id,
-                  workspaceId: row.workspace_id as never,
-                  executionId: row.execution_id,
-                  policyRevision: row.policy_revision,
-                  firstDetectedAt: row.first_detected_at,
-                }) satisfies SandboxProviderUnavailableAttentionProjectionRow,
+              [projectId, row.attention_fact_id],
+            ),
+          );
+          const fact = factRows[0];
+          if (
+            fact === undefined ||
+            fact.policy_digest !== row.policy_digest ||
+            fact.profile_id !== row.profile_id ||
+            fact.provider_id !== row.provider_id ||
+            fact.provider_version !== row.provider_version ||
+            fact.probe_evidence_ref !== row.probe_evidence_ref ||
+            fact.failure_code !== row.failure_code
+          ) {
+            return yield* Effect.fail(
+              persistenceCorruption(
+                "AttentionProjectionStore",
+                "sandbox-provider-unavailable-read",
+                "current policy decision conflicts with its immutable source fact",
+              ),
             );
-          }),
-        listProjectedProcessExecutionUnavailable: (projectId) =>
-          Effect.gen(function* () {
-            const rows = yield* run(
-              sql.unsafe<ProcessExecutionUnavailableDbRow>(
-                `SELECT e.project_id, e.execution_id, e.workspace_id,
+          }
+        }
+        return rows.map(
+          (row) =>
+            ({
+              projectId: row.project_id as ProjectId,
+              attentionFactId: row.attention_fact_id,
+              workspaceId: row.workspace_id as never,
+              executionId: row.execution_id,
+              policyRevision: row.policy_revision,
+              firstDetectedAt: row.first_detected_at,
+            }) satisfies SandboxProviderUnavailableAttentionProjectionRow,
+        );
+      }),
+    listProjectedProcessExecutionUnavailable: (projectId) =>
+      Effect.gen(function* () {
+        const rows = yield* run(
+          sql.unsafe<ProcessExecutionUnavailableDbRow>(
+            `SELECT e.project_id, e.execution_id, e.workspace_id,
                         i.invocation_id, i.tool_name, i.tool_version,
                         i.side_effect_semantics, i.arguments_json, i.approval_id,
                         i.effect_admission_state, i.settled_at,
@@ -312,161 +309,151 @@ export const makeSandboxUnavailableQueries = (context: ProjectionContext): Pick<
                        WHERE a.invocation_id = i.invocation_id
                          AND a.admission_state = 'MayHaveStarted')
                   ORDER BY e.execution_id, i.settled_at, i.invocation_id`,
-                [projectId],
+            [projectId],
+          ),
+        );
+        const projections: ProcessExecutionUnavailableProjectionRow[] = [];
+        const seenInvocations = new Set<string>();
+        for (const row of rows) {
+          const operation = "process-execution-unavailable-read";
+          const failIntegrity = (reason: string) =>
+            persistenceCorruption(
+              "AttentionProjectionStore",
+              operation,
+              reason,
+            );
+          if (seenInvocations.has(row.invocation_id)) {
+            return yield* Effect.fail(
+              failIntegrity("P4 invocation has a non-unique P3 action join"),
+            );
+          }
+          seenInvocations.add(row.invocation_id);
+          if (
+            row.settled_at === null ||
+            !canonicalUtcText(row.settled_at) ||
+            row.tool_name !== "shell" ||
+            row.effect_admission_state !== "NotAdmitted" ||
+            row.settlement_kind !== "Denied" ||
+            row.settlement_provenance !== "Ordinary" ||
+            row.result_ref !== null ||
+            row.observation_format_version !== null ||
+            row.observation_json !== null ||
+            row.observation_sha256 !== null ||
+            row.selected_attempt_no !== null ||
+            row.selected_fact_id !== null
+          ) {
+            return yield* Effect.fail(
+              failIntegrity(
+                "P4 denial post-image is not the exact NotAdmitted shape",
               ),
             );
-            const projections: ProcessExecutionUnavailableProjectionRow[] = [];
-            const seenInvocations = new Set<string>();
-            for (const row of rows) {
-              const operation = "process-execution-unavailable-read";
-              const failIntegrity = (reason: string) =>
-                persistenceCorruption(
-                  "AttentionProjectionStore",
-                  operation,
-                  reason,
-                );
-              if (seenInvocations.has(row.invocation_id)) {
-                return yield* Effect.fail(
-                  failIntegrity(
-                    "P4 invocation has a non-unique P3 action join",
-                  ),
-                );
-              }
-              seenInvocations.add(row.invocation_id);
-              if (
-                row.settled_at === null ||
-                !canonicalUtcText(row.settled_at) ||
-                row.tool_name !== "shell" ||
-                row.effect_admission_state !== "NotAdmitted" ||
-                row.settlement_kind !== "Denied" ||
-                row.settlement_provenance !== "Ordinary" ||
-                row.result_ref !== null ||
-                row.observation_format_version !== null ||
-                row.observation_json !== null ||
-                row.observation_sha256 !== null ||
-                row.selected_attempt_no !== null ||
-                row.selected_fact_id !== null
-              ) {
-                return yield* Effect.fail(
-                  failIntegrity(
-                    "P4 denial post-image is not the exact NotAdmitted shape",
-                  ),
-                );
-              }
-              let settlement: unknown;
-              try {
-                settlement = JSON.parse(
-                  row.settlement_json ?? "null",
-                ) as unknown;
-              } catch {
-                return yield* Effect.fail(
-                  failIntegrity("P4 Denied settlement is malformed"),
-                );
-              }
-              const settlementRecord =
-                typeof settlement === "object" && settlement !== null
-                  ? (settlement as Record<string, unknown>)
-                  : undefined;
-              const reasonCode = settlementRecord?.reasonCode;
-              if (
-                settlementRecord === undefined ||
-                Object.keys(settlementRecord).length !== 3 ||
-                settlementRecord._tag !== "Denied" ||
-                settlementRecord.projectionVersion !== 1 ||
-                (reasonCode !== "ProcessExecutionDisabled" &&
-                  reasonCode !== "NativeOsTupleUnavailable")
-              ) {
-                return yield* Effect.fail(
-                  failIntegrity(
-                    "P4 denial reason or projection version is invalid",
-                  ),
-                );
-              }
-              if (
-                row.recovery_binding_state !== "Bound" ||
-                row.recovery_binding_sha256 === null ||
-                row.recovery_binding_sha256 !== row.binding_sha256 ||
-                row.binding_version !== 1 ||
-                row.canonical_binding_json === null ||
-                row.binding_sha256 === null ||
-                row.action_state !== "TerminalRejected" ||
-                row.action_input_hash !== sha256Hex(row.arguments_json) ||
-                row.action_kind !== row.tool_name ||
-                row.p3_logical_step_no === null ||
-                row.p3_repair_attempt === null ||
-                row.p3_logical_action_id === null ||
-                row.p3_action_index === null ||
-                row.p3_call_ref === null ||
-                row.p3_provider_turn_id === null
-              ) {
-                return yield* Effect.fail(
-                  failIntegrity(
-                    "exact P4/P3 RecoveryBinding join is unavailable",
-                  ),
-                );
-              }
-              const verified = verifyRecoveryBindingV1({
-                invocationId: row.invocation_id as never,
-                canonicalJson: row.canonical_binding_json,
-                bindingSha256: row.binding_sha256,
-              });
-              const binding = verified?.value;
-              let argumentsDigest: string | null = null;
-              try {
-                argumentsDigest = canonicalArgumentsDigestV1(
-                  JSON.parse(row.arguments_json) as unknown,
-                );
-              } catch {
-                argumentsDigest = null;
-              }
-              if (
-                binding === undefined ||
-                binding.executionId !== row.execution_id ||
-                binding.invocationId !== row.invocation_id ||
-                binding.toolName !== row.tool_name ||
-                binding.toolVersion !== row.tool_version ||
-                binding.sideEffectSemantics !== row.side_effect_semantics ||
-                binding.approvalId !== row.approval_id ||
-                binding.canonicalArgumentsDigest !== argumentsDigest ||
-                binding.providerTurnId !== row.p3_provider_turn_id ||
-                binding.logicalStepNo !== row.p3_logical_step_no ||
-                binding.repairAttempt !== row.p3_repair_attempt ||
-                binding.logicalActionId !== row.p3_logical_action_id ||
-                binding.actionIndex !== row.p3_action_index ||
-                binding.callRef !== row.p3_call_ref
-              ) {
-                return yield* Effect.fail(
-                  failIntegrity(
-                    "P4 invocation does not match its exact P3 action",
-                  ),
-                );
-              }
-              const attentionIdentity = {
-                executionId: row.execution_id,
-                workspaceId: row.workspace_id as never,
-                invocationId: row.invocation_id,
-                providerTurnId: binding.providerTurnId,
-                logicalStepNo: binding.logicalStepNo,
-                repairAttempt: binding.repairAttempt,
-                logicalActionId: binding.logicalActionId,
-                actionIndex: binding.actionIndex,
-                callRef: binding.callRef,
-                reasonCode,
-              } satisfies Omit<
-                ProcessExecutionUnavailableProjectionRow,
-                "attentionFactId" | "occurredAt" | "projectId"
-              >;
-              projections.push({
-                projectId: row.project_id as ProjectId,
-                ...attentionIdentity,
-                attentionFactId:
-                  processExecutionUnavailableAttentionFactIdV1(
-                    attentionIdentity,
-                  ),
-                occurredAt: row.settled_at,
-              });
-            }
-            return projections;
-          }),
+          }
+          let settlement: unknown;
+          try {
+            settlement = JSON.parse(row.settlement_json ?? "null") as unknown;
+          } catch {
+            return yield* Effect.fail(
+              failIntegrity("P4 Denied settlement is malformed"),
+            );
+          }
+          const settlementRecord =
+            typeof settlement === "object" && settlement !== null
+              ? (settlement as Record<string, unknown>)
+              : undefined;
+          const reasonCode = settlementRecord?.reasonCode;
+          if (
+            settlementRecord === undefined ||
+            Object.keys(settlementRecord).length !== 3 ||
+            settlementRecord._tag !== "Denied" ||
+            settlementRecord.projectionVersion !== 1 ||
+            (reasonCode !== "ProcessExecutionDisabled" &&
+              reasonCode !== "NativeOsTupleUnavailable")
+          ) {
+            return yield* Effect.fail(
+              failIntegrity(
+                "P4 denial reason or projection version is invalid",
+              ),
+            );
+          }
+          if (
+            row.recovery_binding_state !== "Bound" ||
+            row.recovery_binding_sha256 === null ||
+            row.recovery_binding_sha256 !== row.binding_sha256 ||
+            row.binding_version !== 1 ||
+            row.canonical_binding_json === null ||
+            row.binding_sha256 === null ||
+            row.action_state !== "TerminalRejected" ||
+            row.action_input_hash !== sha256Hex(row.arguments_json) ||
+            row.action_kind !== row.tool_name ||
+            row.p3_logical_step_no === null ||
+            row.p3_repair_attempt === null ||
+            row.p3_logical_action_id === null ||
+            row.p3_action_index === null ||
+            row.p3_call_ref === null ||
+            row.p3_provider_turn_id === null
+          ) {
+            return yield* Effect.fail(
+              failIntegrity("exact P4/P3 RecoveryBinding join is unavailable"),
+            );
+          }
+          const verified = verifyRecoveryBindingV1({
+            invocationId: row.invocation_id as never,
+            canonicalJson: row.canonical_binding_json,
+            bindingSha256: row.binding_sha256,
+          });
+          const binding = verified?.value;
+          let argumentsDigest: string | null = null;
+          try {
+            argumentsDigest = canonicalArgumentsDigestV1(
+              JSON.parse(row.arguments_json) as unknown,
+            );
+          } catch {
+            argumentsDigest = null;
+          }
+          if (
+            binding === undefined ||
+            binding.executionId !== row.execution_id ||
+            binding.invocationId !== row.invocation_id ||
+            binding.toolName !== row.tool_name ||
+            binding.toolVersion !== row.tool_version ||
+            binding.sideEffectSemantics !== row.side_effect_semantics ||
+            binding.approvalId !== row.approval_id ||
+            binding.canonicalArgumentsDigest !== argumentsDigest ||
+            binding.providerTurnId !== row.p3_provider_turn_id ||
+            binding.logicalStepNo !== row.p3_logical_step_no ||
+            binding.repairAttempt !== row.p3_repair_attempt ||
+            binding.logicalActionId !== row.p3_logical_action_id ||
+            binding.actionIndex !== row.p3_action_index ||
+            binding.callRef !== row.p3_call_ref
+          ) {
+            return yield* Effect.fail(
+              failIntegrity("P4 invocation does not match its exact P3 action"),
+            );
+          }
+          const attentionIdentity = {
+            executionId: row.execution_id,
+            workspaceId: row.workspace_id as never,
+            invocationId: row.invocation_id,
+            providerTurnId: binding.providerTurnId,
+            logicalStepNo: binding.logicalStepNo,
+            repairAttempt: binding.repairAttempt,
+            logicalActionId: binding.logicalActionId,
+            actionIndex: binding.actionIndex,
+            callRef: binding.callRef,
+            reasonCode,
+          } satisfies Omit<
+            ProcessExecutionUnavailableProjectionRow,
+            "attentionFactId" | "occurredAt" | "projectId"
+          >;
+          projections.push({
+            projectId: row.project_id as ProjectId,
+            ...attentionIdentity,
+            attentionFactId:
+              processExecutionUnavailableAttentionFactIdV1(attentionIdentity),
+            occurredAt: row.settled_at,
+          });
+        }
+        return projections;
+      }),
   };
 };

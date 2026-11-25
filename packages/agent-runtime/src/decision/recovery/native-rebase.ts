@@ -1,24 +1,33 @@
 import {
   ContextEpochNumber,
   conversationResponseEpisode,
-  executionEpisode,
   type Execution,
   type ExecutionSettlement,
-  parse,
-  type ProviderTurnId,
+  executionEpisode,
   providerTurnOverflowReplacementId as makeOverflowReplacementProviderTurnId,
+  type ProviderTurnId,
+  parse,
 } from "@arbor/domain";
-import type { projectSessionTimeline, SessionTimelineProjection } from "@arbor/model-context";
+import type {
+  projectSessionTimeline,
+  SessionTimelineProjection,
+} from "@arbor/model-context";
 import type {
   AgentLoopStepIdentity,
   ExecutionDriverError,
   SessionEntryRecord,
 } from "@arbor/ports";
 import { Effect } from "effect";
-import { type ModelDecisionOutcome, safetyStop } from "../../agent-loop-policy.js";
+import {
+  type ModelDecisionOutcome,
+  safetyStop,
+} from "../../agent-loop-policy.js";
 import { hasValidCompiledInferenceRequestHash } from "../../agent-loop-step-recovery.js";
 import { nativeCompactionProviderTurnId } from "../../checkpoint/native-evidence.js";
-import { runSummaryCompaction, type SummaryCompactionInput } from "../../compaction-coordinator.js";
+import {
+  runSummaryCompaction,
+  type SummaryCompactionInput,
+} from "../../compaction-coordinator.js";
 import type { ModelDecisionDependencies } from "../contract.js";
 import type { DecisionCursor } from "../startup-recovery.js";
 import { recoverCommittedRebaseStep } from "./committed-rebase-step.js";
@@ -28,8 +37,15 @@ import type { OverflowRecoveryState } from "./overflow-state.js";
 
 type NativeRebaseDependencies = Pick<
   ModelDecisionDependencies,
-  "input" | "capability" | "tx" | "loopSteps" | "loopStepFence" |
-  "providerTurns" | "options" | "failure" | "now"
+  | "input"
+  | "capability"
+  | "tx"
+  | "loopSteps"
+  | "loopStepFence"
+  | "providerTurns"
+  | "options"
+  | "failure"
+  | "now"
 >;
 
 type NativeRebaseResult =
@@ -49,17 +65,24 @@ export const recoverNativeCheckpointContext = (
     readonly cursor: DecisionCursor;
     readonly loopStepIdentity: AgentLoopStepIdentity;
     readonly nativeCheckpoint: SessionTimelineProjection["nativeCheckpoint"];
-    readonly sessionRecord: { readonly value: { readonly contextEpoch: ContextEpochNumber } };
+    readonly sessionRecord: {
+      readonly value: { readonly contextEpoch: ContextEpochNumber };
+    };
     readonly checkpointOwnerExecutionId: Execution["executionId"] | undefined;
     readonly nativeCheckpointIsInherited: boolean;
     readonly recentSessionEntries: ReadonlyArray<SessionEntryRecord>;
     readonly currentBindingFingerprint: string;
     readonly providerNativeSupported: boolean;
-    readonly reasoningProjectionBinding: Parameters<typeof projectSessionTimeline>[3];
+    readonly reasoningProjectionBinding: Parameters<
+      typeof projectSessionTimeline
+    >[3];
     readonly reasoningAttachmentBlobs: ReadonlyMap<string, Uint8Array>;
     readonly compactionDependencies: Parameters<typeof runSummaryCompaction>[1];
     readonly loadWorkCompactionPinning: () => Effect.Effect<
-      Pick<SummaryCompactionInput, "pinnedInstructions" | "pinnedInstructionFragments" | "controlBasis">,
+      Pick<
+        SummaryCompactionInput,
+        "pinnedInstructions" | "pinnedInstructionFragments" | "controlBasis"
+      >,
       ExecutionDriverError
     >;
     readonly proposeSettlement: (
@@ -70,13 +93,32 @@ export const recoverNativeCheckpointContext = (
     readonly overflow: OverflowRecoveryState;
   },
 ): Effect.Effect<NativeRebaseResult, ExecutionDriverError> => {
-  const { input, capability, tx, loopSteps, loopStepFence, providerTurns, options, failure, now } =
-    dependencies;
   const {
-    loopStepIdentity, nativeCheckpoint, sessionRecord, checkpointOwnerExecutionId,
-    nativeCheckpointIsInherited, recentSessionEntries, currentBindingFingerprint,
-    providerNativeSupported, reasoningProjectionBinding, reasoningAttachmentBlobs,
-    compactionDependencies, loadWorkCompactionPinning, proposeSettlement, decodedProviderTurnId,
+    input,
+    capability,
+    tx,
+    loopSteps,
+    loopStepFence,
+    providerTurns,
+    options,
+    failure,
+    now,
+  } = dependencies;
+  const {
+    loopStepIdentity,
+    nativeCheckpoint,
+    sessionRecord,
+    checkpointOwnerExecutionId,
+    nativeCheckpointIsInherited,
+    recentSessionEntries,
+    currentBindingFingerprint,
+    providerNativeSupported,
+    reasoningProjectionBinding,
+    reasoningAttachmentBlobs,
+    compactionDependencies,
+    loadWorkCompactionPinning,
+    proposeSettlement,
+    decodedProviderTurnId,
   } = phase;
   return Effect.gen(function* () {
     let { turn, repairAttempt } = phase.cursor;
@@ -146,8 +188,7 @@ export const recoverNativeCheckpointContext = (
                   boundary: "AH19NativeCheckpointRecovery",
                   stage: `PrerequisitesMissing:turn=${nativeCheckpoint.providerTurnId !== undefined}:from=${nativeCheckpoint.fromEpoch !== undefined}:opaque=${nativeCheckpoint.opaqueItemRef !== undefined}:fingerprint=${nativeCheckpoint.bindingFingerprint !== undefined}:providerStore=${providerTurns !== undefined}:fence=${loopStepFence !== undefined}`,
                   executionId: String(input.execution.executionId),
-                  providerTurnId:
-                    nativeCheckpoint.providerTurnId ?? "unknown",
+                  providerTurnId: nativeCheckpoint.providerTurnId ?? "unknown",
                 }) ?? Promise.resolve(),
             );
           }
@@ -166,8 +207,7 @@ export const recoverNativeCheckpointContext = (
               }) ?? Promise.resolve(),
           );
         }
-        const nativeCheckpointProviderTurnId =
-          nativeCheckpoint.providerTurnId;
+        const nativeCheckpointProviderTurnId = nativeCheckpoint.providerTurnId;
         const nativeProviderTurnId = nativeCompactionProviderTurnId(
           nativeCheckpoint.providerTurnId,
         );
@@ -179,8 +219,7 @@ export const recoverNativeCheckpointContext = (
                   boundary: "AH19NativeCheckpointRecovery",
                   stage: "NativeProviderTurnIdInvalid",
                   executionId: String(input.execution.executionId),
-                  providerTurnId:
-                    nativeCheckpoint.providerTurnId ?? "unknown",
+                  providerTurnId: nativeCheckpoint.providerTurnId ?? "unknown",
                 }) ?? Promise.resolve(),
             );
           }
@@ -299,8 +338,7 @@ export const recoverNativeCheckpointContext = (
             sourceManifestJson.providerTurnId !== outputProviderTurnId ||
             sourceManifestJson.executionId !== input.execution.executionId ||
             sourceManifestJson.sessionId !== input.execution.sessionId ||
-            sourceManifestJson.contextEpoch !==
-              replacementLink.contextEpoch ||
+            sourceManifestJson.contextEpoch !== replacementLink.contextEpoch ||
             sourceManifestJson.operationKind !== "Inference" ||
             sourceManifestJson.logicalStepNo !==
               sourceStep.identity.logicalStepNo ||
@@ -354,7 +392,10 @@ export const recoverNativeCheckpointContext = (
           compactionDependencies,
         ).pipe(Effect.mapError(failure));
         if ("_tag" in rebuilt) {
-          return { _tag: "Complete" as const, outcome: yield* proposeSettlement(safetyStop("RuntimeSafetyStop")) };
+          return {
+            _tag: "Complete" as const,
+            outcome: yield* proposeSettlement(safetyStop("RuntimeSafetyStop")),
+          };
         }
         if (options.qualificationProbe !== undefined) {
           yield* Effect.promise(
@@ -390,10 +431,25 @@ export const recoverNativeCheckpointContext = (
           resumeOverflowCompactionProviderTurnId = undefined;
           resumeOverflowNativeCompaction = false;
           resumeOverflowNativeCompactionInput = undefined;
-          return { _tag: "Restart" as const, cursor: { turn, repairAttempt }, compactionAttempts, overflow: recoveryState() };
+          return {
+            _tag: "Restart" as const,
+            cursor: { turn, repairAttempt },
+            compactionAttempts,
+            overflow: recoveryState(),
+          };
         }
         const committedRebase = yield* recoverCommittedRebaseStep(
-          { input, capability, tx, loopSteps, loopStepFence, providerTurns, options, failure, now },
+          {
+            input,
+            capability,
+            tx,
+            loopSteps,
+            loopStepFence,
+            providerTurns,
+            options,
+            failure,
+            now,
+          },
           {
             turn,
             sourceStepIdentity,
@@ -417,7 +473,12 @@ export const recoverNativeCheckpointContext = (
           resumeOverflowCompactionProviderTurnId = undefined;
           resumeOverflowNativeCompaction = false;
           resumeOverflowNativeCompactionInput = undefined;
-          return { _tag: "Restart" as const, cursor: { turn, repairAttempt }, compactionAttempts, overflow: recoveryState() };
+          return {
+            _tag: "Restart" as const,
+            cursor: { turn, repairAttempt },
+            compactionAttempts,
+            overflow: recoveryState(),
+          };
         }
         const stepProviderLinks = sourceStepLinks;
         const overflowNativeLink = stepProviderLinks.some(
@@ -461,8 +522,7 @@ export const recoverNativeCheckpointContext = (
               priorReplacement.providerTurnId !== replacementProviderTurnId ||
               priorReplacement.predecessorProviderTurnId !==
                 nativeProviderTurnId ||
-              Number(priorReplacement.contextEpoch) !==
-                Number(rebuilt.newEpoch)
+              Number(priorReplacement.contextEpoch) !== Number(rebuilt.newEpoch)
             ) {
               return yield* Effect.fail(
                 failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
@@ -495,7 +555,12 @@ export const recoverNativeCheckpointContext = (
           resumeOverflowCompactionProviderTurnId = undefined;
         }
         compactionAttempts = Math.max(compactionAttempts, 1);
-        return { _tag: "Restart" as const, cursor: { turn, repairAttempt }, compactionAttempts, overflow: recoveryState() };
+        return {
+          _tag: "Restart" as const,
+          cursor: { turn, repairAttempt },
+          compactionAttempts,
+          overflow: recoveryState(),
+        };
       }
     }
     return {

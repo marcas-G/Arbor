@@ -97,7 +97,11 @@ describe("P3 RecoveryBinding source identity", () => {
       callRef: "call-1",
     };
     expect(
-      recoveryBindingIdentityFor({ ...base, step: undefined, action: action() }),
+      recoveryBindingIdentityFor({
+        ...base,
+        step: undefined,
+        action: action(),
+      }),
     ).toBeUndefined();
     expect(
       recoveryBindingIdentityFor({ ...base, step: step(), action: undefined }),

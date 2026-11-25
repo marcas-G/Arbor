@@ -70,9 +70,11 @@ export const object = (fields: Readonly<Record<string, Rule>>): Rule => ({
   kind: "object",
   fields,
 });
-export const union = (tag: string, cases: Readonly<Record<string, Rule>>): Rule => ({
+export const union = (
+  tag: string,
+  cases: Readonly<Record<string, Rule>>,
+): Rule => ({
   kind: "union",
   tag,
   cases,
 });
-

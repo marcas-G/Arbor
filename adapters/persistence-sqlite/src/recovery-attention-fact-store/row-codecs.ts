@@ -1,7 +1,4 @@
-import {
-  ProviderTurnId,
-  parse,
-} from "@arbor/domain";
+import { ProviderTurnId, parse } from "@arbor/domain";
 import type {
   AssignWorkBindingAttentionFact,
   AssignWorkBindingFailureCode,
@@ -18,12 +15,8 @@ import {
   legacyAdoptionAttentionFactIdV1,
   legacyAdoptionEvidenceDigestV1,
 } from "@arbor/ports";
-import {
-  Effect,
-} from "effect";
-import {
-  persistenceCorruption,
-} from "../repository-error.js";
+import { Effect } from "effect";
+import { persistenceCorruption } from "../repository-error.js";
 import {
   decodeSubmittedDecisionBindingAttentionFactRow,
   type SubmittedDecisionBindingAttentionDbRow,
@@ -299,4 +292,3 @@ export const toDeliverReplayFact = (
 export const DELIVER_REPLAY_COLUMNS = `attention_fact_id, event_id, project_id,
   execution_id, target_workspace_id, logical_action_id, message_id,
   failure_code, first_detected_at`;
-

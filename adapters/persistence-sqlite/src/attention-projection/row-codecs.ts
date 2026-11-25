@@ -1,6 +1,4 @@
-import type {
-  ProjectId,
-} from "@arbor/domain";
+import type { ProjectId } from "@arbor/domain";
 import {
   type AssignWorkBindingAttentionProjectionRow,
   type DeliverReplayAttentionProjectionRow,
@@ -310,4 +308,3 @@ export const sameRow = (
   left.occurredAt === right.occurredAt &&
   left.sourceEventId === right.sourceEventId &&
   left.sourceFactId === right.sourceFactId;
-

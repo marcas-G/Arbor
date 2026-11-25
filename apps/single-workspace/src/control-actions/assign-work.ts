@@ -39,14 +39,13 @@ import {
   type WorkspaceRepositoryService,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
+import { validateAssignWorkReceiptBinding } from "./assign-work/receipt-binding.js";
 import {
   actionError,
   actionOperationalFailure,
-  generationScopedCommandId,
   findPriorCommandReceipt,
+  generationScopedCommandId,
 } from "./command-receipts.js";
-
-import { validateAssignWorkReceiptBinding } from "./assign-work/receipt-binding.js";
 
 export interface AssignWorkBindingAttentionQualificationEvent {
   readonly boundary: "AH10AfterAssignWorkBindingAttentionCommit";

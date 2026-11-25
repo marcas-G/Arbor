@@ -1,17 +1,41 @@
-import { executionEpisode, type ExecutionSettlement, type ProviderTurnId, type Work, type Workspace } from "@arbor/domain";
+import {
+  type ExecutionSettlement,
+  executionEpisode,
+  type ProviderTurnId,
+  type Work,
+  type Workspace,
+} from "@arbor/domain";
 import type { ControlBasis, InstructionFragment } from "@arbor/model-context";
-import type { AgentLoopStepRecord, ExecutionDriverError, PortableInputItem } from "@arbor/ports";
+import type {
+  AgentLoopStepRecord,
+  ExecutionDriverError,
+  PortableInputItem,
+} from "@arbor/ports";
 import { Effect, Option } from "effect";
 import type { ModelDecisionOutcome } from "../../agent-loop-policy.js";
 import type { SummaryCompactionInput } from "../../compaction-coordinator.js";
-import { GENERIC_INSTRUCTION_ASSETS, instructionAssetFragment } from "../../prompt-assets.js";
-import { assembleWorkContext, type WorkContextAssembly } from "../../work-context.js";
+import {
+  GENERIC_INSTRUCTION_ASSETS,
+  instructionAssetFragment,
+} from "../../prompt-assets.js";
+import {
+  assembleWorkContext,
+  type WorkContextAssembly,
+} from "../../work-context.js";
 import type { ModelDecisionDependencies } from "../contract.js";
-import { classifySubmittedDecisionBindingFailure, isPinnedSubmittedDecisionReplay } from "../submitted-replay.js";
+import {
+  classifySubmittedDecisionBindingFailure,
+  isPinnedSubmittedDecisionReplay,
+} from "../submitted-replay.js";
 
 type InstructionDependencies = Pick<
   ModelDecisionDependencies,
-  "input" | "tx" | "loopSteps" | "providerTurns" | "decisionRequests" | "failure"
+  | "input"
+  | "tx"
+  | "loopSteps"
+  | "providerTurns"
+  | "decisionRequests"
+  | "failure"
 >;
 
 export type CompactionWorkPinning = Pick<
@@ -48,10 +72,18 @@ export const assembleDecisionInstructions = (
     ) => Effect.Effect<ModelDecisionOutcome, ExecutionDriverError>;
   },
 ): Effect.Effect<InstructionAssembly, ExecutionDriverError> => {
-  const { input, tx, loopSteps, providerTurns, decisionRequests, failure } = dependencies;
+  const { input, tx, loopSteps, providerTurns, decisionRequests, failure } =
+    dependencies;
   const {
-    workspace, currentWork, controlBasis, conversationExecution, loopStep,
-    providerTurnId, inputItems, messageContextRefs, proposeSettlement,
+    workspace,
+    currentWork,
+    controlBasis,
+    conversationExecution,
+    loopStep,
+    providerTurnId,
+    inputItems,
+    messageContextRefs,
+    proposeSettlement,
   } = phase;
   return Effect.gen(function* () {
     const workContext = assembleWorkContext(

@@ -1,7 +1,24 @@
-import type { AgentExecutionState, Execution, ExecutionId, Principal, WakeReason } from "@arbor/domain";
-import type { ExecutionDriverOwnershipLost, ExecutionDriverPortService, LeaseFencingRejected, LeaseRecord, RuntimeSafetyGateService } from "@arbor/ports";
+import type {
+  AgentExecutionState,
+  Execution,
+  ExecutionId,
+  Principal,
+  WakeReason,
+} from "@arbor/domain";
+import type {
+  ExecutionDriverOwnershipLost,
+  ExecutionDriverPortService,
+  LeaseFencingRejected,
+  LeaseRecord,
+  RuntimeSafetyGateService,
+} from "@arbor/ports";
 import { Effect } from "effect";
-import { leaseRenewalLoop, stopRequestLoop, STOP_REQUEST_POLL_INTERVAL_MS, type ExecutionLeaseQualificationProbe } from "./lease.js";
+import {
+  type ExecutionLeaseQualificationProbe,
+  leaseRenewalLoop,
+  STOP_REQUEST_POLL_INTERVAL_MS,
+  stopRequestLoop,
+} from "./lease.js";
 
 /** Drive lifetime owns both renewal and durable stop watchers. */
 export const driveWithLease = (

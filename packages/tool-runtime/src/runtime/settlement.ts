@@ -13,7 +13,11 @@ import type {
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { matchesAuthenticatedP39Evidence } from "../recovery-binding.js";
-import { denied, isLeaseFencingRejected, operationalFailure } from "./errors.js";
+import {
+  denied,
+  isLeaseFencingRejected,
+  operationalFailure,
+} from "./errors.js";
 import type { makeObservationReplay } from "./recovery/observation-replay.js";
 import type {
   PendingReconciliation,
@@ -61,9 +65,7 @@ export const settleToolOutcome = (
       );
     }
 
-    let authenticatedRecoveryEvidence:
-      | SelectedP39RecoveryEvidence
-      | undefined;
+    let authenticatedRecoveryEvidence: SelectedP39RecoveryEvidence | undefined;
     if (outcome.settlement._tag === "ReconciledNoEffect") {
       const rejectUnverifiedSelection = (
         cause: unknown,
@@ -247,19 +249,14 @@ export const settleToolOutcome = (
                         outcome.sandboxProviderUnavailable.policyRevision,
                       policyDigest:
                         outcome.sandboxProviderUnavailable.policyDigest,
-                      profile:
-                        outcome.sandboxProviderUnavailable.profileId,
-                      providerId:
-                        outcome.sandboxProviderUnavailable.providerId,
+                      profile: outcome.sandboxProviderUnavailable.profileId,
+                      providerId: outcome.sandboxProviderUnavailable.providerId,
                       providerVersion:
-                        outcome.sandboxProviderUnavailable
-                          .providerVersion,
+                        outcome.sandboxProviderUnavailable.providerVersion,
                       capabilityRevision:
-                        outcome.sandboxProviderUnavailable
-                          .capabilityRevision,
+                        outcome.sandboxProviderUnavailable.capabilityRevision,
                       probeEvidenceRef:
-                        outcome.sandboxProviderUnavailable
-                          .probeEvidenceRef,
+                        outcome.sandboxProviderUnavailable.probeEvidenceRef,
                       failureCode:
                         outcome.sandboxProviderUnavailable.failureCode,
                       effectDisposition: "NoEffect" as const,
@@ -282,8 +279,7 @@ export const settleToolOutcome = (
             return {
               _tag: "ReconciledNoEffect",
               reasonCode: outcome.settlement.reasonCode,
-              reconciliationFactRef:
-                outcome.settlement.reconciliationFactRef,
+              reconciliationFactRef: outcome.settlement.reconciliationFactRef,
               observation: outcome.observation,
               resultRef: resultRef ?? "",
             };
@@ -298,8 +294,7 @@ export const settleToolOutcome = (
           ? {}
           : {
               reconciliationSelection: {
-                attemptNo:
-                  authenticatedRecoveryEvidence.attempt.attemptNo,
+                attemptNo: authenticatedRecoveryEvidence.attempt.attemptNo,
                 factId: authenticatedRecoveryEvidence.fact.factId,
               },
               authenticatedRecoveryEvidence,
@@ -322,9 +317,7 @@ export const settleToolOutcome = (
                     },
                     now,
                   )
-                  .pipe(
-                    Effect.map((artifact) => String(artifact.artifactId)),
-                  ),
+                  .pipe(Effect.map((artifact) => String(artifact.artifactId))),
             }
           : {}),
         settledAt,
@@ -335,9 +328,7 @@ export const settleToolOutcome = (
         tx.transact(
           Effect.gen(function* () {
             const result =
-              yield* observationEvidence.value.settleOrReadWinner(
-                candidate,
-              );
+              yield* observationEvidence.value.settleOrReadWinner(candidate);
             if (
               result._tag === "Applied" &&
               options.qualificationProbe !== undefined
@@ -408,8 +399,7 @@ export const settleToolOutcome = (
       if (p40Write.value._tag === "ExistingDenied") {
         return denied(p40Write.value.reasonCode);
       }
-      return p40Write.value.evidence
-        .observation as CanonicalToolObservation;
+      return p40Write.value.evidence.observation as CanonicalToolObservation;
     }
     const settlementWrite = yield* Effect.match(
       tx.transact(
@@ -479,8 +469,7 @@ export const settleToolOutcome = (
       ) {
         return {
           _tag: "OutcomeUnknown" as const,
-          reconciliationRefs:
-            canonical.value.settlement.reconciliationRefs,
+          reconciliationRefs: canonical.value.settlement.reconciliationRefs,
         };
       }
       return yield* Effect.fail<ToolRuntimeError>(
@@ -545,8 +534,7 @@ export const settleToolOutcome = (
           return {
             _tag: "ReconciledNoEffect",
             reasonCode: outcome.settlement.reasonCode,
-            reconciliationFactRef:
-              outcome.settlement.reconciliationFactRef,
+            reconciliationFactRef: outcome.settlement.reconciliationFactRef,
             observation: outcome.observation,
             resultRef: resultRef ?? "",
           };

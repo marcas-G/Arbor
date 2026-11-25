@@ -1,14 +1,13 @@
+import { ArtifactId, parse } from "@arbor/domain";
 import {
-  reconciliationFactId,
-  targetResourceIdentityDigestV1,
-  validateToolReconciliationResult,
-  executableApprovalBindingMatches,
   type ArtifactServiceService,
   type ClockService,
   type ExecutableApprovalStoreService,
+  executableApprovalBindingMatches,
   type P39RecoveryEvidenceStoreService,
   type RecoveryBindingV1,
   type ResourceAdmissionService,
+  reconciliationFactId,
   type ToolAuthorityResolverService,
   type ToolDefinition,
   type ToolExecutionContext,
@@ -22,8 +21,9 @@ import {
   type ToolReconciliationResult,
   type ToolRuntimeError,
   type TransactionPortService,
+  targetResourceIdentityDigestV1,
+  validateToolReconciliationResult,
 } from "@arbor/ports";
-import { ArtifactId, parse } from "@arbor/domain";
 import { Effect, Option } from "effect";
 import { matchApproval } from "../../approval.js";
 import { checkInvocationAuthority } from "../../authority.js";
@@ -34,8 +34,15 @@ import {
   operationalFailure,
   reconciliationRetryDenialReasonCode,
 } from "../errors.js";
-import type { ReconciliationProbe, ResourceCapture } from "../phase-contracts.js";
-import type { PendingReconciliation, ToolExecutionResult, ToolExecutor } from "../types.js";
+import type {
+  ReconciliationProbe,
+  ResourceCapture,
+} from "../phase-contracts.js";
+import type {
+  PendingReconciliation,
+  ToolExecutionResult,
+  ToolExecutor,
+} from "../types.js";
 
 /** Reconcile one admitted external effect. Fact recording and retry admission remain atomic. */
 export const reconcileAdmittedInvocation = (
@@ -64,7 +71,13 @@ export const reconcileAdmittedInvocation = (
   probeReconciliation: ReconciliationProbe,
 ) =>
   Effect.gen(function* () {
-    const { regions, boundaryRegions, capturedWorkspace, resolved, validateCapturedSnapshot } = resources;
+    const {
+      regions,
+      boundaryRegions,
+      capturedWorkspace,
+      resolved,
+      validateCapturedSnapshot,
+    } = resources;
     let recoveredToolOutcome: ToolExecutionResult | undefined;
     let pendingReconciliation: PendingReconciliation | undefined;
     let retryAdmitted = false;
@@ -99,10 +112,7 @@ export const reconcileAdmittedInvocation = (
       )
       .pipe(
         Effect.mapError(
-          operationalFailure(
-            "RecoveryBinding",
-            String(intent.invocationId),
-          ),
+          operationalFailure("RecoveryBinding", String(intent.invocationId)),
         ),
       );
     if (Option.isNone(latestAttempt)) {
@@ -140,8 +150,7 @@ export const reconcileAdmittedInvocation = (
       bindingSha256: replayBindingSha256,
       profileHash: trustedProfile.profileHash,
       effectKey: attempt.effectKey,
-      visibilityScopeSha256:
-        replayBindingValue.targetResourceIdentityDigest,
+      visibilityScopeSha256: replayBindingValue.targetResourceIdentityDigest,
     };
     yield* tx
       .transact(
@@ -152,10 +161,7 @@ export const reconcileAdmittedInvocation = (
       )
       .pipe(
         Effect.mapError(
-          operationalFailure(
-            "RecoveryBinding",
-            String(intent.invocationId),
-          ),
+          operationalFailure("RecoveryBinding", String(intent.invocationId)),
         ),
       );
     const portResult = yield* Effect.match(
@@ -190,28 +196,18 @@ export const reconcileAdmittedInvocation = (
             context.executionFence,
             fenceNow,
           );
-          yield* probeReconciliation(
-            "AH7BeforeReconciliationFactCommit",
-            {
-              attemptNo: request.attemptNo,
-              outcomeTag: result._tag,
-            },
-          );
-          yield* reconciliationFacts.value.record(
-            request,
-            result,
-            observedAt,
-          );
+          yield* probeReconciliation("AH7BeforeReconciliationFactCommit", {
+            attemptNo: request.attemptNo,
+            outcomeTag: result._tag,
+          });
+          yield* reconciliationFacts.value.record(request, result, observedAt);
         }),
       );
     if (portResult._tag === "StillUnknown") {
       const observedAt = yield* clock.now();
       yield* persistUnknownFact(portResult, observedAt).pipe(
         Effect.mapError(
-          operationalFailure(
-            "SettlementJournal",
-            String(intent.invocationId),
-          ),
+          operationalFailure("SettlementJournal", String(intent.invocationId)),
         ),
       );
       yield* probeReconciliation("AH7AfterReconciliationFactCommit", {
@@ -243,14 +239,11 @@ export const reconcileAdmittedInvocation = (
                 context.executionFence,
                 gateNow,
               );
-              yield* probeReconciliation(
-                "AH7BeforeReconciliationFactCommit",
-                {
-                  attemptNo: request.attemptNo,
-                  outcomeTag: portResult._tag,
-                  factId,
-                },
-              );
+              yield* probeReconciliation("AH7BeforeReconciliationFactCommit", {
+                attemptNo: request.attemptNo,
+                outcomeTag: portResult._tag,
+                factId,
+              });
               const fact = yield* reconciliationFacts.value.record(
                 request,
                 portResult,
@@ -309,9 +302,7 @@ export const reconcileAdmittedInvocation = (
                 return snapshotAdmission;
               }
 
-              const currentAuthority = Option.isSome(
-                authorityResolver,
-              )
+              const currentAuthority = Option.isSome(authorityResolver)
                 ? yield* authorityResolver.value
                     .resolve({
                       intent,
@@ -359,22 +350,20 @@ export const reconcileAdmittedInvocation = (
                     _tag: "ApprovalNoLongerAuthorized" as const,
                   };
                 }
-                const currentApproval =
-                  yield* executableApprovals.value
-                    .findById(context.executableApproval.approvalId)
-                    .pipe(
-                      Effect.mapError(
-                        operationalFailure(
-                          "ApprovalLookup",
-                          String(intent.invocationId),
-                        ),
+                const currentApproval = yield* executableApprovals.value
+                  .findById(context.executableApproval.approvalId)
+                  .pipe(
+                    Effect.mapError(
+                      operationalFailure(
+                        "ApprovalLookup",
+                        String(intent.invocationId),
                       ),
-                    );
+                    ),
+                  );
                 if (
                   Option.isNone(currentApproval) ||
                   currentApproval.value.state !== "Consumed" ||
-                  currentApproval.value.consumedBy !==
-                    intent.invocationId ||
+                  currentApproval.value.consumedBy !== intent.invocationId ||
                   currentApproval.value.revision !==
                     context.executableApproval.expectedRevision + 1 ||
                   currentApproval.value.expiresAt <= gateNow ||
@@ -447,14 +436,11 @@ export const reconcileAdmittedInvocation = (
           .pipe(
             Effect.tapError((cause) =>
               isLeaseFencingRejected(cause)
-                ? probeReconciliation(
-                    "AH7ReconciliationResultFenceRejected",
-                    {
-                      attemptNo: request.attemptNo,
-                      outcomeTag: portResult._tag,
-                      factId,
-                    },
-                  ).pipe(Effect.catchCause(() => Effect.void))
+                ? probeReconciliation("AH7ReconciliationResultFenceRejected", {
+                    attemptNo: request.attemptNo,
+                    outcomeTag: portResult._tag,
+                    factId,
+                  }).pipe(Effect.catchCause(() => Effect.void))
                 : Effect.void,
             ),
             Effect.mapError(
@@ -464,14 +450,11 @@ export const reconcileAdmittedInvocation = (
               ),
             ),
           );
-        yield* probeReconciliation(
-          "AH7AfterReconciliationFactCommit",
-          {
-            attemptNo: request.attemptNo,
-            outcomeTag: portResult._tag,
-            factId,
-          },
-        );
+        yield* probeReconciliation("AH7AfterReconciliationFactCommit", {
+          attemptNo: request.attemptNo,
+          outcomeTag: portResult._tag,
+          factId,
+        });
         if (retryGate._tag === "Admitted") {
           retryAdmitted = true;
         } else {
@@ -504,14 +487,11 @@ export const reconcileAdmittedInvocation = (
                 context.executionFence,
                 yield* clock.now(),
               );
-              yield* probeReconciliation(
-                "AH7BeforeReconciliationFactCommit",
-                {
-                  attemptNo: request.attemptNo,
-                  outcomeTag: portResult._tag,
-                  factId,
-                },
-              );
+              yield* probeReconciliation("AH7BeforeReconciliationFactCommit", {
+                attemptNo: request.attemptNo,
+                outcomeTag: portResult._tag,
+                factId,
+              });
               return yield* reconciliationFacts.value.record(
                 request,
                 portResult,
@@ -527,14 +507,11 @@ export const reconcileAdmittedInvocation = (
               ),
             ),
           );
-        yield* probeReconciliation(
-          "AH7AfterReconciliationFactCommit",
-          {
-            attemptNo: request.attemptNo,
-            outcomeTag: portResult._tag,
-            factId,
-          },
-        );
+        yield* probeReconciliation("AH7AfterReconciliationFactCommit", {
+          attemptNo: request.attemptNo,
+          outcomeTag: portResult._tag,
+          factId,
+        });
         if (fact.factId !== factId) {
           return yield* Effect.fail<ToolRuntimeError>(
             operationalFailure(
@@ -565,9 +542,7 @@ export const reconcileAdmittedInvocation = (
       let resultBytes: Uint8Array | undefined;
       if (Option.isSome(artifactService)) {
         try {
-          const resultArtifactId = parse(ArtifactId)(
-            portResult.resultRef,
-          );
+          const resultArtifactId = parse(ArtifactId)(portResult.resultRef);
           const loaded = yield* tx
             .transact(artifactService.value.load(resultArtifactId))
             .pipe(
@@ -623,9 +598,7 @@ export const reconcileAdmittedInvocation = (
             : { _tag: "ExpectedFailure" },
         observation: reconstructed.observation,
         resultRef:
-          portResult.settlement === "Success"
-            ? portResult.resultRef
-            : null,
+          portResult.settlement === "Success" ? portResult.resultRef : null,
       };
       const fact = yield* tx
         .transact(
@@ -634,14 +607,11 @@ export const reconcileAdmittedInvocation = (
               context.executionFence,
               yield* clock.now(),
             );
-            yield* probeReconciliation(
-              "AH7BeforeReconciliationFactCommit",
-              {
-                attemptNo: request.attemptNo,
-                outcomeTag: portResult._tag,
-                factId,
-              },
-            );
+            yield* probeReconciliation("AH7BeforeReconciliationFactCommit", {
+              attemptNo: request.attemptNo,
+              outcomeTag: portResult._tag,
+              factId,
+            });
             return yield* reconciliationFacts.value.record(
               request,
               portResult,

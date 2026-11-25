@@ -1,5 +1,5 @@
 import type { Execution, Principal } from "@arbor/domain";
-import { IdGenerator, type AgentLoopStepFence } from "@arbor/ports";
+import { type AgentLoopStepFence, IdGenerator } from "@arbor/ports";
 import { Effect, Option } from "effect";
 
 /** P9 `07` / DID v1.40: record the existing escalation source while the

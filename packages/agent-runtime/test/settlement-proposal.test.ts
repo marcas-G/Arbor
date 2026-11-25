@@ -73,11 +73,14 @@ describe("Prepared step settlement phase", () => {
               }),
           } as never,
           loopSteps: {
-            transition: (input: {
-              readonly expectedRevision: number;
-              readonly expectedState: string;
-              readonly next: unknown;
-            }, actualFence: unknown) =>
+            transition: (
+              input: {
+                readonly expectedRevision: number;
+                readonly expectedState: string;
+                readonly next: unknown;
+              },
+              actualFence: unknown,
+            ) =>
               Effect.sync(() => {
                 trace.push("transition");
                 expect(input.expectedRevision).toBe(1);

@@ -70,8 +70,14 @@ describe("P4 package DAG", () => {
       'effectDisposition: "NotStarted" | "OutcomeUncertain"',
     );
     expect(errors).not.toContain('readonly _tag: "ToolRuntimeError"');
-    const runtimeDirectory = join(repoRoot, "packages/tool-runtime/src/runtime");
-    const runtimeModules = readdirSync(runtimeDirectory, { recursive: true })
+    const runtimeDirectory = join(
+      repoRoot,
+      "packages/tool-runtime/src/runtime",
+    );
+    const runtimeModules = readdirSync(runtimeDirectory, {
+      recursive: true,
+      encoding: "utf8",
+    })
       .filter((name) => name.endsWith(".ts"))
       .map((name) => readFileSync(join(runtimeDirectory, name), "utf8"));
     const runtimeSource = [runtime, ...runtimeModules].join("\n");
@@ -95,9 +101,10 @@ describe("P4 package DAG", () => {
   it("keeps runtime lifecycle modules below the public entry and package barrel", () => {
     const directory = join(repoRoot, "packages/tool-runtime/src/runtime");
     const violations: string[] = [];
-    for (const name of readdirSync(directory, { recursive: true }).filter(
-      (entry) => entry.endsWith(".ts"),
-    )) {
+    for (const name of readdirSync(directory, {
+      recursive: true,
+      encoding: "utf8",
+    }).filter((entry) => entry.endsWith(".ts"))) {
       const file = `runtime/${name.replaceAll("\\", "/")}`;
       const ast = parse(readFileSync(join(directory, name), "utf8"), {
         sourceType: "module",
@@ -108,12 +115,13 @@ describe("P4 package DAG", () => {
           statement.type !== "ImportDeclaration" &&
           statement.type !== "ExportNamedDeclaration" &&
           statement.type !== "ExportAllDeclaration"
-        ) continue;
+        )
+          continue;
         const specifier = statement.source?.value;
         if (specifier === undefined || !specifier.startsWith(".")) continue;
-        const target = posix.normalize(
-          posix.join(posix.dirname(file), specifier),
-        ).replace(/\.(?:js|ts)$/u, "");
+        const target = posix
+          .normalize(posix.join(posix.dirname(file), specifier))
+          .replace(/\.(?:js|ts)$/u, "");
         const recoveryToNewEffectPhase =
           file.startsWith("runtime/recovery/") &&
           [

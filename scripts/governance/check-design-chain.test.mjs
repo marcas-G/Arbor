@@ -17,9 +17,13 @@ test("valid design metadata and dependency chain", () => {
 
 test("reject stale dependency header", () => {
   const result = checkDesignChain((path) =>
-    path === designPaths[3] ? fixture[3].replace("v1.27", "v1.26") : fixture[designPaths.indexOf(path)],
+    path === designPaths[3]
+      ? fixture[3].replace("v1.27", "v1.26")
+      : fixture[designPaths.indexOf(path)],
   );
-  assert.ok(result.errors.some((message) => message.includes("expected dependency")));
+  assert.ok(
+    result.errors.some((message) => message.includes("expected dependency")),
+  );
 });
 
 test("report missing source rather than silently passing", () => {
@@ -32,7 +36,11 @@ test("report missing source rather than silently passing", () => {
 
 test("reject missing version", () => {
   const result = checkDesignChain((path) =>
-    path === designPaths[0] ? "**Status:** FROZEN" : fixture[designPaths.indexOf(path)],
+    path === designPaths[0]
+      ? "**Status:** FROZEN"
+      : fixture[designPaths.indexOf(path)],
   );
-  assert.ok(result.errors.some((message) => message.includes("invalid version")));
+  assert.ok(
+    result.errors.some((message) => message.includes("invalid version")),
+  );
 });

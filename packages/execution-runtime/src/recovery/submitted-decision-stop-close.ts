@@ -2,7 +2,7 @@ import {
   planSubmittedDecisionStopClose,
   reconstructSubmittedDecisionStopCloseActions,
 } from "@arbor/agent-runtime";
-import { executionEpisode, type Execution } from "@arbor/domain";
+import { type Execution, executionEpisode } from "@arbor/domain";
 import type {
   AgentLoopStepStoreService,
   DecisionRequestStoreService,
@@ -16,12 +16,24 @@ import type {
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { RECOVERY_WORKER_INCARNATION_ID } from "../process-identity.js";
-import { recordSubmittedDecisionBindingFailure, type SubmittedDecisionBindingFailureInput } from "../submitted-decision-binding-failure.js";
-import { RECOVERY_WORKER_ID, fencedTakeover, type SubmittedDecisionRecoveryQualificationEvent } from "./common.js";
+import {
+  recordSubmittedDecisionBindingFailure,
+  type SubmittedDecisionBindingFailureInput,
+} from "../submitted-decision-binding-failure.js";
+import {
+  fencedTakeover,
+  RECOVERY_WORKER_ID,
+  type SubmittedDecisionRecoveryQualificationEvent,
+} from "./common.js";
 
 type StopCloseFact = Pick<
   SubmittedDecisionBindingFailureInput,
-  "logicalStepNo" | "repairAttempt" | "providerTurnId" | "logicalActionId" | "failureCode" | "firstDetectedAt"
+  | "logicalStepNo"
+  | "repairAttempt"
+  | "providerTurnId"
+  | "logicalActionId"
+  | "failureCode"
+  | "firstDetectedAt"
 >;
 
 /** Acquire a recovery lease and close an exact P41 action ledger under its original transaction. */
@@ -38,7 +50,9 @@ export const closeSubmittedDecisionForStop = (
   sessions: Option.Option<SessionRepositoryService>,
   recoveryAttentionFacts: Option.Option<RecoveryAttentionFactStoreService>,
   decisionRequests: Option.Option<DecisionRequestStoreService>,
-  reportP41: (event: SubmittedDecisionRecoveryQualificationEvent) => Effect.Effect<void>,
+  reportP41: (
+    event: SubmittedDecisionRecoveryQualificationEvent,
+  ) => Effect.Effect<void>,
 ) =>
   Effect.gen(function* () {
     if (
@@ -108,9 +122,7 @@ export const closeSubmittedDecisionForStop = (
             "execution-not-active-or-stop-request-missing";
           return undefined;
         }
-        const unresolved = yield* reconciliation.pending(
-          execution.executionId,
-        );
+        const unresolved = yield* reconciliation.pending(execution.executionId);
         yield* reportP41({
           boundary: "AH10P41StopCloseStage",
           executionId: String(execution.executionId),
@@ -146,8 +158,7 @@ export const closeSubmittedDecisionForStop = (
         }
         const step = foundStep.value;
         if (
-          step.providerTurnId !==
-          submittedDecisionBindingFact.providerTurnId
+          step.providerTurnId !== submittedDecisionBindingFact.providerTurnId
         ) {
           submittedBindingCloseReason = "provider-turn-mismatch";
           return undefined;
@@ -176,8 +187,7 @@ export const closeSubmittedDecisionForStop = (
         const providerResult = yield* providerTurns.value.findSettledResult(
           step.providerTurnId,
         );
-        submittedBindingCloseStage =
-          "submitted-request-and-provider-result";
+        submittedBindingCloseStage = "submitted-request-and-provider-result";
         if (
           step.state === "ActionsInProgress" &&
           submittedDecisionBindingFact.failureCode ===
@@ -195,8 +205,7 @@ export const closeSubmittedDecisionForStop = (
         }
         if (
           step.state === "ActionsInProgress" &&
-          submittedDecisionBindingFact.failureCode ===
-            "StepManifestMismatch" &&
+          submittedDecisionBindingFact.failureCode === "StepManifestMismatch" &&
           (providerResult._tag !== "SettledSuccess" ||
             providerResult.manifestId === step.manifestId)
         ) {
@@ -253,15 +262,14 @@ export const closeSubmittedDecisionForStop = (
             nextActionIndex: step.nextActionIndex,
           }),
         });
-        const actionIdentities =
-          reconstructSubmittedDecisionStopCloseActions({
-            executionId: String(execution.executionId),
-            sessionId: String(current.value.sessionId),
-            step,
-            providerResult,
-            modelOutputEntry: outputEntry,
-            existingActions,
-          });
+        const actionIdentities = reconstructSubmittedDecisionStopCloseActions({
+          executionId: String(execution.executionId),
+          sessionId: String(current.value.sessionId),
+          step,
+          providerResult,
+          modelOutputEntry: outputEntry,
+          existingActions,
+        });
         submittedBindingCloseStage = "action-ledger-reconstruction";
         if (actionIdentities === undefined) {
           submittedBindingCloseReason =
@@ -303,8 +311,7 @@ export const closeSubmittedDecisionForStop = (
         const plan = planSubmittedDecisionStopClose({
           step,
           actions: actionIdentities,
-          firstDetectedActionId:
-            submittedDecisionBindingFact.logicalActionId,
+          firstDetectedActionId: submittedDecisionBindingFact.logicalActionId,
           updatedAt: now,
         });
         submittedBindingCloseStage = `stop-close-plan:${plan._tag}`;

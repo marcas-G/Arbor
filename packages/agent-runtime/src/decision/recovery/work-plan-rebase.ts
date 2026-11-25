@@ -1,11 +1,14 @@
 import {
   ContextEpochNumber,
   type ExecutionSettlement,
-  parse,
-  ProviderTurnId,
   providerTurnOverflowReplacementId as makeOverflowReplacementProviderTurnId,
+  ProviderTurnId,
+  parse,
 } from "@arbor/domain";
-import { projectSessionTimeline, type SessionTimelineProjection } from "@arbor/model-context";
+import {
+  projectSessionTimeline,
+  type SessionTimelineProjection,
+} from "@arbor/model-context";
 import type {
   AgentLoopStepIdentity,
   AgentLoopStepRecord,
@@ -13,16 +16,30 @@ import type {
   SessionEntryRecord,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
-import { type ModelDecisionOutcome, safetyStop } from "../../agent-loop-policy.js";
+import {
+  type ModelDecisionOutcome,
+  safetyStop,
+} from "../../agent-loop-policy.js";
 import { decodeUniqueNativePortableFrontier } from "../../checkpoint/native-evidence.js";
-import { runSummaryCompaction, type SummaryCompactionInput } from "../../compaction-coordinator.js";
+import {
+  runSummaryCompaction,
+  type SummaryCompactionInput,
+} from "../../compaction-coordinator.js";
 import type { ModelDecisionDependencies } from "../contract.js";
 import type { OverflowRecoveryState } from "./overflow-state.js";
 
 type WorkPlanRebaseDependencies = Pick<
   ModelDecisionDependencies,
-  "input" | "capability" | "tx" | "sessions" | "loopSteps" |
-  "loopStepFence" | "providerTurns" | "options" | "failure" | "now"
+  | "input"
+  | "capability"
+  | "tx"
+  | "sessions"
+  | "loopSteps"
+  | "loopStepFence"
+  | "providerTurns"
+  | "options"
+  | "failure"
+  | "now"
 >;
 
 type WorkPlanRebaseResult =
@@ -41,15 +58,22 @@ export const rebaseWorkPlanCheckpoint = (
     readonly turn: number;
     readonly loopStepIdentity: AgentLoopStepIdentity;
     readonly loopStep: AgentLoopStepRecord | undefined;
-    readonly nativeCheckpoint: NonNullable<SessionTimelineProjection["nativeCheckpoint"]>;
+    readonly nativeCheckpoint: NonNullable<
+      SessionTimelineProjection["nativeCheckpoint"]
+    >;
     readonly recentSessionEntries: ReadonlyArray<SessionEntryRecord>;
     readonly currentBindingFingerprint: string;
     readonly providerNativeSupported: boolean;
-    readonly reasoningProjectionBinding: Parameters<typeof projectSessionTimeline>[3];
+    readonly reasoningProjectionBinding: Parameters<
+      typeof projectSessionTimeline
+    >[3];
     readonly reasoningAttachmentBlobs: ReadonlyMap<string, Uint8Array>;
     readonly compactionDependencies: Parameters<typeof runSummaryCompaction>[1];
     readonly loadWorkCompactionPinning: () => Effect.Effect<
-      Pick<SummaryCompactionInput, "pinnedInstructions" | "pinnedInstructionFragments" | "controlBasis">,
+      Pick<
+        SummaryCompactionInput,
+        "pinnedInstructions" | "pinnedInstructionFragments" | "controlBasis"
+      >,
       ExecutionDriverError
     >;
     readonly proposeSettlement: (
@@ -60,13 +84,29 @@ export const rebaseWorkPlanCheckpoint = (
   },
 ): Effect.Effect<WorkPlanRebaseResult, ExecutionDriverError> => {
   const {
-    input, capability, tx, sessions, loopSteps, loopStepFence,
-    providerTurns, options, failure, now,
+    input,
+    capability,
+    tx,
+    sessions,
+    loopSteps,
+    loopStepFence,
+    providerTurns,
+    options,
+    failure,
+    now,
   } = dependencies;
   const {
-    turn, loopStepIdentity, loopStep, nativeCheckpoint, recentSessionEntries,
-    currentBindingFingerprint, providerNativeSupported, reasoningProjectionBinding,
-    reasoningAttachmentBlobs, compactionDependencies, loadWorkCompactionPinning,
+    turn,
+    loopStepIdentity,
+    loopStep,
+    nativeCheckpoint,
+    recentSessionEntries,
+    currentBindingFingerprint,
+    providerNativeSupported,
+    reasoningProjectionBinding,
+    reasoningAttachmentBlobs,
+    compactionDependencies,
+    loadWorkCompactionPinning,
     proposeSettlement,
   } = phase;
   return Effect.gen(function* () {
@@ -92,12 +132,8 @@ export const rebaseWorkPlanCheckpoint = (
     }
     const [nativeManifestRow, nativeReceipt] = yield* Effect.all(
       [
-        tx.transact(
-          providerTurns.findManifestByTurn(nativeProviderTurnId),
-        ),
-        tx.transact(
-          providerTurns.findSettledResult(nativeProviderTurnId),
-        ),
+        tx.transact(providerTurns.findManifestByTurn(nativeProviderTurnId)),
+        tx.transact(providerTurns.findSettledResult(nativeProviderTurnId)),
       ],
       { concurrency: 1 },
     ).pipe(Effect.mapError(failure));
@@ -130,8 +166,7 @@ export const rebaseWorkPlanCheckpoint = (
       nativeManifest.sessionId !== input.execution.sessionId ||
       nativeManifest.contextEpoch !== nativeCheckpoint.fromEpoch ||
       nativeManifest.operationKind !== "CompactionNative" ||
-      nativeManifest.outputContractRef !==
-        "provider-native-compaction-v1" ||
+      nativeManifest.outputContractRef !== "provider-native-compaction-v1" ||
       nativeManifest.resolvedModelBindingFingerprint !==
         nativeCheckpoint.bindingFingerprint ||
       nativeReceipt.turn.contextEpoch !== nativeCheckpoint.fromEpoch ||
@@ -201,9 +236,7 @@ export const rebaseWorkPlanCheckpoint = (
       [
         loopSteps === undefined
           ? Effect.succeed([])
-          : tx.transact(
-              loopSteps.listProviderTurnLinks(loopStepIdentity),
-            ),
+          : tx.transact(loopSteps.listProviderTurnLinks(loopStepIdentity)),
         tx.transact(sessions.findById(input.execution.sessionId)),
       ],
       { concurrency: 1 },
@@ -266,11 +299,10 @@ export const rebaseWorkPlanCheckpoint = (
       );
     }
     if (isOverflowNativeCheckpoint) {
-      const replacementProviderTurnId =
-        makeOverflowReplacementProviderTurnId(
-          input.execution.executionId,
-          turn,
-        );
+      const replacementProviderTurnId = makeOverflowReplacementProviderTurnId(
+        input.execution.executionId,
+        turn,
+      );
       const existingReplacement = stepProviderLinks.filter(
         (link) => link.role === "OverflowReplacement",
       );
@@ -282,12 +314,9 @@ export const rebaseWorkPlanCheckpoint = (
       const priorReplacement = existingReplacement[0];
       if (priorReplacement !== undefined) {
         if (
-          priorReplacement.providerTurnId !==
-            replacementProviderTurnId ||
-          priorReplacement.predecessorProviderTurnId !==
-            nativeProviderTurnId ||
-          Number(priorReplacement.contextEpoch) !==
-            Number(rebuilt.newEpoch)
+          priorReplacement.providerTurnId !== replacementProviderTurnId ||
+          priorReplacement.predecessorProviderTurnId !== nativeProviderTurnId ||
+          Number(priorReplacement.contextEpoch) !== Number(rebuilt.newEpoch)
         ) {
           return yield* Effect.fail(
             failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),

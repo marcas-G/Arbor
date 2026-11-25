@@ -1,6 +1,4 @@
-import {
-  type ConsumerOffsetStoreError,
-} from "@arbor/ports";
+import type { ConsumerOffsetStoreError } from "@arbor/ports";
 
 export const payloadRecord = (payload: unknown): Record<string, unknown> =>
   typeof payload === "object" && payload !== null

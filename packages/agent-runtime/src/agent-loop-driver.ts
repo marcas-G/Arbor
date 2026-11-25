@@ -51,6 +51,7 @@ import {
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { executeAgentLoopActions } from "./agent-loop-actions.js";
+import { recoverAgentLoopFrontier } from "./agent-loop-driver/recovery.js";
 import { MAX_TURNS, type ModelDecisionOutcome } from "./agent-loop-policy.js";
 import { completeAgentLoopStep } from "./agent-loop-step-completion.js";
 import {
@@ -68,13 +69,11 @@ import type { AgentLoopQualificationProbe } from "./qualification-probe.js";
 import { selectPendingInputPromotions } from "./safe-input-drain.js";
 import { settlementProposal } from "./settlement-proposal.js";
 
-import { recoverAgentLoopFrontier } from "./agent-loop-driver/recovery.js";
-
 export {
   type AgentLoopStepCursor,
-  selectInitialAgentLoopStepCursor,
   isAgentLoopStepManifestBound,
   isPreparedStepAwaitingInitialManifest,
+  selectInitialAgentLoopStepCursor,
 } from "./agent-loop-driver/cursor.js";
 
 export interface AgentLoopDriverOptions {
@@ -238,12 +237,24 @@ export const AgentLoopDriverLive = (
             P39RecoveryEvidenceStore,
           );
           const frontier = yield* recoverAgentLoopFrontier(
-            input, loopSteps, providerTurns, invocationStoreOption,
-            p39RecoveryOption, conversationCheckpointOption, decisionRequestsOption,
-            sessions, tx, failure, options,
+            input,
+            loopSteps,
+            providerTurns,
+            invocationStoreOption,
+            p39RecoveryOption,
+            conversationCheckpointOption,
+            decisionRequestsOption,
+            sessions,
+            tx,
+            failure,
+            options,
           );
           if (frontier._tag === "Terminal") return frontier.outcome;
-          const { firstLogicalStepNo, firstRepairAttempt, exactNotAdmittedRecovery } = frontier;
+          const {
+            firstLogicalStepNo,
+            firstRepairAttempt,
+            exactNotAdmittedRecovery,
+          } = frontier;
           const agentBinding: AgentBinding =
             input.execution.binding._tag === "WorkspaceExecution"
               ? {

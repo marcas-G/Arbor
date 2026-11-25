@@ -3,23 +3,11 @@ import {
   ResourceOwnershipRepository,
   TransactionScope,
 } from "@arbor/ports";
-import {
-  Effect,
-  Layer,
-} from "effect";
-import {
-  SqlClient,
-} from "effect/unstable/sql/SqlClient";
-import type {
-  SqlError,
-} from "effect/unstable/sql/SqlError";
-import {
-  repositoryFailure,
-} from "../repository-error.js";
-import {
-  type ClaimRow,
-  toClaim,
-} from "./claim-codec.js";
+import { Effect, Layer } from "effect";
+import { SqlClient } from "effect/unstable/sql/SqlClient";
+import type { SqlError } from "effect/unstable/sql/SqlError";
+import { repositoryFailure } from "../repository-error.js";
+import { type ClaimRow, toClaim } from "./claim-codec.js";
 
 export const ResourceOwnershipRepositoryLive: Layer.Layer<
   ResourceOwnershipRepository,
@@ -274,4 +262,3 @@ export const ResourceOwnershipRepositoryLive: Layer.Layer<
     });
   }),
 );
-

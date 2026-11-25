@@ -1,11 +1,14 @@
 import {
   conversationResponseEpisode,
-  executionEpisode,
   type ExecutionSettlement,
+  executionEpisode,
   type ProviderTurnId,
   providerTurnInferenceId,
 } from "@arbor/domain";
-import { decodeTurn, type SessionTimelineProjection } from "@arbor/model-context";
+import {
+  decodeTurn,
+  type SessionTimelineProjection,
+} from "@arbor/model-context";
 import type {
   AgentLoopStepFence,
   AgentLoopStepIdentity,
@@ -18,7 +21,10 @@ import type {
 } from "@arbor/ports";
 import { sha256Hex } from "@arbor/ports";
 import { Effect, Option } from "effect";
-import { MAX_TURNS, type ModelDecisionOutcome } from "../../agent-loop-policy.js";
+import {
+  MAX_TURNS,
+  type ModelDecisionOutcome,
+} from "../../agent-loop-policy.js";
 import { hasValidCompiledInferenceRequestHash } from "../../agent-loop-step-recovery.js";
 import type { ModelDecisionDependencies } from "../contract.js";
 import type { DecisionCursor } from "../startup-recovery.js";
@@ -47,32 +53,45 @@ export const recoverCommittedRebaseStep = (
     readonly sourceStep: AgentLoopStepRecord;
     readonly sourceStepLinks: ReadonlyArray<AgentLoopStepProviderTurnLink>;
     readonly nativeManifestJson: Record<string, unknown>;
-    readonly nativeCheckpoint: NonNullable<SessionTimelineProjection["nativeCheckpoint"]>;
+    readonly nativeCheckpoint: NonNullable<
+      SessionTimelineProjection["nativeCheckpoint"]
+    >;
     readonly nativeCheckpointProviderTurnId: string;
     readonly recentSessionEntries: ReadonlyArray<SessionEntryRecord>;
     readonly decodedProviderTurnId: (value: unknown) => ProviderTurnId | null;
   },
 ): Effect.Effect<CommittedRebaseResult, ExecutionDriverError> => {
-  const { input, capability, tx, loopSteps, loopStepFence, providerTurns, options, failure, now } = dependencies;
   const {
-    turn, sourceStepIdentity, sourceStep, sourceStepLinks, nativeManifestJson,
-    nativeCheckpoint, nativeCheckpointProviderTurnId, recentSessionEntries,
+    input,
+    capability,
+    tx,
+    loopSteps,
+    loopStepFence,
+    providerTurns,
+    options,
+    failure,
+    now,
+  } = dependencies;
+  const {
+    turn,
+    sourceStepIdentity,
+    sourceStep,
+    sourceStepLinks,
+    nativeManifestJson,
+    nativeCheckpoint,
+    nativeCheckpointProviderTurnId,
+    recentSessionEntries,
     decodedProviderTurnId,
   } = phase;
   return Effect.gen(function* () {
     if (sourceStep.state === "StepEffectsCommitted") {
       const terminalInboxEpisode = executionEpisode(input.execution);
-      const terminalMessageId = conversationResponseEpisode(
-        input.execution,
-      );
+      const terminalMessageId = conversationResponseEpisode(input.execution);
       const terminalInboxEntryKey =
         terminalInboxEpisode?._tag === "InboxEpisode"
           ? terminalInboxEpisode.entryKey
           : undefined;
-      if (
-        terminalMessageId !== null ||
-        terminalInboxEntryKey !== undefined
-      ) {
+      if (terminalMessageId !== null || terminalInboxEntryKey !== undefined) {
         const outputSequence = sourceStep.modelOutputSessionSequence;
         const outputHash = sourceStep.decodedOutputHash;
         const outputRows = recentSessionEntries.filter(
@@ -96,18 +115,15 @@ export const recoverCommittedRebaseStep = (
           );
         }
         const outputIdentityChecks = {
-          sequence:
-            outputSequence !== undefined && outputHash !== undefined,
+          sequence: outputSequence !== undefined && outputHash !== undefined,
           oneRow: outputRows.length === 1,
           modelOutput: outputEntry?.entryKind === "ModelOutput",
           providerSource: outputEntry?.source?.kind === "ProviderTurn",
           assistantPayload: outputPayload?._tag === "AssistantMessage",
           providerId: true,
-          sourceRef:
-            outputEntry?.source?.ref === `${outputTurnId}:assistant`,
+          sourceRef: outputEntry?.source?.ref === `${outputTurnId}:assistant`,
           contentRef:
-            outputPayload?.contentRef ===
-            `provider:${outputTurnId}:assistant`,
+            outputPayload?.contentRef === `provider:${outputTurnId}:assistant`,
           text:
             typeof outputPayload?.text === "string" &&
             typeof outputPayload.finishReason === "string",
@@ -121,8 +137,7 @@ export const recoverCommittedRebaseStep = (
             replacementLink.identity.repairAttempt ===
               sourceStep.identity.repairAttempt,
           linkOrdinal: replacementLink?.overflowOrdinal === 0,
-          linkProviderTurn:
-            replacementLink?.providerTurnId === outputTurnId,
+          linkProviderTurn: replacementLink?.providerTurnId === outputTurnId,
           linkPredecessor:
             replacementLink?.predecessorProviderTurnId ===
             nativeCheckpointProviderTurnId,
@@ -176,8 +191,7 @@ export const recoverCommittedRebaseStep = (
             outputResult.turn.sessionId === input.execution.sessionId,
           epoch:
             outputResult._tag === "SettledSuccess" &&
-            outputResult.turn.contextEpoch ===
-              replacementLink?.contextEpoch,
+            outputResult.turn.contextEpoch === replacementLink?.contextEpoch,
           model:
             outputResult._tag === "SettledSuccess" &&
             outputResult.turn.modelRef === capability.modelRef,
@@ -214,19 +228,14 @@ export const recoverCommittedRebaseStep = (
             failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
           );
         }
-        if (
-          outputResult._tag !== "SettledSuccess" ||
-          outputManifest === null
-        ) {
+        if (outputResult._tag !== "SettledSuccess" || outputManifest === null) {
           return yield* Effect.fail(
             failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
           );
         }
         let outputManifestJson: Record<string, unknown>;
         try {
-          const parsed = JSON.parse(
-            outputManifest.manifestJson,
-          ) as unknown;
+          const parsed = JSON.parse(outputManifest.manifestJson) as unknown;
           if (
             typeof parsed !== "object" ||
             parsed === null ||
@@ -246,13 +255,10 @@ export const recoverCommittedRebaseStep = (
           providerTurn:
             outputManifestJson.providerTurnId === outputProviderTurnId,
           execution:
-            outputManifestJson.executionId ===
-            input.execution.executionId,
-          session:
-            outputManifestJson.sessionId === input.execution.sessionId,
+            outputManifestJson.executionId === input.execution.executionId,
+          session: outputManifestJson.sessionId === input.execution.sessionId,
           epoch:
-            outputManifestJson.contextEpoch ===
-            outputResult.turn.contextEpoch,
+            outputManifestJson.contextEpoch === outputResult.turn.contextEpoch,
           model: outputManifestJson.modelRef === capability.modelRef,
           operation: outputManifestJson.operationKind === "Inference",
           step:
@@ -304,8 +310,7 @@ export const recoverCommittedRebaseStep = (
             decodedOutput.output.text === outputPayload?.text,
           finish:
             decodedOutput.ok &&
-            decodedOutput.output.finishReason ===
-              outputPayload?.finishReason,
+            decodedOutput.output.finishReason === outputPayload?.finishReason,
           hash:
             decodedOutput.ok &&
             sha256Hex(
@@ -347,8 +352,7 @@ export const recoverCommittedRebaseStep = (
         if (
           decodedOutput.output.toolInvocations.length === 0 &&
           decodedOutput.output.text.trim().length > 0 &&
-          (terminalMessageId !== null ||
-            terminalInboxEntryKey !== undefined)
+          (terminalMessageId !== null || terminalInboxEntryKey !== undefined)
         ) {
           const settlement: ExecutionSettlement =
             terminalMessageId !== null
@@ -393,7 +397,10 @@ export const recoverCommittedRebaseStep = (
               ),
             )
             .pipe(Effect.mapError(failure));
-          return { _tag: "Complete" as const, outcome: { _tag: "Settle" as const, settlement } };
+          return {
+            _tag: "Complete" as const,
+            outcome: { _tag: "Settle" as const, settlement },
+          };
         }
       }
       if (
@@ -496,8 +503,7 @@ export const recoverCommittedRebaseStep = (
           sourceStepIdentity.logicalStepNo + 1,
         initialRepair: successorIdentity.repairAttempt === 0,
         providerTurn:
-          successorRecord?.providerTurnId ===
-          sourceSuccessor.providerTurnId,
+          successorRecord?.providerTurnId === sourceSuccessor.providerTurnId,
         predecessorExecution:
           successorRecord?.predecessor?.executionId ===
           sourceStepIdentity.executionId,
@@ -541,7 +547,10 @@ export const recoverCommittedRebaseStep = (
       }
       return {
         _tag: "Restart" as const,
-        cursor: { turn: successorIdentity.logicalStepNo, repairAttempt: successorIdentity.repairAttempt },
+        cursor: {
+          turn: successorIdentity.logicalStepNo,
+          repairAttempt: successorIdentity.repairAttempt,
+        },
       };
     }
     return { _tag: "Ready" as const };

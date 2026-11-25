@@ -1,7 +1,7 @@
 import {
   ContextEpochNumber,
-  parse,
   providerTurnOverflowReplacementId as makeOverflowReplacementProviderTurnId,
+  parse,
   providerTurnNativeCompactionId,
   providerTurnSummaryCompactionId,
 } from "@arbor/domain";
@@ -18,7 +18,10 @@ import type {
 } from "@arbor/ports";
 import { sha256Hex } from "@arbor/ports";
 import { Effect, Option } from "effect";
-import { type ModelDecisionOutcome, safetyStop } from "../../agent-loop-policy.js";
+import {
+  type ModelDecisionOutcome,
+  safetyStop,
+} from "../../agent-loop-policy.js";
 import { isValidOverflowCompactionLinkPair } from "../../agent-loop-step-recovery.js";
 import {
   decodeUniqueNativePortableFrontier,
@@ -140,11 +143,10 @@ export const recoverWorkOverflow = (
             turn,
             inference.contextEpoch,
           );
-      const replacementProviderTurnId =
-        makeOverflowReplacementProviderTurnId(
-          input.execution.executionId,
-          turn,
-        );
+      const replacementProviderTurnId = makeOverflowReplacementProviderTurnId(
+        input.execution.executionId,
+        turn,
+      );
       const currentSession = yield* tx
         .transact(sessions.findById(input.execution.sessionId))
         .pipe(Effect.mapError(failure));
@@ -201,8 +203,7 @@ export const recoverWorkOverflow = (
                 overflowOrdinal: 0,
                 role: "OverflowCompaction",
                 providerTurnId: compactionProviderTurnId,
-                predecessorProviderTurnId:
-                  activeLoopStep.providerTurnId,
+                predecessorProviderTurnId: activeLoopStep.providerTurnId,
                 contextEpoch: inference.contextEpoch,
                 state: "Prepared",
                 createdAt,
@@ -241,39 +242,27 @@ export const recoverWorkOverflow = (
             failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
           );
         }
-        const [
-          inferenceReceipt,
-          compactionReceipt,
-          compactionManifest,
-        ] = yield* Effect.all(
-          [
-            tx.transact(
-              providerTurns.findSettledResult(
-                inferenceLink.providerTurnId,
+        const [inferenceReceipt, compactionReceipt, compactionManifest] =
+          yield* Effect.all(
+            [
+              tx.transact(
+                providerTurns.findSettledResult(inferenceLink.providerTurnId),
               ),
-            ),
-            tx.transact(
-              providerTurns.findSettledResult(
-                compactionLink.providerTurnId,
+              tx.transact(
+                providerTurns.findSettledResult(compactionLink.providerTurnId),
               ),
-            ),
-            tx.transact(
-              providerTurns.findManifestByTurn(
-                compactionLink.providerTurnId,
+              tx.transact(
+                providerTurns.findManifestByTurn(compactionLink.providerTurnId),
               ),
-            ),
-          ],
-          { concurrency: 1 },
-        ).pipe(Effect.mapError(failure));
+            ],
+            { concurrency: 1 },
+          ).pipe(Effect.mapError(failure));
         if (
           inferenceReceipt._tag !== "SettledFailure" ||
           inferenceReceipt.failureKind !== "ContextLimitExceeded" ||
-          inferenceReceipt.turn.executionId !==
-            input.execution.executionId ||
-          inferenceReceipt.turn.sessionId !==
-            input.execution.sessionId ||
-          inferenceReceipt.turn.contextEpoch !==
-            inferenceLink.contextEpoch
+          inferenceReceipt.turn.executionId !== input.execution.executionId ||
+          inferenceReceipt.turn.sessionId !== input.execution.sessionId ||
+          inferenceReceipt.turn.contextEpoch !== inferenceLink.contextEpoch
         ) {
           return yield* Effect.fail(
             failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
@@ -305,8 +294,7 @@ export const recoverWorkOverflow = (
                   input.execution.sessionId ||
                 existingCompactionTurn.contextEpoch !==
                   compactionLink.contextEpoch ||
-                existingCompactionTurn.modelRef !==
-                  capability.modelRef ||
+                existingCompactionTurn.modelRef !== capability.modelRef ||
                 existingCompactionTurn.outputContractRef !==
                   (existingNativeCompaction
                     ? "provider-native-compaction-v1"
@@ -334,13 +322,10 @@ export const recoverWorkOverflow = (
               nativeManifest === undefined ||
               compactionReceipt._tag !== "Unsettled" ||
               compactionManifest === null ||
-              nativeManifest.providerTurnId !==
-                compactionLink.providerTurnId ||
-              nativeManifest.executionId !==
-                input.execution.executionId ||
+              nativeManifest.providerTurnId !== compactionLink.providerTurnId ||
+              nativeManifest.executionId !== input.execution.executionId ||
               nativeManifest.sessionId !== input.execution.sessionId ||
-              nativeManifest.contextEpoch !==
-                compactionLink.contextEpoch ||
+              nativeManifest.contextEpoch !== compactionLink.contextEpoch ||
               nativeManifest.operationKind !== "CompactionNative" ||
               nativeManifest.logicalStepNo !== turn ||
               nativeManifest.modelRef !== capability.modelRef ||
@@ -373,20 +358,17 @@ export const recoverWorkOverflow = (
             "provider-native-compaction-v1"
         ) {
           if (
-            compactionReceipt.evidenceVersion !==
-              "provider-success-v1" ||
+            compactionReceipt.evidenceVersion !== "provider-success-v1" ||
             compactionReceipt.finishReason !== "Stop" ||
             compactionReceipt.turn.providerTurnId !==
               compactionLink.providerTurnId ||
             compactionReceipt.turn.executionId !==
               input.execution.executionId ||
-            compactionReceipt.turn.sessionId !==
-              input.execution.sessionId ||
+            compactionReceipt.turn.sessionId !== input.execution.sessionId ||
             compactionReceipt.turn.contextEpoch !==
               compactionLink.contextEpoch ||
             compactionManifest === null ||
-            compactionManifest.manifestJson !==
-              compactionReceipt.manifestJson
+            compactionManifest.manifestJson !== compactionReceipt.manifestJson
           ) {
             return yield* Effect.fail(
               failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
@@ -439,13 +421,10 @@ export const recoverWorkOverflow = (
             );
           if (
             nativeFrontier === null ||
-            nativeManifest.providerTurnId !==
-              compactionLink.providerTurnId ||
-            nativeManifest.executionId !==
-              input.execution.executionId ||
+            nativeManifest.providerTurnId !== compactionLink.providerTurnId ||
+            nativeManifest.executionId !== input.execution.executionId ||
             nativeManifest.sessionId !== input.execution.sessionId ||
-            nativeManifest.contextEpoch !==
-              compactionLink.contextEpoch ||
+            nativeManifest.contextEpoch !== compactionLink.contextEpoch ||
             nativeManifest.operationKind !== "CompactionNative" ||
             nativeManifest.logicalStepNo !== turn ||
             typeof nativeManifest.modelRef !== "string" ||
@@ -454,8 +433,7 @@ export const recoverWorkOverflow = (
             !/^p16fp_[0-9a-f]{64}$/u.test(
               nativeManifest.resolvedModelBindingFingerprint,
             ) ||
-            nativeFrontier.request.modelRef !==
-              nativeManifest.modelRef ||
+            nativeFrontier.request.modelRef !== nativeManifest.modelRef ||
             nativeContinuationStates.length !== 1 ||
             nativeContinuationStates[0]?._tag !== "ContinuationState"
           ) {
@@ -472,9 +450,7 @@ export const recoverWorkOverflow = (
               failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
             );
           }
-          const currentEpoch = Number(
-            currentSession.value.contextEpoch,
-          );
+          const currentEpoch = Number(currentSession.value.contextEpoch);
           const compactionEpoch = Number(compactionLink.contextEpoch);
           if (
             currentEpoch !== compactionEpoch &&
@@ -523,10 +499,7 @@ export const recoverWorkOverflow = (
             providerNativeSupported &&
             nativeManifest.resolvedModelBindingFingerprint ===
               currentBindingFingerprint;
-          if (
-            !bindingMatches &&
-            options.qualificationProbe !== undefined
-          ) {
+          if (!bindingMatches && options.qualificationProbe !== undefined) {
             yield* Effect.promise(
               () =>
                 options.qualificationProbe?.({
@@ -574,9 +547,7 @@ export const recoverWorkOverflow = (
                 execution: input.execution,
                 logicalStepNo: compactionLink.identity.logicalStepNo,
                 sourceAgentLoopStep: {
-                  executionId: String(
-                    compactionLink.identity.executionId,
-                  ),
+                  executionId: String(compactionLink.identity.executionId),
                   logicalStepNo: compactionLink.identity.logicalStepNo,
                   repairAttempt: compactionLink.identity.repairAttempt,
                   providerTurnId: String(
@@ -600,7 +571,10 @@ export const recoverWorkOverflow = (
             if ("_tag" in compacted) {
               return {
                 _tag: "Complete" as const,
-                outcome: { _tag: "Settle" as const, settlement: safetyStop("RuntimeSafetyStop") },
+                outcome: {
+                  _tag: "Settle" as const,
+                  settlement: safetyStop("RuntimeSafetyStop"),
+                },
               };
             }
             replacementEpoch = Number(compacted.newEpoch);
@@ -652,10 +626,8 @@ export const recoverWorkOverflow = (
                       overflowOrdinal: 0,
                       role: "OverflowReplacement",
                       providerTurnId: replacementProviderTurnId,
-                      predecessorProviderTurnId:
-                        compactionLink.providerTurnId,
-                      contextEpoch:
-                        parse(ContextEpochNumber)(replacementEpoch),
+                      predecessorProviderTurnId: compactionLink.providerTurnId,
+                      contextEpoch: parse(ContextEpochNumber)(replacementEpoch),
                       state: "Prepared",
                       createdAt: yield* now(),
                     },
@@ -665,8 +637,7 @@ export const recoverWorkOverflow = (
                 .pipe(Effect.mapError(failure));
             }
             overflowRecoveryAttempt = 1;
-            overflowReplacementProviderTurnId =
-              replacementProviderTurnId;
+            overflowReplacementProviderTurnId = replacementProviderTurnId;
             return { _tag: "Restart" as const, overflow: recoveryState() };
           }
         } else if (compactionReceipt._tag === "SettledSuccess") {

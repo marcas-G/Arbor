@@ -6,9 +6,7 @@ import {
   type ResourceBoundaryRevision,
   type WorkspaceId,
 } from "@arbor/domain";
-import {
-  type ResourceOwnershipClaimRecord,
-} from "@arbor/ports";
+import type { ResourceOwnershipClaimRecord } from "@arbor/ports";
 
 export interface ClaimRow {
   readonly claim_id: string;
@@ -92,4 +90,3 @@ export const sourceAddressForRegion = (
     );
   });
 };
-

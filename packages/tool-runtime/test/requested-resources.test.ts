@@ -13,7 +13,10 @@ describe("requested resource arguments before canonical admission", () => {
   it("extracts mount references and tolerates malformed argument JSON", () => {
     expect(
       requestedMountRefs(
-        JSON.stringify({ target: { mount: "workspace" }, cwd: { mount: "other" } }),
+        JSON.stringify({
+          target: { mount: "workspace" },
+          cwd: { mount: "other" },
+        }),
       ),
     ).toEqual(["workspace", "other"]);
     expect(requestedMountRefs("{")).toEqual([]);
@@ -37,9 +40,9 @@ describe("requested resource arguments before canonical admission", () => {
       { mount: "workspace", path: root.path },
       { mount: "workspace", path: "../outside.ts" },
     ]) {
-      expect(requestedFilesystemTarget(JSON.stringify({ target }), root)).toEqual(
-        { _tag: "Invalid" },
-      );
+      expect(
+        requestedFilesystemTarget(JSON.stringify({ target }), root),
+      ).toEqual({ _tag: "Invalid" });
     }
   });
 

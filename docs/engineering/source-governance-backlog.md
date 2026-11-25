@@ -129,3 +129,54 @@ Local checkout remains blocked by GitHub DNS resolution; the container has Node 
 ## Hosted CI transition
 
 Owner direction: use GitHub-hosted runners for CI rather than depending on a persistent self-hosted Linux machine. At `5b1f34416b797f315f831ccfde33131310362dbf`, quality and CodeQL were queued on self-hosted labels; runner administration was not accessible to confirm its online status. Both existing job names, triggers, pinned Node/pnpm versions, storage preflight, test commands, audit, health enforcement, and CodeQL analysis are preserved. The workflows now target `ubuntu-24.04`; the quality job explicitly installs Chromium and its Linux dependencies for the existing functional journey. The CodeQL workflow also cancels superseded runs within the same ref/PR group. There is no new self-hosted job in the PR gate. Deployment-specific Native OS and real-provider qualification remain separate evidence requirements, not skipped or deemed satisfied by hosted CI. Hosted runner execution and compatibility must be confirmed on the resulting exact PR revision before claiming success.
+## Local executable qualification — 2026-11-25 (post-checkpoint)
+
+A local Linux checkout with the pinned pnpm 12.4.2 completed the executable
+qualification the previous environment could not run. Node was v26.0.0 (not
+the CI-pinned 24.21.0); CI parity remains outstanding.
+
+Confirmed diagnostics found and fixed on this branch:
+
+1. Three files carried syntax-level corruption from the remote-API edits
+   (`resources.ts` — `});`/`}),` and a stray `};`; `observation-activation-rows.ts`
+   — orphaned `listDeliverReplayFailures` body pasted before the first real
+   method; `legacy-adoption-rows.ts` — the same body missing at its owner,
+   leaving a dangling method key). All three bodies were restored from the
+   pre-split baselines and now parse.
+2. `NativePortableFrontier` was unexported while appearing in an exported
+   function's inferred return (TS4023); now exported from
+   `checkpoint/native-evidence.ts`.
+3. `executeAgentLoopActions` hit a circular type inference (TS7022) at the
+   `executeExecutableAction` yield; `ExecutableActionResult` is now exported
+   and the binding annotated.
+4. The retired `DecisionTurn` vocabulary re-entered production via the
+   extracted `prepareDecisionTurn`; renamed to `prepareTurnForDecision`
+   (call site, definition, and the P3 architecture anchors).
+5. Five architecture tests used `readdirSync(dir, { recursive: true })` which
+   resolves to `string | Buffer[]` under the repository typings; they now pass
+   `encoding: "utf8"` per the existing `package-dag.test.ts` convention.
+6. The P40 composition assertion for `p39BindingEnabled`/`P40Observation
+   EvidenceStoreUnavailable`/`store.settle(` now points at the extracted
+   owners (`runtime/invocation-setup.ts`, `runtime/settlement.ts`) instead of
+   the facade `runtime.ts`, matching the ownership-pointer policy used for
+   the other decomposed groups.
+7. Biome normalization across 137 files (format + import-type/unused-import
+   safe fixes) that the remote-only workflow could not apply.
+
+Executed results at this working tree (Node v26.0.0, pnpm 12.4.2):
+
+- `pnpm lint` — exit 0 (14 warnings / 7 infos, non-blocking).
+- `pnpm typecheck` — `tsc -b` and `tsconfig.test.json` both clean.
+- `pnpm architecture` — 40 files / 263 tests PASS.
+- `pnpm test` — core suite 508 files PASS.
+- `pnpm --filter @arbor/web typecheck` / `build` / `test` — 40 files /
+  299 tests PASS (a stale `.vite-temp` symlink to a deleted /tmp path was
+  removed locally; it is not tracked content).
+- `pnpm check:source-lines` — still failing by design: the strict gate
+  remains the campaign's open work (the pending production queue above).
+
+Not yet executed here: migration replay, `pnpm test:functional`, the
+Playwright journeys, and the CI workflow on the PR head. The decomposition
+pause condition ("executable evidence for the checkpoint") is now met for
+lint/typecheck/architecture/core/web; functional and CI parity remain
+prerequisites before any merge or further promotion claim.

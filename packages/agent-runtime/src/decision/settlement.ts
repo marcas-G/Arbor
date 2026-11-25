@@ -5,7 +5,13 @@ import type { ModelDecisionDependencies } from "./contract.js";
 
 type SettlementDependencies = Pick<
   ModelDecisionDependencies,
-  "loopSteps" | "loopStepFence" | "providerTurns" | "tx" | "options" | "failure" | "now"
+  | "loopSteps"
+  | "loopStepFence"
+  | "providerTurns"
+  | "tx"
+  | "options"
+  | "failure"
+  | "now"
 >;
 
 /** Propose, but do not authoritatively commit, an execution settlement.
@@ -54,10 +60,7 @@ export const proposePreparedStepSettlement = (
               const dangling =
                 yield* providerTurns.findUnsettledByTurn(providerTurnId);
               if (dangling !== null) {
-                yield* providerTurns.failTurn(
-                  providerTurnId,
-                  yield* now(),
-                );
+                yield* providerTurns.failTurn(providerTurnId, yield* now());
               }
             }
             return yield* loopSteps.transition(

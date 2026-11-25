@@ -139,9 +139,7 @@ export const makeProcessRunner = (
           const currentEpisode =
             context.executionEpisodeBinding === undefined
               ? undefined
-              : decodeExecutionEpisodeBinding(
-                  context.executionEpisodeBinding,
-                );
+              : decodeExecutionEpisodeBinding(context.executionEpisodeBinding);
           if (
             policyEpisode === undefined ||
             currentEpisode === undefined ||
@@ -173,8 +171,7 @@ export const makeProcessRunner = (
           policy.policyRevision < 1 ||
           !/^[0-9a-f]{64}$/u.test(policy.policyDigest) ||
           (isOsPolicy &&
-            (decodeSandboxProviderId(policy.providerId) !==
-              policy.providerId ||
+            (decodeSandboxProviderId(policy.providerId) !== policy.providerId ||
               policy.providerVersion.trim().length === 0 ||
               policy.capabilityRevision.trim().length === 0 ||
               !/^[0-9a-f]{64}$/u.test(policy.enforcementRuleSetDigest) ||
@@ -186,9 +183,8 @@ export const makeProcessRunner = (
                 encodeNetworkPolicyV1(policy.networkPolicy) ||
               ((policy.kind === "OsEnforcedProcessPolicyV2" ||
                 policy.kind === "IndependentVerificationProcessPolicyV1") &&
-                (decodeNetworkBrokerControlsV2(
-                  policy.networkBrokerControls,
-                ) === undefined ||
+                (decodeNetworkBrokerControlsV2(policy.networkBrokerControls) ===
+                  undefined ||
                   policy.networkBrokerControls.mode !==
                     policy.networkPolicy.mode)))) ||
           (!isOsPolicy &&
@@ -240,8 +236,7 @@ export const makeProcessRunner = (
         const requestedTimeoutMs = invocation.requestedTimeoutMs;
         if (
           requestedTimeoutMs !== undefined &&
-          (!Number.isSafeInteger(requestedTimeoutMs) ||
-            requestedTimeoutMs < 1)
+          (!Number.isSafeInteger(requestedTimeoutMs) || requestedTimeoutMs < 1)
         ) {
           return {
             _tag: "Rejected" as const,
@@ -288,10 +283,8 @@ export const makeProcessRunner = (
             providerId: policy.providerId,
             expectedProviderVersion: policy.providerVersion,
             expectedCapabilityRevision: policy.capabilityRevision,
-            expectedEnforcementRuleSetDigest:
-              policy.enforcementRuleSetDigest,
-            expectedQualificationEvidenceRef:
-              policy.qualificationEvidenceRef,
+            expectedEnforcementRuleSetDigest: policy.enforcementRuleSetDigest,
+            expectedQualificationEvidenceRef: policy.qualificationEvidenceRef,
             profile: policy.profile,
             networkPolicy,
             boundary: policy.boundary,

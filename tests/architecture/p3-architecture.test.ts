@@ -82,7 +82,9 @@ describe("P3 package DAG", () => {
       "utf8",
     );
     expect(decisionTurn).toContain("loadConversationDecisionContext(");
-    expect(conversationContext).toContain("projectConversationCheckpointHistory");
+    expect(conversationContext).toContain(
+      "projectConversationCheckpointHistory",
+    );
     expect(decisionTurn).toContain('conversationContext._tag === "Restart"');
     expect(decisionTurn).toContain('conversationContext._tag === "Complete"');
     expect(decisionTurn).toContain("inputItems");
@@ -153,7 +155,10 @@ describe("P3 package DAG", () => {
     expect(errors).not.toContain('readonly _tag: "ExecutionDriverError"');
     expect(translation).toContain('tag === "LeaseFencingRejected"');
     const invocation = readFileSync(
-      join(repoRoot, "packages/agent-runtime/src/decision/provider/invocation.ts"),
+      join(
+        repoRoot,
+        "packages/agent-runtime/src/decision/provider/invocation.ts",
+      ),
       "utf8",
     );
     const turn = readFileSync(
@@ -161,7 +166,7 @@ describe("P3 package DAG", () => {
       "utf8",
     );
     expect(decision).toContain("invokePreparedProviderTurn(");
-    expect(decision).toContain("prepareDecisionTurn(");
+    expect(decision).toContain("prepareTurnForDecision(");
     expect(invocation).toContain("providerFailureSettlement");
     expect(turn).toContain('reason: "ContextUnsatisfiable"');
     expect(preparation).not.toContain("Effect.catchIf");
@@ -188,8 +193,7 @@ describe("Agent Runtime internal directory ownership", () => {
     "agent-loop-driver",
     "agent-loop-actions",
   ]);
-  const moduleIdentity = (path: string) =>
-    path.replace(/\.(?:js|ts)$/u, "");
+  const moduleIdentity = (path: string) => path.replace(/\.(?:js|ts)$/u, "");
 
   const forbiddenEdge = (from: string, specifier: string) => {
     if (!specifier.startsWith(".")) return false;
@@ -208,20 +212,52 @@ describe("Agent Runtime internal directory ownership", () => {
   };
 
   it("keeps decision phases and checkpoint implementation below the drivers", () => {
-    expect(forbiddenEdge("decision/startup-recovery.ts", "../model-decision.js")).toBe(true);
-    expect(forbiddenEdge("checkpoint/conversation/evidence.ts", "../../decision/contract.js")).toBe(true);
-    expect(forbiddenEdge("decision/conversation-context.ts", "../checkpoint/conversation/evidence.js")).toBe(false);
-    expect(forbiddenEdge("decision/startup-recovery.ts", "../native-checkpoint-evidence.js")).toBe(true);
+    expect(
+      forbiddenEdge("decision/startup-recovery.ts", "../model-decision.js"),
+    ).toBe(true);
+    expect(
+      forbiddenEdge(
+        "checkpoint/conversation/evidence.ts",
+        "../../decision/contract.js",
+      ),
+    ).toBe(true);
+    expect(
+      forbiddenEdge(
+        "decision/conversation-context.ts",
+        "../checkpoint/conversation/evidence.js",
+      ),
+    ).toBe(false);
+    expect(
+      forbiddenEdge(
+        "decision/startup-recovery.ts",
+        "../native-checkpoint-evidence.js",
+      ),
+    ).toBe(true);
 
-    expect(forbiddenEdge("agent-loop-actions/ledger.ts", "../agent-loop-actions.js")).toBe(true);
-    expect(forbiddenEdge("agent-loop-actions/ledger.ts", "./types.js")).toBe(false);
-    expect(forbiddenEdge("agent-loop-actions/executable.ts", "../decision/contract.js")).toBe(true);
-    expect(forbiddenEdge("decision/startup-recovery.ts", "../agent-loop-actions/ledger.js")).toBe(true);
+    expect(
+      forbiddenEdge("agent-loop-actions/ledger.ts", "../agent-loop-actions.js"),
+    ).toBe(true);
+    expect(forbiddenEdge("agent-loop-actions/ledger.ts", "./types.js")).toBe(
+      false,
+    );
+    expect(
+      forbiddenEdge(
+        "agent-loop-actions/executable.ts",
+        "../decision/contract.js",
+      ),
+    ).toBe(true);
+    expect(
+      forbiddenEdge(
+        "decision/startup-recovery.ts",
+        "../agent-loop-actions/ledger.js",
+      ),
+    ).toBe(true);
 
     const violations: string[] = [];
     for (const directory of ["decision", "checkpoint", "agent-loop-actions"]) {
       const entries = readdirSync(join(repoRoot, src, directory), {
         recursive: true,
+        encoding: "utf8",
       });
       for (const entry of entries.filter((name) => name.endsWith(".ts"))) {
         const path = `${directory}/${entry.replaceAll("\\", "/")}`;
@@ -234,7 +270,8 @@ describe("Agent Runtime internal directory ownership", () => {
             statement.type !== "ImportDeclaration" &&
             statement.type !== "ExportNamedDeclaration" &&
             statement.type !== "ExportAllDeclaration"
-          ) continue;
+          )
+            continue;
           const specifier = statement.source?.value;
           if (specifier !== undefined && forbiddenEdge(path, specifier)) {
             violations.push(`${path}: ${specifier}`);
@@ -246,7 +283,10 @@ describe("Agent Runtime internal directory ownership", () => {
   });
 
   it("keeps startup recovery and prepared settlement as explicit decision phases", () => {
-    const driver = readFileSync(join(repoRoot, src, "model-decision.ts"), "utf8");
+    const driver = readFileSync(
+      join(repoRoot, src, "model-decision.ts"),
+      "utf8",
+    );
     const startup = readFileSync(
       join(repoRoot, src, "decision/startup-recovery.ts"),
       "utf8",
@@ -257,7 +297,9 @@ describe("Agent Runtime internal directory ownership", () => {
     );
     expect(driver).toContain("recoverStartupDecision(dependencies,");
     expect(driver).toContain("turn = startupRecovery.cursor.turn;");
-    expect(driver).toContain("repairAttempt = startupRecovery.cursor.repairAttempt;");
+    expect(driver).toContain(
+      "repairAttempt = startupRecovery.cursor.repairAttempt;",
+    );
     expect(startup).toContain("findNativeCompactionsBySessionEpoch");
     expect(driver).toContain("proposePreparedStepSettlement(dependencies,");
     expect(settlement).toContain("loopSteps.transition");
@@ -270,7 +312,10 @@ describe("Agent Runtime internal directory ownership", () => {
 describe("durable step recovery responsibility", () => {
   it("delegates overflow recovery to the exact conversation or Session owner", () => {
     const src = "packages/agent-runtime/src/decision";
-    const driver = readFileSync(join(repoRoot, src, "step-recovery.ts"), "utf8");
+    const driver = readFileSync(
+      join(repoRoot, src, "step-recovery.ts"),
+      "utf8",
+    );
     const conversation = readFileSync(
       join(repoRoot, src, "recovery/conversation-overflow.ts"),
       "utf8",
@@ -298,7 +343,8 @@ describe("durable step recovery responsibility", () => {
 
 describe("decision context and native rebase ownership", () => {
   const src = "packages/agent-runtime/src";
-  const read = (path: string) => readFileSync(join(repoRoot, src, path), "utf8");
+  const read = (path: string) =>
+    readFileSync(join(repoRoot, src, path), "utf8");
 
   it("keeps context construction and native checkpoint recovery behind phases", () => {
     const driver = read("model-decision.ts");
@@ -329,7 +375,8 @@ describe("decision context and native rebase ownership", () => {
 
 describe("prepared Provider lifecycle ownership", () => {
   const src = "packages/agent-runtime/src";
-  const read = (path: string) => readFileSync(join(repoRoot, src, path), "utf8");
+  const read = (path: string) =>
+    readFileSync(join(repoRoot, src, path), "utf8");
 
   it("prepares and replays before admitting inference", () => {
     const driver = read("model-decision.ts");
@@ -339,7 +386,7 @@ describe("prepared Provider lifecycle ownership", () => {
     const replay = read("decision/provider/replay.ts");
     const invocation = read("decision/provider/invocation.ts");
     const result = read("decision/provider/result.ts");
-    const prepareAt = driver.indexOf("yield* prepareDecisionTurn(");
+    const prepareAt = driver.indexOf("yield* prepareTurnForDecision(");
     const replayAt = driver.indexOf("yield* replayPreparedProviderTurn(");
     const invokeAt = driver.indexOf("yield* invokePreparedProviderTurn(");
     expect(prepareAt).toBeGreaterThanOrEqual(0);

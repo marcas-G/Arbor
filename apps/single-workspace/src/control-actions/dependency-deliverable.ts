@@ -32,8 +32,8 @@ import type { AnyProducerEvidenceRequest } from "../any-producer-evidence.js";
 import {
   actionError,
   actionOperationalFailure,
-  generationScopedCommandId,
   findPriorCommandReceipt,
+  generationScopedCommandId,
 } from "./command-receipts.js";
 
 export interface DeclareDependencyDependencies {

@@ -110,9 +110,14 @@ describe("module ownership and local dependency DAG", () => {
     it(`keeps ${group.packageRoot}/${group.directory} below its facade and package barrel`, () => {
       const packageRoot = join(repoRoot, group.packageRoot);
       const directory = join(packageRoot, group.directory);
-      const privateFiles = readdirSync(directory, { recursive: true })
+      const privateFiles = readdirSync(directory, {
+        recursive: true,
+        encoding: "utf8",
+      })
         .filter((entry) => entry.endsWith(".ts"))
-        .map((entry) => posix.join(group.directory, entry.replaceAll("\\", "/")));
+        .map((entry) =>
+          posix.join(group.directory, entry.replaceAll("\\", "/")),
+        );
       expect(privateFiles.length).toBeGreaterThan(0);
       const files = [`${group.facade}.ts`, ...privateFiles];
       const localFiles = new Set(

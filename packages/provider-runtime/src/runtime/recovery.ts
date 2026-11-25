@@ -1,5 +1,4 @@
 import {
-  providerRetryCauseFromAttempt,
   type ClockService,
   type ProviderCancellationSignal,
   type ProviderFailure,
@@ -7,14 +6,22 @@ import {
   type ProviderRunInput,
   type ProviderRunResult,
   type ProviderTurnStoreService,
+  providerRetryCauseFromAttempt,
   type RuntimeClockService,
   type TransactionPortService,
   type UnsettledProviderTurn,
 } from "@arbor/ports";
 import { Effect } from "effect";
-import { decideProviderRetry, noAttemptObservation, unknownAttemptObservation } from "../policy.js";
+import {
+  decideProviderRetry,
+  noAttemptObservation,
+  unknownAttemptObservation,
+} from "../policy.js";
 import type { ProviderRuntimeConfig } from "./config.js";
-import { completeNativeSuccessEvidence, type CompleteNativeSuccessEvidence } from "./continuation-evidence.js";
+import {
+  type CompleteNativeSuccessEvidence,
+  completeNativeSuccessEvidence,
+} from "./continuation-evidence.js";
 import { stoppedRecoveryDecision, unknownFailure } from "./failures.js";
 
 /** Discover a durable prior turn, preserving atomic recovery decisions and native-success settlement. */
@@ -41,25 +48,17 @@ export const discoverProviderRecovery = (
       );
       if (recoveryTurn !== null) {
         const resumeBindingChecks = {
-          manifestMatches:
-            recoveryTurn.manifestJson === input.manifestJson,
+          manifestMatches: recoveryTurn.manifestJson === input.manifestJson,
           portableRequestMatches:
-            recoveryTurn.portableRequestJson ===
-            JSON.stringify(input.request),
-          executionMatches:
-            recoveryTurn.turn.executionId === input.executionId,
-          sessionMatches:
-            recoveryTurn.turn.sessionId === input.sessionId,
-          epochMatches:
-            recoveryTurn.turn.contextEpoch === input.contextEpoch,
+            recoveryTurn.portableRequestJson === JSON.stringify(input.request),
+          executionMatches: recoveryTurn.turn.executionId === input.executionId,
+          sessionMatches: recoveryTurn.turn.sessionId === input.sessionId,
+          epochMatches: recoveryTurn.turn.contextEpoch === input.contextEpoch,
           modelMatches: recoveryTurn.turn.modelRef === input.modelRef,
           outputContractMatches:
-            recoveryTurn.turn.outputContractRef ===
-            input.outputContractRef,
+            recoveryTurn.turn.outputContractRef === input.outputContractRef,
         };
-        if (
-          Object.values(resumeBindingChecks).some((matches) => !matches)
-        ) {
+        if (Object.values(resumeBindingChecks).some((matches) => !matches)) {
           // A persisted turn is permanently pinned to its original
           // manifest and portable request. A later model/provider
           // configuration must never resume it under a new binding;
@@ -120,28 +119,24 @@ export const discoverProviderRecovery = (
             ? noAttemptObservation()
             : (last.observation ?? unknownAttemptObservation());
         const persistedPolicy = recoveryTurn.turn.executionPolicy;
-        const persistedDeadline =
-          recoveryTurn.turn.turnDeadlineAt ?? null;
+        const persistedDeadline = recoveryTurn.turn.turnDeadlineAt ?? null;
         const deadlineAtMs =
           persistedDeadline === null
             ? Number.NaN
             : Date.parse(persistedDeadline);
         const retryDecision =
-          persistedPolicy === undefined ||
-          !Number.isFinite(deadlineAtMs)
+          persistedPolicy === undefined || !Number.isFinite(deadlineAtMs)
             ? stoppedRecoveryDecision(
                 "persisted attempt evidence or execution limits are incomplete",
               )
             : decideProviderRetry({
                 cause,
                 observation,
-                continuationCheckpoint:
-                  last?.continuationCheckpoint ?? null,
+                continuationCheckpoint: last?.continuationCheckpoint ?? null,
                 attemptNo: last?.attemptNo ?? -1,
                 maxAttempts: persistedPolicy.maxAttempts,
                 cancelled: last?.outcome === "Cancelled",
-                deadlineExpired:
-                  deadlineAtMs <= runtimeClock.epochMillis(),
+                deadlineExpired: deadlineAtMs <= runtimeClock.epochMillis(),
               });
         const decidedAt = yield* clock.now();
         const recordDecision = () =>
@@ -162,8 +157,7 @@ export const discoverProviderRecovery = (
                 {
                   outcome,
                   taxonomyVersion: "phase1-v2",
-                  observation:
-                    last.observation ?? unknownAttemptObservation(),
+                  observation: last.observation ?? unknownAttemptObservation(),
                   canonicalEventPrefixJson:
                     last.canonicalEventPrefixJson ?? "[]",
                   deliveredPosition: last.deliveredPosition ?? 0,
@@ -171,8 +165,7 @@ export const discoverProviderRecovery = (
                   last.continuationCheckpoint === undefined
                     ? {}
                     : {
-                        continuationCheckpoint:
-                          last.continuationCheckpoint,
+                        continuationCheckpoint: last.continuationCheckpoint,
                       }),
                   retryDecision,
                 },

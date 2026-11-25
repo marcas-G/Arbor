@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   CURRENT_MIGRATIONS,
-  P39_MAINTENANCE_MIGRATIONS,
   P39_MAINTENANCE_MIGRATION_MANIFEST,
+  P39_MAINTENANCE_MIGRATIONS,
 } from "../../adapters/persistence-sqlite/src/migrations.js";
 
 // Exact SQL bytes of the formerly inline descriptors at ac71fef, before
@@ -255,9 +255,11 @@ describe("historical migration descriptor identity", () => {
   it("preserves the ordinary historical registry and maintenance-only P39", () => {
     expect(
       CURRENT_MIGRATIONS.filter((item) => item.id <= 57).map((item) => item.id),
-    ).toEqual(Array.from({ length: 57 }, (_, index) => index + 1).filter(
-      (id) => id !== 39,
-    ));
+    ).toEqual(
+      Array.from({ length: 57 }, (_, index) => index + 1).filter(
+        (id) => id !== 39,
+      ),
+    );
     expect(P39_MAINTENANCE_MIGRATIONS.map((item) => item.id)).toEqual([
       37, 38, 39,
     ]);

@@ -1,13 +1,12 @@
 import { workspaceSandboxPolicyBindingIsAuthorized } from "@arbor/application";
 import {
-  encodeExecutionEpisodeBinding,
-  executionEpisode,
   type Execution,
   type ExecutionId,
+  encodeExecutionEpisodeBinding,
+  executionEpisode,
   type SandboxAuthorityBundleSnapshotCurrent,
 } from "@arbor/domain";
 import {
-  WorkspaceSandboxPolicyBindingPort,
   type AttentionProjectionStoreService,
   type ClockService,
   type CommittedSandboxPolicyDecisionV1,
@@ -19,6 +18,7 @@ import {
   type TransactionPortService,
   type WorkspaceRepositoryService,
   type WorkspaceSandboxAuthorizationStoreService,
+  WorkspaceSandboxPolicyBindingPort,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 

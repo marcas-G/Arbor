@@ -32,8 +32,8 @@ import { Effect, Option } from "effect";
 import {
   actionError,
   actionOperationalFailure,
-  generationScopedCommandId,
   findPriorCommandReceipt,
+  generationScopedCommandId,
   validatePriorCommittedReplay,
 } from "./command-receipts.js";
 

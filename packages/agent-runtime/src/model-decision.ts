@@ -12,26 +12,23 @@ import {
   type InstructionFragment,
   SESSION_TIMELINE_ENTRY_LIMIT,
 } from "@arbor/model-context";
-import type {
-  ExecutionDriverError,
-  SessionEntryRecord,
-} from "@arbor/ports";
+import type { ExecutionDriverError, SessionEntryRecord } from "@arbor/ports";
 import { PROVIDER_REASONING_ATTACHMENT_MEDIA_TYPE } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import type { ModelDecisionOutcome } from "./agent-loop-policy.js";
-import { loadConversationDecisionContext } from "./decision/conversation-context.js";
 import { loadDecisionSessionContext } from "./decision/context/session.js";
 import { loadDecisionWorkspaceContext } from "./decision/context/workspace.js";
-import { rebaseWorkPlanCheckpoint } from "./decision/recovery/work-plan-rebase.js";
-import { recoverNativeCheckpointContext } from "./decision/recovery/native-rebase.js";
 import type { ModelDecisionDependencies } from "./decision/contract.js";
+import { loadConversationDecisionContext } from "./decision/conversation-context.js";
+import { prepareTurnForDecision } from "./decision/preparation/turn.js";
+import { invokePreparedProviderTurn } from "./decision/provider/invocation.js";
+import { replayPreparedProviderTurn } from "./decision/provider/replay.js";
+import { recoverNativeCheckpointContext } from "./decision/recovery/native-rebase.js";
 import type { OverflowRecoveryState } from "./decision/recovery/overflow-state.js";
+import { rebaseWorkPlanCheckpoint } from "./decision/recovery/work-plan-rebase.js";
+import { proposePreparedStepSettlement } from "./decision/settlement.js";
 import { recoverStartupDecision } from "./decision/startup-recovery.js";
 import { recoverDecisionStep } from "./decision/step-recovery.js";
-import { proposePreparedStepSettlement } from "./decision/settlement.js";
-import { prepareDecisionTurn } from "./decision/preparation/turn.js";
-import { replayPreparedProviderTurn } from "./decision/provider/replay.js";
-import { invokePreparedProviderTurn } from "./decision/provider/invocation.js";
 import { assembleWorkContext } from "./work-context.js";
 
 export { isValidOverflowCompactionLinkPair } from "./agent-loop-step-recovery.js";
@@ -286,10 +283,7 @@ export const runModelDecision = (
       if (conversationContext._tag === "Complete") {
         return conversationContext.outcome;
       }
-      const {
-        conversationExecution,
-        placementExecution,
-      } = conversationContext;
+      const { conversationExecution, placementExecution } = conversationContext;
       const sessionContext = yield* loadDecisionSessionContext(dependencies, {
         ...conversationContext,
         turn,
@@ -378,7 +372,7 @@ export const runModelDecision = (
         overflow = planRebase.overflow;
         continue;
       }
-      const turnPreparation = yield* prepareDecisionTurn(dependencies, {
+      const turnPreparation = yield* prepareTurnForDecision(dependencies, {
         turn,
         repairAttempt,
         repairFragments,

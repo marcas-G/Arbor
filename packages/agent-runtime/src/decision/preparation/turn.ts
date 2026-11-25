@@ -1,8 +1,8 @@
-import {
-  type ExecutionSettlement,
-  type ProviderTurnId,
-  type Work,
-  type Workspace,
+import type {
+  ExecutionSettlement,
+  ProviderTurnId,
+  Work,
+  Workspace,
 } from "@arbor/domain";
 import {
   type ControlBasis,
@@ -20,7 +20,11 @@ import type {
   ProviderRunInput,
 } from "@arbor/ports";
 import { Effect, type Option } from "effect";
-import { type ModelDecisionOutcome, runtimeSafetyFragment, safetyStop } from "../../agent-loop-policy.js";
+import {
+  type ModelDecisionOutcome,
+  runtimeSafetyFragment,
+  safetyStop,
+} from "../../agent-loop-policy.js";
 import { runCompaction } from "../../compaction-coordinator.js";
 import { workExecutionLoopFragmentsFor } from "../../prompt-assets.js";
 import type { AgentStepContext } from "../../step-context.js";
@@ -28,20 +32,38 @@ import type { ModelDecisionDependencies } from "../contract.js";
 import type { ConversationDecisionContextResult } from "../conversation-context.js";
 import type { OverflowRecoveryState } from "../recovery/overflow-state.js";
 import { resumePinnedOverflowCompaction } from "../recovery/resume-overflow-compaction.js";
-import { assembleDecisionInstructions, type CompactionWorkPinning } from "./instructions.js";
+import {
+  assembleDecisionInstructions,
+  type CompactionWorkPinning,
+} from "./instructions.js";
 
 type PreparationDependencies = Pick<
   ModelDecisionDependencies,
-  "input" | "agentBinding" | "capability" | "modelContext" | "tx" |
-  "loopSteps" | "loopStepFence" | "providerTurns" | "turnProfileResolver" |
-  "decisionRequests" | "options" | "failure" | "now" | "conversationCheckpoints" | "blobs"
+  | "input"
+  | "agentBinding"
+  | "capability"
+  | "modelContext"
+  | "tx"
+  | "loopSteps"
+  | "loopStepFence"
+  | "providerTurns"
+  | "turnProfileResolver"
+  | "decisionRequests"
+  | "options"
+  | "failure"
+  | "now"
+  | "conversationCheckpoints"
+  | "blobs"
 >;
 
 type PreparationResult =
   | ModelDecisionOutcome
   | {
       readonly _tag: "Prepared";
-      readonly preparation: Extract<TurnPreparation, { readonly _tag: "Ready" }>;
+      readonly preparation: Extract<
+        TurnPreparation,
+        { readonly _tag: "Ready" }
+      >;
       readonly turnInput: ProviderRunInput;
       readonly compactionWorkPinning: CompactionWorkPinning;
     }
@@ -53,7 +75,7 @@ type PreparationResult =
 
 /** Assemble canonical instructions and decision context, resume any pinned
  * compaction, then prepare the exact Provider request. No inference is admitted here. */
-export const prepareDecisionTurn = (
+export const prepareTurnForDecision = (
   dependencies: PreparationDependencies,
   phase: {
     readonly turn: number;
@@ -64,7 +86,10 @@ export const prepareDecisionTurn = (
     readonly loopStepIdentity: AgentLoopStepIdentity;
     readonly workspace: Option.Some<Workspace>;
     readonly currentWork: Work | null;
-    readonly conversation: Extract<ConversationDecisionContextResult, { readonly _tag: "Ready" }>;
+    readonly conversation: Extract<
+      ConversationDecisionContextResult,
+      { readonly _tag: "Ready" }
+    >;
     readonly controlBasis: ControlBasis;
     readonly stepContext: AgentStepContext;
     readonly sessionProjection: SessionTimelineProjection;
@@ -82,19 +107,35 @@ export const prepareDecisionTurn = (
   },
 ): Effect.Effect<PreparationResult, ExecutionDriverError> => {
   const {
-    input, agentBinding, capability, modelContext, loopStepFence,
-    turnProfileResolver, options, failure,
+    input,
+    agentBinding,
+    capability,
+    modelContext,
+    loopStepFence,
+    turnProfileResolver,
+    options,
+    failure,
   } = dependencies;
   const {
-    turn, repairFragments, providerTurnId, loopStep,
-    loopStepIdentity, workspace, currentWork, controlBasis, stepContext,
-    sessionProjection, historyContext, inputItems, messageContextRefs,
-    currentBindingFingerprint, providerNativeSupported, compactionDependencies,
+    turn,
+    repairFragments,
+    providerTurnId,
+    loopStep,
+    loopStepIdentity,
+    workspace,
+    currentWork,
+    controlBasis,
+    stepContext,
+    sessionProjection,
+    historyContext,
+    inputItems,
+    messageContextRefs,
+    currentBindingFingerprint,
+    providerNativeSupported,
+    compactionDependencies,
     proposeSettlement,
   } = phase;
-  const {
-    conversationMessages, conversationExecution,
-  } = phase.conversation;
+  const { conversationMessages, conversationExecution } = phase.conversation;
   return Effect.gen(function* () {
     let compactionAttempts = phase.compactionAttempts;
     const instructions = yield* assembleDecisionInstructions(dependencies, {
@@ -136,8 +177,7 @@ export const prepareDecisionTurn = (
     const turnProfile = yield* turnProfileResolver
       .resolve({
         execution: input.execution,
-        conversation:
-          conversationExecution && conversationMessages.length > 0,
+        conversation: conversationExecution && conversationMessages.length > 0,
       })
       .pipe(Effect.mapError(failure));
     const workExecutionLoopFragments = workExecutionLoopFragmentsFor(
@@ -269,7 +309,11 @@ export const prepareDecisionTurn = (
       if ("_tag" in compacted) {
         return yield* proposeSettlement(safetyStop("RuntimeSafetyStop"));
       }
-      return { _tag: "Restart" as const, overflow: phase.overflow, compactionAttempts };
+      return {
+        _tag: "Restart" as const,
+        overflow: phase.overflow,
+        compactionAttempts,
+      };
     }
 
     const turnInput: ProviderRunInput = {

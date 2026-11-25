@@ -1,5 +1,13 @@
-import type { CommandSubmissionContext, Execution, ExecutionSettlement } from "@arbor/domain";
-import type { ControlBasis, ModelOutput, PreparedModelTurn } from "@arbor/model-context";
+import type {
+  CommandSubmissionContext,
+  Execution,
+  ExecutionSettlement,
+} from "@arbor/domain";
+import type {
+  ControlBasis,
+  ModelOutput,
+  PreparedModelTurn,
+} from "@arbor/model-context";
 import type {
   AgentLoopStepFence,
   AgentLoopStepRecord,
@@ -15,7 +23,10 @@ import type {
   TransactionPortService,
 } from "@arbor/ports";
 import type { Effect } from "effect";
-import type { ControlToolRegistryService, ExecutableInvocationHandler } from "../control.js";
+import type {
+  ControlToolRegistryService,
+  ExecutableInvocationHandler,
+} from "../control.js";
 import type { ControlActionAuthorizerService } from "../control-authorization.js";
 import type { AgentLoopQualificationProbe } from "../qualification-probe.js";
 
@@ -94,4 +105,3 @@ export type AgentLoopActionOutcome =
       readonly outcome: SandboxProviderUnavailableOutcome;
     }
   | { readonly _tag: "SandboxPolicyRequiredInterruption" };
-
