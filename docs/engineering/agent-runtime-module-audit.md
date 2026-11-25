@@ -83,3 +83,67 @@ Required verification in the pinned Arbor checkout:
     pnpm check
 
 Additionally run applicable AH17/AH19 checkpoint, AH7/P39 tool recovery and P9 sandbox-unavailable process cases according to the current manifest and release qualification policy. Do not claim completion or merge without required gates.
+
+
+## Proposed structural convergence: replace giant orchestration bodies
+
+Audit base: 8c757bbface43cc048ee01197fbf45751ddaa977. This is a proposed implementation decomposition within the existing frozen design, not a new product contract or owner approval of semantic changes. DID §10.6 explicitly specifies a slim AgentRuntime, P3 defines the durable AgentLoopStep handoff, P4 owns executable tool execution, §7.4 requires one semantic transaction scope, and P9 requires systematic crash/recovery evidence. These existing constraints govern all extractions.
+
+The preceding work moved independent helpers, but left runModelDecision, ToolRuntimeLive and executeAgentLoopActions bodies byte-identical. Their remaining control-flow and state coupling are the primary problem. Do not continue optimizing file-size totals.
+
+### Observed source map (1-based approximate ranges at the audit base)
+
+| Current file | Range / anchor | Responsibility candidate |
+|---|---|---|
+| model-decision.ts | 227–399 | Turn dependency setup; timeline and Work compaction pinning |
+| model-decision.ts | 400–986 | Startup checkpoint recovery and inherited producer ownership |
+| model-decision.ts | 987–2090 | Exact step identity, durable ProviderTurn/step replay and overflow continuation |
+| model-decision.ts | 2091–2163 | Settlement proposal and fenced step transition |
+| model-decision.ts | 2164–2667 | Conversation-specific input/history/checkpoint processing, including terminal recovery |
+| model-decision.ts | 2676–4575 | Session projection, pinned output and checkpoint validation/replay |
+| model-decision.ts | 4576–5099 | Workspace/Work context, instructions, decision replay binding |
+| model-decision.ts | 5100–5407 | Compaction continuation, profile and preparation |
+| model-decision.ts | 5408–5890 | ProviderRunInput and durable manifest/replay handling |
+| model-decision.ts | 5891–6407 | Admission, Provider result/overflow, repair and outcome |
+| tool-runtime/src/runtime.ts | 310–683 | Existing Layer assembly and sandbox process runner |
+| tool-runtime/src/runtime.ts | 684–1154 | Recorded observation evidence and fenced invocation lookup |
+| tool-runtime/src/runtime.ts | 1155–1957 | Invocation setup, durable no-effect and replay gates |
+| tool-runtime/src/runtime.ts | 1958–2146 | Workspace/environment/resource resolution and captured admission checks |
+| tool-runtime/src/runtime.ts | 2147–3741 | Admission, P39 evidence/reconciliation, retry and fenced claims |
+| tool-runtime/src/runtime.ts | 3742–4317 | New effect admission, sandbox/execution and reconciliation selection |
+| tool-runtime/src/runtime.ts | 4318–end | Terminal evidence/settlement writes and response |
+| agent-loop-actions.ts | makeBlockedSettlement; 431–703 | Blocked settlement and exact step recovery before dispatch |
+| agent-loop-actions.ts | 704–1539 | Action iteration, terminal result and observation persistence |
+| agent-loop-actions.ts | 1540–1779 | Executable action path |
+| agent-loop-actions.ts | 1780–end | Control decode, authorization, handler, settlement |
+| apps/single-workspace/src/control-actions.ts | 903–4838 | Distinct handlers (assign work, sandbox allocation, acceptance, communication, plan, coordination, delivery, verification) |
+| apps/single-workspace/src/control-actions.ts | 4839–end | Registry/composition and Layer wiring |
+
+Ranges are investigation anchors, not extraction cuts. Some branches interleave early returns, continue, and transaction work across the conceptual boundaries. Determine actual live inputs/outputs and transfer ownership before moving them.
+
+### Target internal responsibility graph
+
+Preserve existing packages, public exports, direction of dependency and durable schemas. Place internal modules near their owner; reuse existing checkpoint, compaction, policy, recovery, authority, resolution and settlement modules rather than creating parallel services.
+
+- Agent model decision: startup recovery; step recovery; conversation context; Work/session context; turn preparation; provider result/repair; settlement. The top-level decision driver should express the loop and outcome transitions, not reimplement every branch.
+- Agent action execution: step resume; Action ledger/terminal persistence; executable dispatch; control dispatch; settlement. Both dispatch paths must use the same action identity and authoritative observation/settlement boundary where already required.
+- Tool runtime: invocation identity/replay; resolution and authorization; approval and effect admission; reconciliation; scoped execution; terminal evidence/settlement. The existing Layer remains the composition root for this runtime.
+- App control handlers: group by product capability (Work lifecycle, workspace authorization/placement, communication, dependency/delivery, verification), share existing command-receipt and fencing policy, retain registry assembly as wiring. Do not move semantic mutations out of owning Application commands.
+
+The orchestration may use small explicit discriminated outcomes for a phase (continue with updated local state, return an existing ModelDecisionOutcome, or fail through the existing typed Effect error channel). They are private control-flow objects, never persisted state or new semantic authority. Each helper takes a narrow, immutable input and explicit required ports; no giant mutable DecisionContext, untyped service bag, hidden global state, or new independent scheduler. Do not invent outcomes or remove existing early returns merely to force a linear pipeline. Do not introduce a general-purpose state machine engine before the current state graph and proof obligations are mapped.
+
+### Refactor sequence and exit gates
+
+1. Qualify the existing extraction branch at a clean pinned revision: typecheck, lint, architecture, targeted tests, full check; preserve real failures. Obtain the actual import and inventory diagnostics.
+2. Create a pre-refactor call/control-flow map including all return/continue/throw sites, mutable local cursor writes, transaction scope, fencing, provider activity bracket and crash boundaries. Map existing tests to those transitions; fill missing regression tests first.
+3. Split capability-based top-level control handlers and isolate one shared receipt/fencing seam; keep command ownership and registry behavior intact. In parallel only if file ownership is disjoint.
+4. Extract ModelDecision settlement proposal and startup/step recovery by explicit outcome contracts. Next separate conversation context from Work/session context, then preparation and provider/result handling. Each PR covers a complete responsibility seam, not a mechanical line quota. Validate exact replay, overflow, checkpoint, repair, and restart paths.
+5. Extract Action ledger and dispatch boundaries. Preserve observed sequence and the P3/P4/P40 handoff. Prove recovery with existing P9/SandboxUnavailable and blocked-settlement cases.
+6. Extract ToolRuntime in transaction-order groups: replay/evidence, admission/reconciliation, scoped effect execution, terminal settlement. Verify AH7, P39/P40, stop/revocation, unknown outcome, lease/fence and cleanup paths. Do not move admission or settlement into a separate transaction.
+7. Reassess attention projection and schema upgrade only after runtime boundaries stabilize; do not restructure historical migrations for cosmetic consistency.
+
+For every slice, maintain a reviewable before/after transition map, explicit dependency surface, unchanged persisted/public contract, unit and required integration/process tests on the new revision. Split or adapt architecture checks to the actual owner without weakening an invariant. The target is a coherent short top-level orchestration plus independently testable phase implementations; file/line sizes are indicators only. Establish actual baselines and do not introduce arbitrary blocking line-count limits.
+
+### Current blocker
+
+The current session can read and write repository files through GitHub, but cannot resolve github.com for a local clone (git ls-remote fails with "Could not resolve host: github.com"). Local Node is v22.16.0, pnpm is unavailable; the pinned project build and integration qualification cannot run here. The prior helper extraction commits have not been qualified as a combined Arbor tree. This plan is committed as a proposed audit-backed roadmap, not an executed large-scale refactor. Avoid adding unverified stateful rewrites to that stack until the actual runner/build is available. No branch promotion, new CI run, design change or release claim is authorized by this note.
