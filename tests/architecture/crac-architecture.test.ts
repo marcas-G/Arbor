@@ -26,7 +26,7 @@ describe("DID v1.31 MAC-P1 Root Conversation work-initiation boundary", () => {
 
   it("keeps conversation action results exact-execution scoped", () => {
     const decision = source("packages/agent-runtime/src/model-decision.ts");
-    const actions = source("packages/agent-runtime/src/agent-loop-actions.ts");
+    const actions = source("packages/agent-runtime/src/agent-loop-actions/ledger.ts");
     const evidence = source(
       "packages/agent-runtime/src/checkpoint/conversation/evidence.ts",
     );
