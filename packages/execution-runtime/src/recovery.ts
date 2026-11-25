@@ -1,8 +1,4 @@
 import {
-  planSubmittedDecisionStopClose,
-  reconstructSubmittedDecisionStopCloseActions,
-} from "@arbor/agent-runtime";
-import {
   CommandGateway,
   newUuid7,
   semanticRequestFingerprint,
@@ -21,14 +17,12 @@ import {
 } from "@arbor/domain";
 import {
   type AgentLoopStepActionRecord,
-  type AgentLoopStepFence,
   type AgentLoopStepRecord,
   AgentLoopStepStore,
   Clock,
   DecisionRequestStore,
   DomainEventJournal,
   ExecutionRepository,
-  IdGenerator,
   type LeaseRecord,
   LeaseService,
   ProviderTurnStore,
@@ -41,47 +35,20 @@ import {
 import { Effect, Layer, Option } from "effect";
 import { RECOVERY_WORKER_INCARNATION_ID } from "./process-identity.js";
 import { recordSubmittedDecisionBindingFailure } from "./submitted-decision-binding-failure.js";
+import { RECOVERY_WORKER_ID, fencedTakeover, type SubmittedDecisionRecoveryQualificationEvent, type SubmittedDecisionRecoveryQualificationProbe } from "./recovery/common.js";
+import { closeSubmittedDecisionForStop } from "./recovery/submitted-decision-stop-close.js";
+
+export type {
+  SubmittedDecisionRecoveryQualificationEvent,
+  SubmittedDecisionRecoveryQualificationProbe,
+} from "./recovery/common.js";
+export { makeReconciliationEscalationRecorder } from "./recovery/escalation-recorder.js";
 
 export interface RecoveryResult {
   readonly invalidated: number;
   readonly settled: ReadonlyArray<string>;
   readonly escalated: ReadonlyArray<string>;
 }
-
-/** Test-only synchronous trace for diagnosing the accepted P41 fact-first
- * Stop recovery branch. Ordinary production composition leaves it absent. */
-export type SubmittedDecisionRecoveryQualificationEvent =
-  | {
-      readonly boundary: "AH10P41RecoveryCandidate";
-      readonly executionId: string;
-      readonly stopRequested: boolean;
-      readonly factPresent: boolean;
-      readonly failureCode?: string;
-    }
-  | {
-      readonly boundary: "AH10P41RecoveryLease";
-      readonly executionId: string;
-      readonly acquired: boolean;
-      readonly fencingGeneration?: number;
-      readonly errorTag?: string;
-    }
-  | {
-      readonly boundary: "AH10P41StopCloseStage";
-      readonly executionId: string;
-      readonly stage: string;
-      readonly outcome: "pass" | "blocked";
-      readonly reason?: string;
-      readonly unresolvedP4Effects?: number;
-    }
-  | {
-      readonly boundary: "AH10P41StopSettlement";
-      readonly executionId: string;
-      readonly resolution: string;
-    };
-
-export type SubmittedDecisionRecoveryQualificationProbe = (
-  event: SubmittedDecisionRecoveryQualificationEvent,
-) => void;
 
 /** P9 `01` §2 (B-2): a durable completion fact — an `ExecutionSettled`
  * event whose payload settlement is `Completed(...)` persisted in the
@@ -117,8 +84,6 @@ const recoveryCommandId = (
   branch: "completion" | "stop",
 ): CommandId =>
   parse(CommandId)(`cmd_${newUuid7("recovery", `${executionId}:${branch}`)}`);
-
-const RECOVERY_WORKER_ID = "worker:recovery-controller";
 
 export const classifySettledDecisionPendingActionAudit = (input: {
   readonly executionId: string;
@@ -167,105 +132,9 @@ export const classifySettledDecisionPendingActionAudit = (input: {
 /**
  * Deterministic Execution-boundary recovery (P2 `06` §2–§6).
  * Invalidates expired leases; settles only deterministic outcomes via
- * `SettleExecution` with `RecoveryController` authority; never blindly
+ * SettleExecution with RecoveryController authority; never blindly
  * replays an uncertain case.
  */
-/** Crash-restart edge: the previous daemon died mid-flight holding the
- * lease. A fenced settle means the lease is still live — lazy lease expiry
- * owns the takeover; a fenced execution must never crash the daemon. */
-const fencedTakeover = (error: unknown): boolean =>
-  typeof error === "object" &&
-  error !== null &&
-  ((error as { readonly _tag?: unknown })._tag === "LeaseFencingRejected" ||
-    JSON.stringify(error).includes("LeaseFencingRejected"));
-
-/** P9 `07` / DID v1.40: record the existing escalation source while the
- * originating action still has its current Worker fence and its Execution is
- * unsettled. P3 calls this before persisting its terminal OutcomeUnknown
- * action; the event identity matches the recovery-sweep path below. */
-export const makeReconciliationEscalationRecorder =
-  (dependencies: {
-    readonly tx: import("@arbor/ports").TransactionPortService;
-    readonly repository: import("@arbor/ports").ExecutionRepositoryService;
-    readonly leases: import("@arbor/ports").LeaseServiceService;
-    readonly journal: import("@arbor/ports").DomainEventJournalService;
-    readonly clock: import("@arbor/ports").ClockService;
-    readonly ids: import("@arbor/ports").IdGeneratorService;
-  }) =>
-  (input: {
-    readonly execution: Execution;
-    readonly fence: AgentLoopStepFence;
-    readonly principal: Principal;
-    readonly invocationRefs: ReadonlyArray<string>;
-  }) =>
-    Effect.gen(function* () {
-      const { tx, repository, leases, journal, clock, ids } = dependencies;
-      const { execution, fence, invocationRefs } = input;
-      if (
-        invocationRefs.length === 0 ||
-        fence.executionId !== execution.executionId
-      ) {
-        return yield* Effect.fail({
-          _tag: "ReconciliationEscalationBindingMismatch",
-          executionId: execution.executionId,
-        });
-      }
-      const fingerprint = [...invocationRefs].sort().join(",");
-      const now = yield* clock.now();
-      yield* tx.transact(
-        Effect.gen(function* () {
-          yield* leases.renew(
-            fence.executionId,
-            fence.workerId,
-            fence.workerIncarnationId,
-            fence.fencingGeneration,
-          );
-          const current = yield* repository.findById(fence.executionId);
-          if (
-            Option.isNone(current) ||
-            current.value.state.status !== "Active" ||
-            current.value.projectId !== execution.projectId
-          ) {
-            return yield* Effect.fail({
-              _tag: "ReconciliationEscalationExecutionNotActive",
-              executionId: execution.executionId,
-            });
-          }
-          const events = yield* journal.readAfter(
-            execution.projectId,
-            0,
-            1_000_000,
-          );
-          const alreadyFact = events.some(
-            (event) =>
-              event.eventType === "ReconciliationEscalated" &&
-              event.aggregateRef === execution.executionId &&
-              (event.payload as { invocationRefsFingerprint?: string })
-                .invocationRefsFingerprint === fingerprint,
-          );
-          if (!alreadyFact) {
-            yield* journal
-              .append([
-                {
-                  projectId: execution.projectId,
-                  eventType: "ReconciliationEscalated",
-                  eventVersion: 1,
-                  occurredAt: now,
-                  aggregateRef: execution.executionId,
-                  actor: input.principal as never,
-                  payload: {
-                    executionId: execution.executionId,
-                    invocationRefsFingerprint: fingerprint,
-                    refs: invocationRefs,
-                  },
-                } as never,
-              ])
-              .pipe(Effect.provideService(IdGenerator, ids));
-          }
-        }),
-      );
-    });
-
 export const runRecovery = (
   principal: Principal,
   qualificationProbe?: SubmittedDecisionRecoveryQualificationProbe,
@@ -676,348 +545,17 @@ export const runRecovery = (
       };
       let submittedBindingRecoveryLease: LeaseRecord | undefined;
       if (submittedDecisionBindingFact !== undefined) {
-        if (
-          !Option.isSome(loopSteps) ||
-          !Option.isSome(providerTurns) ||
-          !Option.isSome(sessions) ||
-          !Option.isSome(recoveryAttentionFacts) ||
-          recoveryAttentionFacts.value.recordSubmittedDecisionBindingFailure ===
-            undefined
-        ) {
+        const closed = yield* closeSubmittedDecisionForStop(
+          execution, submittedDecisionBindingFact, now, tx, repository, leases,
+          reconciliation, loopSteps, providerTurns, sessions, recoveryAttentionFacts,
+          decisionRequests, reportP41,
+        );
+        if (closed._tag === "Blocked") {
           escalated.push(execution.executionId);
           continue;
         }
-        const acquired = yield* Effect.match(
-          tx.transact(
-            leases.acquire(
-              execution.executionId,
-              RECOVERY_WORKER_ID,
-              RECOVERY_WORKER_INCARNATION_ID,
-            ),
-          ),
-          {
-            onFailure: (error) => ({ ok: false as const, error }),
-            onSuccess: (lease) => ({ ok: true as const, lease }),
-          },
-        );
-        if (!acquired.ok) {
-          yield* reportP41({
-            boundary: "AH10P41RecoveryLease",
-            executionId: String(execution.executionId),
-            acquired: false,
-            errorTag:
-              typeof acquired.error === "object" &&
-              acquired.error !== null &&
-              "_tag" in acquired.error
-                ? String(acquired.error._tag)
-                : "unknown",
-          });
-          if (fencedTakeover(acquired.error)) {
-            escalated.push(execution.executionId);
-            continue;
-          }
-          return yield* Effect.fail(acquired.error);
-        }
-        const lease = acquired.lease;
-        yield* reportP41({
-          boundary: "AH10P41RecoveryLease",
-          executionId: String(execution.executionId),
-          acquired: true,
-          fencingGeneration: Number(lease.generation),
-        });
-        submittedBindingRecoveryLease = lease;
-        let submittedBindingCloseStage = "lease-revalidation";
-        let submittedBindingCloseReason = "close-guard-not-reached";
-        const closed = yield* tx.transact(
-          Effect.gen(function* () {
-            yield* leases.renew(
-              execution.executionId,
-              lease.workerId,
-              lease.workerIncarnationId,
-              lease.generation,
-            );
-            const current = yield* repository.findById(execution.executionId);
-            if (
-              Option.isNone(current) ||
-              current.value.stopRequestedAt === null ||
-              current.value.state.status !== "Active"
-            ) {
-              submittedBindingCloseReason =
-                "execution-not-active-or-stop-request-missing";
-              return undefined;
-            }
-            const unresolved = yield* reconciliation.pending(
-              execution.executionId,
-            );
-            yield* reportP41({
-              boundary: "AH10P41StopCloseStage",
-              executionId: String(execution.executionId),
-              stage: "p4-gate",
-              outcome: unresolved.length === 0 ? "pass" : "blocked",
-              unresolvedP4Effects: unresolved.length,
-              ...(unresolved.length === 0
-                ? {}
-                : { reason: "unresolved-p4-side-effects" }),
-            });
-            const episode = executionEpisode(current.value);
-            submittedBindingCloseStage = "episode-and-decision-store";
-            if (episode?._tag !== "DecisionEpisode") {
-              submittedBindingCloseReason = "episode-not-decision";
-              return undefined;
-            }
-            const decisionStore = Option.getOrUndefined(decisionRequests);
-            if (decisionStore === undefined) {
-              submittedBindingCloseReason = "decision-store-unavailable";
-              return undefined;
-            }
-            const request = yield* decisionStore.findById(episode.decisionId);
-            const stepIdentity = {
-              executionId: execution.executionId,
-              logicalStepNo: submittedDecisionBindingFact.logicalStepNo,
-              repairAttempt: submittedDecisionBindingFact.repairAttempt,
-            };
-            const foundStep = yield* loopSteps.value.find(stepIdentity);
-            submittedBindingCloseStage = "step-and-action-binding";
-            if (Option.isNone(foundStep)) {
-              submittedBindingCloseReason = "step-not-found";
-              return undefined;
-            }
-            const step = foundStep.value;
-            if (
-              step.providerTurnId !==
-              submittedDecisionBindingFact.providerTurnId
-            ) {
-              submittedBindingCloseReason = "provider-turn-mismatch";
-              return undefined;
-            }
-            const existingActions = yield* loopSteps.value.listActions(
-              step.identity,
-            );
-            const exactPendingAction = existingActions.find(
-              (action) => action.actionIndex === step.nextActionIndex,
-            );
-            if (step.state === "ActionsInProgress") {
-              if (
-                exactPendingAction?.logicalActionId !==
-                  submittedDecisionBindingFact.logicalActionId ||
-                exactPendingAction.routeKind !== "Control" ||
-                exactPendingAction.actionKind !== "select_current_work" ||
-                exactPendingAction.state !== "Pending"
-              ) {
-                submittedBindingCloseReason = "pending-action-mismatch";
-                return undefined;
-              }
-            } else if (step.state !== "SettlementProposed") {
-              submittedBindingCloseReason = "step-not-closeable";
-              return undefined;
-            }
-            const providerResult = yield* providerTurns.value.findSettledResult(
-              step.providerTurnId,
-            );
-            submittedBindingCloseStage =
-              "submitted-request-and-provider-result";
-            if (
-              step.state === "ActionsInProgress" &&
-              submittedDecisionBindingFact.failureCode ===
-                "DecisionRequestWorkspaceMismatch" &&
-              (Option.isNone(request) ||
-                request.value.state._tag !== "Submitted" ||
-                request.value.revision !== episode.requestRevision + 1 ||
-                request.value.workspaceId === current.value.workspaceId ||
-                !request.value.candidateWorkIds.includes(
-                  request.value.state.selectedWorkId,
-                ))
-            ) {
-              submittedBindingCloseReason = "decision-request-mismatch";
-              return undefined;
-            }
-            if (
-              step.state === "ActionsInProgress" &&
-              submittedDecisionBindingFact.failureCode ===
-                "StepManifestMismatch" &&
-              (providerResult._tag !== "SettledSuccess" ||
-                providerResult.manifestId === step.manifestId)
-            ) {
-              submittedBindingCloseReason = "provider-result-mismatch";
-              return undefined;
-            }
-            yield* recordSubmittedDecisionBindingFailure(
-              recoveryAttentionFacts.value,
-              {
-                projectId: execution.projectId,
-                executionId: execution.executionId,
-                workspaceId: current.value.workspaceId,
-                logicalStepNo: submittedDecisionBindingFact.logicalStepNo,
-                repairAttempt: submittedDecisionBindingFact.repairAttempt,
-                providerTurnId: submittedDecisionBindingFact.providerTurnId,
-                logicalActionId: submittedDecisionBindingFact.logicalActionId,
-                failureCode: submittedDecisionBindingFact.failureCode,
-                firstDetectedAt: submittedDecisionBindingFact.firstDetectedAt,
-                causedByCommandId: null,
-              },
-            );
-            submittedBindingCloseStage = "reconstruction-inputs";
-            if (unresolved.length > 0) {
-              submittedBindingCloseReason = "unresolved-p4-side-effects";
-              return undefined;
-            }
-            const outputEntries =
-              step.modelOutputSessionSequence === undefined
-                ? []
-                : yield* sessions.value.listEntries(
-                    current.value.sessionId,
-                    step.modelOutputSessionSequence - 1,
-                    1,
-                  );
-            const outputEntry = outputEntries[0];
-            yield* reportP41({
-              boundary: "AH10P41StopCloseStage",
-              executionId: String(execution.executionId),
-              stage: "action-reconstruction-input",
-              outcome: "pass",
-              reason: JSON.stringify({
-                providerResultTag: providerResult._tag,
-                providerTurnMatches:
-                  providerResult._tag === "SettledSuccess" &&
-                  providerResult.turn.providerTurnId === step.providerTurnId,
-                modelOutputSequence: step.modelOutputSessionSequence ?? null,
-                modelOutputEntryKind: outputEntry?.entryKind ?? null,
-                modelOutputEntrySequence: outputEntry?.sequence ?? null,
-                decodedOutputHashPresent: step.decodedOutputHash !== undefined,
-                manifestMatchesStep:
-                  providerResult._tag === "SettledSuccess" &&
-                  providerResult.manifestId === step.manifestId,
-                existingActionCount: existingActions.length,
-                nextActionIndex: step.nextActionIndex,
-              }),
-            });
-            const actionIdentities =
-              reconstructSubmittedDecisionStopCloseActions({
-                executionId: String(execution.executionId),
-                sessionId: String(current.value.sessionId),
-                step,
-                providerResult,
-                modelOutputEntry: outputEntry,
-                existingActions,
-              });
-            submittedBindingCloseStage = "action-ledger-reconstruction";
-            if (actionIdentities === undefined) {
-              submittedBindingCloseReason =
-                "action-ledger-reconstruction-insufficient";
-              return undefined;
-            }
-            if (step.state === "SettlementProposed") {
-              const currentActionIndex = actionIdentities.findIndex(
-                (action) =>
-                  action.logicalActionId ===
-                  submittedDecisionBindingFact.logicalActionId,
-              );
-              const settledActions = new Map(
-                existingActions.map((action) => [action.actionIndex, action]),
-              );
-              const currentAction = settledActions.get(currentActionIndex);
-              const closeWasPersisted =
-                step.nextActionIndex === actionIdentities.length &&
-                step.settlement?._tag === "Interrupted" &&
-                step.settlement.result._tag === "StopRequested" &&
-                currentAction?.state === "TerminalRejected" &&
-                typeof currentAction.disposition === "object" &&
-                currentAction.disposition !== null &&
-                "_tag" in currentAction.disposition &&
-                currentAction.disposition._tag ===
-                  "StopRequestedAfterSubmittedBindingFailure" &&
-                currentAction.observationSourceRef === undefined &&
-                actionIdentities.every((action) => {
-                  if (action.actionIndex <= currentActionIndex) return true;
-                  const settled = settledActions.get(action.actionIndex);
-                  return (
-                    settled?.state === "SkippedEarlySettlement" &&
-                    settled.observationSourceRef === undefined
-                  );
-                });
-              return closeWasPersisted ? step.settlement : undefined;
-            }
-            if (step.state !== "ActionsInProgress") return undefined;
-            const plan = planSubmittedDecisionStopClose({
-              step,
-              actions: actionIdentities,
-              firstDetectedActionId:
-                submittedDecisionBindingFact.logicalActionId,
-              updatedAt: now,
-            });
-            submittedBindingCloseStage = `stop-close-plan:${plan._tag}`;
-            if (plan._tag !== "Ready") return undefined;
-            const fence = {
-              executionId: execution.executionId,
-              workerId: lease.workerId,
-              workerIncarnationId: lease.workerIncarnationId,
-              fencingGeneration: lease.generation,
-            };
-            for (const nextAction of plan.actions) {
-              const existing = existingActions.find(
-                (action) => action.actionIndex === nextAction.actionIndex,
-              );
-              if (existing === undefined) {
-                yield* loopSteps.value.createAction(nextAction, fence);
-              } else {
-                yield* loopSteps.value.transitionAction(
-                  {
-                    identity: existing.identity,
-                    actionIndex: existing.actionIndex,
-                    expectedRevision: existing.revision,
-                    expectedState: "Pending",
-                    next: nextAction,
-                  },
-                  fence,
-                );
-              }
-            }
-            const proposed = yield* loopSteps.value.transition(
-              {
-                identity: step.identity,
-                expectedRevision: step.revision,
-                expectedState: "ActionsInProgress",
-                next: plan.step,
-              },
-              fence,
-            );
-            submittedBindingCloseStage = `step-transition:${proposed.state}`;
-            if (
-              proposed.state !== "SettlementProposed" ||
-              proposed.settlement === undefined
-            ) {
-              return undefined;
-            }
-            return proposed.settlement;
-          }),
-        );
-        if (closed === undefined) {
-          yield* reportP41({
-            boundary: "AH10P41StopCloseStage",
-            executionId: String(execution.executionId),
-            stage: submittedBindingCloseStage,
-            outcome: "blocked",
-            reason: submittedBindingCloseReason,
-          });
-          yield* tx.transact(
-            leases.release(
-              execution.executionId,
-              lease.workerId,
-              lease.workerIncarnationId,
-              lease.generation,
-            ),
-          );
-          submittedBindingRecoveryLease = undefined;
-          escalated.push(execution.executionId);
-          continue;
-        }
-        yield* reportP41({
-          boundary: "AH10P41StopCloseStage",
-          executionId: String(execution.executionId),
-          stage: submittedBindingCloseStage,
-          outcome: "pass",
-        });
-        settlement = closed;
+        submittedBindingRecoveryLease = closed.lease;
+        settlement = closed.settlement;
       }
       const payload = { executionId: execution.executionId, settlement };
       // Crash-restart edge (observed live): the previous daemon died
