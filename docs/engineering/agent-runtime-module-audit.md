@@ -266,3 +266,24 @@ Validation: source-body inverse checks during extraction; final static scan of 5
 
 Full qualification is blocked: git ls-remote still fails to resolve github.com in the container, Node is v22.16.0 and pnpm is unavailable. The branch has not passed pinned TypeScript, Biome, Vitest, architecture, process recovery or release gates. In particular, verify effect replay/interruption, AH3/AH4/AH14/AH17/AH18/AH19/P20 and submitted-decision recovery before promoting. Keep the current root entry and existing public exports; do not relocate remaining historical compatibility paths before qualification. The next structural target is agent-loop-actions.ts (ledger and exact resume, executable dispatch, control dispatch, settlement), then Tool Runtime. Existing oversized files keep the strict repository-wide gate red. No merge, workflow change or release approval.
 
+## R3 Agent Loop Actions and AssignWork structural convergence — source-size target reached
+
+Base: 4eade36d7336478a6df6b567689014f036d8f675. Implementation commits: 680501db6908aed2eb6d563454496967099c8411, 3e5ba6595d56b63cb30fe213de9c9be74126b903, ba1aa661a12f89937112fbcbeab90b3463f231ec.
+
+| Canonical owner | Conservative line count (including trailing empty split line) |
+|---|---:|
+| packages/agent-runtime/src/agent-loop-actions.ts | 765 |
+| packages/agent-runtime/src/agent-loop-actions/types.ts | 98 |
+| packages/agent-runtime/src/agent-loop-actions/blocked-settlement.ts | 237 |
+| packages/agent-runtime/src/agent-loop-actions/committed-step.ts | 274 |
+| packages/agent-runtime/src/agent-loop-actions/ledger.ts | 791 |
+| packages/agent-runtime/src/agent-loop-actions/action-errors.ts | 23 |
+| packages/agent-runtime/src/agent-loop-actions/executable.ts | 258 |
+| apps/single-workspace/src/control-actions/assign-work.ts | 759 |
+| apps/single-workspace/src/control-actions/assign-work/receipt-binding.ts | 220 |
+
+The public action entry remains the orchestrator. Committed-step replay, blocked settlement, ledger persistence and executable dispatch have separate owners; control dispatch remains in the entry. Ledger operations share the orchestrator's cursor, not an independent durable authority. Executable dispatch returns Continue or a terminal outcome; observations and progress carry through. AssignWork's receipt-binding validator is private to that capability. Existing transaction/probe bodies were extracted, but runtime equivalence is unverified.
+
+Static validation on the pinned implementation: 11/11 direct source assertions passed; 33 literal relative references scanned in nine production files, no forbidden action-submodule back-edge in that scan. External relative targets were not all independently fetched. The P3 ownership test now includes agent-loop-actions/ and prohibits private implementation coupling with decision/ or checkpoint/; CRAC follows the ledger owner. AssignWork's architecture edge exception is limited to its private validator. These are static text checks, not executed Vitest/TypeScript tests, and do not establish repository-wide compliance.
+
+Qualification remains blocked by DNS resolution for local GitHub clone, Node v22.16.0 instead of pinned 24.21.0, and missing pnpm. Run pinned source-line, Biome, TypeScript, architecture, core and process recovery gates before promotion; verify AH7/AH9/AH10, stale control-basis transitions, blocked evidence and committed action replay. Ledger is close to the 800-line limit; split terminal-result projection further if formatting exceeds the cap. Next: Tool Runtime, remaining oversized sources, full repository-wide qualification. No mainline merge or release approval.
