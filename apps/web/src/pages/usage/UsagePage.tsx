@@ -14,7 +14,7 @@ import { Card } from "../../components/Card.js";
 import { Empty } from "../../components/Empty.js";
 import { ProblemCard } from "../../problems/ProblemCard.js";
 import { UsageView } from "../../views/UsageView.js";
-import styles from "./usage.module.css";
+import styles from "./usage.styles.js";
 
 export function UsagePage({
   route,

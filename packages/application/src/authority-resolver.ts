@@ -18,11 +18,13 @@ import type {
   WorkId,
   WorkspaceId,
   WorkspacePolicy,
+  WorkspaceSandboxAuthorizationSnapshot,
 } from "@arbor/domain";
 import {
   decodeExecutionEpisodeBinding,
   encodeExecutionEpisodeBinding,
   isIsoTimestamp,
+  resolveWorkspaceSandboxAuthorization,
 } from "@arbor/domain";
 import type {
   InvocationApproval,
@@ -59,6 +61,8 @@ export interface CanonicalWorkspaceSnapshot {
   readonly workspaceId: WorkspaceId;
   readonly projectId: ProjectId;
   readonly parentWorkspaceId: WorkspaceId | null;
+  readonly lifecycle?: "Active" | "Retired";
+  readonly revision?: number;
 }
 
 export interface CanonicalExecutionSnapshot {
@@ -143,6 +147,20 @@ export interface AuthorityDecisionInput {
   /** Exact immutable provenance loaded by the composition root for the one
    * resolver-selected CAPA grant; never caller-provided. */
   readonly sandboxPolicyGrantIssuerProvenance?: SandboxPolicyGrantIssuerProvenanceV1;
+  /** Current-head ancestor snapshot, read under one canonical transaction.
+   * This is trusted composition input, never external/model wire data. */
+  readonly workspaceSandboxAuthorizationSnapshot?: WorkspaceSandboxAuthorizationSnapshot;
+  readonly workspaceSandboxAuthorizationNow?: string;
+  /** Host provenance only; this input confers no legacy human issuer authority. */
+  readonly workspaceSandboxPolicyHostSnapshot?: Pick<
+    SandboxPolicyAuthoritySnapshotV2,
+    | "authorityBundleRevision"
+    | "authorityBundleDigest"
+    | "providerRegistryRevision"
+    | "providerRegistryDigest"
+    | "operatorConfigRevision"
+    | "operatorConfigDigest"
+  >;
 }
 
 /** P4 `03` §2/§4 invocation-scoped facts. `AuthorityDecisionInput` cannot
@@ -166,6 +184,10 @@ export interface InvocationDecisionInput {
   };
   readonly controlBasisDigest: string;
   readonly grants: ReadonlyArray<PermissionGrant>;
+  /** Current effective Workspace authorization projected by composition.
+   * This is standing capability, not a synthetic PermissionGrant and not an
+   * exact-action approval. */
+  readonly workspaceAuthorizationCapabilities?: ReadonlyArray<string>;
   readonly governance: ParentUserGovernanceFacts;
   readonly policy: ProjectPolicy | WorkspacePolicy;
   readonly delegationDepth: number;
@@ -499,6 +521,85 @@ const governanceCommandFact = (
   };
 
   switch (commandType) {
+    case "AuthorizeWorkspaceSandbox":
+    case "RevokeWorkspaceSandboxAuthorization": {
+      const workspace = input.canonicalFacts.workspace;
+      const context = input.submissionContext;
+      const deny = () => Effect.fail(denyCommand(input, commandType, "Denied"));
+      if (
+        workspace === undefined ||
+        workspace.projectId !== projectId ||
+        input.canonicalFacts.projectId !== projectId ||
+        workspace.lifecycle !== "Active" ||
+        workspace.workspaceId !== payloadString(payload, "workspaceId") ||
+        context.principal !== principal
+      )
+        return deny();
+      const source = payloadRecord(payloadRecord(payload).source);
+      if (
+        context._tag === "External" &&
+        input.governance.authenticatedHumans.includes(principal) &&
+        (commandType === "RevokeWorkspaceSandboxAuthorization" ||
+          source.kind === "Human")
+      ) {
+        return Effect.succeed({
+          _tag: "WorkspaceSandboxAuthorizationAuthority",
+          principal,
+          commandId,
+          semanticRequestFingerprint,
+          projectId,
+          workspaceId: workspace.workspaceId,
+          commandKind: commandType,
+          source: { kind: "Human" },
+        });
+      }
+      const execution = input.canonicalFacts.execution;
+      const snapshot = input.workspaceSandboxAuthorizationSnapshot;
+      const now = input.workspaceSandboxAuthorizationNow;
+      if (
+        commandType !== "AuthorizeWorkspaceSandbox" ||
+        context._tag !== "ExecutionOrigin" ||
+        source.kind !== "Parent" ||
+        workspace.parentWorkspaceId === null ||
+        execution === undefined ||
+        execution.executionId !== context.executionId ||
+        execution.workspaceId !== workspace.parentWorkspaceId ||
+        execution.projectId !== projectId ||
+        execution.status !== "Active" ||
+        execution.episodeBinding === undefined ||
+        snapshot === undefined ||
+        now === undefined
+      )
+        return deny();
+      const parent = resolveWorkspaceSandboxAuthorization({
+        ...snapshot,
+        projectId,
+        workspaceId: workspace.parentWorkspaceId,
+        now,
+      });
+      if (
+        parent._tag !== "Authorized" ||
+        parent.authorization.authorizationRevision !==
+          source.expectedParentAuthorizationRevision
+      )
+        return deny();
+      return Effect.succeed({
+        _tag: "WorkspaceSandboxAuthorizationAuthority",
+        principal,
+        commandId,
+        semanticRequestFingerprint,
+        projectId,
+        workspaceId: workspace.workspaceId,
+        commandKind: commandType,
+        source: {
+          kind: "Parent",
+          parentWorkspaceId: workspace.parentWorkspaceId,
+          parentAuthorizationRevision:
+            parent.authorization.authorizationRevision,
+          parentExecutionId: context.executionId,
+        },
+      });
+    }
     case "CreateProject": {
       const error = guarded("CreateProject", projectId);
       if (error !== null) {
@@ -790,7 +891,12 @@ const governanceCommandFact = (
       const approval = input.canonicalFacts.executableApproval;
       const execution = input.canonicalFacts.execution;
       if (
-        (!input.governance.authenticatedHumans.includes(principal) &&
+        // Executable approval is a governance decision. The single-user
+        // transport has one explicit local human principal; every other
+        // human identity must be projected into the trusted governance set.
+        // A caller-controlled `user:*` spelling must not approve execution.
+        (principal !== "user:local" &&
+          !input.governance.authenticatedHumans.includes(principal) &&
           !governanceAuthorizes(
             input.governance,
             principal,
@@ -907,6 +1013,44 @@ const governanceCommandFact = (
         payload,
         "permissionGrantId",
       ) as PermissionGrantId | null;
+      if (payloadRecord(payload).expiresAt === null) {
+        const workspace = input.canonicalFacts.workspace;
+        const permission = payloadRecord(payload);
+        const subject = payloadRecord(permission.subject);
+        if (
+          input.submissionContext._tag !== "External" ||
+          input.submissionContext.principal !== principal ||
+          !input.governance.authenticatedHumans.includes(principal) ||
+          permissionGrantId === null ||
+          permission.issuer !== principal ||
+          workspace === undefined ||
+          workspace.projectId !== projectId ||
+          input.canonicalFacts.projectId !== projectId ||
+          workspace.lifecycle !== "Active" ||
+          workspace.revision === undefined ||
+          !Number.isSafeInteger(workspace.revision) ||
+          workspace.revision < 0 ||
+          subject._tag !== "WorkspaceAgent" ||
+          subject.workspaceId !== workspace.workspaceId ||
+          permission.target !== workspace.workspaceId ||
+          (permission.capability !== "fs:write" &&
+            permission.capability !== "shell:exec")
+        ) {
+          return Effect.fail(denyCommand(input, "GrantPermission", "Denied"));
+        }
+        return Effect.succeed({
+          _tag: "GrantPermissionAuthority",
+          principal,
+          commandId,
+          semanticRequestFingerprint,
+          projectId,
+          permissionGrantId,
+          workspacePermissionBinding: {
+            workspaceId: workspace.workspaceId,
+            workspaceRevision: workspace.revision,
+          },
+        });
+      }
       if (payloadString(payload, "capability") === "DecideSandboxPolicy") {
         const targetExecutionId = payloadString(payload, "target");
         const issuer = payloadString(payload, "issuer");
@@ -989,6 +1133,83 @@ const governanceCommandFact = (
         semanticRequestFingerprint,
         projectId,
         permissionGrantId,
+      });
+    }
+    case "BindWorkspaceSandboxPolicy": {
+      const context = input.submissionContext;
+      const execution = input.canonicalFacts.execution;
+      const workspace = input.canonicalFacts.workspace;
+      const snapshot = input.workspaceSandboxAuthorizationSnapshot;
+      const host = input.workspaceSandboxPolicyHostSnapshot;
+      const now = input.workspaceSandboxAuthorizationNow;
+      const data = payloadRecord(payload);
+      const episode = decodeExecutionEpisodeBinding(data.episodeBinding);
+      const deny = () => Effect.fail(denyCommand(input, commandType, "Denied"));
+      if (
+        context._tag !== "System" ||
+        context.principal !== principal ||
+        context.causationRef !== input.envelope.causationRef ||
+        input.canonicalFacts.projectId !== projectId ||
+        data.projectId !== projectId ||
+        execution === undefined ||
+        workspace === undefined ||
+        snapshot === undefined ||
+        host === undefined ||
+        now === undefined ||
+        !isIsoTimestamp(now) ||
+        execution.executionId !== data.executionId ||
+        execution.workspaceId !== data.workspaceId ||
+        execution.projectId !== projectId ||
+        execution.status !== "Active" ||
+        execution.episodeRevision !== data.expectedEpisodeRevision ||
+        !Number.isSafeInteger(execution.episodeRevision) ||
+        (execution.episodeRevision ?? -1) < 0 ||
+        workspace.workspaceId !== execution.workspaceId ||
+        workspace.projectId !== projectId ||
+        workspace.lifecycle !== "Active" ||
+        episode === undefined ||
+        execution.episodeBinding === undefined ||
+        encodeExecutionEpisodeBinding(episode) !==
+          encodeExecutionEpisodeBinding(execution.episodeBinding)
+      )
+        return deny();
+      for (const key of [
+        "authorityBundle",
+        "providerRegistry",
+        "operatorConfig",
+      ] as const) {
+        if (
+          !Number.isSafeInteger(host[`${key}Revision`]) ||
+          host[`${key}Revision`] < 1 ||
+          !/^[0-9a-f]{64}$/u.test(host[`${key}Digest`])
+        )
+          return deny();
+      }
+      const current = resolveWorkspaceSandboxAuthorization({
+        ...snapshot,
+        projectId,
+        workspaceId: workspace.workspaceId,
+        now,
+      });
+      if (
+        current._tag !== "Authorized" ||
+        current.authorization.authorizationRevision !==
+          data.expectedAuthorizationRevision
+      )
+        return deny();
+      return Effect.succeed({
+        _tag: "WorkspaceSandboxPolicyBindingAuthority",
+        principal,
+        commandId,
+        semanticRequestFingerprint,
+        projectId,
+        workspaceId: workspace.workspaceId,
+        executionId: execution.executionId,
+        episodeBinding: episode,
+        episodeRevision: execution.episodeRevision as number,
+        workspaceAuthorizationRevision:
+          current.authorization.authorizationRevision,
+        ...host,
       });
     }
     case "DecideSandboxPolicy": {
@@ -1150,6 +1371,10 @@ const authorizeInvocation = (
   if (requested.every((capability) => capability === "fs:read")) {
     return Effect.succeed([...requested]);
   }
+  const covered = new Set(input.workspaceAuthorizationCapabilities ?? []);
+  if (requested.every((capability) => covered.has(capability))) {
+    return Effect.succeed([...requested]);
+  }
   if (input.grants.length === 0) {
     return Effect.fail({
       _tag: "NoApplicableGrant",
@@ -1157,7 +1382,6 @@ const authorizeInvocation = (
       toolName: input.intent.toolName,
     });
   }
-  const covered = new Set<string>();
   for (const requestedCapability of requested) {
     if (
       matchGrant(input.grants, requestedCapability, input.workspaceId, {

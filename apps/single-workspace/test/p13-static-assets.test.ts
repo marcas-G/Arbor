@@ -10,11 +10,13 @@ describe("P13 TR-W2 static asset face", () => {
   beforeAll(() => {
     dist = mkdtempSync(join(tmpdir(), "arbor-web-dist-"));
     mkdirSync(join(dist, "assets"));
+    mkdirSync(join(dist, "fonts"));
     writeFileSync(
       join(dist, "index.html"),
       "<!doctype html><title>arbor</title>",
     );
     writeFileSync(join(dist, "assets", "app-abc123.js"), "console.log(1)");
+    writeFileSync(join(dist, "fonts", "font.css"), "@font-face {}");
   });
 
   afterAll(() => {
@@ -52,6 +54,15 @@ describe("P13 TR-W2 static asset face", () => {
   it("rejects traversal attempts", () => {
     expect(resolveStatic(dist, "/../etc/passwd").kind).toBe("rejected");
     expect(resolveStatic(dist, "/assets/../../secret").kind).toBe("rejected");
+  });
+
+  it("serves bundled font files as immutable assets", () => {
+    const result = resolveStatic(dist, "/fonts/font.css");
+    expect(result.kind).toBe("file");
+    if (result.kind === "file") {
+      expect(result.contentType).toBe("text/css; charset=utf-8");
+      expect(result.cacheControl).toContain("immutable");
+    }
   });
 
   it("reports not-configured when dist is absent", () => {

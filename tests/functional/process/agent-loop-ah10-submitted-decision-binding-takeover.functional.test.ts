@@ -961,6 +961,7 @@ describe("AH10 P41 Submitted DecisionEpisode binding process recovery", () => {
 
       const db = new DatabaseSync(fixture.databaseFile);
       try {
+        db.exec("PRAGMA busy_timeout = 60000");
         if (corruption === "workspace") {
           if (foreignWorkspaceId === undefined) {
             throw new Error(

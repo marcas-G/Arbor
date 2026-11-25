@@ -1,6 +1,5 @@
 import type { Tone } from "../tokens.js";
 import { Badge } from "./Badge.js";
-import styles from "./FreshnessChip.module.css";
 
 export type FreshnessState = "fresh" | "stale" | "offline";
 
@@ -16,7 +15,7 @@ const FRESHNESS: Readonly<
 export function FreshnessChip({ state }: { readonly state: FreshnessState }) {
   const meta = FRESHNESS[state];
   return (
-    <span className={styles.chip}>
+    <span className={"inline-flex items-center"}>
       <Badge tone={meta.tone}>{meta.label}</Badge>
     </span>
   );

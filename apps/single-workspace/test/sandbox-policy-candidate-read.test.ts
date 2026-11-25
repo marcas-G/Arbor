@@ -173,7 +173,7 @@ const read = (
         },
       ],
       resolvedRegions: [primary],
-      primaryManagedGitWorktreeRegion: primary,
+      primaryResourceRegion: primary,
     },
     authority: authoritySnapshot,
     currentHost,

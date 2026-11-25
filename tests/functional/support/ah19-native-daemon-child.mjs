@@ -172,7 +172,15 @@ const nativeAdapter = {
                     bindingFingerprint: item.bindingFingerprint,
                     opaqueItemRef: item.opaqueItemRef,
                   }
-                : { _tag: item._tag },
+                : {
+                    _tag: item._tag,
+                    ...("providerTurnId" in item
+                      ? { providerTurnId: item.providerTurnId }
+                      : {}),
+                    ...("callRef" in item ? { callRef: item.callRef } : {}),
+                    ...("role" in item ? { role: item.role } : {}),
+                    ...("text" in item ? { text: item.text } : {}),
+                  },
             ),
           };
           const beforeStream = Stream.fromEffect(
@@ -351,7 +359,7 @@ const nativeAdapter = {
                           items: [
                             {
                               itemId: "ah19-history",
-                              text: `AH19 public Work history ${"durable observation ".repeat(250)}`,
+                              text: "AH19 public Work history remains durable.",
                               status: "Pending",
                             },
                           ],

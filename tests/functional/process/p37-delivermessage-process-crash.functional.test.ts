@@ -1155,6 +1155,7 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
     const deliverCommandCount = beforeDrift.deliverMessageReceipts.length;
     const inboxDb = new DatabaseSync(prepared.fixture.databaseFile);
     try {
+      inboxDb.exec("PRAGMA busy_timeout = 60000");
       const changed = inboxDb
         .prepare(
           "UPDATE inbox_entries SET summary = 'drifted after fact commit' WHERE entry_key = ?",

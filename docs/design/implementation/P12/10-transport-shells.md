@@ -1,7 +1,7 @@
 # P12 — 10 Transport Shells (v1.13 G6)
 
 **Authority:** DID v1.14 §10.1/§10.4.1/§10.5 and v1.36 §4.1C, v1.39 EA-DG-01, v1.13 G6; SD v1.14 §4.5.1; P10 `01` §1/§4 (Search deferral), P10 `05` §2–§3; P9 `00` (recovery daemon/composition surface); `planning/results/P8.result.md` (consumer-loop daemon wiring); P11 `05` §2 (drift watcher trigger).
-**Status:** DRAFT.
+**Status:** DRAFT for unrelated baseline clauses; Native OS Sandbox transport addendum accepted under `ACCEPT_NATIVE_OS_SANDBOX_CONVERGENCE_V1`.
 
 **敏感读取边界修订（2026-10-10，P12-SRA-01）：** accepted governance
 candidate SHA-256
@@ -62,6 +62,31 @@ daemons : recovery pass driver (`P9/00`), verification/completion consumer loops
 ## 3. Authentication → Authority Resolver
 
 - External human/parent requests are authenticated at the transport boundary.
+
+P8 `RetryVerification` uses only the existing authenticated `/commands`
+external envelope. The shell supplies authenticated actor and stable
+CommandId; strict payload fields include exact Work, Verification, expected
+Work revision and bounded summary content, never a BlobRef or authority.
+For a historical exact retry, Application/Composition may load the immutable
+P8 `retry_verification_origins` fact by candidate CommandId into declared
+Resolver input; this is not a CommandStore/receipt read. Resolver still
+re-evaluates current actor/project/source visibility and exact current human
+governance: Root-local human for Root Work or the authenticated human of the
+exact current direct Parent Workspace for child Work. Revoked authority,
+changed owner, foreign principal, or changed source scope is a generic deny
+before Gateway. The P8 handler still revalidates the original open source on
+first execution; replay-only authority never reaches that handler. Gateway
+remains the sole receipt lookup and compares the complete tuple in its
+transaction. The action is unavailable to Agent/model, RecoveryController,
+scheduler, or Attention-consumer paths.
+
+The P6 `UnboundLegacy` Governance Inbox entry remains on the existing
+authenticated Inbox-view surface; no route or authentication exception is
+added. Its displayed Workspace is a current route projection, not authority.
+Before returning the entry, the existing view authorization must allow the
+current Root-local or exact direct-Parent human for the canonical Work route;
+P6/P12 must not authorize from a stale `inbox_entries.workspace_id` alone.
+Reads do not consume the entry or access/decode a Command receipt.
 - For sensitive read surfaces, transport authentication and the existing
   supported local-principal check (`user:local`) MUST complete before any
   projection, directory, progress-stream source, or invalidation broadcast is
@@ -200,6 +225,14 @@ external request → authenticated principal → resolver fact → CommandGatewa
 resolver invocation + canonicalFacts/grants loading occur at the composition root, not transport
 no transport path writes canonical state directly
 human shell carries no worker identity; worker transport carries no human authority
+
+The ordinary local Web journey does not expose Workspace baseline authorization
+as a repeated per-Work form. After qualified initialization, the workbench may
+start ordinary coding Work directly. The transport exposes an install/repair
+state when the baseline cannot be initialized and a same-Work retry when an
+older Work was blocked solely by the missing baseline. No transport route may
+create a hidden grant, skip current Workspace/resource checks or replace a
+missing qualified provider with host or fake execution.
 worker transport is owned by `06`; its wire contract is domain/ports-level (no application types)
 recovery/consumer daemons run from composition root; offsets drive consumer loops
 Sensitive reads (`/projects`, supported `/views`, conversation-progress SSE,
@@ -208,7 +241,88 @@ non-loopback/no-auth fails closed; loopback/no-auth preserves local single-user 
 Configured-auth reads admit only `user:local`; multi-principal visibility remains open
 ```
 
+## Accepted Native OS Sandbox transport addendum
+
+The existing authenticated `/commands` route transports human-originated
+`DecideSandboxPolicy` unchanged through Application and CommandGateway and
+returns its ordinary receipt/result. The existing `/views` route renders
+P10's `WorkspaceDetail.executionSummary.sandboxPolicy` projection and
+`SandboxProviderUnavailable` Attention row using the existing DTOs. The
+existing Problem DTO maps provider-unavailable to HTTP 503 and stable code
+`sandbox/provider-unavailable` with safe bounded detail. HTTP, WS, CLI and Web
+bind the same P10-owned profile/config/status/unavailable contracts.
+
+This addendum adds no authentication mode, Principal/Actor binding, Resolver
+or authorization endpoint, server-side Grant writer, request-derived
+authority, or direct store/event write. Model inputs cannot select or submit a
+trusted human policy. P12/10 preserves all existing resolver-before-receipt
+and Gateway command semantics; it only forwards and presents.
+
+## Accepted first-run model setup host surface (2026-11-14)
+
+Under accepted proposal SHA-256
+`a4ce27ecdeadcb040a1f98052b7af87f9ac2b323f66c2b9254757f7eb18f0dbf`, the
+local single-user host composition may expose one additive startup
+configuration surface outside the domain command ledger:
+
+- `GET /model-setup` returns only `{configured:boolean,model:string|null}`;
+- `POST /model-setup` accepts exactly `{endpoint,model,apiKey}` and returns
+  `{ok:true,restarting:true}` only after an actual provider connection check,
+  or a fixed safe error code on failure;
+- the surface is local-only, subject to the existing Host/Origin boundary,
+  JSON and size limits, and is unavailable to remote or model-originated
+  callers;
+- it is first-run only. An existing configured provider rejects this route;
+  it cannot change a model during an active Work;
+- the endpoint and model are stored as configuration and the key as a private
+  SecretRef-backed file. Neither response, view, log nor error may contain the
+  key or provider response body;
+- a successful save synchronizes the private files and restarts the same Linux
+  daemon only after its Effect scope, listener and writer resources have
+  closed. Before setup succeeds, business HTTP/WS and `/commands` are rejected
+  before core logic is reached.
+
+This is a host startup/configuration exception, not a new domain command,
+authority grant, Work mutation or model-facing tool. All Work and policy
+changes continue to use the existing authenticated `/commands` path.
+
+
+## V21 transport binding
+
+P12 transports the existing POST /views/workspace-detail request/response.
+The exact provider-unavailable transient Problem is the full existing Problem
+DTO: correlationId from request/transport or null, code
+sandbox/provider-unavailable, category unavailable, fixed safe message,
+retryDisposition retryable and safeDetails containing only executionId,
+workspaceId and policyRevision. It applies only to the exact current terminal
+P4 provider-unavailable outcome before matching P9 fact/queue commit; after
+P9 atomic commit status is HTTP 200 with Unavailable/Attention. Ordinary lag,
+policy-required NeedsDecision, authorization rejection and stale command are
+not this 503. P12 adds no route, Problem category or response fields. P13/Web
+must not auto-retry; only WS invalidation or explicit manual refetch.
+
 ## 9. Host Project Resource Profile catalog (FT-DG-01 functional scope)
+
+**Accepted runtime selection amendment (2026-11-11; DID §4.1D):** In addition
+to this compatible path-free catalog, the local-single-user composition
+provides authenticated GET/POST `/project-directories` for human directory
+selection. GET returns `{path,parent,entries:[{name,path}],truncated}` and
+accepts optional `?path`; directory listings are bounded. POST accepts exactly
+`{path,create}` and returns `{path,name,selection,existingProject}`, where the
+selection uses the existing Profile ref/version shape and existingProject is
+null or `{projectId,rootWorkspaceId,name,lifecycle}`. It requires an
+authorization header, JSON and same-host Origin when present. Principal
+validation precedes filesystem access. The host persists exact canonical
+selections atomically outside the command transaction as defined in §4.1D.
+No new model-facing control or execution permission results.
+
+The ordinary `/project-resources` catalog adds optional
+`directorySelectionSupported: true`, with no paths in its entries. The
+authenticated local `/projects` face may add `directoryPath: string | null`
+from persistent root Workspace boundaries. These two dedicated human
+directory faces supersede the blanket path-display restriction solely for
+the authorized local principal; other public DTO/receipt/error restrictions
+remain unchanged. No multi-principal filesystem visibility is defined.
 
 P12 host configuration supplies the Profile catalog consumed by the P1
 ProjectResourceProfilePort. In the first single-root implementation,
@@ -309,3 +423,30 @@ missing claim; its existing exact-v2 post-commit replay behavior remains the
 only retry path, and continuing failure remains outside this automatic
 Attention guarantee. Historical v1 rows remain preserve-only and are never
 replayed or backfilled under this contract.
+
+## Accepted P37 DeliverReplay deployment profile wiring (DID v1.43)
+
+The v5+v6 fixed package hashes, B0 independent review and acceptance are in
+`planning/results/AH10-deliver-event-pruning-v6-governance-acceptance-and-landing.md`.
+The P12 host pins the accepted `DeliverReplayCapacityProfile` identity and
+runtime values—poll interval/lease TTL, outbox/event batch sizes, and deterministic
+base/max/exponent retry backoff—as deployment configuration consumed by the
+P10 dispatcher. The profile ID/revision in measured evidence must match this
+active configuration. Metrics do not feed back into dispatcher or authority
+decisions. The global SQLite lease and due-Project attempt ordering remain
+P1/P10 contracts; this transport/deployment document adds no HTTP, WebSocket,
+CLI, auth, readiness or transport route semantics. A lease TTL does not
+preempt a process holding SQLite's writer lock; deployment qualification uses
+the measured lock-hold/writer-wait limits from P12 `05`/`13`.
+
+## Accepted Option A command transport reference (2026-10-20)
+
+The existing authenticated `/commands` route forwards the P1/01 current
+OsEnforced request including the explicit `providerVersion` and
+`capabilityRevision` fields. The external codec remains its existing v1
+envelope; the internal CommandEnvelope uses the current registered
+DecideSandboxPolicy handler schema, with prior schema-1 handling restricted
+to the P1 exact stored-receipt replay path. P12 adds no request-derived host,
+evidence or authority fields, no route, and no transport-side selection or
+defaulting. The accepted source is proposal SHA-256
+`02D2687AA87D6E2B08D06090F293961CCBCFDFF884B6348872D42AFAA59B3013`.

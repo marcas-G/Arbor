@@ -8,7 +8,7 @@ import type {
   WorkspaceId,
 } from "@arbor/domain";
 import { Context, type Effect, type Option } from "effect";
-import type { RepositoryFailure } from "./errors.js";
+import type { ProviderFailureKind, RepositoryFailure } from "./errors.js";
 import type { TransactionScope } from "./session.js";
 
 export type ReadmissionSourceKind =
@@ -17,12 +17,25 @@ export type ReadmissionSourceKind =
   | "DeliverReplayFact"
   | "AssignWorkBindingFact"
   | "ReconciliationEscalationEvent"
+  | "SandboxProviderUnavailableFact"
   | "TerminalProviderFailureSettlement";
 
+export const TERMINAL_PROVIDER_FAILURE_KINDS = [
+  "AuthenticationFailed",
+  "AuthorizationFailed",
+  "RateLimited",
+  "QuotaExceeded",
+  "ProviderUnavailable",
+  "TransportFailed",
+  "StreamInterrupted",
+  "RequestRejected",
+  "ContextLimitExceeded",
+  "ProtocolViolation",
+  "UnknownProviderFailure",
+] as const satisfies ReadonlyArray<Exclude<ProviderFailureKind, "Cancelled">>;
+
 export type TerminalProviderFailureKind =
-  | "AuthenticationFailed"
-  | "RequestRejected"
-  | "ProtocolViolation";
+  (typeof TERMINAL_PROVIDER_FAILURE_KINDS)[number];
 
 export interface TerminalProviderFailureSource {
   readonly sourceKind: "TerminalProviderFailureSettlement";
@@ -76,6 +89,7 @@ export interface ReadmissionGateIntegrityFailure {
     | "EpisodeMalformed"
     | "EpisodeVersionUnsupported"
     | "SourceFactEventMismatch"
+    | "SourceFactEpisodeMismatch"
     | "SourceEventExecutionMismatch"
     | "SourceProjectMismatch"
     | "SourceWorkspaceMismatch"

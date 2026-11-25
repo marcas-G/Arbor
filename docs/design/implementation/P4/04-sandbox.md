@@ -117,10 +117,14 @@ access while enforcing OS-level process, filesystem, network, environment and
 resource controls. A Git worktree is not an OS security boundary.
 
 The profiles are `ReadOnly`, `WorkspaceWrite` and explicit `FullAccess`;
-network modes are `Disabled`, `Restricted` and `Enabled`. Restricted/Enabled
-require the exact durable human policy authority; ordinary approval does not
-grant network. If any required control cannot be probed/enforced, the provider
-is `Unavailable` and no process starts. Platform adapters report effective
+network modes are `Disabled`, `Restricted` and `Enabled`. For an initialized
+Linux single-user Workspace, the exact qualified `WorkspaceWrite × Enabled`
+baseline is established by Workspace admission and is not a repeated per-Work
+human policy choice. Explicit human authority remains required for capability
+or boundary expansion, weaker isolation, and sensitive external side effects;
+ordinary action approval does not widen the baseline or its network boundary.
+If any required control cannot be probed/enforced, the provider is
+`Unavailable` and no process starts. Platform adapters report effective
 
 
 ## Accepted full-chain OS policy, network and provider contract (V21)
@@ -398,3 +402,121 @@ the intent and consumes the Approved revision. P4 uses the committed current
 decision only after that ordinary gate. Missing/stale policy still follows
 the existing NotAdmitted SandboxPolicyRequiredInterruption; real provider
 unavailability still follows the existing P9 terminal no-later-action path.
+
+## Linux workspace networking V2 governance supplement
+
+Accepted under `ACCEPT_LINUX_WORKSPACE_NETWORK_V2`; proposal SHA-256 `9801a907a540a7ea2ec5a68e2ac197105c4bf5a1b00191c3801e888dded59111`.
+
+This supplement owns only the Linux V2 changes assigned to this document. For V2 it supersedes the conflicting first-release Windows-only, blanket loopback-denial, V1 broker and discovery clauses; V1/Windows/historical evidence retain their original meaning. It creates no Supported result, migration execution, preserved-database upgrade or release claim. Service registration, cross-command service reuse and preview still require their separate exact contract and acceptance; the full product goal is not reduced. DID 1.66 owns the closed technical definitions.
+
+#### 3. 执行和通信边界
+
+- 复用 bubblewrap 的 user/mount/PID/IPC/UTS/network namespaces，以及 systemd
+  用户 cgroup 的进程树、内存、CPU、进程数、超时和停止管理。工具链只读；项目
+  资源继续来自现有精确 admission/ownership。所有工具使用一致的工作区资源边界。
+- 不把整个 HOME、Arbor 数据、主机网络、任意宿主 Unix socket 或模型密钥挂入工作区。
+  主机工具环境只按既有名称 allowlist 投影。专用代理通过显式私有 IPC 接入；
+  helper 及其固定启动配置属于受信产物，项目不能替换它们。
+- 隔离必须覆盖共享挂载中的 pathname socket 及 namespace/进程逃逸路径；不能只
+  测 abstract socket 或把只读挂载等同于禁止 socket 连接。可复用成熟 seccomp
+  组件限制未授权 socket/namespace 操作；是否采用其他等效控制由工程和证据决定。
+  缺少有效控制时不得签发 Supported。
+- 工作区运行载体是工程对象，不新增 Agent 或组织实体，不代替 Work/Session。
+  载体必须精确绑定 Workspace 和当前资源/策略身份；权限缩窄或停止时按既有
+  quiescence 结束失效进程，不能让旧环境继续访问过期挂载。
+- 同一工作区的后续命令与服务复用、预览入口是独立必验项。浏览器预览只映射明确
+  登记的工作区服务，不透传 Arbor 控制凭据；HTTP 和 WebSocket 指向相同工作区。
+  本包不凭网络通道新增永久端口或隐式服务。服务登记/预览的独立合同尚未闭合，
+  必须另行闭合后实现；这不阻止本包精确限定的联网命令实现，也不减少总交付目标。
+
+#### 4. 公网通道的精确语义
+
+通道只接受规范 `CONNECT <lowercase-IDNA-DNS-name>:443`，拒绝 IP literal、
+userinfo、非规范域名及其他端口。Restricted 检查现有精确 HTTPS origin 清单；
+Enabled 允许公共目标；Disabled 不启动外部通道，但同工作区内部 TCP 不因此失效。
+Restricted 限制的是代理请求的 CONNECT 目标；不检查加密 TLS 内部的 SNI/Host，
+不承诺阻止公共服务器的域名前置或应用层转发。这是相较旧严格域名合同的明确取舍。
+
+受信侧每条连接重新查询全部 A/AAAA；任一答案命中既有冻结特殊地址 deny-set 时
+整体拒绝，IPv4-mapped IPv6 先归一化。只选择已验证的 A 记录，以数值 IPv4 拨号，
+不让系统重新解析目标，不连接 AAAA、不复用旧已解析路线。没有可用 A、DNS 错误、
+地址被拒绝或通道失效均产生可读失败。
+
+HTTP CONNECT 由标准 Node HTTP/net/stream 实现；TLS 字节原样转发，客户端使用
+自己的普通受信根验证目标。Arbor 不生成 CA、不关闭证书验证、不声称检查了加密
+HTTP 的 Host/方法/正文。HTTPS 跳转由客户端处理，每条新 CONNECT 重新授权；
+它不是 broker 内的五跳下载器，也不声明限制了所有客户端的重定向总次数。
+未来内置 fetch 的逐跳、大小、来源与取消由其独立工具合同负责。
+
+保留有限建连期限、空闲期限、取消、背压和有界资源使用；停止等待通道及进程树
+清理确认。网络可达不等于发布/部署获准，执行审批不自动扩大后续工具能力。
+
+##### 8.2 Command、snapshot、receipt 与内部 process policy
+
+- 新 `OsEnforcedPolicySummaryV2` 等于当前 `OsEnforcedPolicySummaryV1` 的**全部现有
+  字段、类型和键序**，仅 version 改为 2，networkBrokerControls 改为上述 V2；kind
+  仍为 `OsEnforced`。必须绑定 Linux、linux-bwrap 和精确 V2 registry rule digest。
+  旧 `TrustedLocalUnconfinedV1` 不变，不获得 version 2。
+- 新 `SandboxPolicyDecisionCommittedInternalV2` 等于 V1 的完整字段和键序，仅
+  version=2、effectivePolicySnapshot=上述 V2。原 receipt 的命令身份、指纹、
+  时间和单次消费不变；旧命令重放只返回它原来的 V1 结果，不能被重新物化成 V2。
+- `DecideSandboxPolicy` schema 2 复用 schema 1 的全部输入字段、精确 authority/
+  revision/CAS/选择合同，只允许上述 V2 Linux OsEnforced 分支。schema 1 只能物化
+  原 V1；schema 2 不能生成 TrustedLocal。模型不能提交受信规则、控制或资格结果。
+  新候选使用显式 policySchemaVersion=2，UI 转发该版本；缺失/未知版本拒绝，
+  不从字符串 providerId 猜测版本。
+- `SandboxEnvironmentBasisV1` 及其字节保持不变：相同 mounts/authority/registry
+  输入仍得到原摘要。完整 effective-policy 摘要含 version 和 V2 controls，结合
+  registry 内 V2 rules digest 绑定不同语义；不得用旧 policyDigest 验收新策略。
+- 新内部 `OsEnforcedSandboxProcessPolicyV2` 与现有 process policy 具有相同现有
+  字段和约束，kind 为 `OsEnforcedProcessPolicyV2`，另含唯一新增字段
+  `networkBrokerControls: SandboxNetworkBrokerControlsV2`。它是进程内类型，不是
+  新 wire 协议或 durable record。现有 SandboxProcessPort.run 的 request.policy
+  扩展为 V1/V2 closed union；V2 adapter 不接受 V1 假冒 V2，反向亦然。
+- V2 broker binding 不含 certificatePath，不产生 CA 文件；提供私有 socket、
+  固定 relay artifact、端口及 close 生命周期。绑定只在精确隔离执行中使用，
+  不从模型输入解析主机路径。旧 V1 binding 与执行分支保持原义。
+
+## 2026-11-16 独立验证命令环境补充
+
+治理修订：`IVE-P4-20261116.1`。负责人已明确接受固定临时副本方案；接受编号
+`ACCEPT_INDEPENDENT_VERIFICATION_COMMAND_ENVIRONMENT`。固定提案
+`docs/proposals/2026-11-16-independent-verification-command-environment.md`，
+SHA-256 `a6e85e9e15301cbc377f3468d5bfca706cf3019e42bc28fe712a1947a0d6108d`。
+以下为该提案分配给本文的完整条款；接受与设计落地不等于实现或发行资格。
+
+1. 为上述环境引入明确版本化的独立验证策略/绑定变体，字段绑定精确 Verification、
+   execution、目标 Work 修订、owner Workspace、只读取材范围、副本身份/输入摘要、
+   当前工作区授权来源、provider 资格、挂载/资源限制、网络策略、有效期和策略修订。
+   复用现有主机材料、摘要与精确快照校验；不能让旧 Workspace codec 接受新字面量。
+2. source 和临时可写环境分别校验，不把 WorkspaceWrite 对原项目的授权直接赋给
+   验证器。受信运行时创建的验证环境仅用于执行 P8 mission；临时写入不形成对原
+   资源的新授权，不增加 fs:write/shell:exec/网络能力的上限。
+3. provider/实际挂载组合必须经过真实资格检查。现有 WorkspaceWrite × Enabled
+   Supported tuple 不能被推导成任意只读/overlay/临时副本组合均已 Supported。
+4. P4 保持 intent、真实 InvocationAuthority、effect admission、审批、lease fencing、
+   观察、持久输出、停止/恢复。不能绕开 P4 直接 spawn 验证进程，不能把缺失策略
+   表达为不存在的 pending request。无法执行必须给出真实未执行结果/可恢复阻断。
+5. 历史 Workspace 策略、receipt 和事件字节保持原编解码。新持久表示用独立版本、
+   类型约束和可验证来源；迁移如有需要必须同步 upgrader/manifest/维护终态，仍不
+   承诺升级保留用户数据库。新变体不得放宽旧版本字段检查。
+
+## 2026-11-20 Workspace default execution capability supplement
+
+Accepted under `ACCEPT_WORKSPACE_DEFAULT_EXECUTION_CAPABILITY`; fixed proposal
+`docs/proposals/2026-11-20-workspace-default-execution-capability.md`, SHA-256
+`8503d5c2663d3098171c57646b78a8408d5f1a28dc7f3cf3a37f2181fddaed66`.
+
+After qualified Linux environment installation, ordinary Workspace admission
+may use the system-created baseline `WorkspaceWrite × Enabled` capability for
+the current Workspace boundary. This baseline is not a per-Work human policy
+selection and never widens the logical mounts or ownership produced by P4
+resource admission. P4 must still materialize the exact current mounts,
+provider-qualified process policy and network controls for each Execution.
+
+If the baseline head is absent, revoked, stale or the exact tuple is not
+qualified, P4 must not spawn a host process or silently select TrustedLocal or
+fake execution. Initialization exposes the repair state before new executable
+Work admission; a Work blocked solely for this reason is resumed only through
+the explicit same-Work retry contract. Sensitive action approval remains a
+separate gate and cannot be supplied by the baseline capability.

@@ -96,6 +96,7 @@ export interface SandboxAuthorityAuditRecordV2 {
 
 const digestPattern = /^[0-9a-f]{64}$/u;
 const canonicalIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+const canonicalOsBuildPattern = /^[A-Za-z0-9][A-Za-z0-9._:+-]{0,127}$/u;
 const envNamePattern = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 const profiles = ["ReadOnly", "WorkspaceWrite", "FullAccess"] as const;
 const osFamilies = ["Linux", "macOS", "Windows"] as const;
@@ -143,6 +144,10 @@ const canonicalId = (value: unknown): value is string =>
   typeof value === "string" &&
   value === value.trim() &&
   canonicalIdPattern.test(value);
+const canonicalOsBuild = (value: unknown): value is string =>
+  typeof value === "string" &&
+  value === value.trim() &&
+  canonicalOsBuildPattern.test(value);
 const sortedUnique = (values: ReadonlyArray<string>): boolean =>
   values.every(
     (value, index) =>
@@ -330,7 +335,7 @@ export const decodeSandboxProviderQualificationRegistryV1 = (
       !canonicalId(entry.providerVersion) ||
       !safePositive(entry.capabilityRevision) ||
       !osFamilies.includes(entry.osFamily as (typeof osFamilies)[number]) ||
-      !canonicalId(entry.osBuild) ||
+      !canonicalOsBuild(entry.osBuild) ||
       !statuses.includes(entry.status as (typeof statuses)[number])
     )
       return undefined;

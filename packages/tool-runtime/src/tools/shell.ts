@@ -1,5 +1,33 @@
+import { isAbsolute, relative, resolve, sep } from "node:path";
+import type { SandboxHandle } from "@arbor/ports";
 import { Effect } from "effect";
 import { bounded, type ToolExecutor } from "../runtime.js";
+
+const workspaceMountRoot = (sandbox: SandboxHandle): string => {
+  const workspace = sandbox.mounts?.find((mount) => mount.ref === "workspace");
+  return resolve(workspace?.rootPath ?? sandbox.rootPath);
+};
+
+/**
+ * Older/third-party model turns may still contain the trusted host path as a
+ * shell cwd.  Convert it only when it is lexically inside the already-open
+ * workspace mount.  An outside path is left untouched so the native sandbox
+ * can fail closed with PathOutsideAdmittedMount; this helper never widens a
+ * mount or authorizes a new resource.
+ */
+const normalizeWorkspaceCwd = (
+  sandbox: SandboxHandle,
+  cwd: { readonly mount: string; readonly path: string },
+): { readonly mount: string; readonly path: string } => {
+  if (cwd.mount !== "workspace" || !isAbsolute(cwd.path)) return cwd;
+  const root = workspaceMountRoot(sandbox);
+  const candidate = resolve(cwd.path);
+  const within = relative(root, candidate);
+  if (within === ".." || within.startsWith(`..${sep}`) || isAbsolute(within)) {
+    return cwd;
+  }
+  return { mount: "workspace", path: within.length === 0 ? "." : within };
+};
 
 /** P4 `08` §4 (G6). Deterministic policy evaluation; concrete lists are
  * configurable but the mechanism is contract. */
@@ -126,7 +154,7 @@ export const createShellExecutor = (): ToolExecutor => ({
   processCapability: "SandboxProcess",
   requiresApproval: destructive,
   execute: (input) => {
-    const { intent, runProcess } = input;
+    const { intent, runProcess, sandbox } = input;
     return Effect.gen(function* () {
       const args = JSON.parse(intent.argumentsJson) as {
         command: string;
@@ -146,6 +174,7 @@ export const createShellExecutor = (): ToolExecutor => ({
         process.platform === "win32"
           ? ["-NoProfile", "-NonInteractive", "-Command", args.command]
           : ["-lc", args.command];
+      const cwd = normalizeWorkspaceCwd(sandbox, args.cwd);
       const result =
         runProcess === undefined
           ? {
@@ -155,7 +184,7 @@ export const createShellExecutor = (): ToolExecutor => ({
           : yield* runProcess({
               executable,
               args: shellArgs,
-              cwd: args.cwd,
+              cwd,
               ...(args.timeoutMs === undefined
                 ? {}
                 : { requestedTimeoutMs: args.timeoutMs }),

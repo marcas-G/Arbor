@@ -1,0 +1,138 @@
+name: Arbor CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  merge_group:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: arbor-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  quality:
+    # Ephemeral GitHub-hosted Linux VM; the storage preflight below remains
+    # mandatory for SQLite and sandbox tests.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.21.0
+
+      - name: Verify Linux runner storage
+        run: node scripts/ci/verify-runner-storage.mjs
+
+      - name: Prepare isolated local temp directory
+        shell: bash
+        run: |
+          ci_tmp="$GITHUB_WORKSPACE/.ci-tmp"
+          mkdir -p "$ci_tmp"
+          chmod 700 "$ci_tmp"
+          echo "TMPDIR=$ci_tmp" >> "$GITHUB_ENV"
+          echo "TMP=$ci_tmp" >> "$GITHUB_ENV"
+          echo "TEMP=$ci_tmp" >> "$GITHUB_ENV"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.4.2
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+
+      - name: Architecture
+        run: pnpm architecture
+
+      - name: Manifest checks
+        run: pnpm test:manifest
+
+      - name: Core tests
+        run: pnpm test
+
+      - name: Source-size gate (advisory until baseline closes)
+        id: source-lines
+        if: always()
+        continue-on-error: true
+        run: pnpm check:source-lines
+
+
+      # The functional journey is the slow lane (30+ min real processes);
+      # PR pushes take the fast lane. Full qualification runs on merge
+      # candidates, master pushes, manual dispatch, or when the
+      # `full-qualification` label is present. This is the risk-based CI
+      # split GOVERNANCE.md reserves: no safety/recovery/schema-required
+      # evidence is waived — it moves to the merge gate.
+      - name: Decide full qualification
+        id: lanes
+        run: |
+          if [ "${{ github.event_name }}" = "merge_group" ] \
+            || [ "${{ github.event_name }}" = "push" ] \
+            || [ "${{ github.event_name }}" = "workflow_dispatch" ] \
+            || [ "${{ contains(github.event.pull_request.labels.*.name, 'full-qualification') }}" = "true" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Coverage
+        if: steps.lanes.outputs.run == 'true'
+        run: pnpm test:coverage
+
+      - name: Web checks
+        run: pnpm --filter @arbor/web typecheck && pnpm --filter @arbor/web build && pnpm --filter @arbor/web test
+
+      - name: Install functional UI browser
+        if: steps.lanes.outputs.run == 'true'
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Functional release journey
+        if: steps.lanes.outputs.run == 'true'
+        run: pnpm test:functional
+
+      - name: Dependency audit
+        id: audit
+        if: always()
+        continue-on-error: true
+        run: pnpm audit --prod --audit-level high --json > audit.json
+
+      - name: Health snapshot
+        if: always()
+        env:
+          ARBOR_AUDIT_JSON: ${{ github.workspace }}/audit.json
+          ARBOR_AUDIT_STATUS: ${{ steps.audit.outcome }}
+          ARBOR_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || '' }}
+        run: node scripts/ci/health-metrics.mjs --enforce > health-metrics.json
+
+      - name: Upload health snapshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: arbor-health-${{ github.sha }}
+          if-no-files-found: warn
+          path: |
+            health-metrics.json
+            audit.json
+            coverage/

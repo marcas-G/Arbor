@@ -94,7 +94,8 @@ Classification (R-07 / NEW-10 — corrects the earlier "additive" claim):
   provider-specific failure class with no frozen tag MUST normalize it to
   ProtocolViolation (terminal) at the adapter boundary — it MUST NOT emit an
   out-of-union value and MUST NOT pass an unknown tag through to consumers.
-  The six frozen tags keep their exact retry dispositions (P3 `06` §2):
+  The current closed failure union keeps its exact retry dispositions (P3
+  `06` §2):
     retryable : RateLimited | ProviderUnavailable | StreamInterrupted
     terminal  : AuthenticationFailed | RequestRejected | ProtocolViolation
 ```
@@ -109,18 +110,17 @@ Classification (R-07 / NEW-10 — corrects the earlier "additive" claim):
   removal/reinterpretation of `ModelCapability` is a MAJOR change.
 - This is a P12 phase contract revision; DID top-level semantics are unchanged.
 
-**RAI-DG-02 accepted integration rule:** the closed terminal set
-`AuthenticationFailed | RequestRejected | ProtocolViolation` may participate
-in the exact Work-revision hold only when the durable final Attempt is
-`TerminalFailure` with retry decision `Stop` and the owning P3 Turn/Step/
-Manifest chain is exact. The retryable set
-`RateLimited | ProviderUnavailable | StreamInterrupted` never becomes this
-source because of budget/deadline exhaustion or final Execution reason text.
-Telemetry, backoff, credential/config reload and adapter health remain
-non-authoritative and cannot release or create the hold. P12 qualification
-must preserve provider taxonomy tests while adding the accepted negative and
-terminal-chain integration cases; no adapter-specific error or raw provider
-content enters the public fact.
+**RAI-DG-02 accepted integration rule:** every non-cancelled Provider failure
+kind may participate in the exact Work-revision hold when the durable final
+Attempt is `TerminalFailure` with retry decision `Stop` and the owning P3
+Turn/Step/Manifest chain is exact. `Cancelled` remains controlled
+interruption. Turn-local retryable failures still retry only within the same
+Provider Turn; once the final Attempt stops, no same-revision Work Execution
+may be admitted. Telemetry, backoff, credential/config reload and adapter
+health remain non-authoritative and cannot release or create the hold. P12
+qualification must preserve provider taxonomy tests while adding the accepted
+all-Stop terminal-chain integration cases; no adapter-specific error or raw
+provider content enters the public fact.
 
 ## 6. Non-`read`/`patch`/`shell` tools via the generic seam
 
@@ -203,3 +203,22 @@ a non-read/patch/shell tool runs the unchanged P4 pipeline (authority + sandbox 
 project tool without registration → not visible / not invocable (`01` §5)
 model-facing tool metadata is real (no `schemaJson:"{}"` / `description:name`) (`07`)
 ```
+
+## Linux workspace networking V2 governance supplement
+
+Accepted under `ACCEPT_LINUX_WORKSPACE_NETWORK_V2`; proposal SHA-256 `9801a907a540a7ea2ec5a68e2ac197105c4bf5a1b00191c3801e888dded59111`.
+
+This supplement owns only the Linux V2 changes assigned to this document. For V2 it supersedes the conflicting first-release Windows-only, blanket loopback-denial, V1 broker and discovery clauses; V1/Windows/historical evidence retain their original meaning. It creates no Supported result, migration execution, preserved-database upgrade or release claim. Service registration, cross-command service reuse and preview still require their separate exact contract and acceptance; the full product goal is not reduced. DID 1.66 owns the closed technical definitions.
+
+#### 6. 资格和正式装配
+
+- provider 探测只报告事实，不能自行产生 Supported。精确主机 build、provider/
+  capability 版本、profile×network、规则和实际产物摘要必须与受信 registry 和
+  qualification manifest 一致；受信来源继续使用现有 P5 authority/source/high-water
+  机制。Linux 不伪造 Windows signed-helper 证据。
+- 必须验证真实文件、namespace、未授权 socket、网络、资源限制、进程树停止及
+  崩溃恢复；不以命令退出零或工具存在替代。
+- 新安装默认使用完成资格的隔离执行模式。条件不满足时明确报告未完成命令执行
+  安装，不自动提权、不退回 TrustedLocal，也不把仅文件功能称为交付完成。
+- 配置仍是启动快照；更新、主机/产物漂移、过期或缺失证据导致不可用，不能通过
+  CLI/环境变量/模型输出强制宣称 Supported。既有安装不被后台静默切换。

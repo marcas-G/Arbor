@@ -99,6 +99,8 @@
       "tests/functional/process/human-steer.functional.test.ts",
       "tests/functional/process/model-output-ah5-ah6.functional.test.ts",
       "tests/functional/process/native-sandbox-first-release-disabled.functional.test.ts",
+      "tests/functional/process/network-proxy-broker.functional.test.ts",
+      "tests/functional/process/network-proxy-streaming.functional.test.ts",
       "tests/functional/process/organization.functional.test.ts",
       "tests/functional/process/p37-delivermessage-process-crash.functional.test.ts",
       "tests/functional/process/p38-control-approval-current-assign-work.functional.test.ts",
@@ -124,6 +126,7 @@
       "tests/functional/process/s3-any-producer-wait-recovery.functional.test.ts",
       "tests/functional/process/sandbox-policy-v3-source-adoption.functional.test.ts",
       "tests/functional/process/sandbox-policy-v6-registry-drift-restart.functional.test.ts",
+      "tests/functional/process/stop-held-provider.functional.test.ts",
       "tests/functional/package/clean-checkout.functional.test.ts"
     ],
     "functionalUi": [

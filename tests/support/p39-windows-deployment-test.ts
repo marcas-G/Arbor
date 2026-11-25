@@ -61,6 +61,13 @@ export interface P39PrivateTestTempRoot {
   readonly currentSid: string;
 }
 
+/** P39 qualification must exercise a supported local filesystem.  On Linux,
+ * the host /tmp is commonly tmpfs, which is intentionally rejected by the
+ * production deployment check.  Keep the override for CI hosts whose
+ * checkout is not on a supported local filesystem. */
+export const p39TestTempRoot = (): string =>
+  resolve(process.env.ARBOR_P39_TEST_TEMP_ROOT ?? process.cwd());
+
 /** Create an invocation-wide temp root without relying on Microsoft.PowerShell.Security.
  * Its protected DACL grants FullControl only to the current SID, SYSTEM, and
  * Administrators, and descendants inherit exactly those grants. */

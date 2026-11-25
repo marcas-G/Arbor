@@ -35,3 +35,4 @@ export * from "./verification-signal-reconciliation.js";
 export * from "./verifier-spawn.js";
 export * from "./wake-sink.js";
 export * from "./workflow-signal-consumer.js";
+export * from "./workspace-sandbox-authorization.js";

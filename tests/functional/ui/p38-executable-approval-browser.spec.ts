@@ -835,9 +835,7 @@ test("P38 browser approval resumes the same action under explicitly configured T
 
   await page.goto(`${fixture.baseUrl}/p/${project.projectId}`);
   await page.getByRole("button", { name: "待处理" }).click();
-  await expect(
-    page.getByRole("heading", { name: "待处理", exact: true }),
-  ).toBeVisible();
+  await expect(page.locator("h1", { hasText: "待处理" })).toBeVisible();
   const approvalDetails = page.getByLabel("待处理详情");
   // The unique canary exists only in a free-form shell argument; locate the
   // review card by its safe target metadata and check the entire details DOM.
@@ -1226,6 +1224,8 @@ test("P38 Queue renders an expired approval and recovers without an effect", asy
 
   const db = new DatabaseSync(fixture?.databaseFile ?? "");
   try {
+    // The daemon may hold a short write transaction while this fixture expires the approval.
+    db.exec("PRAGMA busy_timeout = 5000");
     const expired = db
       .prepare(
         "UPDATE action_approvals SET expires_at = ? WHERE approval_id = ? AND route_kind = 'Executable' AND state = 'Pending' AND revision = ?",

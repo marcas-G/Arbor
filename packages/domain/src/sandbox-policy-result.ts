@@ -18,6 +18,10 @@ import type {
   SandboxNetworkBrokerControlsV1,
   SandboxPolicyMountV1,
 } from "./sandbox-policy-producers.js";
+import type { SandboxPolicyLimitsV1 } from "./sandbox-policy-types.js";
+
+export type { SandboxPolicyLimitsV1 } from "./sandbox-policy-types.js";
+
 import {
   decodeNetworkBrokerControlsV1,
   decodeSandboxTargetRefV1,
@@ -29,15 +33,6 @@ export type {
   SandboxNetworkBrokerControlsV1,
   SandboxPolicyMountV1,
 } from "./sandbox-policy-producers.js";
-
-export interface SandboxPolicyLimitsV1 {
-  readonly wallTimeMs: number;
-  readonly stdoutBytes: number;
-  readonly stderrBytes: number;
-  readonly processCount: number;
-  readonly memoryBytes: number;
-  readonly cpuTimeMs: number;
-}
 
 export interface OsEnforcedPolicySummaryV1 {
   readonly version: 1;

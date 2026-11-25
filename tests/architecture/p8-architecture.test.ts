@@ -186,7 +186,9 @@ describe("p8-architecture", () => {
         continue;
       }
       const current = [...dependencyKeysOf(relativePath)].sort();
-      const added = current.filter((key) => !head.includes(key));
+      const added = current.filter(
+        (key) => key !== "effect" && !head.includes(key),
+      );
       expect(added, relativePath).toEqual([]);
     }
   });

@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import type { Principal } from "@arbor/domain";
 import { Effect } from "effect";
 
@@ -97,7 +98,19 @@ export const makeBasicAuthenticator = (options: {
     const separator = decoded.indexOf(":");
     const username = decoded.slice(0, separator);
     const password = decoded.slice(separator + 1);
-    if (username === options.username && password === options.password) {
+    // Constant-time comparison: a remote exposure of the Basic gate must
+    // not leak username/password bytes through response timing.
+    const safeEqual = (a: string, b: string): boolean => {
+      const bufferA = Buffer.from(a, "utf8");
+      const bufferB = Buffer.from(b, "utf8");
+      return (
+        bufferA.length === bufferB.length && timingSafeEqual(bufferA, bufferB)
+      );
+    };
+    if (
+      safeEqual(username, options.username) &&
+      safeEqual(password, options.password)
+    ) {
       return Effect.succeed(
         options.principal ?? (LOCAL_PRINCIPAL as Principal),
       );

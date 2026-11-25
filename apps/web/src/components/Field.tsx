@@ -1,6 +1,7 @@
 import { type KeyboardEvent, type ReactNode, useId } from "react";
-import { cx } from "./cx.js";
-import styles from "./Field.module.css";
+import { cn } from "../lib/utils.js";
+import { Input, inputClassName } from "./ui/input.js";
+import { Textarea } from "./ui/textarea.js";
 
 type FieldBase = {
   readonly label: string;
@@ -48,7 +49,7 @@ export function Field(props: FieldProps) {
   switch (props.control) {
     case "input":
       control = (
-        <input
+        <Input
           id={controlId}
           className="arbor-field-control"
           value={value}
@@ -67,7 +68,7 @@ export function Field(props: FieldProps) {
       control = (
         <select
           id={controlId}
-          className="arbor-field-control"
+          className={cn(inputClassName, "arbor-field-control")}
           value={value}
           disabled={disabled}
           aria-invalid={invalid}
@@ -86,7 +87,7 @@ export function Field(props: FieldProps) {
       break;
     case "textarea":
       control = (
-        <textarea
+        <Textarea
           id={controlId}
           className="arbor-field-control"
           value={value}
@@ -104,13 +105,19 @@ export function Field(props: FieldProps) {
       break;
   }
   return (
-    <div className="arbor-field">
-      <label className="arbor-field-label" htmlFor={controlId}>
+    <div className="arbor-field grid gap-ui-1">
+      <label
+        className="arbor-field-label text-caption font-semibold text-muted-foreground"
+        htmlFor={controlId}
+      >
         {label}
       </label>
       {control}
       {error === undefined ? null : (
-        <p className={cx(["arbor-field-error", styles.error])} id={errorId}>
+        <p
+          className="arbor-field-error m-0 text-small text-destructive"
+          id={errorId}
+        >
           {error}
         </p>
       )}

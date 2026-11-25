@@ -66,7 +66,7 @@ describe("programming paradigm regression guards", () => {
 
   it("keeps the proof-level manifest present", () => {
     const manifest = readFileSync(
-      join(root, "planning", "programming-paradigm", "07-test-proof-levels.md"),
+      join(root, "planning", "reviews", "paradigm-07-test-proof-levels.md"),
       "utf8",
     );
     for (const level of ["Pure", "Port", "Application", "Process", "Public"]) {

@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import {
@@ -20,6 +20,91 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
   await fixture.stop();
+});
+
+test("a user selects different project paths, reopens existing directories, and retains bindings after restart", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  const localMarker = `FOLDER-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+  const local = await startProductionFixture({
+    daemonEnvironment: { ARBOR_FUNCTIONAL_DIRECTORY_SELECTION: "1" },
+    reply: makeWorkProvider({ marker: localMarker, verdict: "Pass" }),
+  });
+  try {
+    const existingPath = join(local.directory, "已有 工程");
+    const newPath = join(local.directory, "新建 工程");
+    mkdirSync(existingPath);
+    writeFileSync(join(existingPath, "proof.txt"), "FUNCTIONAL_VERIFIED");
+    await page.goto(local.baseUrl);
+    await page.getByLabel("项目目录", { exact: true }).fill(existingPath);
+    await page.getByRole("button", { name: "浏览文件夹", exact: true }).click();
+    await expect(page.getByText(existingPath, { exact: true })).toBeVisible();
+    await page
+      .getByRole("button", { name: "使用此文件夹", exact: true })
+      .click();
+    await page.getByLabel("项目名称").fill("已有目录项目");
+    await page.getByRole("button", { name: /^(开始使用|创建项目)$/u }).click();
+    await expect(page).toHaveURL(/\/p\/prj_[A-Za-z0-9-]+$/u);
+    const firstProjectId = new URL(page.url()).pathname.split("/")[2];
+    expect(readFileSync(join(existingPath, "proof.txt"), "utf8")).toBe(
+      "FUNCTIONAL_VERIFIED",
+    );
+
+    await page
+      .getByLabel("消息")
+      .fill(`请完成目标 ${localMarker}，读取 proof.txt 并独立验证。`);
+    await page.getByRole("button", { name: "发送", exact: true }).click();
+    await page.getByRole("button", { name: /^待处理/u }).click();
+    await expect(
+      page.getByRole("button", { name: "批准并继续", exact: true }),
+    ).toBeVisible({ timeout: 30_000 });
+    await page.getByRole("button", { name: "批准并继续", exact: true }).click();
+    await expect(page.getByText("等待验收").first()).toBeVisible({
+      timeout: 45_000,
+    });
+    expect(JSON.stringify(local.providerCalls)).toContain(
+      "FUNCTIONAL_VERIFIED",
+    );
+
+    await page
+      .getByRole("button", { name: "打开项目中心", exact: true })
+      .click();
+    await expect(
+      page.getByRole("dialog").getByText(existingPath, { exact: true }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "新建项目", exact: true }).click();
+    await page.getByLabel("项目目录", { exact: true }).fill(newPath);
+    await page.getByLabel("新建此文件夹", { exact: true }).check();
+    await page.getByLabel("项目名称", { exact: true }).fill("新建目录项目");
+    await page.getByRole("button", { name: "创建项目", exact: true }).click();
+    await expect(page).toHaveURL(/\/p\/prj_[A-Za-z0-9-]+$/u);
+    expect(new URL(page.url()).pathname.split("/")[2]).not.toBe(firstProjectId);
+    expect(statSync(newPath).isDirectory()).toBe(true);
+
+    await page
+      .getByRole("button", { name: "打开项目中心", exact: true })
+      .click();
+    await page.getByRole("button", { name: "新建项目", exact: true }).click();
+    await page.getByLabel("项目目录", { exact: true }).fill(existingPath);
+    await page.getByRole("button", { name: "创建项目", exact: true }).click();
+    await expect(page).toHaveURL(`${local.baseUrl}/p/${firstProjectId}`);
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+
+    await local.restart();
+    await page.goto(local.baseUrl);
+    const list = page.getByRole("region", { name: "项目列表", exact: true });
+    await expect(list.getByRole("article")).toHaveCount(2);
+    await expect(list.getByText(existingPath, { exact: true })).toBeVisible();
+    await expect(list.getByText(newPath, { exact: true })).toBeVisible();
+    await list
+      .getByRole("button", { name: "已有目录项目", exact: true })
+      .click();
+    await expect(page).toHaveURL(`${local.baseUrl}/p/${firstProjectId}`);
+    expect(local.daemonErrors).toEqual([]);
+  } finally {
+    await local.stop();
+  }
 });
 
 test("F21 browser Profile selection reaches file evidence, Verification PASS, and Acceptance", async ({
@@ -46,7 +131,7 @@ test("F21 browser Profile selection reaches file evidence, Verification PASS, an
   await expect(page.getByText(selectedProfile.version)).toHaveCount(0);
   await expect(page.getByText(fixture.workspaceDirectory)).toHaveCount(0);
   await page.getByLabel("项目名称").fill("F21 浏览器资源项目");
-  await page.getByRole("button", { name: "创建项目" }).click();
+  await page.getByRole("button", { name: /^(开始使用|创建项目)$/u }).click();
   await expect(page).toHaveURL(/\/p\/prj_[A-Za-z0-9-]+$/u);
 
   await page
@@ -135,7 +220,7 @@ test("F21 browser Profile selection reaches file evidence, Verification PASS, an
     attentionProblem.getByRole("heading", { name: "服务不可用" }),
   ).toBeVisible();
   await expect(
-    attentionProblem.getByText("Network / Unavailable"),
+    attentionProblem.getByText("连接暂时中断，请重试。"),
   ).toBeVisible();
   await expect(
     attentionProblem.getByRole("button", { name: "重试" }),

@@ -251,7 +251,10 @@ describe("p12-closure", () => {
 
   it("CI-2 — no secret material reaches prompt / session / event / log / artifact", () => {
     // SecretMaterial is opaque and redacted by default under serialization.
-    const provider = sourceOf("packages/ports/src/provider.ts");
+    const provider = sourceOf("packages/ports/src/provider/secrets.ts");
+    expect(sourceOf("packages/ports/src/provider.ts")).toContain(
+      'export * from "./provider/secrets.js"',
+    );
     expect(provider.includes("[REDACTED]")).toBe(true);
     expect(provider.includes("toJSON")).toBe(true);
     expect(provider.includes("toString")).toBe(true);

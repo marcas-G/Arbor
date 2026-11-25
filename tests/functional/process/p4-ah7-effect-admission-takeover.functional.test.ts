@@ -1301,9 +1301,16 @@ describe("P4 AH7 effect-admission generation takeover", () => {
         expect(recovered.invocation).toMatchObject({
           invocation_id: invocationId,
           effect_admission_state: "MayHaveStarted",
-          settled_at: null,
-          settlement_kind: null,
           approval_id: executableApprovalId,
+          ...(scenario.sideEffectSemantics === "NonIdempotent"
+            ? {
+                settled_at: expect.any(String),
+                settlement_kind: "OutcomeUnknown",
+              }
+            : {
+                settled_at: null,
+                settlement_kind: null,
+              }),
         });
         expect(recovered.execution).toMatchObject({
           settlement_kind: "OutcomeUnknown",

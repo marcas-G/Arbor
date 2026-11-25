@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   appendFileSync,
   closeSync,
@@ -7,6 +7,7 @@ import {
   linkSync,
   lstatSync,
   openSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -353,6 +354,34 @@ export const makeSandboxAuthorityProvisioningFileStore = (
             )
               throw new Error("forensic evidence protection changed");
             return readFileSync(filename, "utf8");
+          }, "SourceUnreadable"),
+        readLinuxSandboxQualificationEvidence: (ref) =>
+          result(() => {
+            const digest = /^blob:sha256:([0-9a-f]{64})$/u.exec(ref)?.[1];
+            if (digest === undefined) throw new Error("evidence ref malformed");
+            if (
+              !hasNoReparsePath(forensic, "directory") ||
+              !validateP39ProtectedDirectory(forensic)
+            )
+              throw new Error("forensic directory protection changed");
+            for (const name of readdirSync(forensic)) {
+              if (
+                !name.endsWith(".raw") ||
+                !/^[a-z0-9-]{1,96}\.raw$/u.test(name)
+              )
+                continue;
+              const filename = join(forensic, name);
+              if (
+                !hasNoReparsePath(filename, "file") ||
+                !validateP39ProtectedFile(filename) ||
+                !exactPosixMode(filename, 0o600)
+              )
+                throw new Error("forensic evidence protection changed");
+              const bytes = readFileSync(filename);
+              if (createHash("sha256").update(bytes).digest("hex") === digest)
+                return bytes.toString("utf8");
+            }
+            return undefined;
           }, "SourceUnreadable"),
       } satisfies SandboxAuthorityProvisioningStoreService);
 

@@ -45,6 +45,17 @@ describe("W-01 design system", () => {
     expect(onClick).not.toHaveBeenCalled();
   });
 
+  it("Button forwards native accessibility and test attributes", () => {
+    render(
+      <Button aria-label="刷新项目" data-testid="refresh-project">
+        刷新
+      </Button>,
+    );
+    expect(
+      screen.getByTestId("refresh-project").getAttribute("aria-label"),
+    ).toBe("刷新项目");
+  });
+
   it("Button 正常态可点击并透传 type", async () => {
     const user = userEvent.setup();
     const onClick = vi.fn();

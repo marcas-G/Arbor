@@ -14,6 +14,9 @@ import type {
   BlobStoreError,
   CommandStoreError,
   ControlApprovalStoreError,
+  ConversationAttemptConflict,
+  ConversationAttemptStoreError,
+  ConversationJobConflict,
   ConversationJobStoreError,
   DeliverableRepositoryError,
   DependencyRepositoryError,
@@ -50,6 +53,7 @@ import type {
   WorkRepositoryError,
   WorkspaceRepositoryError,
   WorkspaceResourceActivationStoreError,
+  WorkspaceSandboxAuthorizationStoreError,
   WorktreeStoreError,
   WorkWaitStoreError,
 } from "@arbor/ports";
@@ -105,18 +109,48 @@ export interface GatewayEnvelope<C> {
  */
 export const eraseCommandHandler = <C, R>(
   handler: CommandHandler<C, R>,
-): CommandHandler<unknown, unknown> => ({
-  commandType: handler.commandType,
-  schemaVersion: handler.schemaVersion,
-  authority: handler.authority as CommandAuthorityRule<unknown>,
-  stopAdmission: handler.stopAdmission,
-  execute: (envelope, context) =>
-    handler.execute(envelope as GatewayEnvelope<C>, context) as Effect.Effect<
-      CommandResult<CommandOutcome<unknown>>,
-      CommandHandlerError,
-      TransactionScope
-    >,
-});
+): CommandHandler<unknown, unknown> => {
+  const prepare = handler.prepare;
+  const validateReceiptReplay = handler.validateReceiptReplay;
+  return {
+    commandType: handler.commandType,
+    schemaVersion: handler.schemaVersion,
+    ...(handler.priorReceiptSchemaVersions === undefined
+      ? {}
+      : {
+          priorReceiptSchemaVersions: handler.priorReceiptSchemaVersions,
+        }),
+    authority: handler.authority as CommandAuthorityRule<unknown>,
+    stopAdmission: handler.stopAdmission,
+    ...(prepare === undefined
+      ? {}
+      : {
+          prepare: (envelope, context, authority) =>
+            prepare(envelope as GatewayEnvelope<C>, context, authority),
+        }),
+    ...(validateReceiptReplay === undefined
+      ? {}
+      : {
+          validateReceiptReplay: (receipt, payload, envelope, context) =>
+            validateReceiptReplay(
+              receipt as CommandReceipt<R, CommandRejection>,
+              payload as C,
+              envelope as GatewayEnvelope<C>,
+              context,
+            ),
+        }),
+    execute: (envelope, context, prepared) =>
+      handler.execute(
+        envelope as GatewayEnvelope<C>,
+        context,
+        prepared,
+      ) as Effect.Effect<
+        CommandResult<CommandOutcome<unknown>>,
+        CommandHandlerError,
+        TransactionScope
+      >,
+  };
+};
 
 export interface CommandOutcome<R> {
   readonly result: R;
@@ -134,6 +168,7 @@ export interface CommandOutcome<R> {
 export type CommandHandlerError =
   | ProjectRepositoryError
   | WorkspaceRepositoryError
+  | WorkspaceSandboxAuthorizationStoreError
   | WorkRepositoryError
   | WorkBlockerStoreError
   | SessionRepositoryError
@@ -155,6 +190,9 @@ export type CommandHandlerError =
   | ProjectToolRegistryError
   | PermissionGrantRepositoryError
   | HumanMessageStoreError
+  | ConversationAttemptConflict
+  | ConversationAttemptStoreError
+  | ConversationJobConflict
   | ConversationJobStoreError
   | ControlApprovalStoreError
   | ToolInvocationStoreError

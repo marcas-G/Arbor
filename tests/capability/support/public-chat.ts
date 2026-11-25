@@ -478,7 +478,14 @@ export const withPublicConversationApp = async (
             readTranscript: async (params) => {
               const response = await fetch(`${base}/views/transcript`, {
                 method: "POST",
-                headers,
+                // Sensitive read models are intentionally restricted to the
+                // local principal. Keep the capability-test principal for
+                // command submission, but use the harness's already-issued
+                // local catalog credential for transcript reads.
+                headers: {
+                  "content-type": "application/json",
+                  authorization: `Bearer ${profileCatalogToken}`,
+                },
                 body: JSON.stringify(params),
               });
               if (response.status !== 200) {

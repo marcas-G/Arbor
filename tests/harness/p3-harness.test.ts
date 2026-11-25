@@ -41,12 +41,13 @@ describe("p3 harness wiring", () => {
     expect(manifest.dependencies?.["@arbor/model-context"]).toBe("workspace:*");
   });
 
-  it("keeps provider-runtime dependent on ports only", () => {
+  it("keeps provider-runtime dependent on ports and the Effect runtime", () => {
     const manifest = JSON.parse(
       read("packages/provider-runtime/package.json"),
     ) as { dependencies?: Record<string, string> };
     expect(Object.keys(manifest.dependencies ?? {}).sort()).toEqual([
       "@arbor/ports",
+      "effect",
     ]);
   });
 });

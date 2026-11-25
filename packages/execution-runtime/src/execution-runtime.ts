@@ -9,15 +9,10 @@ import {
   type VerifiedRuntimeCommandAuthority,
 } from "@arbor/application";
 import type {
-  AgentEpisodeIdentity,
-  AgentExecutionState,
   CommandSubmissionContext,
-  Execution,
   ExecutionId,
   LeaseGeneration,
   Principal,
-  SandboxAuthorityBundleSnapshotCurrent,
-  SandboxPolicyDecisionCommittedInternalV1,
   WakeReason,
 } from "@arbor/domain";
 import { encodeExecutionEpisodeBinding, executionEpisode } from "@arbor/domain";
@@ -26,17 +21,12 @@ import {
   AgentLoopStepStore,
   AttentionProjectionStore,
   Clock,
-  type CommittedSandboxPolicyDecisionV1,
   ControlApprovalStore,
   CurrentSandboxAuthoritySnapshotPort,
   DecisionRequestStore,
   ExecutableApprovalStore,
-  type ExecutionDriverOwnershipLost,
   ExecutionDriverPort,
   ExecutionRepository,
-  type ExecutionRepositoryError,
-  type LeaseFencingRejected,
-  type LeaseRecord,
   LeaseService,
   P39RecoveryEvidenceStore,
   ProviderTurnStore,
@@ -47,18 +37,32 @@ import {
   SandboxPolicyRequirementReadPort,
   SandboxProviderUnavailableStore,
   SessionRepository,
-  type TransactionOperationalFailure,
   TransactionPort,
   WorkerDispatchPort,
+  WorkspaceRepository,
+  WorkspaceSandboxAuthorizationStore,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
-import { LOCAL_WORKER_INCARNATION_ID } from "./process-identity.js";
+import { claimExecutionLease } from "./execution/claim-lease.js";
+import { driveWithLease } from "./execution/drive-with-lease.js";
+import {
+  type ExecutionLeaseQualificationProbe,
+  LEASE_RENEW_INTERVAL_MS,
+  renewLeaseOnce,
+} from "./execution/lease.js";
+import { checkExecutionPolicyBeforeDispatch } from "./execution/pre-dispatch-policy.js";
 import { recordSubmittedDecisionBindingFailure } from "./submitted-decision-binding-failure.js";
 
-/** Empirical TTL value (P2 `03` §8 keeps lease duration non-contract); only
- * the TTL/3 renewal-cadence convention is contract (P9 `03` §1). */
-export const LEASE_TTL_MS = 30_000;
-export const LEASE_RENEW_INTERVAL_MS = LEASE_TTL_MS / 3;
+export {
+  type ExecutionLeaseQualificationProbe,
+  LEASE_RENEW_INTERVAL_MS,
+  LEASE_TTL_MS,
+  type LeaseLost,
+  leaseRenewalLoop,
+  renewLeaseOnce,
+  STOP_REQUEST_POLL_INTERVAL_MS,
+  stopRequestLoop,
+} from "./execution/lease.js";
 
 /** Test-only process-local seam. Production composition leaves it absent. */
 export type ExecutionSettlementQualificationProbe = (
@@ -82,268 +86,6 @@ export type ExecutionSettlementQualificationProbe = (
         readonly failureCode: string;
       },
 ) => Promise<void>;
-
-/** Test-child-only seam for proving real lease takeover without editing the
- * durable lease. Production Composition leaves this probe absent. */
-export type ExecutionLeaseQualificationProbe = (
-  event:
-    | {
-        readonly boundary: "AH10BeforeLeaseRenewal" | "AH10AfterLeaseAcquired";
-        readonly executionId: ExecutionId;
-        readonly workerId?: string;
-        readonly workerIncarnationId?: string;
-        readonly fencingGeneration: LeaseGeneration;
-      }
-    | {
-        readonly boundary: "AH10BeforeLeaseAcquired";
-        readonly executionId: ExecutionId;
-      }
-    | {
-        /** Scheduler observed a live lease and skipped before runExecution. */
-        readonly boundary: "AH10PreDispatchSkippedLiveLease";
-        readonly executionId: ExecutionId;
-      }
-    | {
-        /** Emitted only after this process's real LeaseService.acquire call rejects. */
-        readonly boundary: "AH10LeaseAcquisitionRejected";
-        readonly executionId: ExecutionId;
-        readonly workerId: string;
-        readonly workerIncarnationId: string;
-        readonly fencingGeneration: LeaseGeneration;
-      },
-) => Promise<void>;
-
-const WORKER_ID = "worker:local";
-
-const episodeIdentityMatches = (
-  stored: AgentEpisodeIdentity,
-  expected: AgentEpisodeIdentity,
-): boolean => {
-  if (stored._tag !== expected._tag) return false;
-  switch (expected._tag) {
-    case "WorkEpisode":
-      return (
-        stored._tag === "WorkEpisode" &&
-        stored.workId === expected.workId &&
-        stored.targetWorkRevision === expected.targetWorkRevision
-      );
-    case "ConversationResponseEpisode":
-      return (
-        stored._tag === "ConversationResponseEpisode" &&
-        stored.messageId === expected.messageId &&
-        stored.responseJobRevision === expected.responseJobRevision
-      );
-    case "InboxEpisode":
-      return (
-        stored._tag === "InboxEpisode" &&
-        stored.entryKey === expected.entryKey &&
-        stored.inputKind === expected.inputKind
-      );
-    case "DecisionEpisode":
-      return (
-        stored._tag === "DecisionEpisode" &&
-        stored.decisionId === expected.decisionId &&
-        stored.decisionKind === expected.decisionKind &&
-        stored.requestRevision === expected.requestRevision
-      );
-    case "ExecutionBoundEpisode":
-      return (
-        stored._tag === "ExecutionBoundEpisode" &&
-        stored.executionId === expected.executionId
-      );
-    case "LegacyAmbiguousEpisode":
-      return (
-        stored._tag === "LegacyAmbiguousEpisode" &&
-        stored.executionId === expected.executionId
-      );
-  }
-};
-
-/** P2 pre-dispatch check. P4 still performs the final currentness check at
- * effect admission; this earlier guard prevents a known-stale policy from
- * acquiring a lease or dispatching a Worker. */
-const sandboxPolicyDecisionIsCurrentForRequirement = (input: {
-  readonly execution: Execution;
-  readonly requirement: import("@arbor/ports").SandboxPolicyRequirementV1;
-  readonly committed: CommittedSandboxPolicyDecisionV1;
-  readonly authority: SandboxAuthorityBundleSnapshotCurrent;
-  readonly now: string;
-}): boolean => {
-  const { execution, requirement, committed, authority } = input;
-  const decision = committed.decision;
-  const result: SandboxPolicyDecisionCommittedInternalV1 = committed.result;
-  const snapshot = result.effectivePolicySnapshot;
-  const currentEpisode = executionEpisode(execution);
-  if (currentEpisode === undefined) return false;
-  const episodeJson = encodeExecutionEpisodeBinding(currentEpisode);
-  const bundle = authority.bundle;
-  const commonCurrent =
-    execution.projectId === requirement.projectId &&
-    execution.workspaceId === requirement.workspaceId &&
-    execution.executionId === requirement.executionId &&
-    encodeExecutionEpisodeBinding(requirement.episodeBinding) === episodeJson &&
-    decision.projectId === requirement.projectId &&
-    decision.workspaceId === requirement.workspaceId &&
-    decision.executionId === requirement.executionId &&
-    encodeExecutionEpisodeBinding(decision.episodeBinding) === episodeJson &&
-    decision.expectedExecutionRevision ===
-      requirement.expectedEpisodeRevision &&
-    result.commandId === decision.decisionCommandId &&
-    result.projectId === decision.projectId &&
-    result.workspaceId === decision.workspaceId &&
-    result.executionId === decision.executionId &&
-    encodeExecutionEpisodeBinding(result.episodeBinding) === episodeJson &&
-    result.policyRevision === decision.policyRevision &&
-    result.policyDigest === decision.policyDigest &&
-    snapshot.projectId === decision.projectId &&
-    snapshot.workspaceId === decision.workspaceId &&
-    snapshot.executionId === decision.executionId &&
-    encodeExecutionEpisodeBinding(snapshot.episodeBinding) === episodeJson &&
-    snapshot.policyRevision === decision.policyRevision &&
-    snapshot.expiresAt === decision.expiresAt &&
-    Date.parse(decision.expiresAt) > Date.parse(input.now) &&
-    snapshot.authorityBundleRevision === bundle.bundleRevision &&
-    snapshot.authorityBundleDigest === authority.bundleDigest;
-  if (!commonCurrent) return false;
-
-  if (snapshot.kind === "TrustedLocalUnconfinedV1") {
-    const trustedMatches =
-      snapshot.trustedRuntimeIdentity === "TrustedLocal" &&
-      snapshot.trustedRuntimeVersion === "builtin-v1" &&
-      snapshot.profile === "FullAccess" &&
-      snapshot.networkBoundary === "Unconfined" &&
-      decision.providerId === "TrustedLocal" &&
-      decision.profile === "FullAccess" &&
-      decision.networkPolicy.kind === "TrustedLocalUnconfinedV1" &&
-      decision.networkPolicy.version === 1;
-    return trustedMatches;
-  }
-
-  return (
-    decision.providerId === snapshot.providerId &&
-    decision.profile === snapshot.profile &&
-    decision.networkPolicy.kind === "OsEnforced" &&
-    JSON.stringify(decision.networkPolicy.policy) ===
-      JSON.stringify(snapshot.networkPolicy) &&
-    snapshot.providerRegistryRevision === bundle.providerRegistryRevision &&
-    snapshot.providerRegistryDigest === bundle.providerRegistryDigest
-  );
-};
-
-const executionEpisodeIdentity = (
-  execution: import("@arbor/domain").Execution,
-): AgentEpisodeIdentity =>
-  execution.binding._tag === "ExecutionBoundAgentBinding"
-    ? { _tag: "ExecutionBoundEpisode", executionId: execution.executionId }
-    : (execution.binding.episode ?? {
-        _tag: "LegacyAmbiguousEpisode",
-        executionId: execution.executionId,
-      });
-
-const initialAgentExecutionState = (
-  executionId: ExecutionId,
-  episode: AgentEpisodeIdentity,
-  wakeReason: WakeReason,
-  updatedAt: string,
-): AgentExecutionState => ({
-  executionId,
-  episode,
-  wakeReason,
-  currentMode: null,
-  activeSkillRefs: [],
-  turnNo: 0,
-  recentDirectiveRefs: [],
-  recentActionFingerprints: [],
-  updatedAt,
-});
-
-const agentStateBindingFailure = {
-  _tag: "PersistenceCorruption" as const,
-  repository: "ExecutionRepository" as const,
-  operation: "agent-state-episode-binding",
-  reason:
-    "stored AgentExecutionState does not match canonical Execution Episode",
-};
-
-/** P2 `03` §7 / P9 `03` §1: the renewal CAS failed (stale generation / no
- * live lease) — the worker lost ownership, must stop durable mutation and
- * must not ordinary-retry. */
-export interface LeaseLost {
-  readonly _tag: "LeaseLost";
-  readonly executionId: ExecutionId;
-  readonly generation: LeaseGeneration;
-}
-
-/** One renewal CAS on (worker_id, generation) extending `expires_at`;
- * generation UNCHANGED, no new lease row identity (P2 `03` §2). A fencing
- * rejection maps to the local `LeaseLost`. */
-export const renewLeaseOnce = (
-  executionId: ExecutionId,
-  workerId: string,
-  workerIncarnationId: string,
-  generation: LeaseGeneration,
-): Effect.Effect<
-  LeaseRecord,
-  LeaseLost | ExecutionRepositoryError | TransactionOperationalFailure,
-  TransactionPort | LeaseService
-> =>
-  Effect.gen(function* () {
-    const tx = yield* TransactionPort;
-    const leases = yield* LeaseService;
-    return yield* tx
-      .transact(
-        leases.renew(executionId, workerId, workerIncarnationId, generation),
-      )
-      .pipe(
-        Effect.mapError(
-          (
-            error,
-          ):
-            | LeaseLost
-            | ExecutionRepositoryError
-            | TransactionOperationalFailure =>
-            error._tag === "LeaseFencingRejected"
-              ? { _tag: "LeaseLost", executionId, generation }
-              : error,
-        ),
-      );
-  });
-
-/** P9 `03` §1: the renewal loop — every TTL/3 during a drive; bounded by
- * the drive lifetime (raced against it), never an independent daemon
- * thread. A drive shorter than one interval needs no renewal. */
-export const leaseRenewalLoop = (
-  executionId: ExecutionId,
-  workerId: string,
-  workerIncarnationId: string,
-  generation: LeaseGeneration,
-  intervalMs: number = LEASE_RENEW_INTERVAL_MS,
-  qualificationProbe?: ExecutionLeaseQualificationProbe,
-): Effect.Effect<
-  never,
-  LeaseLost | ExecutionRepositoryError | TransactionOperationalFailure,
-  TransactionPort | LeaseService
-> =>
-  Effect.forever(
-    Effect.gen(function* () {
-      yield* Effect.sleep(intervalMs);
-      if (qualificationProbe !== undefined) {
-        yield* Effect.promise(() =>
-          qualificationProbe({
-            boundary: "AH10BeforeLeaseRenewal",
-            executionId,
-            fencingGeneration: generation,
-          }),
-        );
-      }
-      yield* renewLeaseOnce(
-        executionId,
-        workerId,
-        workerIncarnationId,
-        generation,
-      );
-    }),
-  );
 
 /**
  * Orchestration: durable admission already exists; dispatch, acquire a lease,
@@ -370,6 +112,10 @@ export const runExecution = (
     const sandboxUnavailableStore = yield* Effect.serviceOption(
       SandboxProviderUnavailableStore,
     );
+    const workspaceAuthorizations = yield* Effect.serviceOption(
+      WorkspaceSandboxAuthorizationStore,
+    );
+    const policyWorkspaces = yield* Effect.serviceOption(WorkspaceRepository);
     const sandboxPolicyDecisions = yield* Effect.serviceOption(
       SandboxPolicyDecisionStore,
     );
@@ -409,123 +155,21 @@ export const runExecution = (
     if (Option.isNone(execution)) {
       return yield* Effect.fail({ _tag: "ExecutionNotFound" as const });
     }
-    if (Option.isSome(sandboxPolicyRequirements)) {
-      const pendingRequirement = yield* tx.transact(
-        sandboxPolicyRequirements.value.findPendingByExecution({
-          projectId: execution.value.projectId,
-          workspaceId: execution.value.workspaceId,
-          executionId,
-        }),
-      );
-      let policyMustWaitForHuman = false;
-      if (
-        Option.isSome(pendingRequirement) &&
-        pendingRequirement.value._tag === "SandboxPolicyRequirementV1"
-      ) {
-        const currentAuthority = Option.isSome(currentAuthoritySnapshotPort)
-          ? yield* currentAuthoritySnapshotPort.value.loadCurrentVerifiedV2()
-          : { _tag: "Unavailable" as const, failure: "SourceMissing" as const };
-        const now = yield* clock.now();
-        policyMustWaitForHuman = yield* tx.transact(
-          Effect.gen(function* () {
-            // Re-read the exact proof after the effectful P5 source/high-water
-            // load. This closes a requirement change during that read window.
-            const requirement =
-              yield* sandboxPolicyRequirements.value.findPendingByExecution({
-                projectId: execution.value.projectId,
-                workspaceId: execution.value.workspaceId,
-                executionId,
-              });
-            if (
-              Option.isNone(requirement) ||
-              requirement.value._tag !== "SandboxPolicyRequirementV1"
-            )
-              return false;
-            if (
-              currentAuthority._tag !== "Available" ||
-              Option.isNone(sandboxPolicyDecisions)
-            ) {
-              return true;
-            }
-            const current =
-              yield* sandboxPolicyDecisions.value.findCurrentForExecution(
-                execution.value.projectId,
-                execution.value.workspaceId,
-                executionId,
-              );
-            if (Option.isNone(current)) return true;
-            return !sandboxPolicyDecisionIsCurrentForRequirement({
-              execution: execution.value,
-              requirement: requirement.value,
-              committed: current.value,
-              authority: currentAuthority.snapshot,
-              now,
-            });
-          }),
-        );
-      }
-      if (policyMustWaitForHuman) {
-        return { _tag: "RecoveryBlocked" as const };
-      }
-    }
-    if (
-      Option.isSome(attentionProjection) &&
-      Option.isSome(p39RecoveryEvidence) &&
-      attentionProjection.value.listSandboxPolicyDecisionRequired !== undefined
-    ) {
-      const now = yield* clock.now();
-      const required = yield* tx.transact(
-        attentionProjection.value.listSandboxPolicyDecisionRequired(
-          execution.value.projectId,
-          now,
-        ),
-      );
-      if (required.some((item) => item.executionId === executionId)) {
-        return { _tag: "RecoveryBlocked" as const };
-      }
-    }
-    if (
-      Option.isSome(sandboxUnavailableStore) &&
-      Option.isSome(sandboxPolicyDecisions)
-    ) {
-      const currentPolicy = yield* tx.transact(
-        sandboxPolicyDecisions.value.findCurrentForExecution(
-          execution.value.projectId,
-          execution.value.workspaceId,
-          executionId,
-        ),
-      );
-      if (Option.isSome(currentPolicy)) {
-        const decision = currentPolicy.value.decision;
-        const snapshot = currentPolicy.value.result.effectivePolicySnapshot;
-        const fact = yield* tx.transact(
-          sandboxUnavailableStore.value.findByExecutionAndRevision(
-            executionId,
-            decision.policyRevision,
-          ),
-        );
-        if (fact !== undefined) {
-          if (
-            snapshot.kind !== "OsEnforced" ||
-            fact.projectId !== decision.projectId ||
-            fact.workspaceId !== decision.workspaceId ||
-            encodeExecutionEpisodeBinding(fact.episodeBinding) !==
-              encodeExecutionEpisodeBinding(decision.episodeBinding) ||
-            fact.policyDigest !== decision.policyDigest ||
-            fact.profileId !== snapshot.profile ||
-            fact.providerId !== snapshot.providerId ||
-            fact.providerVersion !== snapshot.providerVersion
-          ) {
-            return yield* Effect.fail({
-              _tag: "SandboxProviderUnavailableFactInvariantConflict" as const,
-              reason:
-                "current policy head conflicts with its immutable unavailable fact",
-            });
-          }
-          return { _tag: "RecoveryBlocked" as const };
-        }
-      }
-    }
+    const policyBlock = yield* checkExecutionPolicyBeforeDispatch(
+      execution.value,
+      executionId,
+      tx,
+      clock,
+      sandboxPolicyRequirements,
+      currentAuthoritySnapshotPort,
+      sandboxPolicyDecisions,
+      workspaceAuthorizations,
+      policyWorkspaces,
+      attentionProjection,
+      p39RecoveryEvidence,
+      sandboxUnavailableStore,
+    );
+    if (policyBlock !== undefined) return policyBlock;
     // P2 `06` §10: Pending approval is a durable nonterminal pause. Every
     // execution entry point shares this trusted gate before dispatch or lease
     // acquisition; only a committed resolution can re-enter the same Step.
@@ -547,68 +191,16 @@ export const runExecution = (
       workspaceId: execution.value.workspaceId,
       workerKind: "Agent",
     });
-    if (leaseQualificationProbe !== undefined) {
-      yield* Effect.promise(() =>
-        leaseQualificationProbe({
-          boundary: "AH10BeforeLeaseAcquired",
-          executionId,
-        }),
-      );
-    }
-    const { lease, agentExecutionState } = yield* tx.transact(
-      Effect.gen(function* () {
-        const lease = yield* leases
-          .acquire(executionId, WORKER_ID, LOCAL_WORKER_INCARNATION_ID)
-          .pipe(
-            Effect.tapError((error) =>
-              error._tag === "LeaseFencingRejected" &&
-              leaseQualificationProbe !== undefined
-                ? Effect.promise(() =>
-                    leaseQualificationProbe({
-                      boundary: "AH10LeaseAcquisitionRejected",
-                      executionId,
-                      workerId: WORKER_ID,
-                      workerIncarnationId: LOCAL_WORKER_INCARNATION_ID,
-                      fencingGeneration: error.generation,
-                    }),
-                  )
-                : Effect.void,
-            ),
-          );
-        const existingState = yield* states.find(executionId);
-        const episode = executionEpisodeIdentity(execution.value);
-        if (Option.isSome(existingState)) {
-          const state = existingState.value;
-          if (
-            state.executionId !== executionId ||
-            state.episode === undefined ||
-            !episodeIdentityMatches(state.episode, episode)
-          ) {
-            return yield* Effect.fail(agentStateBindingFailure);
-          }
-          return { lease, agentExecutionState: state };
-        }
-        const state = initialAgentExecutionState(
-          executionId,
-          episode,
-          wakeReason,
-          yield* clock.now(),
-        );
-        yield* states.upsert(state);
-        return { lease, agentExecutionState: state };
-      }),
+    const { lease, agentExecutionState } = yield* claimExecutionLease(
+      execution.value,
+      executionId,
+      wakeReason,
+      tx,
+      leases,
+      states,
+      clock,
+      leaseQualificationProbe,
     );
-    if (leaseQualificationProbe !== undefined) {
-      yield* Effect.promise(() =>
-        leaseQualificationProbe({
-          boundary: "AH10AfterLeaseAcquired",
-          executionId,
-          workerId: WORKER_ID,
-          workerIncarnationId: LOCAL_WORKER_INCARNATION_ID,
-          fencingGeneration: lease.generation,
-        }),
-      );
-    }
     const submittedDecisionEpisode = executionEpisode(execution.value);
     const submittedDecisionStopRecovery =
       execution.value.stopRequestedAt !== null &&
@@ -646,43 +238,36 @@ export const runExecution = (
         .pipe(Effect.ignore);
       return { _tag: "RecoveryBlocked" as const };
     }
-    // P9 `03` §1: race the drive against the renewal loop — the first to
-    // complete wins; a lost renewal (LeaseLost) interrupts the drive so no
-    // durable mutation is attempted, and no ordinary retry occurs.
-    const outcome = yield* Effect.raceFirst(
-      driver.drive({
-        execution: execution.value,
-        agentExecutionState,
-        wakeReason,
-        context: {
-          _tag: "ExecutionOrigin",
-          principal,
-          executionId,
-          fencingGeneration: lease.generation,
-          workerId: lease.workerId,
-          workerIncarnationId: lease.workerIncarnationId,
-        },
-        safetyGate: safety,
-      }),
-      leaseRenewalLoop(
-        executionId,
-        lease.workerId,
-        lease.workerIncarnationId,
-        lease.generation,
-        renewIntervalMs,
-        leaseQualificationProbe,
-      ),
-    ).pipe(
-      Effect.catchTag(
-        "ExecutionDriverOwnershipLost",
-        (lost: ExecutionDriverOwnershipLost) =>
-          Effect.fail<LeaseFencingRejected>({
-            _tag: "LeaseFencingRejected",
-            executionId: lost.executionId,
-            generation: lost.generation,
-          }),
-      ),
+    const outcome = yield* driveWithLease(
+      execution.value,
+      executionId,
+      agentExecutionState,
+      wakeReason,
+      principal,
+      lease,
+      driver,
+      safety,
+      renewIntervalMs,
+      leaseQualificationProbe,
     );
+
+    if (outcome._tag === "StopRequestedByControl") {
+      // Effect interruption has already run ProviderRuntime's cancellation
+      // finalizer. Do not renew or synthesize a settlement here; the recovery
+      // controller must still inspect reconciliation evidence before it can
+      // commit Interrupted(StopRequested).
+      yield* tx
+        .transact(
+          leases.release(
+            executionId,
+            lease.workerId,
+            lease.workerIncarnationId,
+            lease.generation,
+          ),
+        )
+        .pipe(Effect.ignore);
+      return { _tag: "RecoveryBlocked" as const };
+    }
 
     // The background loop keeps a long drive live. Renew once more at the
     // durability boundary so a scheduler delay around the final tick cannot
@@ -1178,9 +763,8 @@ export const runExecution = (
       );
     }
     if (receipt.resolution._tag === "TerminalRejected") {
-      return yield* Effect.fail(
-        receipt.resolution.error as unknown as CommandRejection,
-      );
+      const rejection: CommandRejection = receipt.resolution.error;
+      return yield* Effect.fail(rejection);
     }
     // P9 `03` §1 soft release: worker-initiated CAS deleting the live lease
     // row's liveness. Release never settles the Execution and never changes

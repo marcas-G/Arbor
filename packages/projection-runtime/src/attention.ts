@@ -5,7 +5,10 @@ import type {
   WorkspaceId,
   WorkspaceLifecycle,
 } from "@arbor/domain";
-import type { ReadmissionGateIntegrityFailure } from "@arbor/ports";
+import type {
+  ReadmissionGateIntegrityFailure,
+  TerminalProviderFailureKind,
+} from "@arbor/ports";
 
 // --- P10 `02` §1 frozen vocabulary ---
 
@@ -60,10 +63,7 @@ export interface AttentionRow {
         readonly workId: WorkId;
         readonly workRevision: number;
         readonly occurredAt: string;
-        readonly failureCode:
-          | "AuthenticationFailed"
-          | "RequestRejected"
-          | "ProtocolViolation";
+        readonly failureCode: TerminalProviderFailureKind;
         readonly failureFingerprint: Sha256;
       }
     | {

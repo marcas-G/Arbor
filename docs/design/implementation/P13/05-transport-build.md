@@ -81,7 +81,7 @@ interface InvalidationFrame {
    标记为 fresh；在首帧成功前不允许服务端 broadcast，也不允许 UI 宣称
    fresh。单独的 `command` 帧不授权 invalidation 订阅。
 
-## 4. 前端构建基线与依赖（frozen，DID §14.1 v1.15）
+## 4. 前端构建基线与依赖（frozen，DID §14.1 v1.15；2026-11-14 UI 基础层增补）
 
 | 项 | 规则 |
 |---|---|
@@ -90,14 +90,19 @@ interface InvalidationFrame {
 | 语言 | TypeScript（同 monorepo 版本；`apps/web` 独立 tsconfig，`verbatimModuleSyntax`/strict 对齐根） |
 | 路由/状态 | 最小化：路由用 React 19 + 自维护轻方案或 react-router（exact pin，二选一在 planning 定）；**禁止**引入 redux/mobx 等全局状态库（状态纪律 `01` §3 已冻结，不需要） |
 | 数据获取 | 自研 fetch 封装（合同行为小）；**禁止** react-query/swr 等 cache 库（避免第二套缓存语义） |
-| 样式 | CSS custom properties + CSS Modules 或 vanilla CSS（`04` tokens）；**禁止** tailwind/styled-components 等 |
+| 样式 | Arbor design tokens + Tailwind utilities；保留项目 reset，关闭 preflight；迁移期间允许兼容既有 CSS Modules/vanilla CSS；**禁止** styled-components 等运行时样式方案 |
+| 组件原语 | shadcn/ui 风格的项目内组件源码（`components/ui/**`）+ Radix Primitives 负责复杂交互的焦点、键盘和可访问性语义 |
 | 测试 | Vitest + @testing-library/react（或等价 DOM 测试，exact pin）；render tests 走 jsdom/happy-dom |
 | lint/format | Biome（同 monorepo，不引入 ESLint/Prettier） |
 
 **exact pin 集合**（进 `apps/web/package.json`，锁死）：vite、react、
 react-dom、@types/react、@types/react-dom、路由选定项、测试选定项。
-其余 frontend 依赖原则上不引入；引入新依赖 = 合同修订（`06` EC-12 校验
-依赖清单与 pin 策略）。
+其余 frontend 依赖原则上不引入；本次 UI 基础层增补接受并 exact pin
+`@radix-ui/react-dialog`、`@radix-ui/react-dropdown-menu`、`@radix-ui/react-tabs`、
+`@tailwindcss/vite`、
+`tailwindcss`、`class-variance-authority`、`clsx`、`tailwind-merge` 和
+`lucide-react`。后续新增依赖仍需合同修订（`06` EC-12 校验依赖清单与 pin
+策略）。
 
 ## 5. 脚本与 CI 接线
 

@@ -30,7 +30,7 @@ function collectSourceFiles(dir: string, found: string[] = []): string[] {
     const path = join(dir, entry);
     if (statSync(path).isDirectory()) {
       collectSourceFiles(path, found);
-    } else if (/\.(tsx|css)$/.test(entry)) {
+    } else if (/\.(tsx?|css)$/.test(entry)) {
       found.push(path);
     }
   }

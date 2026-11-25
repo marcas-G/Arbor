@@ -52,6 +52,12 @@ const canonicalId = (value: unknown): value is string =>
   value.length <= 128 &&
   value === value.trim() &&
   /^[A-Za-z0-9][A-Za-z0-9._:-]*$/u.test(value);
+const canonicalOsBuild = (value: unknown): value is string =>
+  typeof value === "string" &&
+  value.length > 0 &&
+  value.length <= 128 &&
+  value === value.trim() &&
+  /^[A-Za-z0-9][A-Za-z0-9._:+-]*$/u.test(value);
 
 const utf8Compare = (left: string, right: string): number => {
   const a = Array.from(left, (character) => character.codePointAt(0) ?? 0);
@@ -112,7 +118,7 @@ const decodeRegistry = (
       !canonicalId(entry.providerVersion) ||
       !isRevision(entry.capabilityRevision, true) ||
       !["Linux", "macOS", "Windows"].includes(String(entry.osFamily)) ||
-      !canonicalId(entry.osBuild) ||
+      !canonicalOsBuild(entry.osBuild) ||
       !["Experimental", "Unavailable", "Supported"].includes(
         String(entry.status),
       )

@@ -2,10 +2,12 @@ import type {
   ExecutionEpisodeBinding,
   ExecutionId,
   NetworkPolicyV1,
+  SandboxNetworkBrokerControlsV2,
   SandboxProfile,
   SandboxProviderCapability,
   SandboxProviderId,
   ToolInvocationId,
+  VerificationSandboxBindingV1,
 } from "@arbor/domain";
 import { Context, type Effect } from "effect";
 import type { SandboxHandle, SandboxMountAccess } from "./tool.js";
@@ -19,13 +21,15 @@ export interface SandboxProcessLimits {
   readonly cpuTimeMs: number;
 }
 
-interface SandboxProcessPolicyCommon {
+export interface SandboxProcessPolicyCommon {
   readonly executionId: ExecutionId;
   readonly episodeBinding: ExecutionEpisodeBinding;
   readonly sandboxHandleId: string;
   readonly policyRevision: number;
   readonly expiresAt?: string;
   readonly policyDigest: string;
+  /** Internal provenance of a modern policy, never an additional grant. */
+  readonly workspaceAuthorizationRevision?: number;
   readonly admittedMounts: ReadonlyArray<{
     readonly ref: string;
     readonly rootPath: string;
@@ -49,6 +53,36 @@ export interface OsEnforcedSandboxProcessPolicy
   readonly networkPolicy: NetworkPolicyV1;
 }
 
+/** Linux V2 process policy. V2 is a closed runtime type so an adapter cannot
+ * accidentally apply V1's TLS-terminating broker to the V2 contract. */
+export interface OsEnforcedSandboxProcessPolicyV2
+  extends SandboxProcessPolicyCommon {
+  readonly kind: "OsEnforcedProcessPolicyV2";
+  readonly profile: Exclude<SandboxProfile, "FullAccess">;
+  readonly providerId: SandboxProviderId;
+  readonly providerVersion: string;
+  readonly capabilityRevision: string;
+  readonly enforcementRuleSetDigest: string;
+  readonly qualificationEvidenceRef: string;
+  readonly boundary: "OsEnforced";
+  readonly networkPolicy: NetworkPolicyV1;
+  readonly networkBrokerControls: SandboxNetworkBrokerControlsV2;
+}
+
+export type OsEnforcedSandboxProcessPolicyAny =
+  | OsEnforcedSandboxProcessPolicy
+  | OsEnforcedSandboxProcessPolicyV2
+  | IndependentVerificationProcessPolicyV1;
+
+/** Separate process-only variant; old episode/policy codecs stay unchanged. */
+export interface IndependentVerificationProcessPolicyV1
+  extends Omit<OsEnforcedSandboxProcessPolicyV2, "kind" | "episodeBinding"> {
+  readonly kind: "IndependentVerificationProcessPolicyV1";
+  readonly verificationBinding: VerificationSandboxBindingV1;
+  /** Additional actual mount-combination qualification, not the old tuple. */
+  readonly verificationMountQualificationEvidenceRef: string;
+}
+
 /** Internal runtime-only policy for the explicit V21 TrustedLocal choice. It
  * is deliberately not a SandboxProcessPort/provider capability and asserts
  * no OS isolation or resource-limit enforcement. */
@@ -67,10 +101,12 @@ export interface TrustedLocalUnconfinedRuntimePolicy
 
 export type SandboxProcessPolicy =
   | OsEnforcedSandboxProcessPolicy
+  | OsEnforcedSandboxProcessPolicyV2
+  | IndependentVerificationProcessPolicyV1
   | TrustedLocalUnconfinedRuntimePolicy;
 
 export interface SandboxProcessRequest {
-  readonly policy: OsEnforcedSandboxProcessPolicy;
+  readonly policy: OsEnforcedSandboxProcessPolicyAny;
   readonly handle: SandboxHandle;
   readonly executable: string;
   readonly args: ReadonlyArray<string>;
@@ -118,6 +154,7 @@ export type SandboxProcessOutcome =
         | "MountBindingMismatch"
         | "InvalidTimeout"
         | "ProcessCapabilityNotBound"
+        | "VerificationEnvironmentUnavailable"
         | "ProviderOutcomeMismatch";
     };
 

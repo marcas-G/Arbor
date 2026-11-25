@@ -246,8 +246,16 @@ export type TerminalProviderFailureView =
       readonly occurredAt: string;
       readonly failureCode:
         | "AuthenticationFailed"
+        | "AuthorizationFailed"
+        | "RateLimited"
+        | "QuotaExceeded"
+        | "ProviderUnavailable"
+        | "TransportFailed"
+        | "StreamInterrupted"
         | "RequestRejected"
-        | "ProtocolViolation";
+        | "ContextLimitExceeded"
+        | "ProtocolViolation"
+        | "UnknownProviderFailure";
     }
   | {
       readonly kind: "TerminalProviderFailureIntegrity";
@@ -285,6 +293,14 @@ export interface WorkspaceDetailReq {
 }
 
 interface WorkspaceDetailResCore {
+  readonly workspaceSandboxAuthorization?: {
+    readonly expectedAuthorizationRevision: number;
+    readonly resourceBoundaryRevision: number;
+    readonly workspacePolicyRevision: number;
+    readonly current:
+      | import("@arbor/domain").WorkspaceSandboxAuthorization
+      | null;
+  };
   readonly responsibility: ResponsibilityDefinition;
   readonly boundary: ResourceBoundary;
   readonly currentWork?: CurrentWorkSummary | undefined;

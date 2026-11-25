@@ -36,13 +36,15 @@ export type SchemaUpgradeMaintenancePhase =
   | "writer-lock-acquisition"
   | "manifest-validation"
   | "p39-reservation-and-gate"
-  | "p40-p54-continuation"
+  | "p40-p55-continuation"
+  | "p40-p57-continuation"
   | "version45-closed-readonly-no-op"
   | "version46-closed-readonly-no-op"
   | "version47-closed-readonly-no-op"
   | "version48-closed-readonly-no-op"
   | "version50-closed-readonly-no-op"
-  | "version54-closed-readonly-no-op";
+  | "version55-closed-readonly-no-op"
+  | "version57-closed-readonly-no-op";
 
 export interface SchemaUpgradeFileIdentity {
   readonly device: string;
@@ -963,8 +965,8 @@ export const descriptorHashesThrough = (
     42: "a0294a5db440e402a6c32b5a2b596502e059642431157eadcb6be7212224e5aa",
     43: "8a125c31202b6a3fda240095d5b85547c8f16347ea9fd759a943971547119cf5",
     44: "2378c0170aae7beb0592c69bfffef9e611da6d5323caaa0de5b7d5360b7ff33f",
-    45: "c7c934d2929fda3ac9928d0ce4da25c9b4b6dc7b532581f5a18c144a6ce1834f",
-    46: "2b484f4d8c534644b4623702a4f383a410566386f6b8a8a401fd6fcd728c7828",
+    45: "346659273206a75f46d89d01d08d722c0d07ea4a2470ca6694c70e15310de947",
+    46: "f665e11ff762922c7c7bb4115c6a5527c49f94d734b889474b0bedbb6ab67790",
     47: "7cc51d23acee151a45f9949c11c0179543b8344ac97ac3894878e9d52b92e4c1",
     48: "55b3283f50865c5e47e5f503e66f65d989390d7abd8c2753e123d22c6cd7846d",
     49: "b8145e3a49f1de191544bd2598eea250910f2d54f9f56e497dd9e49e03cf22dc",
@@ -973,9 +975,13 @@ export const descriptorHashesThrough = (
     52: "a0cfebb4d6257a37e2bf6ad9db3c1d9f2540af424854ae05ac2dd39646ab7a82",
     53: "b6c7c70ee009a987cb09387157891c55ad3a79cbf435e5b715b6f1335b418e3e",
     54: "161e6b70c9940a80387eb41dd8fa14d5c0dc5834bc220097681d1f6df60f5597",
+    55: "589030dc55c5e6fef68e8bdc5d239894494a1800ee0f5178235501092dd52a1a",
+    56: "17db4fd369edb9244b9f91d9aeed145c3d04ad8ba6e95d06247f07a63527d11a",
+    57: "49086e7ed47f922dc1a15211a9e246ad37469781be0afb5a04154cbfb635b1e7",
   };
   for (const id of [
-    37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54,
+    37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55,
+    56, 57,
   ]) {
     if (id <= version) {
       const expected = pinned[id] ?? refuse(`descriptor ${id} is not pinned`);

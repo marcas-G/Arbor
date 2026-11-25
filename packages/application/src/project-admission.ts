@@ -4,6 +4,7 @@ const CLOSED_ALLOWED_COMMANDS = new Set([
   "StopExecution",
   "SettleExecution",
   "RevokePermission",
+  "RevokeWorkspaceSandboxAuthorization",
   "RetireWorktree",
 ]);
 

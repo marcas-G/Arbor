@@ -88,6 +88,15 @@ const resolver = makeTurnProfileResolver({
           requiredCapability: "agent:inspect-workspaces",
         },
         {
+          stableId: "core.control.allocate-workspace-sandbox",
+          name: "allocate_workspace_sandbox",
+          description: "allocate within Parent authorization",
+          schemaJson: "{}",
+          version: "1",
+          hash: "allocate-workspace-sandbox-hash",
+          requiredCapability: "agent:allocate-workspace-sandbox",
+        },
+        {
           stableId: "core.control.accept-result",
           name: "accept_result",
           description: "accept child result",
@@ -152,7 +161,7 @@ const resolver = makeTurnProfileResolver({
 });
 
 describe("P17 TurnProfileResolver", () => {
-  it("gives Root Conversation zero executable tools and only placement/work-initiation controls", async () => {
+  it("gives Root Conversation zero executable tools and only placement, authorization and work-initiation controls", async () => {
     const profile = await Effect.runPromise(
       resolver.resolve({
         conversation: true,
@@ -176,6 +185,7 @@ describe("P17 TurnProfileResolver", () => {
       "assign_work",
       "list_workspaces",
       "read_workspace",
+      "allocate_workspace_sandbox",
       "accept_result",
       "propose_workspace",
     ]);
@@ -208,6 +218,7 @@ describe("P17 TurnProfileResolver", () => {
       "assign_work",
       "list_workspaces",
       "read_workspace",
+      "allocate_workspace_sandbox",
       "accept_result",
       "update_plan",
       "propose_workspace",
@@ -259,6 +270,7 @@ describe("P17 TurnProfileResolver", () => {
       "send_message",
       "list_workspaces",
       "read_workspace",
+      "allocate_workspace_sandbox",
       "accept_result",
     ]);
   });

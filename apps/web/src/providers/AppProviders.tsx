@@ -179,15 +179,11 @@ function WSInvalidationProvider({
       setFreshness({ state: "offline", lastWatermark: null });
       return;
     }
-    let hasOpened = false;
     const channel = connectInvalidation(
       wsUrl(),
       {
         onOpen: () => {
-          if (hasOpened) {
-            void client.invalidateQueries({ queryKey: ["view"] });
-          }
-          hasOpened = true;
+          void client.invalidateQueries({ queryKey: ["view"] });
           setFreshness((previous) => ({ ...previous, state: "fresh" }));
         },
         onClose: () => {

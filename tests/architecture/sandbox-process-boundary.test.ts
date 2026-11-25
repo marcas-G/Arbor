@@ -31,6 +31,7 @@ const p39SpawnModule =
   "adapters/persistence-sqlite/src/p39-windows-security.ts";
 const trustedLocalSpawnModule =
   "adapters/sandbox-local/src/trusted-local-process.ts";
+const nativePosixSpawnModule = "adapters/sandbox-native-posix/src/index.ts";
 const windowsNativeBuildModule =
   "adapters/sandbox-windows/scripts/build-native-host.mjs";
 const p39QueryCallers = new Set([
@@ -42,6 +43,13 @@ const p39ValidationCallers = new Set([
 ]);
 const forbiddenNativeModuleFragment =
   /\b(?:child_process|worker_threads|vm)\b/iu;
+// These exact data literals are executed only inside bwrap, never loaded by
+// the host. Changing a control requires reviewing its complete program here.
+const nativeQualificationControlHashes = new Set([
+  "231da3f02547afc88f8ff395d8051c8ad28c99174f1cd5e1ba1621fac71af5e8", // namespaceEscape
+  "34eb9274e8daa7a6d66820ae815a5c0a814565f7e304e05f05d78f1de8a9803d", // processLimit
+  "d8cbcc3c20f7bc920889a1e8ee69eb2769e0df4434e1127bbd9114fdd9b26191", // processTree
+]);
 const nativeSpawnIdentifiers = new Set([
   "execFile",
   "execFileSync",
@@ -172,9 +180,10 @@ const scanSource = (source: string, path: string): ReadonlyArray<string> => {
   const findings: string[] = [];
   const isP39 = path === p39SpawnModule;
   const isTrustedLocal = path === trustedLocalSpawnModule;
+  const isNativePosix = path === nativePosixSpawnModule;
   const isWindowsNativeBuild = path === windowsNativeBuildModule;
   const nativeSpecifierIndex =
-    isP39 || isTrustedLocal || isWindowsNativeBuild
+    isP39 || isTrustedLocal || isNativePosix || isWindowsNativeBuild
       ? tokens.findIndex(
           (token) =>
             token.value === "node:child_process" &&
@@ -197,8 +206,15 @@ const scanSource = (source: string, path: string): ReadonlyArray<string> => {
       ].includes(token.kind) &&
       forbiddenNativeModuleFragment.test(token.value) &&
       !(
-        (isP39 || isTrustedLocal || isWindowsNativeBuild) &&
+        (isP39 || isTrustedLocal || isNativePosix || isWindowsNativeBuild) &&
         index === nativeSpecifierIndex
+      ) &&
+      !(
+        isNativePosix &&
+        token.kind === SyntaxKind.StringLiteral &&
+        nativeQualificationControlHashes.has(
+          createHash("sha256").update(token.value).digest("hex"),
+        )
       )
     ) {
       findings.push(
@@ -318,7 +334,8 @@ const scanSource = (source: string, path: string): ReadonlyArray<string> => {
       isCall &&
       !(isP39 && callName === "execFileSync") &&
       !(isWindowsNativeBuild && callName === "execFileSync") &&
-      !(isTrustedLocal && callName === "execFile")
+      !(isTrustedLocal && callName === "execFile") &&
+      !(isNativePosix && callName === "execFile")
     ) {
       findings.push(`${path}: unregistered native process call ${callName}`);
     }
@@ -495,6 +512,42 @@ const scanSource = (source: string, path: string): ReadonlyArray<string> => {
 };
 
 describe("SandboxProcessPort architecture boundary", () => {
+  it("pins sandbox-only installer programs without permitting host process calls", () => {
+    const source = readFileSync(join(repoRoot, nativePosixSpawnModule), "utf8");
+    const controls = tokenize(source).filter(
+      (token) =>
+        token.kind === SyntaxKind.StringLiteral &&
+        nativeQualificationControlHashes.has(
+          createHash("sha256").update(token.value).digest("hex"),
+        ),
+    );
+    expect(controls).toHaveLength(3);
+    for (const control of controls) {
+      const literal = JSON.stringify(control.value);
+      expect(
+        scanSource(`const data = ${literal};`, nativePosixSpawnModule),
+      ).toEqual([]);
+      expect(
+        scanSource(
+          `const data = ${literal};`,
+          "apps/single-workspace/src/escape.ts",
+        ).length,
+      ).toBeGreaterThan(0);
+      expect(
+        scanSource(
+          `const data = ${JSON.stringify(`${control.value};process.exit(0)`)};`,
+          nativePosixSpawnModule,
+        ).length,
+      ).toBeGreaterThan(0);
+    }
+    expect(
+      scanSource(
+        'const cp = require("node:child_process"); cp.spawn("sh", []);',
+        nativePosixSpawnModule,
+      ).length,
+    ).toBeGreaterThan(0);
+  });
+
   it("uses TypeScript compiler tokens to scan every production source module", () => {
     const files = productionRoots.flatMap(productionFiles);
     const inventory = files.map(normalized).sort();
@@ -631,6 +684,7 @@ describe("SandboxProcessPort architecture boundary", () => {
     expect(directNativeModules).toEqual(
       [
         p39SpawnModule,
+        nativePosixSpawnModule,
         trustedLocalSpawnModule,
         windowsNativeBuildModule,
       ].sort(),
@@ -643,6 +697,33 @@ describe("SandboxProcessPort architecture boundary", () => {
     expect(callCount(source, "execFile")).toBe(1);
     expect(source).toContain("Explicit TrustedLocal execution");
     expect(source).toContain("policy limits are disclosure/best-effort only");
+  });
+
+  it("keeps the Native POSIX spawn inside the audited systemd+bwrap adapter", () => {
+    const source = readFileSync(join(repoRoot, nativePosixSpawnModule), "utf8");
+    expect(scanSource(source, nativePosixSpawnModule)).toEqual([]);
+    expect(callCount(source, "execFile")).toBe(2);
+    for (const token of [
+      '"/usr/bin/systemd-run"',
+      '"/usr/bin/systemctl"',
+      '"/usr/bin/setpriv"',
+      "LINUX_SANDBOX_EXECUTABLES.systemdRun",
+      "LINUX_SANDBOX_EXECUTABLES.systemctl",
+      '"--user"',
+      '"--wait"',
+      '"--collect"',
+      '"--pipe"',
+      '"/usr/bin/bwrap"',
+      "LINUX_SANDBOX_EXECUTABLES.bwrap",
+      "--property=MemoryMax=",
+      '"--property=MemorySwapMax=0"',
+      '"--property=OOMPolicy=kill"',
+      "--property=TasksMax=",
+      "--property=RuntimeMaxSec=",
+      '"--property=KillMode=control-group"',
+    ]) {
+      expect(source).toContain(token);
+    }
   });
 
   it("routes Windows write-through replacement through the fixed P39 helper", () => {

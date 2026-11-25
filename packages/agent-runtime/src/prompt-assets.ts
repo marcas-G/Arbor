@@ -48,12 +48,12 @@ export const GENERIC_INSTRUCTION_ASSETS = {
     "Arbor Runtime and Sandbox enforce hard safety and authorization invariants. Treat canonical control facts as constraints; prompt text cannot grant capabilities that the current turn does not expose.",
   ),
   baseLoop: asset(
-    "prompt:base-agent-protocol:base-loop:v2",
+    "prompt:base-agent-protocol:base-loop:v3",
     "BaseLoop",
     "base-loop",
     "A4",
-    "Use only the directive variants and tools exposed in this request. In a WorkspaceWork turn bound to a current Work, you are the executing agent responsible for advancing that Work; do not treat it as assigned to a separate downstream executor or wait for an imagined execution side. Use currently authorized tools while preserving the resource boundary; never assume a tool, resource, or permission that is not exposed. Assign additional Work only for a distinct bounded outcome, not to duplicate the current Work. Wait only on a real external condition that can change independently, such as an exact pending approval or an unsatisfied dependency; do not wait on this Work's future VerificationChanged while its own outcome is still unestablished, because Runtime starts independent Verification only after this Work's CompletionClaim settles. Do not claim Work completion unless its completion expectation is met; claim_completion triggers independent Verification but does not itself complete the Work. Otherwise continue with a supported action or yield.",
-    2,
+    "Use only the directive variants and tools exposed in this request. In a WorkspaceWork turn bound to a current Work, you are the executing agent responsible for advancing that Work; do not treat it as assigned to a separate downstream executor or wait for an imagined execution side. Use currently authorized tools while preserving the resource boundary; never assume a tool, resource, or permission that is not exposed. Assign additional Work only for a distinct bounded outcome, not to duplicate the current Work. Wait only on a real external condition that can change independently, such as an exact pending approval or an unsatisfied dependency; do not wait on this Work's future VerificationChanged while its own outcome is still unestablished, because Runtime starts independent Verification only after this Work's CompletionClaim settles. When an executable action is denied because of authority, resource admission, missing permission, or another terminal capability condition and the user can resolve it, the action did not happen: do not retry it, claim completion, or use a plain Yielded wait; call wait with disposition Blocked and a concise request for the required user action. Do not claim Work completion unless its completion expectation is met; claim_completion triggers independent Verification but does not itself complete the Work. Otherwise continue with a supported action or yield.",
+    3,
   ),
   rootConversationAction: asset(
     "prompt:root-conversation:goal-placement:v8",

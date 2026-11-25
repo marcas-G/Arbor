@@ -92,7 +92,7 @@ describe("p11-closure", () => {
     );
     expect(recAdapter.includes("RecordEnvironmentChange")).toBe(true);
     const ownershipAdapter = sourceOf(
-      "adapters/persistence-sqlite/src/ownership.ts",
+      "adapters/persistence-sqlite/src/ownership/environment-revision.ts",
     );
     expect(ownershipAdapter.includes("lazyInitAnchor")).toBe(true); // P1-DG-08 exempt path
   });

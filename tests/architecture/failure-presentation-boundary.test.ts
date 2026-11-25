@@ -23,7 +23,9 @@ describe("Failure presentation boundary", () => {
   });
 
   it("allows terminal negative and uncertain ToolResults as verifier evidence", () => {
-    const actions = sourceOf("apps/single-workspace/src/control-actions.ts");
+    const actions = sourceOf(
+      "apps/single-workspace/src/control-actions/verification.ts",
+    );
     expect(actions).toContain("toolResultMatchesSettlement");
     expect(actions).toContain('case "Failed"');
     expect(actions).toContain('case "Interrupted"');

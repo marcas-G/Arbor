@@ -57,6 +57,114 @@ const contextFor = (executionId: string) =>
   }) as never;
 
 describe("executable tool invocation identity scope", () => {
+  it("rejects an execution-bound shell without a resumable policy instead of returning a phantom wait", async () => {
+    let invoked = false;
+    let policyRequested = false;
+    const handler = makeExecutableToolHandler(
+      {
+        invoke: () => {
+          invoked = true;
+          return Effect.die("must not execute without an exact sandbox policy");
+        },
+      },
+      { now: () => Effect.succeed("2026-11-16T00:00:00.000Z") },
+      {
+        visibleRefs: () =>
+          Effect.succeed([{ name: "shell", version: "1", hash: "shell-v1" }]),
+        resolveForModel: () => Effect.die("unused"),
+      },
+      undefined,
+      undefined,
+      undefined,
+      () => {
+        policyRequested = true;
+        return Effect.succeed(undefined);
+      },
+    );
+    const executionId = "exe_018f2b3c-4d5e-7abc-8def-0123456789a1";
+    const result = await Effect.runPromise(
+      Effect.result(
+        handler.handle({
+          invocation: { ...invocation, toolName: "shell" },
+          execution: {
+            ...episodeExecutionFor(executionId, undefined as never),
+            binding: {
+              _tag: "ExecutionBoundAgentBinding",
+              parentExecutionId: null,
+              mission: "Independent verification",
+            },
+          } as never,
+          context: contextFor(executionId),
+          controlBasis: {} as never,
+        }),
+      ),
+    );
+    expect(result).toMatchObject({
+      _tag: "Failure",
+      failure: {
+        _tag: "AgentActionRejected",
+        code: "action/tool-unavailable",
+        correction: "ChooseAlternative",
+      },
+    });
+    expect(invoked).toBe(false);
+    expect(policyRequested).toBe(false);
+  });
+
+  it.each([
+    "AuthorizationRequired",
+    "Unavailable",
+    "Stale",
+    "NotApplicable",
+  ] as const)(
+    "delegates shell policy waiting to P4 when Workspace binding returns %s",
+    async (outcome) => {
+      let invoked = false;
+      let materialized = false;
+      const handler = makeExecutableToolHandler(
+        {
+          invoke: () => {
+            invoked = true;
+            return Effect.succeed({
+              _tag: "SandboxPolicyRequiredInterruption" as const,
+            });
+          },
+        },
+        { now: () => Effect.succeed("2026-11-16T00:00:00.000Z") },
+        {
+          visibleRefs: () =>
+            Effect.succeed([{ name: "shell", version: "1", hash: "shell-v1" }]),
+          resolveForModel: () => Effect.die("unused"),
+        },
+        undefined,
+        undefined,
+        undefined,
+        () => {
+          materialized = true;
+          return Effect.succeed(undefined);
+        },
+        undefined,
+        undefined,
+        () => Effect.succeed({ _tag: outcome }),
+      );
+      const result = await Effect.runPromise(
+        handler.handle({
+          invocation: { ...invocation, toolName: "shell" },
+          execution: episodeExecutionFor("exe_identity_a", {
+            _tag: "InboxEpisode",
+            entryKey: "shell",
+            inputKind: "HumanMessage",
+          } as never),
+          context: contextFor("exe_identity_a"),
+          controlBasis: {} as never,
+        }),
+      );
+      expect(result).toEqual({ _tag: "SandboxPolicyRequiredInterruption" });
+      expect(invoked).toBe(true);
+      expect(materialized).toBe(false);
+    },
+  );
+
   it("separates executions that reuse a provider callRef and stabilizes retries within one execution", async () => {
     const observed: Array<{
       readonly executionId: string;

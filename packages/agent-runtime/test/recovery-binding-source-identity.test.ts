@@ -89,6 +89,25 @@ describe("P3 RecoveryBinding source identity", () => {
     expect(sourceIdentity({ actionIndex: 3 })).toBeUndefined();
   });
 
+  it("does not infer missing persisted Step or Action identities", () => {
+    const base = {
+      executionId,
+      providerTurnId,
+      actionIndex: 2,
+      callRef: "call-1",
+    };
+    expect(
+      recoveryBindingIdentityFor({
+        ...base,
+        step: undefined,
+        action: action(),
+      }),
+    ).toBeUndefined();
+    expect(
+      recoveryBindingIdentityFor({ ...base, step: step(), action: undefined }),
+    ).toBeUndefined();
+  });
+
   it("fails closed when an Action belongs to a different persisted Step", () => {
     const mismatchedAction = {
       ...action(),

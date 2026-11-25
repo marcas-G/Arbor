@@ -21,7 +21,7 @@ import { ProblemCard } from "../../problems/ProblemCard.js";
 import { useSession } from "../../session/SessionContext.js";
 import { statusTone } from "../../tokens.js";
 import { TimeText } from "../../views/shared.js";
-import styles from "./attention.module.css";
+import styles from "./attention.styles.js";
 
 const SEVERITY_ORDER: ReadonlyArray<string> = ["ActionRequired", "Attention"];
 
@@ -316,9 +316,7 @@ export function AttentionPage({
                       <section key={severity} className={styles.group}>
                         <h2 className={styles.groupTitle}>
                           <Badge tone={statusTone(severity)}>{severity}</Badge>
-                          <span
-                            className={styles.groupCount}
-                          >{`${String(severityRows.length)} 条`}</span>
+                          <span>{`${String(severityRows.length)} 条`}</span>
                         </h2>
                         <ul className={styles.rowList}>
                           {severityRows.map((row) => (

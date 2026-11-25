@@ -114,7 +114,7 @@ describe("p10-architecture (projection-runtime)", () => {
   it("projection-runtime declares exactly the domain+ports edge (DID §10.4.1; package-dag ALLOWED_EDGES)", () => {
     expect(
       [...dependencyKeysOf("packages/projection-runtime/package.json")].sort(),
-    ).toEqual(["@arbor/domain", "@arbor/ports"]);
+    ).toEqual(["@arbor/domain", "@arbor/ports", "effect"]);
     const dag = sourceOf("tests/architecture/package-dag.ts");
     expect(dag.includes('"projection-runtime": ["domain", "ports"]')).toBe(
       true,

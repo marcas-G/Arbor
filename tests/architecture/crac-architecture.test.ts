@@ -26,21 +26,38 @@ describe("DID v1.31 MAC-P1 Root Conversation work-initiation boundary", () => {
 
   it("keeps conversation action results exact-execution scoped", () => {
     const decision = source("packages/agent-runtime/src/model-decision.ts");
-    const actions = source("packages/agent-runtime/src/agent-loop-actions.ts");
-    expect(decision).toContain("belongsToConversationExecution");
-    expect(decision).toContain("providerTurnPrefix");
+    const actions = source(
+      "packages/agent-runtime/src/agent-loop-actions/ledger.ts",
+    );
+    const evidence = source(
+      "packages/agent-runtime/src/checkpoint/conversation/evidence.ts",
+    );
+    const sessionContext = source(
+      "packages/agent-runtime/src/decision/context/session.ts",
+    );
+    expect(decision).toContain("loadDecisionSessionContext(");
+    expect(sessionContext).toContain("belongsToConversationExecution(");
+    expect(sessionContext).toContain(
+      "../../checkpoint/conversation/evidence.js",
+    );
+    expect(evidence).toContain("providerTurnPrefix");
+    expect(evidence).toContain("export const belongsToConversationExecution");
     expect(actions).toContain(
       ["observation_", "$", "{input.execution.executionId}_"].join(""),
     );
   });
 
   it("keeps historical formation governance exact while MAC-P1 hides its model surface", () => {
-    const controls = source("apps/single-workspace/src/control-actions.ts");
+    const controls = source(
+      "apps/single-workspace/src/control-actions/workspace.ts",
+    );
     const decision = source(
       "packages/application/src/commands/record-decision.ts",
     );
     const drain = source("packages/agent-runtime/src/safe-input-drain.ts");
-    const migrations = source("adapters/persistence-sqlite/src/migrations.ts");
+    const migrations = source(
+      "adapters/persistence-sqlite/src/migrations/v21-v30.ts",
+    );
     expect(controls).toContain(
       ["gov:", "$", "{record.proposalId}:", "$", "{record.revision}"].join(""),
     );

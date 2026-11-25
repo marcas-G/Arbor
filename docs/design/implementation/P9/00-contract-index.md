@@ -1,5 +1,17 @@
 # P9 — 00 Contract Index
 
+**RAI-DG-01 amendment (DID v1.37 §8.18A.1):** P9 `07` owns the closed
+Deliver replay, direct-child AssignWork binding, and ReconciliationEscalated
+source identities/code unions used by the exact Work-revision gate. Facts and
+events remain immutable and atomic; ephemeral RecoveryBlocked outcomes are
+not promoted into sources.
+
+**Accepted ProviderTurnId V2 codec amendment (DID v1.58):** P9 `07` recovery
+and legacy adoption use P3's strict closed codec. Existing UUIDv7 and
+deterministic V2 identities are matched byte-for-byte across Turn, Manifest,
+Step, Session source refs, Action and P20 links. Unknown formats fail closed;
+P9 writes no replacement identity and changes no settlement semantics.
+
 **Authority:** DID v1.20（含原 DID v1.11 P9 closure 与 AHT-1…AHT-8）；SD v1.3 §6.5/§7.3/§10/§14；P1 `06`/`07`, P2 `03`/`06`, P3 `06`/`08`, P4 `01`/`02`/`03`/`06`, P5 `04`/`05`, P8 `00`/`02`/`03`；GQ1–GQ5 与 2026-09-30 AgentLoopStep 治理裁决。
 **Status:** FROZEN — P9 formally closed; accepted AH7-DG-03 owner amendment
 (2026-10-10). Post-landing consistency review pending.
@@ -170,3 +182,29 @@ The DID v1.22 SCRC successor adds recovery contracts for Inbox promotion,
 callRef-paired ToolResult, checkpoint/epoch atomicity, bounded overflow recovery
 and native-binding fallback in `04`/`07`. It is design-frozen but implementation
 is not authorized and does not reopen historical P9 completion.
+
+## Accepted Native OS Sandbox recovery owner amendment
+
+P9 `07` owns rehydration of the exact P1 `SandboxPolicyDecision` and its
+provider binding on restart, plus the durable pre-spawn
+`SandboxProviderUnavailable` fact/event that P10 projects. Recovery never
+reconstructs a decision from current config, Worktree or model text. The
+accepted sandbox fact does not reopen P9/AH completion or authorize runtime
+implementation.
+
+## Accepted V5 fact-storage/rebuild amendment
+
+P9 `07` owns the immutable fact relation, bounded opaque reason decoder,
+canonical identity, lease-fenced fact→P10 queue→wake-event transaction,
+exact retry/conflict semantics, and `listSandboxProviderUnavailableFacts`
+snapshot. Event is only wake/audit; P9 fact is source of truth and is
+independent of `domain_events` retention. No runtime implementation is
+authorized by this storage design.
+
+## Accepted Native OS Sandbox RecoveryBinding Attention amendment (V21)
+
+P9 `07` classifies invalid/missing existing RecoveryBindingV1 evidence
+read-only from P4 invocation/binding rows as internal RecoveryBlocked. It
+does not persist a replay fact/event/marker or call P4/Provider/lease/effect;
+P10 derives the non-persisted `SandboxRecoveryBindingFailure` Attention.
+Actual `SandboxProviderUnavailableFactV1` persistence remains unchanged.

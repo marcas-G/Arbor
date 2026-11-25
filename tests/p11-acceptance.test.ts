@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, describe, expect, it } from "vitest";
+import { makeBlobStorePortLive } from "../adapters/blob-local/src/index.js";
 import { ProjectEnvironmentPortLive } from "../adapters/environment-local/src/index.js";
 import { EnvironmentResolverLocalLive } from "../adapters/environment-resolver-local/src/index.js";
 // P12 `05` §5.1 (TR-1): advancement only via the internal capability.
@@ -13,23 +14,37 @@ import {
   EnvironmentRevisionAdvancementLive,
 } from "../adapters/persistence-sqlite/src/environment-advancement.js";
 import {
+  AcceptanceRepositoryLive,
   ClockLive,
   ClockTest,
   CommandStoreLive,
+  ConversationAttemptStoreLive,
+  ConversationCheckpointStoreLive,
+  ConversationResponseJobStoreLive,
+  DecisionRequestStoreLive,
   DomainEventJournalLive,
   EnvironmentRevisionStoreLive,
+  ExecutionRepositoryLive,
+  FormationFulfillmentStoreLive,
+  FormationProposalStoreLive,
   HumanMessageStoreLive,
   IdGeneratorLive,
+  InboxProjectionStoreLive,
+  LocalPlanStoreLive,
   layer,
   P16_MIGRATIONS,
+  P39RecoveryEvidenceStoreLive,
   ProjectRepositoryLive,
   ProviderTurnStoreLive,
   RecordEnvironmentChangeLive,
+  RecoveryAttentionFactStoreLive,
   ResourceOwnershipRepositoryLive,
   RuntimeClockLive,
   runMigrations,
   SessionRepositoryLive,
+  ToolInvocationStoreLive,
   TransactionPortLive,
+  VerificationRepositoryLive,
   WorkRepositoryLive,
   WorkspaceRepositoryLive,
   WorkWaitStoreLive,
@@ -43,6 +58,8 @@ import {
   type SandboxWorktreeRetirement,
   type SandboxWriteBackChange,
 } from "../adapters/sandbox-worktree/src/index.js";
+import { WorkspaceKnowledgePortLive } from "../apps/single-workspace/src/workspace-knowledge.js";
+import { WorkspacePlacementPortLive } from "../apps/single-workspace/src/workspace-placement.js";
 import {
   type AgentActionHandler,
   AgentLoopDriverLive,
@@ -77,6 +94,7 @@ import {
   CommandHandlerRegistry,
   FenceStopCheckInertLive,
   type GatewayEnvelope,
+  InputPromotionServiceLive,
   semanticRequestFingerprint,
 } from "../packages/application/src/index.js";
 import {
@@ -271,6 +289,7 @@ const driftAppLayer = (
     ...(reprobe === undefined ? ([] as const) : [reprobe]),
   );
   const rec = Layer.provide(RecordEnvironmentChangeLive, recDeps);
+  const _sessions = Layer.provide(SessionRepositoryLive, infra);
   const revisions = Layer.provide(EnvironmentRevisionStoreLive, infra);
   const resolver = Layer.provide(EnvironmentResolverLocalLive, base);
   return Layer.mergeAll(
@@ -509,6 +528,7 @@ const cbRecordingModelContext = (recorded: Array<ControlBasis>) =>
 
 const cbMakeApp = () => {
   const recorded: Array<ControlBasis> = [];
+  const cbBlobRoot = mkdtempSync(join(tmpdir(), "arbor-p11-cb-blobs-"));
   const base = layer({ filename: ":memory:" });
   const infra = Layer.mergeAll(
     base,
@@ -529,6 +549,7 @@ const cbMakeApp = () => {
       infra,
     ),
   );
+  const sessions = Layer.provide(SessionRepositoryLive, infra);
   const revisions = Layer.provide(EnvironmentRevisionStoreLive, infra);
   const advancement = Layer.provide(EnvironmentRevisionAdvancementLive, infra);
   const tx = Layer.provide(TransactionPortLive, infra);
@@ -544,6 +565,56 @@ const cbMakeApp = () => {
       Layer.provide(ProjectRepositoryLive, infra),
       Layer.provide(WorkspaceRepositoryLive, infra),
       Layer.provide(WorkRepositoryLive, infra),
+      Layer.provide(InboxProjectionStoreLive, infra),
+      Layer.provide(
+        InputPromotionServiceLive,
+        Layer.mergeAll(
+          infra,
+          tx,
+          sessions,
+          Layer.provide(InboxProjectionStoreLive, infra),
+          Layer.provide(ExecutionRepositoryLive, infra),
+        ),
+      ),
+      Layer.provide(ConversationResponseJobStoreLive, infra),
+      Layer.provide(ConversationAttemptStoreLive, infra),
+      Layer.provide(ConversationCheckpointStoreLive, infra),
+      Layer.provide(ExecutionRepositoryLive, infra),
+      Layer.provide(
+        RecoveryAttentionFactStoreLive,
+        Layer.mergeAll(infra, Layer.provide(DomainEventJournalLive, infra)),
+      ),
+      Layer.provide(ToolInvocationStoreLive, infra),
+      Layer.provide(P39RecoveryEvidenceStoreLive, infra),
+      Layer.provide(LocalPlanStoreLive, infra),
+      Layer.provide(DecisionRequestStoreLive, infra),
+      Layer.provide(
+        WorkspaceKnowledgePortLive,
+        Layer.mergeAll(
+          infra,
+          tx,
+          Layer.provide(WorkRepositoryLive, infra),
+          Layer.provide(VerificationRepositoryLive, infra),
+          Layer.provide(AcceptanceRepositoryLive, infra),
+          Layer.provide(FormationProposalStoreLive, infra),
+          Layer.provide(FormationFulfillmentStoreLive, infra),
+          Layer.provide(WorkspaceRepositoryLive, infra),
+        ),
+      ),
+      Layer.provide(
+        WorkspacePlacementPortLive,
+        Layer.mergeAll(
+          infra,
+          tx,
+          Layer.provide(WorkRepositoryLive, infra),
+          Layer.provide(VerificationRepositoryLive, infra),
+          Layer.provide(AcceptanceRepositoryLive, infra),
+          Layer.provide(FormationProposalStoreLive, infra),
+          Layer.provide(FormationFulfillmentStoreLive, infra),
+          Layer.provide(WorkspaceRepositoryLive, infra),
+        ),
+      ),
+      makeBlobStorePortLive(cbBlobRoot),
       tx,
       revisions,
     ),

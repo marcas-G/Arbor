@@ -1,6 +1,10 @@
 import type { ReactNode } from "react";
-import styles from "./Card.module.css";
-import { cx } from "./cx.js";
+import {
+  CardContent,
+  CardHeader,
+  CardTitle,
+  Card as UiCard,
+} from "./ui/card.js";
 
 /** W-01 formal Card: optional `title` on the left, optional `actions` on
  * the right of the header row. */
@@ -15,18 +19,18 @@ export function Card({
 }) {
   const hasHeader = title !== undefined || actions !== undefined;
   return (
-    <section className={cx(["arbor-card", styles.card])}>
+    <UiCard className="arbor-card">
       {hasHeader ? (
-        <header className={cx(["arbor-card-header", styles.header])}>
+        <CardHeader className="arbor-card-header">
           {title === undefined ? null : (
-            <h2 className={cx(["arbor-card-title", styles.title])}>{title}</h2>
+            <CardTitle className="arbor-card-title">{title}</CardTitle>
           )}
           {actions === undefined ? null : (
-            <div className={styles.actions}>{actions}</div>
+            <div className="flex items-center gap-ui-2">{actions}</div>
           )}
-        </header>
+        </CardHeader>
       ) : null}
-      <div className={cx(["arbor-card-body", styles.body])}>{children}</div>
-    </section>
+      <CardContent className="arbor-card-body">{children}</CardContent>
+    </UiCard>
   );
 }

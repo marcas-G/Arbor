@@ -4087,8 +4087,20 @@ describe("p9-acceptance mechanical assertions (06 checklist)", () => {
     } finally {
       rmSync(invalidConfigRoot, { recursive: true, force: true });
     }
+    // The escape fixture must live outside the repository. CI exports
+    // TMPDIR inside the workspace ($GITHUB_WORKSPACE/.ci-tmp), so tmpdir()
+    // alone cannot guarantee that; fall back to the repository's parent.
+    const surelyOutsideDirectory = (() => {
+      const temporary = realpathSync(tmpdir());
+      const relation = relative(realpathSync(REPO_ROOT), temporary);
+      return relation === "" ||
+        relation === ".." ||
+        relation.startsWith(`..${sep}`)
+        ? temporary
+        : dirname(REPO_ROOT);
+    })();
     const outsideRoot = mkdtempSync(
-      join(tmpdir(), "arbor-p9-architecture-config-escape-"),
+      join(surelyOutsideDirectory, "arbor-p9-architecture-config-escape-"),
     );
     try {
       const outsideConfigPath = join(outsideRoot, "vitest.config.ts");

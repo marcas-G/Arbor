@@ -24,6 +24,8 @@ import {
   type WorkspaceRepositoryService,
   WorkspaceResourceActivationStore,
   type WorkspaceResourceActivationStoreService,
+  type WorkspaceSandboxAuthorizationInitializationPortService,
+  type WorkspaceSandboxAuthorizationStoreService,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { type CommandHandler, CommandHandlerRegistry } from "../gateway.js";
@@ -61,6 +63,11 @@ export interface P1CommandDependencies {
   readonly approvals?: Pick<
     ControlApprovalStoreService,
     "findById" | "consumeApproved"
+  >;
+  readonly workspaceAuthorizationInitialization?: WorkspaceSandboxAuthorizationInitializationPortService;
+  readonly workspaceAuthorizations?: Pick<
+    WorkspaceSandboxAuthorizationStoreService,
+    "findCurrent"
   >;
 }
 
@@ -172,6 +179,8 @@ export const P1CommandHandlerRegistryLive: Layer.Layer<
  * composes). */
 export interface P12CommandDependencies {
   readonly projectToolRegistry: ProjectToolRegistryService;
+  readonly clock?: Pick<ClockService, "now">;
+  readonly workspaces?: Pick<WorkspaceRepositoryService, "findById">;
   /** P12 `02` §5 (CI-1): when provided, the `GrantPermission` /
    * `RevokePermission` handlers are registered; they are the only durable
    * writers of the grant store. */
@@ -189,10 +198,15 @@ export const makeP12CommandHandlers = (
   if (dependencies.permissionGrantRepository !== undefined) {
     const grants = dependencies.permissionGrantRepository;
     handlers.push(
-      makeGrantPermissionHandler({ grants }) as unknown as CommandHandler<
-        unknown,
-        unknown
-      >,
+      makeGrantPermissionHandler({
+        grants,
+        ...(dependencies.workspaces === undefined
+          ? {}
+          : { workspaces: dependencies.workspaces }),
+        ...(dependencies.clock === undefined
+          ? {}
+          : { clock: dependencies.clock }),
+      }) as unknown as CommandHandler<unknown, unknown>,
       makeRevokePermissionHandler({ grants }) as unknown as CommandHandler<
         unknown,
         unknown

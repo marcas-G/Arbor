@@ -76,6 +76,30 @@ export const makePublicClient = (
   baseUrl: string,
   options: PublicClientOptions = {},
 ): PublicClient => {
+  const fetchPublic = async (
+    path: string,
+    init: RequestInit,
+  ): Promise<Response> => {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await fetch(`${baseUrl}${path}`, init);
+      } catch (error) {
+        const cause =
+          error instanceof Error
+            ? (error.cause as { code?: unknown } | undefined)
+            : undefined;
+        if (
+          attempt >= 1 ||
+          init.signal?.aborted === true ||
+          !["ECONNRESET", "EPIPE", "UND_ERR_SOCKET"].includes(
+            String(cause?.code),
+          )
+        ) {
+          throw error;
+        }
+      }
+    }
+  };
   const requestSignal = (): AbortSignal | undefined => {
     if (options.deadlineAt === undefined) return undefined;
     const remainingMs = options.deadlineAt - Date.now();
@@ -87,7 +111,7 @@ export const makePublicClient = (
 
   const post = async (path: string, body: unknown) => {
     const signal = requestSignal();
-    const response = await fetch(`${baseUrl}${path}`, {
+    const response = await fetchPublic(path, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -108,7 +132,7 @@ export const makePublicClient = (
   };
   const get = async (path: string) => {
     const signal = requestSignal();
-    const response = await fetch(`${baseUrl}${path}`, {
+    const response = await fetchPublic(path, {
       headers: { authorization: "Bearer local" },
       ...(signal === undefined ? {} : { signal }),
     });
@@ -129,7 +153,7 @@ export const makePublicClient = (
     commandId = functionalId("cmd"),
   ) => {
     const signal = requestSignal();
-    return fetch(`${baseUrl}/commands`, {
+    return fetchPublic("/commands", {
       method: "POST",
       headers: {
         "content-type": "application/json",

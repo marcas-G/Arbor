@@ -96,16 +96,18 @@ import type {
   ExecutionRepository,
   IdGenerator,
   MessageStore,
-  PermissionGrantRepository,
   ProjectRepository,
   ResourceOwnershipRepository,
   SessionRepository,
-  TransactionPort,
   VerificationRepository,
   WorkContractRevisionRepository,
   WorkRepository,
   WorkspaceRepository,
   WorkWaitStore,
+} from "../packages/ports/src/index.js";
+import {
+  PermissionGrantRepository,
+  TransactionPort,
 } from "../packages/ports/src/index.js";
 import {
   createCurrentSchemaTestDatabaseFactory,
@@ -648,6 +650,108 @@ describe("P12-010 transport forwards Commands through the composition root (EC-1
       expect(outcome.body.rejection).not.toBe("AuthorityDenied");
     }
   });
+
+  itWithSchema44Database(
+    "persists a Workspace tool permission through the current external composition, replays after reopen and revokes it",
+    async (database) => {
+      const grantId = "pgr_018f2b3c-4d5e-7abc-8def-0123456789ab";
+      const envelope = {
+        commandType: "GrantPermission",
+        commandId: "cmd_018f2b3c-4d5e-7abc-8def-0123456789a1",
+        projectId: PROJECT,
+        actor: HUMAN,
+        issuedAt: "2026-11-16T00:00:00Z",
+        payload: {
+          permissionGrantId: grantId,
+          issuer: HUMAN,
+          subject: { _tag: "WorkspaceAgent", workspaceId: WORKSPACE },
+          capability: "fs:write",
+          target: WORKSPACE,
+          expiresAt: null,
+        },
+      };
+      await run(
+        Effect.gen(function* () {
+          const submission = yield* makeExternalSubmissionFromServices({
+            authenticatedHumans: [HUMAN],
+            directParentOf: [],
+          });
+          const core = makeTransportCore({
+            views: stubViews(),
+            authenticator: makeStaticAuthenticator({ "human-token": HUMAN }),
+            submission,
+          });
+          const created = yield* core.submitCommand(
+            { token: "human-token" },
+            createProjectEnvelope(),
+          );
+          expect(created.ok && created.body.resolution).toBe("Committed");
+          const response = yield* core.submitCommand(
+            { token: "human-token" },
+            envelope,
+          );
+          expect(response.ok && response.body.resolution).toBe("Committed");
+          const repo = yield* PermissionGrantRepository;
+          const tx = yield* TransactionPort;
+          expect(yield* tx.transact(repo.activeGrants(PROJECT))).toMatchObject([
+            {
+              permissionGrantId: grantId,
+              expiresAt: null,
+              lifetime: "Workspace",
+            },
+          ]);
+        }),
+        database.databaseFilename,
+      );
+      await run(
+        Effect.gen(function* () {
+          const submission = yield* makeExternalSubmissionFromServices({
+            authenticatedHumans: [HUMAN],
+            directParentOf: [],
+          });
+          const core = makeTransportCore({
+            views: stubViews(),
+            authenticator: makeStaticAuthenticator({ "human-token": HUMAN }),
+            submission,
+          });
+          const replay = yield* core.submitCommand(
+            { token: "human-token" },
+            envelope,
+          );
+          expect(replay.ok && replay.body.resolution).toBe("Committed");
+          const sql = yield* SqlClient;
+          const receipts = yield* sql.unsafe<{ schema_version: string }>(
+            "SELECT schema_version FROM commands WHERE command_id = ?",
+            [envelope.commandId],
+          );
+          expect(receipts).toEqual([{ schema_version: "2" }]);
+          const events = yield* sql.unsafe<{ count: number }>(
+            "SELECT COUNT(*) AS count FROM domain_events WHERE event_type = 'PermissionChanged' AND caused_by_command_id = ?",
+            [envelope.commandId],
+          );
+          expect(Number(events[0]?.count)).toBe(1);
+          const revoked = yield* core.submitCommand(
+            { token: "human-token" },
+            {
+              commandType: "RevokePermission",
+              commandId: "cmd_018f2b3c-4d5e-7abc-8def-0123456789a2",
+              projectId: PROJECT,
+              actor: HUMAN,
+              issuedAt: "2026-11-16T00:01:00Z",
+              payload: { permissionGrantId: grantId },
+            },
+          );
+          expect(revoked.ok && revoked.body.resolution).toBe("Committed");
+          const repo = yield* PermissionGrantRepository;
+          const tx = yield* TransactionPort;
+          expect(yield* tx.transact(repo.activeGrants(PROJECT))).toHaveLength(
+            0,
+          );
+        }),
+        database.databaseFilename,
+      );
+    },
+  );
 
   itWithSchema44Database(
     "P15 authenticated human can rename and archive over the real external command composition",

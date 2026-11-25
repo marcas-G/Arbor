@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import type { VirtuosoHandle } from "react-virtuoso";
 import { Virtuoso } from "react-virtuoso";
 import { useViewQuery } from "../../api/useViewQuery.js";
@@ -13,25 +13,30 @@ import {
   useConversation,
 } from "../../conversation/useConversation.js";
 import { useConversationProgress } from "../../conversation/useConversationProgress.js";
+import { cn } from "../../lib/utils.js";
 import { ProblemCard } from "../../problems/ProblemCard.js";
 import { useSession } from "../../session/SessionContext.js";
 import { TimeText } from "../../views/shared.js";
 import { presentResponsibilityTree } from "../tree/treePresentation.js";
-import styles from "./workspace.module.css";
 
 /** The browser displays one server-authoritative conversation timeline. */
 function MessageRow({ message }: { readonly message: ConversationMessage }) {
   return (
     <div
-      className={`arbor-conversation-turn arbor-conversation-${
-        message.role === "human" ? "human" : "assistant"
-      }`}
+      className={cn(
+        "flex max-w-[min(84%,48rem)] flex-col gap-1 rounded-lg border border-solid border-border px-5 py-3 text-foreground max-[48rem]:max-w-full",
+        message.role === "human"
+          ? "ml-auto rounded-br-sm border-primary/20 bg-accent"
+          : "mr-auto rounded-bl-sm bg-card shadow-card",
+      )}
       data-phase="authoritative"
     >
-      <span className="arbor-conversation-author">
+      <span className="text-caption font-bold tracking-wide text-primary">
         {message.role === "human" ? "你" : "Arbor"}
       </span>
-      <span className="arbor-conversation-body">{message.body}</span>
+      <span className="wrap-anywhere whitespace-pre-wrap leading-[1.65]">
+        {message.body}
+      </span>
     </div>
   );
 }
@@ -70,9 +75,12 @@ function ResponseStatusPanel({
   if (status.state === "Answered") return null;
   if (status.state === "Running") {
     return (
-      <div className={styles.conversationStatus} role="status">
+      <div
+        className="my-1 mb-3 grid gap-1 rounded-r-md border-0 border-l-[3px] border-solid border-attention bg-[color-mix(in_srgb,var(--arbor-attention)_8%,transparent)] px-3 py-2 text-caption text-muted-foreground [&_strong]:text-foreground"
+        role="status"
+      >
         <strong>正在处理（第 {status.attemptNo + 1} 次尝试）</strong>
-        <span className={styles.liveStage}>
+        <span className="text-muted-foreground">
           {progress === null
             ? "正在连接模型"
             : progress.stage === "tool"
@@ -84,13 +92,22 @@ function ResponseStatusPanel({
                   : "正在分析请求"}
         </span>
         {progress?.toolNames.map((toolName) => (
-          <span className={styles.liveStep} key={toolName}>
-            <span className={styles.liveStepDot} aria-hidden="true" />
+          <span
+            className="inline-flex items-center gap-1.5 text-muted-foreground"
+            key={toolName}
+          >
+            <span
+              className="size-1.5 rounded-full bg-accent-foreground motion-safe:animate-pulse"
+              aria-hidden="true"
+            />
             工具调用：{toolName}
           </span>
         ))}
         {progress?.text ? (
-          <span className={styles.liveAnswer} aria-live="polite">
+          <span
+            className="max-h-40 overflow-auto whitespace-pre-wrap border-0 border-l-2 border-solid border-accent-foreground bg-background/70 p-2 text-foreground"
+            aria-live="polite"
+          >
             {progress.text}
           </span>
         ) : null}
@@ -133,7 +150,10 @@ function ResponseStatusPanel({
   const cancelledCopy =
     status.state === "Cancelled" ? presentCancelledReason(status.reason) : null;
   return (
-    <div className={styles.conversationStatus} role="status">
+    <div
+      className="my-1 mb-3 grid gap-1 rounded-r-md border-0 border-l-[3px] border-solid border-attention bg-[color-mix(in_srgb,var(--arbor-attention)_8%,transparent)] px-3 py-2 text-caption text-muted-foreground [&_strong]:text-foreground"
+      role="status"
+    >
       <strong>
         {status.state === "Queued"
           ? "已排队"
@@ -151,7 +171,7 @@ function ResponseStatusPanel({
       {attentionCopy === undefined ? null : (
         <>
           <span>{attentionCopy.description}</span>
-          <details className={styles.technicalReason}>
+          <details className="text-muted-foreground [&_summary]:cursor-pointer [&_code]:mt-1 [&_code]:block [&_code]:font-mono">
             <summary>技术详情</summary>
             <code>{attentionReason}</code>
           </details>
@@ -164,7 +184,7 @@ function ResponseStatusPanel({
         <>
           <span>{cancelledCopy.description}</span>
           {cancelledCopy.known ? null : (
-            <details className={styles.technicalReason}>
+            <details className="text-muted-foreground [&_summary]:cursor-pointer [&_code]:mt-1 [&_code]:block [&_code]:font-mono">
               <summary>技术详情</summary>
               <code>{status.state === "Cancelled" ? status.reason : ""}</code>
             </details>
@@ -295,6 +315,23 @@ export function ConversationTab({
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const pinnedWorkspaceRef = useRef<string | null>(null);
   const conversation = useConversation(workspaceId);
+  useEffect(() => {
+    if (
+      conversation.messages.length === 0 ||
+      pinnedWorkspaceRef.current === workspaceId
+    ) {
+      return;
+    }
+    pinnedWorkspaceRef.current = workspaceId;
+    queueMicrotask(() => {
+      virtuosoRef.current?.scrollToIndex({
+        index: conversation.messages.length - 1,
+        align: "end",
+        behavior: "auto",
+      });
+    });
+  }, [conversation.messages.length, workspaceId]);
+
   const answeredMessageIds = new Set(
     conversation.messages.flatMap((message) =>
       message.role === "assistant" && message.messageId !== undefined
@@ -304,10 +341,8 @@ export function ConversationTab({
   );
 
   return (
-    <div className={styles.conversation}>
-      <p className={styles.conversationLabel}>
-        {isRoot ? "项目主对话" : "对话记录（只读）"}
-      </p>
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
+      <p className="sr-only">{isRoot ? "项目主对话" : "对话记录（只读）"}</p>
       {conversation.loadingHistory && conversation.messages.length === 0 ? (
         <Empty>加载中</Empty>
       ) : conversation.historyError !== null &&
@@ -321,11 +356,8 @@ export function ConversationTab({
       ) : (
         <Virtuoso
           ref={virtuosoRef}
-          style={{
-            height: "min(64vh, 48rem)",
-            minHeight: "15rem",
-            overflowX: "hidden",
-          }}
+          className="h-[min(64vh,48rem)] min-h-60 overflow-x-hidden overscroll-contain max-[48rem]:h-[min(55dvh,38rem)] max-[48rem]:min-h-48"
+          style={{ overflowX: "hidden" }}
           data={conversation.messages}
           computeItemKey={(_, message) => message.key}
           initialTopMostItemIndex={Math.max(
@@ -340,7 +372,9 @@ export function ConversationTab({
           components={{
             Header: () =>
               conversation.olderFetching ? (
-                <p className={styles.historyLoading}>正在加载更早的消息…</p>
+                <p className="m-0 self-center text-caption text-muted-foreground">
+                  正在加载更早的消息…
+                </p>
               ) : null,
           }}
           itemContent={(_, message) => (
@@ -361,24 +395,8 @@ export function ConversationTab({
           )}
         />
       )}
-      {(() => {
-        if (
-          conversation.messages.length > 0 &&
-          pinnedWorkspaceRef.current !== workspaceId
-        ) {
-          pinnedWorkspaceRef.current = workspaceId;
-          queueMicrotask(() => {
-            virtuosoRef.current?.scrollToIndex({
-              index: conversation.messages.length - 1,
-              align: "end",
-              behavior: "auto",
-            });
-          });
-        }
-        return null;
-      })()}
       {isRoot ? (
-        <div className={styles.composer}>
+        <div className="flex flex-col gap-2 rounded-lg border border-solid border-border-strong bg-card px-3 pt-2 pb-3 shadow-card transition focus-within:border-accent-foreground focus-within:shadow-float [&_.arbor-field-label]:text-primary [&_.arbor-button-primary]:min-w-[76px]">
           <SubmitHumanMessageForm
             actor={actor ?? ""}
             token={token ?? undefined}

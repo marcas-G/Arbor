@@ -2,7 +2,10 @@ import {
   type ContextEpochNumber,
   createSession,
   createWorkspace,
+  type GrantedWorkspaceSandboxAuthorization,
+  Principal,
   type ProjectId,
+  parse,
   type ResourceBoundary,
   type ResourceBoundaryRevision,
   type ResponsibilityBoundAgentBinding,
@@ -18,11 +21,14 @@ import type {
   SessionRepositoryService,
   WorkspaceRepositoryService,
   WorkspaceResourceActivationStoreService,
+  WorkspaceSandboxAuthorizationInitializationPortService,
+  WorkspaceSandboxAuthorizationStoreService,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { commandErr, commandOk } from "../command-result.js";
 import type { FormationDelegationApproval } from "../formation-plan.js";
 import type { CommandHandler } from "../gateway.js";
+import { resolveCurrentWorkspaceSandboxAuthorization } from "../workspace-sandbox-authorization.js";
 
 export interface CreateChildWorkspacePayload {
   readonly parentWorkspaceId: WorkspaceId;
@@ -48,6 +54,7 @@ export interface CreateChildWorkspaceResult {
   readonly projectId: ProjectId;
   readonly parentWorkspaceId: WorkspaceId;
   readonly primarySessionId: SessionId;
+  readonly workspaceAuthorization?: import("@arbor/domain").WorkspaceSandboxAuthorization;
 }
 
 export interface CreateChildWorkspaceDependencies {
@@ -57,6 +64,12 @@ export interface CreateChildWorkspaceDependencies {
     WorkspaceResourceActivationStoreService,
     "insertPending"
   >;
+  readonly workspaceAuthorizationInitialization?: WorkspaceSandboxAuthorizationInitializationPortService;
+  readonly workspaceAuthorizations?: Pick<
+    WorkspaceSandboxAuthorizationStoreService,
+    "findCurrent"
+  >;
+  readonly clock?: { readonly now: () => Effect.Effect<string> };
 }
 
 export const makeCreateChildWorkspaceHandler = (
@@ -165,6 +178,36 @@ export const makeCreateChildWorkspaceHandler = (
         }
       }
 
+      let parentAuthorization: GrantedWorkspaceSandboxAuthorization | undefined;
+      let canInitializeAuthorization =
+        dependencies.workspaceAuthorizationInitialization === undefined;
+      if (dependencies.workspaceAuthorizationInitialization !== undefined) {
+        if (
+          dependencies.workspaceAuthorizations === undefined ||
+          dependencies.clock === undefined
+        ) {
+          canInitializeAuthorization = false;
+        } else {
+          const resolved = yield* resolveCurrentWorkspaceSandboxAuthorization(
+            {
+              workspaces: dependencies.workspaces,
+              authorizations: dependencies.workspaceAuthorizations,
+            },
+            {
+              projectId: envelope.projectId,
+              workspaceId: payload.parentWorkspaceId,
+              now: yield* dependencies.clock.now(),
+            },
+          );
+          if (resolved._tag === "Authorized") {
+            parentAuthorization = resolved.authorization;
+            canInitializeAuthorization = true;
+          } else {
+            canInitializeAuthorization = false;
+          }
+        }
+      }
+
       yield* dependencies.workspaces.create(
         createWorkspace({
           workspaceId: payload.workspaceId,
@@ -192,6 +235,30 @@ export const makeCreateChildWorkspaceHandler = (
           contextEpoch: payload.primarySession.contextEpoch,
         }),
       );
+      const initialization =
+        dependencies.workspaceAuthorizationInitialization === undefined ||
+        !canInitializeAuthorization
+          ? undefined
+          : yield* dependencies.workspaceAuthorizationInitialization.initialize(
+              {
+                projectId: envelope.projectId,
+                workspaceId: payload.workspaceId,
+                commandId: envelope.commandId,
+                actorPrincipal: parse(Principal)(String(envelope.actor)),
+                resourceBoundaryRevision: payload.resourceBoundaryRevision,
+                workspacePolicyRevision: payload.workspacePolicyRevision,
+                recordedAt: envelope.issuedAt,
+                providerId: "linux-bwrap",
+                networkPolicy: {
+                  version: 1,
+                  mode: "Enabled",
+                  destinations: [],
+                },
+                ...(parentAuthorization === undefined
+                  ? {}
+                  : { parentAuthorization }),
+              },
+            );
       if (delegation !== undefined) {
         const activationStore = dependencies.activations;
         if (activationStore === undefined) {
@@ -229,6 +296,25 @@ export const makeCreateChildWorkspaceHandler = (
             name: payload.name,
           },
         },
+        ...(initialization?._tag === "Initialized"
+          ? [
+              {
+                projectId: envelope.projectId,
+                eventType: "WorkspaceSandboxAuthorizationChanged" as const,
+                eventVersion: 1,
+                occurredAt: envelope.issuedAt,
+                aggregateRef: payload.workspaceId,
+                actor: envelope.actor,
+                causedByCommandId: envelope.commandId,
+                payload: {
+                  workspaceId: payload.workspaceId,
+                  authorizationRevision:
+                    initialization.authorization.authorizationRevision,
+                  state: initialization.authorization.state,
+                },
+              },
+            ]
+          : []),
       ];
 
       return commandOk({
@@ -237,6 +323,9 @@ export const makeCreateChildWorkspaceHandler = (
           projectId: envelope.projectId,
           parentWorkspaceId: payload.parentWorkspaceId,
           primarySessionId: payload.primarySession.sessionId,
+          ...(initialization?._tag === "Initialized"
+            ? { workspaceAuthorization: initialization.authorization }
+            : {}),
         },
         events,
       });

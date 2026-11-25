@@ -133,7 +133,7 @@ describe("V6 complete P11 candidate boundary read", () => {
       ownershipClaims: claims,
       worktrees: [worktree],
       resolvedRegions: [primaryRegion],
-      primaryManagedGitWorktreeRegion: primaryRegion,
+      primaryResourceRegion: primaryRegion,
     });
     expect(result.observationCalls).toBe(1);
   });
@@ -167,14 +167,49 @@ describe("V6 complete P11 candidate boundary read", () => {
     });
     expect(result.result._tag).toBe("Success");
     if (result.result._tag !== "Success") return;
+    expect(result.result.value.primaryResourceRegion.normalizedRegion).toEqual({
+      kind: "GitWorktree",
+      path: address.path,
+    });
     expect(
-      result.result.value.primaryManagedGitWorktreeRegion.normalizedRegion,
-    ).toEqual({ kind: "GitWorktree", path: address.path });
-    expect(
-      canonicalRegionString(
-        result.result.value.primaryManagedGitWorktreeRegion,
-      ),
+      canonicalRegionString(result.result.value.primaryResourceRegion),
     ).toBe(canonicalRegionString(fileTreeRegion));
+  });
+
+  it("uses an admitted FileTree as the primary resource when no Worktree row exists", async () => {
+    const fileTreeAddress = {
+      _tag: "FileTree" as const,
+      path: "/repo/plain-directory",
+    };
+    const fileTreeRegion = {
+      resourceSpaceId: "filesystem" as const,
+      normalizedRegion: {
+        kind: "FileTree" as const,
+        path: fileTreeAddress.path,
+      },
+    };
+    const fileWorkspace = {
+      ...workspace,
+      resourceBoundary: {
+        ...workspace.resourceBoundary,
+        addresses: [fileTreeAddress],
+      },
+    } as unknown as Workspace;
+    const result = await read({
+      workspace: fileWorkspace,
+      worktrees: [],
+      entries: [
+        {
+          address: fileTreeAddress,
+          resolved: fileTreeRegion,
+          probe: { kind: "FileTree", exists: true },
+        },
+      ],
+      regions: [fileTreeRegion],
+    });
+    expect(result.result._tag).toBe("Success");
+    if (result.result._tag !== "Success") return;
+    expect(result.result.value.primaryResourceRegion).toEqual(fileTreeRegion);
   });
 
   it.each([

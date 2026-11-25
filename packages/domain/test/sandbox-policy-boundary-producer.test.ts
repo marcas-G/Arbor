@@ -53,7 +53,7 @@ const input = (
   responsibilityRevision: 0,
   boundary: boundary(addresses),
   resolvedRegions,
-  primaryManagedGitWorktreeRegion: gitWorktree("/repo/workspace"),
+  primaryResourceRegion: gitWorktree("/repo/workspace"),
   ownershipClaims: [],
   policyKind: "OsEnforced",
   profile: "WorkspaceWrite",
@@ -161,7 +161,7 @@ describe("P11 complete sandbox ResourceBoundary producer", () => {
     const boundaryDigest = produceSandboxBoundaryV1(
       input([{ _tag: "GitWorktree", path: "/fixture/a" }], [fixture], {
         resourceBoundaryRevision: 0,
-        primaryManagedGitWorktreeRegion: fixture,
+        primaryResourceRegion: fixture,
       }),
       hash,
     );
@@ -176,7 +176,7 @@ describe("P11 complete sandbox ResourceBoundary producer", () => {
       input(
         [{ _tag: "GitWorktree", path: "C:\\v17-fixture\\workspace" }],
         [knownTarget],
-        { primaryManagedGitWorktreeRegion: knownTarget },
+        { primaryResourceRegion: knownTarget },
       ),
       hash,
     );
@@ -243,7 +243,7 @@ describe("P11 complete sandbox ResourceBoundary producer", () => {
     ).toBeUndefined();
   });
 
-  it("requires a complete, space-consistent boundary and exact primary worktree", () => {
+  it("requires a complete, space-consistent boundary and admitted primary resource", () => {
     const primary = gitWorktree("/repo/workspace");
     const validAddress: ResourceAddress[] = [
       { _tag: "GitWorktree", path: "/repo/workspace" },
@@ -254,11 +254,11 @@ describe("P11 complete sandbox ResourceBoundary producer", () => {
     expect(
       produceSandboxBoundaryV1(
         input(validAddress, [primary], {
-          primaryManagedGitWorktreeRegion: fileTree("/repo/workspace"),
+          primaryResourceRegion: fileTree("/repo/workspace"),
         }),
         hash,
       ),
-    ).toBeUndefined();
+    ).toBeDefined();
     expect(
       produceSandboxBoundaryV1(
         input(validAddress, [primary], { responsibilityRevision: 1 }),
@@ -274,7 +274,7 @@ describe("P11 complete sandbox ResourceBoundary producer", () => {
     expect(
       produceSandboxBoundaryV1(
         input(validAddress, [primary], {
-          primaryManagedGitWorktreeRegion: gitWorktree("/repo/elsewhere"),
+          primaryResourceRegion: gitWorktree("/repo/elsewhere"),
         }),
         hash,
       ),
@@ -328,7 +328,7 @@ describe("P11 complete sandbox ResourceBoundary producer", () => {
           [{ _tag: "FileTree", path: "/repo/workspace" }, primary, conflicting],
           [fileTree("/repo/workspace")],
           {
-            primaryManagedGitWorktreeRegion: region,
+            primaryResourceRegion: region,
           },
         ),
         hash,
@@ -345,7 +345,7 @@ describe("P11 complete sandbox ResourceBoundary producer", () => {
           { _tag: "GitWorktree", path: "./relative/workspace" },
         ],
         [fileTree("C:\\resolved\\workspace")],
-        { primaryManagedGitWorktreeRegion: resolvedPrimary },
+        { primaryResourceRegion: resolvedPrimary },
       ),
       hash,
     );

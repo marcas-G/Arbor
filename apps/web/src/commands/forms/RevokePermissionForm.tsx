@@ -9,12 +9,12 @@ import { Button } from "../../components/Button.js";
 import { Card } from "../../components/Card.js";
 import { Empty } from "../../components/Empty.js";
 import { Field } from "../../components/Field.js";
+import { cn } from "../../lib/utils.js";
 import { revokePermissionSchema, zodResolver } from "../schemas.js";
 import type { CommandReceiptView } from "../submitCommand.js";
 import { useCommandSubmission } from "../useCommandSubmission.js";
 import { FormFeedback } from "./FormFeedback.js";
 import { capabilityLabel } from "./GrantPermissionForm.js";
-import "./forms.css";
 
 export interface GrantListItem {
   readonly grantId: string;
@@ -66,7 +66,10 @@ export function RevokePermissionForm({
   };
   return (
     <Card title="撤销额外操作">
-      <form className="arbor-command-form" onSubmit={doSubmit}>
+      <form
+        className={cn("arbor-command-form", "flex flex-col gap-ui-3")}
+        onSubmit={doSubmit}
+      >
         <Field
           control="select"
           label="选择授权"
@@ -81,7 +84,11 @@ export function RevokePermissionForm({
           }))}
         />
         <FormFeedback state={state} onRetry={() => doSubmit()} />
-        <Button variant="primary" type="submit" disabled={submissionLocked}>
+        <Button
+          variant="primary"
+          type="submit"
+          disabled={state.phase === "submitting"}
+        >
           撤销授权
         </Button>
       </form>

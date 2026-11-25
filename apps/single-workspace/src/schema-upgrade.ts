@@ -37,6 +37,9 @@ import {
   P52_WORK_CONTRACT_REVISION_MIGRATION,
   P53_CANONICAL_OWNERSHIP_CARVEOUTS_MIGRATION,
   P54_NATIVE_PROCESS_MODE_NO_EFFECT_DENIAL_MIGRATION,
+  P55_SESSION_CAUSAL_PROVENANCE_MIGRATION,
+  P56_LINUX_WORKSPACE_NETWORK_V2_MIGRATION,
+  P57_WORKSPACE_SANDBOX_AUTHORIZATION_MIGRATION,
   p39WriterLockFilename,
   preflightVerificationEvidenceSnapshot,
   runMigrations,
@@ -82,8 +85,8 @@ const PINNED_DESCRIPTOR_HASHES: Readonly<Record<number, string>> = {
   42: "a0294a5db440e402a6c32b5a2b596502e059642431157eadcb6be7212224e5aa",
   43: "8a125c31202b6a3fda240095d5b85547c8f16347ea9fd759a943971547119cf5",
   44: "2378c0170aae7beb0592c69bfffef9e611da6d5323caaa0de5b7d5360b7ff33f",
-  45: "c7c934d2929fda3ac9928d0ce4da25c9b4b6dc7b532581f5a18c144a6ce1834f",
-  46: "2b484f4d8c534644b4623702a4f383a410566386f6b8a8a401fd6fcd728c7828",
+  45: "346659273206a75f46d89d01d08d722c0d07ea4a2470ca6694c70e15310de947",
+  46: "f665e11ff762922c7c7bb4115c6a5527c49f94d734b889474b0bedbb6ab67790",
   47: "7cc51d23acee151a45f9949c11c0179543b8344ac97ac3894878e9d52b92e4c1",
   48: "55b3283f50865c5e47e5f503e66f65d989390d7abd8c2753e123d22c6cd7846d",
   49: "b8145e3a49f1de191544bd2598eea250910f2d54f9f56e497dd9e49e03cf22dc",
@@ -92,11 +95,14 @@ const PINNED_DESCRIPTOR_HASHES: Readonly<Record<number, string>> = {
   52: "a0cfebb4d6257a37e2bf6ad9db3c1d9f2540af424854ae05ac2dd39646ab7a82",
   53: "b6c7c70ee009a987cb09387157891c55ad3a79cbf435e5b715b6f1335b418e3e",
   54: "161e6b70c9940a80387eb41dd8fa14d5c0dc5834bc220097681d1f6df60f5597",
+  55: "589030dc55c5e6fef68e8bdc5d239894494a1800ee0f5178235501092dd52a1a",
+  56: "17db4fd369edb9244b9f91d9aeed145c3d04ad8ba6e95d06247f07a63527d11a",
+  57: "49086e7ed47f922dc1a15211a9e246ad37469781be0afb5a04154cbfb635b1e7",
 };
 const PINNED_P45_BACKFILL_SOURCE_SHA256 =
-  "3445512013678ab71f413fb9eea29a55338662b0d656c1bd427eb21cb8774f70";
+  "4ee4f89cf3c9eb59af576bf3cbe9b9ae061f2f97280f724c438230ac01340d3c";
 const PINNED_P46_PREFLIGHT_SOURCE_SHA256 =
-  "3ad1c17fe075399098f960b9fce74035af4e9a11e21ab300edc1b26625fbd56a";
+  "2e300fbbade6570968ce0d8552efd5f8d00296d58d4cc4f8bb90f4b6ff19f326";
 const PINNED_SCHEMA44_SIGNATURE =
   "3cbae01c8835a1b4e40d62660725f15f746b04f06e2b08aca94eedc66c9d6ce7";
 const PINNED_SCHEMA45_SIGNATURE =
@@ -119,6 +125,12 @@ const PINNED_SCHEMA53_SIGNATURE =
   "603bf200195cfebc2215cc76ef361b2a525d95d2f1e3eecc49d55adb72d584c4";
 const PINNED_SCHEMA54_SIGNATURE =
   "2592a3628003c1afe9cb394f3b52d2085ce866e5a52da226c67bd07878712711";
+const PINNED_SCHEMA55_SIGNATURE =
+  "af4b1fc084fffbf5fa53c8e8dbde0e4a1f108814057bca1f2e1dead2a9643269";
+const PINNED_SCHEMA56_SIGNATURE =
+  "f521381fabc4d48242dde9135e9174099cbf136163d278855f9e18ddd2f0fbe7";
+const PINNED_SCHEMA57_SIGNATURE =
+  "3311a475d0f0e84997761f30eafc4014267fefa6e064f22e1466d8ca798cfea7";
 const PINNED_P51_MIGRATION_SOURCE_SHA256 =
   "c3c7423014bbf1f6078dc6a5ab326bfd92afe3630741c2b9271d9a1b8beef9cc";
 const PINNED_P52_MIGRATION_SOURCE_SHA256 =
@@ -286,7 +298,10 @@ export interface SchemaUpgradeTestHooks {
       | 51
       | 52
       | 53
-      | 54,
+      | 54
+      | 55
+      | 56
+      | 57,
   ) => void;
   readonly afterDatabaseCommit?: (
     version:
@@ -305,10 +320,13 @@ export interface SchemaUpgradeTestHooks {
       | 51
       | 52
       | 53
-      | 54,
+      | 54
+      | 55
+      | 56
+      | 57,
   ) => void;
-  readonly afterVersion54NoOpVerification?: (evidence: {
-    readonly userVersion: 54;
+  readonly afterLatestVersionNoOpVerification?: (evidence: {
+    readonly userVersion: 57;
     readonly reopenedReadOnly: true;
   }) => void;
   readonly beforeMaintenancePermitAcquire?: () => void;
@@ -390,7 +408,7 @@ export const parseSchemaUpgradeArguments = (
 
 export const schemaUpgradeUsage = (): string =>
   [
-    "Offline P39–P54 schema upgrade (operator-selected disposable target)",
+    "Offline P39–P57 schema upgrade (operator-selected disposable target)",
     "  --mode fresh --database <new-target> --p39-report-db <new-report> --copy-manifest <new-manifest>",
     "  --mode copy --source-database <offline-source> --database <new-copy> --p39-report-db <new-report> --copy-manifest <new-manifest>",
     "  --mode resume-copy --source-database <same-source> --database <same-copy> --p39-report-db <same-report> --copy-manifest <same-manifest>",
@@ -569,10 +587,12 @@ const validatePathSet = (
 
 const assertSourcePrefix = (version: number): void => {
   if (
-    ![36, 37, 38, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54].includes(version)
+    ![
+      36, 37, 38, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57,
+    ].includes(version)
   )
     throw new SchemaUpgradeRefusal(
-      `copy source schema ${version} is unsupported; expected 36–38 or 44–54`,
+      `copy source schema ${version} is unsupported; expected 36–38 or 44–57`,
     );
 };
 
@@ -627,7 +647,10 @@ const verifySourcePrefixSchema = async (
     version === 51 ||
     version === 52 ||
     version === 53 ||
-    version === 54
+    version === 54 ||
+    version === 55 ||
+    version === 56 ||
+    version === 57
   ) {
     const expected =
       version === 48
@@ -642,7 +665,13 @@ const verifySourcePrefixSchema = async (
                 ? PINNED_SCHEMA52_SIGNATURE
                 : version === 53
                   ? PINNED_SCHEMA53_SIGNATURE
-                  : PINNED_SCHEMA54_SIGNATURE;
+                  : version === 54
+                    ? PINNED_SCHEMA54_SIGNATURE
+                    : version === 55
+                      ? PINNED_SCHEMA55_SIGNATURE
+                      : version === 56
+                        ? PINNED_SCHEMA56_SIGNATURE
+                        : PINNED_SCHEMA57_SIGNATURE;
     if (
       expected.length !== 64 ||
       readUserVersion(filename) !== version ||
@@ -886,9 +915,9 @@ const manifestStepState = (
   if (
     !Number.isInteger(header.initialUserVersion) ||
     header.initialUserVersion < 36 ||
-    ![36, 37, 38, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54].includes(
-      header.initialUserVersion,
-    ) ||
+    ![
+      36, 37, 38, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57,
+    ].includes(header.initialUserVersion) ||
     (header.mode === "copy" &&
       (header.source === null ||
         header.sourceUserVersion !== header.initialUserVersion ||
@@ -916,7 +945,11 @@ const manifestStepState = (
           },
         ]
       : []),
-    ...([40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54] as const)
+    ...(
+      [
+        40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57,
+      ] as const
+    )
       .map((to) => ({
         step: String(to).padStart(4, "0"),
         from: to - 1,
@@ -1199,7 +1232,7 @@ const validateResume = async (
       "copy target version/content differs from its last committed manifest boundary",
     );
   }
-  if (actualVersion < 36 || actualVersion > 54)
+  if (actualVersion < 36 || actualVersion > 57)
     throw new SchemaUpgradeRefusal(
       `resume target version ${actualVersion} is unsupported`,
     );
@@ -1255,6 +1288,12 @@ const migrationDescriptorByVersion = (
       return P53_CANONICAL_OWNERSHIP_CARVEOUTS_MIGRATION;
     case 54:
       return P54_NATIVE_PROCESS_MODE_NO_EFFECT_DENIAL_MIGRATION;
+    case 55:
+      return P55_SESSION_CAUSAL_PROVENANCE_MIGRATION;
+    case 56:
+      return P56_LINUX_WORKSPACE_NETWORK_V2_MIGRATION;
+    case 57:
+      return P57_WORKSPACE_SANDBOX_AUTHORIZATION_MIGRATION;
     default:
       return undefined;
   }
@@ -1388,7 +1427,7 @@ export interface SchemaUpgradeDescriptorPinKat {
  */
 export const schemaUpgradeDescriptorPinKats =
   (): ReadonlyArray<SchemaUpgradeDescriptorPinKat> =>
-    Array.from({ length: 18 }, (_, index) => index + 37).map((version) => {
+    Array.from({ length: 21 }, (_, index) => index + 37).map((version) => {
       validateDescriptorPin(version);
       return {
         version,
@@ -1514,7 +1553,7 @@ const previewCommittedPrefixes = async (
       });
     }
     for (const version of [
-      40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54,
+      40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57,
     ]) {
       const current = readVersionWithOpenSource(database);
       if (current >= version) continue;
@@ -1736,7 +1775,7 @@ const appendCommitted = (
   });
 };
 
-const runP40ToP54 = (
+const runP40ToP57 = (
   primary: Parameters<
     Parameters<typeof runP39SqliteMaintenanceWithPermit>[1]
   >[0],
@@ -1759,12 +1798,12 @@ const runP40ToP54 = (
         "PRAGMA user_version",
       ))[0]?.user_version,
     );
-    if (startingVersion < 39 || startingVersion > 54)
+    if (startingVersion < 39 || startingVersion > 57)
       throw new SchemaUpgradeRefusal(
-        `P40–P54 suffix expected version 39–54, found ${startingVersion}`,
+        `P40–P57 suffix expected version 39–57, found ${startingVersion}`,
       );
     for (const version of [
-      40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54,
+      40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57,
     ]) {
       const currentRows = yield* primary.unsafe<{ user_version: number }>(
         "PRAGMA user_version",
@@ -1817,13 +1856,20 @@ const runP40ToP54 = (
           | 51
           | 52
           | 53
-          | 54,
+          | 54
+          | 55
+          | 56
+          | 57,
       );
-      if (version === 45 || version === 46) {
+      if (version === 45 || version === 46 || version === 57) {
         yield* Effect.sync(() => {
           const database = new DatabaseSync(targetPath);
           try {
-            database.exec("PRAGMA foreign_keys = ON; BEGIN IMMEDIATE");
+            database.exec(
+              version === 57
+                ? "PRAGMA foreign_keys = OFF; BEGIN IMMEDIATE"
+                : "PRAGMA foreign_keys = ON; BEGIN IMMEDIATE",
+            );
             const check = Number(
               (
                 database.prepare("PRAGMA user_version").get() as {
@@ -1883,7 +1929,10 @@ const runP40ToP54 = (
               version === 51 ||
               version === 52 ||
               version === 53 ||
-              version === 54
+              version === 54 ||
+              version === 55 ||
+              version === 56 ||
+              version === 57
             ) {
               const violations = yield* primary.unsafe(
                 "PRAGMA foreign_key_check",
@@ -1912,13 +1961,28 @@ const runP40ToP54 = (
           | 51
           | 52
           | 53
-          | 54,
+          | 54
+          | 55
+          | 56
+          | 57,
       );
-      if (version === 53 || version === 54) {
+      if (
+        version === 53 ||
+        version === 54 ||
+        version === 55 ||
+        version === 56 ||
+        version === 57
+      ) {
         const expectedSchemaSignature =
           version === 53
             ? PINNED_SCHEMA53_SIGNATURE
-            : PINNED_SCHEMA54_SIGNATURE;
+            : version === 54
+              ? PINNED_SCHEMA54_SIGNATURE
+              : version === 55
+                ? PINNED_SCHEMA55_SIGNATURE
+                : version === 56
+                  ? PINNED_SCHEMA56_SIGNATURE
+                  : PINNED_SCHEMA57_SIGNATURE;
         const actualSchemaSignature = sqliteSchemaSignature(targetPath);
         if (actualSchemaSignature !== expectedSchemaSignature) {
           throw new SchemaUpgradeRefusal(
@@ -1955,15 +2019,15 @@ const runP40ToP54 = (
         "PRAGMA user_version",
       ))[0]?.user_version,
     );
-    if (finalVersion !== 54)
+    if (finalVersion !== 57)
       throw new SchemaUpgradeRefusal(
-        `schema upgrade ended at ${finalVersion}, expected 54`,
+        `schema upgrade ended at ${finalVersion}, expected 57`,
       );
     validateP52WorkContractRevisionState(targetPath);
     const violations = yield* primary.unsafe("PRAGMA foreign_key_check");
     if (violations.length > 0)
       throw new SchemaUpgradeRefusal(
-        "schema version 54 failed foreign_key_check",
+        "schema version 57 failed foreign_key_check",
       );
     const f18Tables = yield* primary.unsafe<{ name: string }>(
       `SELECT name FROM sqlite_master WHERE type='table' AND name IN (
@@ -2051,11 +2115,11 @@ const runP40ToP54 = (
       );
     const finalDigest = logicalSqliteDigest(targetPath);
     if (finalDigest.length !== 64)
-      throw new SchemaUpgradeRefusal("version 54 logical digest is invalid");
+      throw new SchemaUpgradeRefusal("version 57 logical digest is invalid");
     if (source !== undefined) assertSourceUnchanged(source);
-    if (finalVersion === 54 && manifestStepState(manifest).version < 54) {
+    if (finalVersion === 57 && manifestStepState(manifest).version < 57) {
       throw new SchemaUpgradeRefusal(
-        "version 54 target lacks its final committed provenance record",
+        "version 57 target lacks its final committed provenance record",
       );
     }
     return manifest;
@@ -2093,7 +2157,7 @@ const runP39AndSuffix = async (
   try {
     previews =
       hooks.previewTemplate ??
-      (previewVersion === 54
+      (previewVersion === 57
         ? {
             prefixes: new Map(),
             p39Blocked: false,
@@ -2138,7 +2202,7 @@ const runP39AndSuffix = async (
     validateDescriptorPin(id);
     return pinnedDescriptorHash(id);
   });
-  if (previewVersion > 54) {
+  if (previewVersion > 57) {
     throw new SchemaUpgradeRefusal(
       `offline schema version ${previewVersion} is unsupported`,
     );
@@ -2199,7 +2263,7 @@ const runP39AndSuffix = async (
               p39Hashes,
             );
           }
-          return runP40ToP54(
+          return runP40ToP57(
             primary,
             prepared,
             targetPath,
@@ -2521,15 +2585,15 @@ const runP39AndSuffix = async (
                 validateP52WorkContractRevisionState(targetPath);
               }
               const digest = logicalSqliteDigest(targetPath);
-              const expectedVersion = 54;
-              const expectedSignature = PINNED_SCHEMA54_SIGNATURE;
+              const expectedVersion = 57;
+              const expectedSignature = PINNED_SCHEMA57_SIGNATURE;
               const signature = prefixSignatureForDigest(
                 expectedVersion,
                 descriptorHashesThrough(expectedVersion),
                 digest,
               );
               if (
-                version !== 54 ||
+                version !== 57 ||
                 state.version !== expectedVersion ||
                 state.pending !== undefined ||
                 state.isolated ||
@@ -2541,8 +2605,8 @@ const runP39AndSuffix = async (
                   `read-only reopened target is not the exact committed version ${expectedVersion} manifest head (observedVersion=${version}, manifestVersion=${state.version}, pending=${state.pending === undefined ? "none" : state.pending.step}, isolated=${String(state.isolated)}, digestMatch=${String(digest === state.lastDigest)}, prefixMatch=${String(signature === state.lastPrefixSignature)}, schemaSignature=${sqliteSchemaSignature(targetPath)})`,
                 );
               }
-              hooks.afterVersion54NoOpVerification?.({
-                userVersion: 54,
+              hooks.afterLatestVersionNoOpVerification?.({
+                userVersion: 57,
                 reopenedReadOnly: true,
               });
             }),
@@ -2893,7 +2957,9 @@ const main = async (): Promise<void> => {
   try {
     const args = parseSchemaUpgradeArguments(process.argv.slice(2));
     await runSchemaUpgrade(args);
-    process.stdout.write("Schema upgrade completed at version 50.\n");
+    process.stdout.write(
+      `Schema upgrade completed at version ${readUserVersion(args.database)}.\n`,
+    );
   } catch (cause) {
     const detail = formatSchemaUpgradeCliFailure(cause);
     process.stderr.write(`Schema upgrade refused or failed: ${detail}\n`);

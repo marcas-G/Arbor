@@ -85,4 +85,59 @@ describe("Work context frontier", () => {
       ),
     ).toEqual([1, 2]);
   });
+
+  it("drops an AgentLoopAction result when its call was trimmed from the window", () => {
+    const executionId = parse(ExecutionId)(
+      "exe_00000000-0000-7000-8000-0000000000f1",
+    );
+    const workId = parse(WorkId)("wrk_00000000-0000-7000-8000-0000000000f1");
+    const binding = {
+      projectId: "prj_00000000-0000-7000-8000-0000000000f1" as never,
+      workspaceId: "ws_00000000-0000-7000-8000-0000000000f1" as never,
+      executionId,
+      workId,
+      episodeBinding: "WorkEpisode" as const,
+      causedByRef: null,
+    };
+    const result = filterEntriesForWork(
+      [
+        {
+          sessionId: "ses_x" as never,
+          sequence: 1,
+          entryKind: "Observation" as const,
+          payload: {
+            _tag: "ToolResult",
+            callRef: "trimmed-call",
+            toolName: "read",
+          },
+          createdAt: "t",
+          source: {
+            kind: "AgentLoopAction",
+            ref: "observation_trimmed",
+            contentHash: "hash",
+          },
+          causalBinding: binding,
+        },
+        {
+          sessionId: "ses_x" as never,
+          sequence: 2,
+          entryKind: "Observation" as const,
+          payload: {
+            _tag: "ToolResult",
+            callRef: "invocation-result",
+            toolName: "read",
+          },
+          createdAt: "t",
+          source: {
+            kind: "ToolInvocation",
+            ref: "tin_current",
+            contentHash: "hash",
+          },
+          causalBinding: binding,
+        },
+      ],
+      { executionId, workId },
+    );
+    expect(result.map((entry) => entry.sequence)).toEqual([2]);
+  });
 });

@@ -18,13 +18,20 @@ import type { CommandReceiptView } from "../commands/submitCommand.js";
 import { Empty } from "../components/Empty.js";
 import { FreshnessChip } from "../components/FreshnessChip.js";
 import { Icon, type IconName } from "../components/Icon.js";
+import { ProjectDirectoryList } from "../components/ProjectDirectoryList.js";
 import { RefreshingStatus } from "../components/RefreshingStatus.js";
 import { Sheet } from "../components/Sheet.js";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../components/ui/dropdown-menu.js";
 import { BootstrapPage } from "../pages/bootstrap/BootstrapPage.js";
 import { useFreshness, usePath } from "../providers/AppProviders.js";
 import { useSession } from "../session/SessionContext.js";
 import { ProjectRouteContent } from "./ProjectRouteContent.js";
-import styles from "./shell.module.css";
+import styles from "./shell.styles.js";
 
 export interface ShellPageProps {
   readonly route: Route;
@@ -344,21 +351,6 @@ function ProjectPanel({
   const session = useSession();
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<"directory" | "create">("directory");
-  const [showArchived, setShowArchived] = useState(false);
-  const directory = useQuery({
-    queryKey: ["project-directory"],
-    queryFn: () =>
-      fetchProjectDirectory({
-        token: session.token,
-        onUnauthenticated: session.reportUnauthenticated,
-      }),
-    enabled: open && session.token !== null,
-  });
-  const allProjects =
-    directory.data?.ok === true ? directory.data.dto.projects : [];
-  const projects = allProjects.filter(
-    (project) => showArchived || project.lifecycle === "Open",
-  );
   const close = (): void => {
     setMode("directory");
     onClose();
@@ -391,6 +383,11 @@ function ProjectPanel({
               actor={session.actor}
               token={session.token}
               onSubmitted={projectCreated}
+              onProjectOpened={(projectId) => {
+                session.setProjectId(projectId);
+                close();
+                navigate({ name: "workbench", projectId });
+              }}
               embedded
             />
           ) : (
@@ -411,50 +408,10 @@ function ProjectPanel({
               <small>创建一个可持续推进的新项目</small>
             </span>
           </button>
-          <label className={styles.projectFilter}>
-            <input
-              type="checkbox"
-              checked={showArchived}
-              onChange={(event) => setShowArchived(event.target.checked)}
-            />
-            显示已归档项目
-          </label>
-          <section className={styles.projectPanelList} aria-label="项目列表">
-            {projects.length === 0 ? (
-              <Empty>还没有项目，请先创建一个项目</Empty>
-            ) : (
-              projects.map((project) => (
-                <button
-                  key={project.projectId}
-                  type="button"
-                  className={styles.projectPanelOption}
-                  aria-current={
-                    project.projectId === route?.projectId ? "true" : undefined
-                  }
-                  onClick={() => {
-                    session.setProjectId(project.projectId);
-                    close();
-                    navigate({
-                      name: "workbench",
-                      projectId: project.projectId,
-                    });
-                  }}
-                >
-                  <span>
-                    <strong>{project.name}</strong>
-                    <small>
-                      {project.lifecycle === "Open" ? "进行中" : "已归档"}
-                    </small>
-                  </span>
-                  {project.projectId === route?.projectId ? (
-                    <span className={styles.currentProjectLabel}>当前</span>
-                  ) : (
-                    <Icon name="chevron" size={15} />
-                  )}
-                </button>
-              ))
-            )}
-          </section>
+          <ProjectDirectoryList
+            currentProjectId={route?.projectId}
+            onNavigate={close}
+          />
         </div>
       )}
     </Sheet>
@@ -556,7 +513,6 @@ const romanize = (label: string): string =>
 
 function MobileTabbar({ route }: { readonly route: Route | null }) {
   const session = useSession();
-  const [moreOpen, setMoreOpen] = useState(false);
   const queryClient = useQueryClient();
   if (session.token === null) {
     return null;
@@ -565,96 +521,64 @@ function MobileTabbar({ route }: { readonly route: Route | null }) {
     (item) => item.label !== "用量" && item.label !== "设置",
   );
   return (
-    <>
-      {moreOpen ? (
-        <Sheet
-          open={moreOpen}
-          title="更多"
-          onClose={() => {
-            setMoreOpen(false);
-          }}
-        >
-          <div className={styles.moreItems}>
-            <button
-              type="button"
-              className={styles.moreItem}
-              onClick={() => {
-                if (route !== null) {
-                  navigate({ name: "usage", projectId: route.projectId });
-                }
-                setMoreOpen(false);
-              }}
-            >
-              用量
-            </button>
-            <button
-              type="button"
-              className={styles.moreItem}
-              onClick={() => {
-                if (route !== null) {
-                  navigate({ name: "settings", projectId: route.projectId });
-                }
-                setMoreOpen(false);
-              }}
-            >
-              设置
-            </button>
-            <button
-              type="button"
-              className={styles.moreItem}
-              onClick={() => {
-                setMoreOpen(false);
-                void queryClient.invalidateQueries({ queryKey: ["view"] });
-              }}
-            >
-              刷新数据
-            </button>
-            <button
-              type="button"
-              className={styles.moreItem}
-              onClick={() => {
-                setMoreOpen(false);
-                session.clearSession();
-              }}
-            >
-              断开连接
-            </button>
-          </div>
-        </Sheet>
-      ) : null}
-      <nav className={styles.tabbar} aria-label="移动导航">
-        {tabs.map((item) => (
-          <button
-            key={item.label}
-            type="button"
-            className={`${styles.tabItem} ${route !== null && item.match(route) ? styles.tabItemActive : ""}`}
-            onClick={() => {
-              if (route !== null) {
-                item.go(route.projectId);
-              }
-            }}
-            disabled={route === null}
-            aria-current={
-              route !== null && item.match(route) ? "page" : undefined
-            }
-          >
-            <Icon name={item.icon} size={18} />
-            <span>{item.label}</span>
-          </button>
-        ))}
+    <nav className={styles.tabbar} aria-label="移动导航">
+      {tabs.map((item) => (
         <button
+          key={item.label}
           type="button"
-          className={styles.tabItem}
-          aria-expanded={moreOpen}
-          aria-haspopup="dialog"
+          className={`${styles.tabItem} ${route !== null && item.match(route) ? styles.tabItemActive : ""}`}
           onClick={() => {
-            setMoreOpen(true);
+            if (route !== null) {
+              item.go(route.projectId);
+            }
           }}
+          disabled={route === null}
+          aria-current={
+            route !== null && item.match(route) ? "page" : undefined
+          }
         >
-          更多
+          <Icon name={item.icon} size={18} />
+          <span>{item.label}</span>
         </button>
-      </nav>
-    </>
+      ))}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button type="button" className={styles.tabItem}>
+            更多
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent side="top" align="end" aria-label="更多">
+          <DropdownMenuItem
+            disabled={route === null}
+            onSelect={() => {
+              if (route !== null)
+                navigate({ name: "usage", projectId: route.projectId });
+            }}
+          >
+            用量
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={route === null}
+            onSelect={() => {
+              if (route !== null)
+                navigate({ name: "settings", projectId: route.projectId });
+            }}
+          >
+            设置
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onSelect={() => {
+              void queryClient.invalidateQueries({ queryKey: ["view"] });
+            }}
+          >
+            刷新数据
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={session.clearSession}>
+            断开连接
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </nav>
   );
 }
 

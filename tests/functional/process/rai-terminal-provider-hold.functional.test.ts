@@ -36,7 +36,7 @@ type TerminalFailureKind =
   | "ProtocolViolation";
 
 const TERMINAL_PROVIDER_SUMMARY =
-  "The model provider rejected this Work execution. Review the provider configuration or request compatibility, then explicitly steer the Work to retry.";
+  "The model provider could not complete this Work execution. Review the provider configuration or connection, then explicitly steer the Work to retry.";
 
 const terminalFailureResponse = (
   failureKind: TerminalFailureKind,

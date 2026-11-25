@@ -71,7 +71,7 @@ describe("P11 resolver → complete sandbox boundary integration", () => {
                 resolvedRegions: observation.entries.map(
                   (entry) => entry.resolved,
                 ),
-                primaryManagedGitWorktreeRegion: primaryEntry.resolved,
+                primaryResourceRegion: primaryEntry.resolved,
                 ownershipClaims: [],
                 policyKind: "TrustedLocalUnconfinedV1",
                 profile: "FullAccess",

@@ -144,6 +144,7 @@ try {
         timerFired,
       })}\n`,
     );
+    process.exitCode = 1;
   }
 } finally {
   if (timer !== undefined) clearTimeout(timer);

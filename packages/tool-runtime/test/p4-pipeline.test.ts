@@ -1559,7 +1559,10 @@ const processPolicy = (
   episodeBinding: ExecutionEpisodeBinding,
   providerId = "bwrap",
   providerVersion = "0.8.0",
-): SandboxProcessPolicy => ({
+): Extract<
+  SandboxProcessPolicy,
+  { readonly kind: "OsEnforcedProcessPolicy" }
+> => ({
   kind: "OsEnforcedProcessPolicy",
   executionId,
   episodeBinding,
@@ -1590,7 +1593,10 @@ const processPolicy = (
 });
 
 const processContext = (
-  policy: SandboxProcessPolicy,
+  policy: Exclude<
+    SandboxProcessPolicy,
+    { readonly kind: "IndependentVerificationProcessPolicyV1" }
+  >,
   currentEpisode = policy.episodeBinding,
 ): import("@arbor/ports").ToolExecutionContext => ({
   ...context,
@@ -1690,6 +1696,77 @@ const sandboxCapability = (
 });
 
 describe("P4 tool runtime pipeline", () => {
+  it("parks an unexpired process policy from an earlier Workspace authorization before effect admission", async () => {
+    const p39Case = p39ApprovedCase(
+      "c7",
+      "action-p4-stale-workspace-authorization",
+    );
+    const trace: PipelineTrace = {
+      noEffectDenials: [],
+      events: [],
+      approvalConsumer: null,
+      intentWrites: 0,
+      effectAdmissions: 0,
+      approvalConsumes: 0,
+      resolvedEnvironmentRevisionSequence: [
+        "rev-exact",
+        "rev-exact",
+        "rev-exact",
+        "rev-exact",
+      ],
+      currentEnvironmentRevisionValues: ["rev-exact", "rev-exact"],
+      sandboxCapabilities: [sandboxCapability("bwrap", "Supported", "0.8.0")],
+    };
+    const policy = {
+      ...processPolicy(processEpisode),
+      workspaceAuthorizationRevision: 1,
+    };
+    let refreshes = 0;
+    const result = await run(
+      app(
+        false,
+        { ...processExecutor, requiresApproval: () => true },
+        {},
+        trace,
+        p39Case.approval,
+        false,
+        undefined,
+        "rev-exact",
+      ),
+      p39Case.argumentsJson,
+      p39Case.approvalId,
+      {
+        ...p39Case.approvedContext,
+        executionEpisodeBinding: processEpisode,
+        authority: {
+          ...authority,
+          ...p39Case.approvedContext.authority,
+          workspaceSandboxSources: [
+            {
+              workspaceId,
+              parentWorkspaceId: null,
+              lifecycle: "Active",
+              resourceBoundaryRevision: 0,
+              workspacePolicyRevision: 0,
+              authorizationRevision: 2,
+            },
+          ],
+        },
+        sandboxProcessPolicy: policy,
+        resolveSandboxProcessPolicy: () => {
+          refreshes++;
+          return Effect.succeed({ policy, mounts: [] });
+        },
+      },
+    );
+    expect(result._tag).toBe("SandboxPolicyRequiredInterruption");
+    expect(refreshes).toBe(1);
+    expect(trace.intentWrites).toBe(1);
+    expect(trace.effectAdmissions).toBe(0);
+    expect(trace.sandboxProcessPortRuns ?? 0).toBe(0);
+    expect(trace.settlementWrites ?? 0).toBe(0);
+  });
+
   it("parks the same bound invocation when process policy is absent, before effect admission", async () => {
     const p39Case = p39ApprovedCase("c7", "action-p4-policy-required");
     const trace: PipelineTrace = {
@@ -1776,7 +1853,7 @@ describe("P4 tool runtime pipeline", () => {
           {
             ...sandboxCapability("bwrap", "Supported", "0.8.0"),
             ...(caseName === "provider-evidence-mismatch"
-              ? { probeEvidenceRef: `blob:sha256:${"c".repeat(64)}` }
+              ? { qualificationEvidenceRef: `blob:sha256:${"c".repeat(64)}` }
               : {}),
             ...(caseName === "provider-rule-digest-mismatch"
               ? { enforcementRuleSetDigest: "c".repeat(64) }
@@ -1785,17 +1862,20 @@ describe("P4 tool runtime pipeline", () => {
         ],
       };
       const policy = processPolicy(processEpisode);
-      const selectedPolicy: SandboxProcessPolicy =
+      const selectedPolicy: Extract<
+        SandboxProcessPolicy,
+        { readonly kind: "OsEnforcedProcessPolicy" }
+      > =
         caseName === "missing-policy-evidence"
           ? ({
               ...policy,
               qualificationEvidenceRef: undefined,
-            } as unknown as SandboxProcessPolicy)
+            } as unknown as typeof policy)
           : caseName === "missing-policy-rule-digest"
             ? ({
                 ...policy,
                 enforcementRuleSetDigest: undefined,
-              } as unknown as SandboxProcessPolicy)
+              } as unknown as typeof policy)
             : policy;
       const result = await run(
         app(false, processExecutor, {}, trace),

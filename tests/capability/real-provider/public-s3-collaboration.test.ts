@@ -714,7 +714,7 @@ it.skipIf(skipReason !== undefined)(
 
       const request =
         `目标 ${marker}。立即只提议一个父工作区“${parentName}”，不要先解释或列计划。resourceBoundaryDraft 使用当前 FileTree 下已有子目录 ${parentRoot} 的绝对 FileTree 地址，resourceOwnershipDelegation.addresses 使用同一地址。责任草案只填简短 purpose，其余可选数组留空。` +
-        `父 initialWork 只需包含标记 ${childWorkMarker}，目标写“等待后续精确子任务指令；Child 的 Delivery 只表示到达，必须等 Child 独立 Verification PASS 并由 Parent 调用 accept_result 后，才能整合到 ResourceBoundary 内的 ${parentMountFile}”；在精确指令到达前下一次 ActionCall 只能调用 wait(disposition Blocked, Manual)，禁止 list/list_workspaces/read/update_plan。constraints 必须包含不得使用 shell/网络，以及“未成功 accept_result 前禁止 read Child、patch 父结果或 claim_completion”；verification criteria 只写父结果文件存在且非空，路径使用 ResourceBoundary mount-relative 的 ${parentMountFile}。不要在本次 proposal 中展开 Child 细节。`;
+        `父 initialWork 只需包含标记 ${childWorkMarker}，目标写“等待后续精确子任务指令；Child 的 Delivery 只表示到达，必须等 Child 独立 Verification PASS 并由 Parent 调用 accept_result 后，才能整合到 ResourceBoundary 内的 ${parentMountFile}”；在精确指令到达前下一次 ActionCall 只能调用 wait(disposition Blocked, Manual)，禁止 list/list_workspaces/read/update_plan。上述等待和调用顺序只属于当前执行的临时指令，不得写入 constraints 或 verificationMission.riskRequirements。constraints 仅包含不得使用 shell/网络，以及“未成功 accept_result 前禁止 read Child、patch 父结果或 claim_completion”；verificationMission.riskRequirements 仅包含不得使用 shell/网络，独立 Verifier 必须允许用 read 检查结果文件。verification criteria 只写父结果文件存在且非空，路径使用 ResourceBoundary mount-relative 的 ${parentMountFile}。不要在本次 proposal 中展开 Child 细节。`;
       const releasedProviderResponses = new Set<string>();
       await client.command(project.projectId, "SubmitHumanMessage", {
         messageId: functionalId("msg"),
@@ -781,7 +781,7 @@ it.skipIf(skipReason !== undefined)(
                 severity: "Normal",
                 operation: {
                   kind: "DirectionGuidance",
-                  guidance: `立即执行，不要调用 update_plan、list、list_workspaces、read、wait、declare_dependency 或 send_message；下一次且本次唯一的 ActionCall 必须是提议直接子工作区“${childName}”。resourceBoundaryDraft 使用已存在目录 ${parentRoot} 的绝对 FileTree 地址；resourceOwnershipDelegation.addresses 只使用其子目录 ${childRoot}。Child initialWork 只写“等待后续精确执行指令”，并要求指令到达前下一次 ActionCall 只能 wait(disposition Blocked, Manual)，禁止 list/read/update_plan；保留最终 Verifier criteria：相对于 Child ResourceBoundary mount 的 ${childMountFile} 存在且唯一一行匹配 ${childEvidencePrefix}<12位小写字母或数字>。之后所有 Child patch/read target.path 都必须相对于该 mount，不能再加 ${parentRoot} 前缀。提议成功后立即结束本次 turn；不要在 Child canonical WorkspaceId 出现前声明任何 Dependency，尤其禁止 AnyProducer。不得使用 shell/网络。`,
+                  guidance: `立即执行，不要调用 update_plan、list、list_workspaces、read、declare_dependency 或 send_message；下一次且本次唯一的 ActionCall 必须是提议直接子工作区“${childName}”。提议前不要 wait。resourceBoundaryDraft 使用已存在目录 ${parentRoot} 的绝对 FileTree 地址；resourceOwnershipDelegation.addresses 只使用其子目录 ${childRoot}。Child initialWork 只写“等待后续精确执行指令”，并要求指令到达前下一次 ActionCall 只能 wait(disposition Blocked, Manual)，禁止 list/read/update_plan；等待和调用顺序不得写入 Child constraints 或 verificationMission.riskRequirements，riskRequirements 仅包含不得使用 shell/网络，独立 Verifier 必须允许用 read 检查结果文件。保留最终 Verifier criteria：相对于 Child ResourceBoundary mount 的 ${childMountFile} 存在且唯一一行匹配 ${childEvidencePrefix}<12位小写字母或数字>。之后所有 Child patch/read target.path 都必须相对于该 mount，不能再加 ${parentRoot} 前缀。收到 ProposalRecorded 工具结果后，下一次 ActionCall 必须调用 wait(disposition Blocked, Manual) 结束当前 Execution 并等待人工审批，不要用纯文本重复提议状态。不要在 Child canonical WorkspaceId 出现前声明任何 Dependency，尤其禁止 AnyProducer。不得使用 shell/网络。`,
                 },
               },
               provenance: { source: "HumanInput" },
@@ -1224,6 +1224,11 @@ it.skipIf(skipReason !== undefined)(
         }
       }
 
+      if (publicSnapshot === null) {
+        throw new Error(
+          "REAL public S3 did not reach completed Parent/Child Work with independent verification and acceptance before the journey deadline",
+        );
+      }
       const after = captureWorkspaceSnapshot(fixture.workspaceDirectory);
       expect(after.entries[childFile]?.kind).toBe("file");
       expect(after.entries[forbiddenFile]).toBeUndefined();

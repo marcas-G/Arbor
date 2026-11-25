@@ -12,14 +12,13 @@ import { type Resolver, useForm } from "react-hook-form";
 import { Button } from "../../components/Button.js";
 import { Card } from "../../components/Card.js";
 import { Field } from "../../components/Field.js";
-import { Mono } from "../../views/shared.js";
+import { cn } from "../../lib/utils.js";
 import { HUMAN_ACTIONABLE_COMMANDS } from "../catalog.js";
 import { grantPermissionSchema, zodResolver } from "../schemas.js";
 import type { CommandReceiptView } from "../submitCommand.js";
 import { useCommandSubmission } from "../useCommandSubmission.js";
 import { uuidv7 } from "../uuid7.js";
 import { FormFeedback } from "./FormFeedback.js";
-import "./forms.css";
 
 const CUSTOM = "__custom__";
 
@@ -89,6 +88,14 @@ export function GrantPermissionForm({
   const expiresAt = watch("expiresAt");
   const effectiveCapability =
     selection === CUSTOM ? customCapability.trim() : selection;
+  const submissionLocked =
+    state.phase === "submitting" || state.phase === "transport-failed";
+  const subjectLabel =
+    subjectKind === "HumanPrincipal"
+      ? "用户标识"
+      : subjectKind === "WorkspaceAgent"
+        ? "分工标识"
+        : "运行标识";
   const doSubmit = (event?: FormEvent): void => {
     event?.preventDefault();
     if (effectiveCapability.length === 0) {
@@ -121,31 +128,37 @@ export function GrantPermissionForm({
     })();
   };
   return (
-    <Card title="授予权限（GrantPermission）">
-      <form className="arbor-command-form" onSubmit={doSubmit}>
+    <Card title="开放额外操作">
+      <form
+        className={cn("arbor-command-form", "flex flex-col gap-ui-3")}
+        onSubmit={doSubmit}
+      >
         <Field
           control="select"
-          label="授权主体类型"
+          label="开放给谁"
+          disabled={submissionLocked}
           value={subjectKind}
           onChange={(next) => {
             setValue("subjectKind", next as GrantValues["subjectKind"]);
           }}
           options={[
-            { value: "HumanPrincipal", label: "用户 Principal" },
-            { value: "WorkspaceAgent", label: "工作区 Agent" },
-            { value: "Execution", label: "单次 Execution" },
+            { value: "HumanPrincipal", label: "用户" },
+            { value: "WorkspaceAgent", label: "自动分工" },
+            { value: "Execution", label: "本次运行" },
           ]}
         />
         <Field
           control="input"
-          label="授权主体"
-          placeholder="user:… / ws_… / exe_…"
+          label={subjectLabel}
+          disabled={submissionLocked}
+          placeholder={`输入${subjectLabel}`}
           value={subjectRef}
           onChange={(next) => setValue("subjectRef", next)}
         />
         <Field
           control="select"
-          label="capability"
+          label="允许的操作"
+          disabled={submissionLocked}
           value={selection}
           onChange={(next) => {
             setSelection(next);
@@ -153,16 +166,17 @@ export function GrantPermissionForm({
           options={[
             ...HUMAN_ACTIONABLE_COMMANDS.map((value) => ({
               value,
-              label: value,
+              label: capabilityLabel(value),
             })),
-            { value: CUSTOM, label: "自定义…" },
+            { value: CUSTOM, label: "其他操作…" },
           ]}
         />
         {selection === CUSTOM ? (
           <Field
             control="input"
-            label="capability（自由输入）"
-            placeholder="capability 名"
+            label="操作名称"
+            disabled={submissionLocked}
+            placeholder="输入操作名称"
             value={customCapability}
             onChange={(next) => {
               setCustomCapability(next);
@@ -171,21 +185,28 @@ export function GrantPermissionForm({
         ) : null}
         <Field
           control="input"
-          label="target（必填，精确绑定）"
-          placeholder="精确资源 ID；fs:write 请填写目标 Workspace ID"
+          label="适用范围"
+          disabled={submissionLocked}
+          placeholder="填写精确资源 ID"
           value={target}
           onChange={(next) => {
             setValue("target", next);
           }}
         />
         {formState.errors.target ? (
-          <p className="arbor-command-error">
+          <p
+            className={cn(
+              "arbor-command-error",
+              "m-0 text-small text-destructive",
+            )}
+          >
             {formState.errors.target.message}
           </p>
         ) : null}
         <Field
           control="input"
-          label="过期时间（必填）"
+          label="过期时间"
+          disabled={submissionLocked}
           placeholder="未来 ISO 时间，例如 2026-10-12T08:30:00Z"
           value={expiresAt}
           onChange={(next) => {
@@ -193,13 +214,15 @@ export function GrantPermissionForm({
           }}
         />
         {formState.errors.expiresAt ? (
-          <p className="arbor-command-error">
+          <p
+            className={cn(
+              "arbor-command-error",
+              "m-0 text-small text-destructive",
+            )}
+          >
             {formState.errors.expiresAt.message}
           </p>
         ) : null}
-        <p className="arbor-command-static">
-          issuer（签发者，只读）：<Mono>{actor}</Mono>
-        </p>
         <FormFeedback state={state} onRetry={() => doSubmit()} />
         <Button
           variant="primary"
@@ -208,7 +231,7 @@ export function GrantPermissionForm({
             state.phase === "submitting" || effectiveCapability.length === 0
           }
         >
-          授予
+          开放操作
         </Button>
       </form>
     </Card>

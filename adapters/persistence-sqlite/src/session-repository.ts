@@ -558,14 +558,61 @@ export const SessionRepositoryLive: Layer.Layer<
           );
           return [...rows].reverse().map(toSessionItemRecord);
         }),
-      listWorkActiveFrontier: (sessionId, currentExecutionId) =>
+      listWorkActiveFrontier: (sessionId, currentExecutionId, currentWorkId) =>
         Effect.gen(function* () {
           yield* TransactionScope;
           if (!(yield* hasTimelineColumns)) return [];
           const episodeAware = yield* hasExecutionEpisodeColumns;
+          const causalBindingAware = yield* hasCausalBindingColumn;
           const workOwnershipFilter = episodeAware
             ? `AND ${WORK_HISTORY_EXCLUDES_CONVERSATION}`
             : "";
+          const causalBindingSelection = causalBindingAware
+            ? ", causal_binding_json"
+            : ", NULL AS causal_binding_json";
+          // A WorkspacePrimary Session can contain checkpoints from several
+          // Work executions.  The checkpoint is the frontier root, so an
+          // unscoped "latest checkpoint" query would let Work B inherit Work
+          // A's opaque ProviderNative continuation.  Current Work checkpoints
+          // are written with a durable causal binding; if that column is not
+          // available, fail closed for this scoped lookup rather than return a
+          // checkpoint whose Work owner cannot be proved.
+          const checkpointWorkOwnershipFilter =
+            currentWorkId === undefined
+              ? ""
+              : causalBindingAware
+                ? `AND json_extract(session_entries.causal_binding_json, '$.episodeBinding') = 'WorkEpisode'
+                  AND json_extract(session_entries.causal_binding_json, '$.workId') = ?`
+                : "AND 1 = 0";
+          const checkpointWorkOwnershipParams =
+            currentWorkId !== undefined && causalBindingAware
+              ? [currentWorkId]
+              : [];
+          // Explicitly foreign Work-bound rows must not enter the active
+          // frontier.  Legacy/unbound rows remain subject to the existing
+          // source-owner checks because their Work cannot be proven either
+          // way; they are never used to select a checkpoint root above.
+          const foreignWorkCausalBindingFilter =
+            currentWorkId !== undefined && causalBindingAware
+              ? `AND NOT (
+                  json_extract(session_entries.causal_binding_json, '$.episodeBinding') = 'WorkEpisode'
+                  AND json_extract(session_entries.causal_binding_json, '$.workId') IS NOT NULL
+                  AND json_extract(session_entries.causal_binding_json, '$.workId') <> ?
+                )`
+              : "";
+          const foreignWorkCausalBindingParams =
+            currentWorkId !== undefined && causalBindingAware
+              ? [currentWorkId]
+              : [];
+          const sameWorkCausalBindingFilter =
+            currentExecutionId !== undefined &&
+            currentWorkId !== undefined &&
+            causalBindingAware
+              ? `OR (
+                  json_extract(session_entries.causal_binding_json, '$.episodeBinding') = 'WorkEpisode'
+                  AND json_extract(session_entries.causal_binding_json, '$.workId') = ?
+                )`
+              : "";
           const executionOwnedSourceFilter =
             currentExecutionId === undefined
               ? ""
@@ -681,6 +728,7 @@ export const SessionRepositoryLive: Layer.Layer<
                     length('observation_' || ? || '_')
                   ) = 'observation_' || ? || '_'
                 )
+              ${sameWorkCausalBindingFilter}
               )`;
           const executionOwnedSourceParams =
             currentExecutionId === undefined
@@ -696,11 +744,14 @@ export const SessionRepositoryLive: Layer.Layer<
                   currentExecutionId,
                   currentExecutionId,
                   currentExecutionId,
+                  ...(sameWorkCausalBindingFilter === ""
+                    ? []
+                    : [currentWorkId]),
                 ];
           const checkpointRows = yield* run(
             sql.unsafe<{ sequence: number }>(
-              `SELECT sequence FROM session_entries WHERE session_id = ? AND schema_version = 2 AND item_type = 'CompactionCheckpoint' ${workOwnershipFilter} ORDER BY sequence DESC LIMIT 1`,
-              [sessionId],
+              `SELECT sequence FROM session_entries WHERE session_id = ? AND schema_version = 2 AND item_type = 'CompactionCheckpoint' ${workOwnershipFilter} ${checkpointWorkOwnershipFilter} ORDER BY sequence DESC LIMIT 1`,
+              [sessionId, ...checkpointWorkOwnershipParams],
             ),
           );
           const checkpointSequence = checkpointRows[0]?.sequence;
@@ -713,13 +764,27 @@ export const SessionRepositoryLive: Layer.Layer<
                   ORDER BY sequence DESC
                   LIMIT ?
                 )
-                SELECT session_id, sequence, entry_kind, payload_json, created_at, source_kind, source_ref, content_hash
+                SELECT session_id, sequence, entry_kind, payload_json, created_at, source_kind, source_ref, content_hash${causalBindingSelection}
                 FROM raw_frontier AS session_entries
-                WHERE schema_version = 2 ${workOwnershipFilter} ${executionOwnedSourceFilter}
+                WHERE schema_version = 2 ${workOwnershipFilter} ${foreignWorkCausalBindingFilter} ${executionOwnedSourceFilter}
+                  AND NOT (
+                    source_kind = 'AgentLoopAction'
+                    AND
+                    item_type IN ('ToolResult', 'ControlResult')
+                    AND json_extract(payload_json, '$.callRef') IS NOT NULL
+                    AND NOT EXISTS (
+                      SELECT 1
+                      FROM raw_frontier AS paired_call
+                      WHERE paired_call.item_type = 'ToolCall'
+                        AND json_extract(paired_call.payload_json, '$.callRef') =
+                            json_extract(session_entries.payload_json, '$.callRef')
+                    )
+                  )
                 ORDER BY sequence`,
                 [
                   sessionId,
                   WORK_PRECHECKPOINT_ENTRY_LIMIT,
+                  ...foreignWorkCausalBindingParams,
                   ...executionOwnedSourceParams,
                 ],
               ),
@@ -732,8 +797,13 @@ export const SessionRepositoryLive: Layer.Layer<
           // older legacy and checkpoint-covered rows are outside this frontier.
           const rows = yield* run(
             sql.unsafe<SessionEntryRow>(
-              `SELECT session_id, sequence, entry_kind, payload_json, created_at, source_kind, source_ref, content_hash FROM session_entries WHERE session_id = ? AND schema_version = 2 AND sequence >= ? ${workOwnershipFilter} ${executionOwnedSourceFilter} ORDER BY sequence`,
-              [sessionId, checkpointSequence, ...executionOwnedSourceParams],
+              `SELECT session_id, sequence, entry_kind, payload_json, created_at, source_kind, source_ref, content_hash${causalBindingSelection} FROM session_entries WHERE session_id = ? AND schema_version = 2 AND sequence >= ? ${workOwnershipFilter} ${foreignWorkCausalBindingFilter} ${executionOwnedSourceFilter} ORDER BY sequence`,
+              [
+                sessionId,
+                checkpointSequence,
+                ...foreignWorkCausalBindingParams,
+                ...executionOwnedSourceParams,
+              ],
             ),
           );
           return rows.map(toSessionEntry);
@@ -814,6 +884,9 @@ export const SessionRepositoryLive: Layer.Layer<
               contextEpoch: input.nextEpoch,
               source: input.source,
               contentHash: input.contentHash,
+              ...(input.causalBinding === undefined
+                ? {}
+                : { causalBinding: input.causalBinding }),
             },
             fence,
           );

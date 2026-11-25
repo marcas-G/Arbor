@@ -9,11 +9,11 @@ import { type Resolver, useForm } from "react-hook-form";
 import { Button } from "../../components/Button.js";
 import { Card } from "../../components/Card.js";
 import { Field } from "../../components/Field.js";
+import { cn } from "../../lib/utils.js";
 import { recordDecisionSchema, zodResolver } from "../schemas.js";
 import type { CommandReceiptView } from "../submitCommand.js";
 import { useCommandSubmission } from "../useCommandSubmission.js";
 import { FormFeedback } from "./FormFeedback.js";
-import "./forms.css";
 
 export interface DecisionTarget {
   readonly proposalId: string;
@@ -66,7 +66,10 @@ export function RecordDecisionForm({
   };
   return (
     <Card title="处理待决事项">
-      <form className="arbor-command-form" onSubmit={doSubmit}>
+      <form
+        className={cn("arbor-command-form", "flex flex-col gap-ui-3")}
+        onSubmit={doSubmit}
+      >
         <p>{target.summary}</p>
         <Field
           control="select"
@@ -87,9 +90,7 @@ export function RecordDecisionForm({
         <Button
           variant="primary"
           type="submit"
-          disabled={
-            state.phase === "submitting" || state.phase === "transport-failed"
-          }
+          disabled={state.phase === "submitting"}
         >
           提交决策
         </Button>

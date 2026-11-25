@@ -2,7 +2,7 @@ import {
   CommandId,
   decodeCanonicalExecutionEpisodeBinding,
   decodeCanonicalSandboxNetworkPolicySelectionV1,
-  decodeCanonicalSandboxPolicyDecisionCommittedInternalV1,
+  decodeCanonicalSandboxPolicyDecisionCommittedInternal,
   decodeSandboxProviderId,
   ExecutionId,
   encodeExecutionEpisodeBinding,
@@ -40,9 +40,11 @@ interface SandboxPolicyDecisionRow {
   readonly provider_id: string;
   readonly network_policy_json: string;
   readonly policy_digest: string;
-  readonly permission_grant_id: string;
-  readonly grant_permission_command_id: string;
-  readonly grant_issuer_principal: string;
+  readonly permission_grant_id: string | null;
+  readonly grant_permission_command_id: string | null;
+  readonly grant_issuer_principal: string | null;
+  readonly authority_kind: "LegacyHumanGrant" | "WorkspaceAuthorization";
+  readonly workspace_authorization_revision: number | null;
   readonly operator_config_revision: number;
   readonly operator_config_digest: string;
   readonly actor_principal: string;
@@ -90,8 +92,7 @@ const decodeRow = (
     !isIsoTimestamp(row.issued_at) ||
     !isIsoTimestamp(row.expires_at) ||
     Date.parse(row.expires_at) <= Date.parse(row.issued_at) ||
-    !isHumanPrincipal(row.actor_principal) ||
-    !isHumanPrincipal(row.grant_issuer_principal) ||
+    !isPositiveRevision(row.policy_revision) ||
     (row.profile_id !== "ReadOnly" &&
       row.profile_id !== "WorkspaceWrite" &&
       row.profile_id !== "FullAccess")
@@ -99,7 +100,7 @@ const decodeRow = (
     return undefined;
   }
   try {
-    return {
+    const common = {
       projectId: parse(ProjectId)(row.project_id),
       workspaceId: parse(WorkspaceId)(row.workspace_id),
       executionId: parse(ExecutionId)(row.execution_id),
@@ -111,17 +112,47 @@ const decodeRow = (
       providerId,
       networkPolicy,
       policyDigest: row.policy_digest,
-      permissionGrantId: parse(PermissionGrantId)(row.permission_grant_id),
-      grantPermissionCommandId: parse(CommandId)(
-        row.grant_permission_command_id,
-      ),
-      grantIssuerPrincipal: parse(Principal)(row.grant_issuer_principal),
       operatorConfigRevision: row.operator_config_revision,
       operatorConfigDigest: row.operator_config_digest,
       actorPrincipal: parse(Principal)(row.actor_principal),
       decisionCommandId: parse(CommandId)(row.decision_command_id),
       issuedAt: row.issued_at,
       expiresAt: row.expires_at,
+    };
+    if (row.authority_kind === "WorkspaceAuthorization") {
+      if (
+        row.workspace_authorization_revision === null ||
+        !isPositiveRevision(row.workspace_authorization_revision) ||
+        row.permission_grant_id !== null ||
+        row.grant_permission_command_id !== null ||
+        row.grant_issuer_principal !== null ||
+        common.profile === "FullAccess" ||
+        common.networkPolicy.kind !== "OsEnforced"
+      )
+        return undefined;
+      return {
+        ...common,
+        authorityKind: "WorkspaceAuthorization",
+        workspaceAuthorizationRevision: row.workspace_authorization_revision,
+      };
+    }
+    if (
+      row.authority_kind !== "LegacyHumanGrant" ||
+      row.workspace_authorization_revision !== null ||
+      row.permission_grant_id === null ||
+      row.grant_permission_command_id === null ||
+      row.grant_issuer_principal === null ||
+      !isHumanPrincipal(row.actor_principal) ||
+      !isHumanPrincipal(row.grant_issuer_principal)
+    )
+      return undefined;
+    return {
+      ...common,
+      permissionGrantId: parse(PermissionGrantId)(row.permission_grant_id),
+      grantPermissionCommandId: parse(CommandId)(
+        row.grant_permission_command_id,
+      ),
+      grantIssuerPrincipal: parse(Principal)(row.grant_issuer_principal),
     };
   } catch {
     return undefined;
@@ -150,12 +181,19 @@ const decodeCommitted = (
     typeof row.command_result_json !== "string"
   )
     return undefined;
-  const result = decodeCanonicalSandboxPolicyDecisionCommittedInternalV1(
+  const result = decodeCanonicalSandboxPolicyDecisionCommittedInternal(
     row.command_result_json,
     sha256Hex,
   );
   if (
     result === undefined ||
+    (decision.authorityKind === "WorkspaceAuthorization"
+      ? row.command_schema_version !== "1" ||
+        result.version !== 3 ||
+        result.workspaceAuthorizationRevision !==
+          decision.workspaceAuthorizationRevision
+      : result.version === 3 ||
+        (row.command_schema_version === "1" && result.version !== 1)) ||
     result.commandId !== decision.decisionCommandId ||
     result.projectId !== decision.projectId ||
     result.workspaceId !== decision.workspaceId ||
@@ -167,6 +205,12 @@ const decodeCommitted = (
   )
     return undefined;
   const snapshot = result.effectivePolicySnapshot;
+  if (
+    snapshot.operatorConfigRevision !== decision.operatorConfigRevision ||
+    snapshot.operatorConfigDigest !== decision.operatorConfigDigest ||
+    snapshot.expiresAt !== decision.expiresAt
+  )
+    return undefined;
   if (
     snapshot.kind === "OsEnforced"
       ? decision.profile === "FullAccess" ||
@@ -188,6 +232,26 @@ export const SandboxPolicyDecisionStoreLive = Layer.effect(
   SandboxPolicyDecisionStore,
   Effect.gen(function* () {
     const sql = yield* SqlClient;
+    // The adapter also reads preserved schema49–56 fixtures. Resolve the
+    // actual table shape at each transaction boundary rather than caching a
+    // pre-migration absence when a qualification applies the staged migration.
+    const supportsWorkspaceAuthority = () =>
+      sql
+        .unsafe<{ readonly name: string }>(
+          "PRAGMA table_info(sandbox_policy_decisions)",
+        )
+        .pipe(
+          Effect.map((rows) =>
+            rows.some((row) => row.name === "authority_kind"),
+          ),
+          Effect.mapError(
+            repositoryFailure("SandboxPolicyDecisionStore", "schema-features"),
+          ),
+        );
+    const authorityColumns = (modern: boolean) =>
+      modern
+        ? "d.authority_kind, d.workspace_authorization_revision"
+        : "'LegacyHumanGrant' AS authority_kind, NULL AS workspace_authorization_revision";
     const run = <A>(
       effect: Effect.Effect<A, SqlError>,
     ): Effect.Effect<A, SandboxPolicyDecisionStoreError> =>
@@ -219,9 +283,10 @@ export const SandboxPolicyDecisionStoreLive = Layer.effect(
       findExact: (key) =>
         Effect.gen(function* () {
           yield* TransactionScope;
+          const modern = yield* supportsWorkspaceAuthority();
           const rows = yield* run(
             sql.unsafe<SandboxPolicyDecisionRow>(
-              `SELECT ${columns} FROM sandbox_policy_decisions d
+              `SELECT ${columns}, ${authorityColumns(modern)} FROM sandbox_policy_decisions d
                 LEFT JOIN commands c ON c.command_id = d.decision_command_id
                 WHERE d.project_id = ? AND d.workspace_id = ? AND d.execution_id = ?
                   AND d.episode_binding_json = ? AND d.policy_revision = ?`,
@@ -239,9 +304,10 @@ export const SandboxPolicyDecisionStoreLive = Layer.effect(
       findCurrentForExecution: (projectId, workspaceId, executionId) =>
         Effect.gen(function* () {
           yield* TransactionScope;
+          const modern = yield* supportsWorkspaceAuthority();
           const rows = yield* run(
             sql.unsafe<SandboxPolicyDecisionRow>(
-              `SELECT ${columns} FROM sandbox_policy_decisions d
+              `SELECT ${columns}, ${authorityColumns(modern)} FROM sandbox_policy_decisions d
                 LEFT JOIN commands c ON c.command_id = d.decision_command_id
                 WHERE d.project_id = ? AND d.workspace_id = ? AND d.execution_id = ?
                 ORDER BY d.policy_revision DESC LIMIT 1`,
@@ -253,6 +319,7 @@ export const SandboxPolicyDecisionStoreLive = Layer.effect(
       insertCommitted: (decision) =>
         Effect.gen(function* () {
           yield* TransactionScope;
+          const modern = yield* supportsWorkspaceAuthority();
           if (
             decodeRow({
               project_id: decision.projectId,
@@ -270,9 +337,13 @@ export const SandboxPolicyDecisionStoreLive = Layer.effect(
                 decision.networkPolicy,
               ),
               policy_digest: decision.policyDigest,
-              permission_grant_id: decision.permissionGrantId,
-              grant_permission_command_id: decision.grantPermissionCommandId,
-              grant_issuer_principal: decision.grantIssuerPrincipal,
+              permission_grant_id: decision.permissionGrantId ?? null,
+              grant_permission_command_id:
+                decision.grantPermissionCommandId ?? null,
+              grant_issuer_principal: decision.grantIssuerPrincipal ?? null,
+              authority_kind: decision.authorityKind ?? "LegacyHumanGrant",
+              workspace_authorization_revision:
+                decision.workspaceAuthorizationRevision ?? null,
               operator_config_revision: decision.operatorConfigRevision,
               operator_config_digest: decision.operatorConfigDigest,
               actor_principal: decision.actorPrincipal,
@@ -288,6 +359,15 @@ export const SandboxPolicyDecisionStoreLive = Layer.effect(
               reason: "sandbox policy decision failed strict input validation",
             });
           }
+          if (!modern && decision.authorityKind === "WorkspaceAuthorization") {
+            return yield* Effect.fail<SandboxPolicyDecisionStoreError>({
+              _tag: "PersistenceCorruption",
+              repository: "SandboxPolicyDecisionStore",
+              operation: "insert-committed",
+              reason:
+                "Workspace authority requires the schema57 provenance boundary",
+            });
+          }
           yield* run(
             sql.unsafe(
               `INSERT INTO sandbox_policy_decisions (
@@ -298,7 +378,8 @@ export const SandboxPolicyDecisionStoreLive = Layer.effect(
                 grant_permission_command_id, grant_issuer_principal,
                 operator_config_revision, operator_config_digest, actor_principal,
                 decision_command_id, issued_at, expires_at
-              ) VALUES (${Array.from({ length: 20 }, () => "?").join(",")})`,
+                ${modern ? ", authority_kind, workspace_authorization_revision" : ""}
+              ) VALUES (${Array.from({ length: modern ? 22 : 20 }, () => "?").join(",")})`,
               [
                 decision.projectId,
                 decision.workspaceId,
@@ -311,15 +392,21 @@ export const SandboxPolicyDecisionStoreLive = Layer.effect(
                 decision.providerId,
                 encodeSandboxNetworkPolicySelectionV1(decision.networkPolicy),
                 decision.policyDigest,
-                decision.permissionGrantId,
-                decision.grantPermissionCommandId,
-                decision.grantIssuerPrincipal,
+                decision.permissionGrantId ?? null,
+                decision.grantPermissionCommandId ?? null,
+                decision.grantIssuerPrincipal ?? null,
                 decision.operatorConfigRevision,
                 decision.operatorConfigDigest,
                 decision.actorPrincipal,
                 decision.decisionCommandId,
                 decision.issuedAt,
                 decision.expiresAt,
+                ...(modern
+                  ? [
+                      decision.authorityKind ?? "LegacyHumanGrant",
+                      decision.workspaceAuthorizationRevision ?? null,
+                    ]
+                  : []),
               ],
             ),
           );

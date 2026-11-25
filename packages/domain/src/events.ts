@@ -297,6 +297,14 @@ export const ExecutionSettled = Schema.TaggedStruct("ExecutionSettled", {
   claimRef: Schema.String,
 });
 export const PermissionChanged = Schema.TaggedStruct("PermissionChanged", {});
+export const WorkspaceSandboxAuthorizationChanged = Schema.TaggedStruct(
+  "WorkspaceSandboxAuthorizationChanged",
+  {
+    workspaceId: Schema.String,
+    authorizationRevision: Schema.Number,
+    state: Schema.Literals(["Granted", "Revoked"]),
+  },
+);
 export const SandboxPolicyGrantIssued = Schema.TaggedStruct(
   "SandboxPolicyGrantIssued",
   {
@@ -315,6 +323,19 @@ export const SandboxPolicyDecisionRecorded = Schema.TaggedStruct(
     episodeBinding: Schema.Unknown,
     policyRevision: Schema.Number,
     permissionGrantId: Schema.String,
+    operatorConfigRevision: Schema.Number,
+    operatorConfigDigest: Schema.String,
+  },
+);
+/** Version 2 changes only provenance; version 1 remains a frozen catalog schema. */
+export const SandboxPolicyDecisionRecordedV2 = Schema.TaggedStruct(
+  "SandboxPolicyDecisionRecorded",
+  {
+    workspaceId: Schema.String,
+    executionId: Schema.String,
+    episodeBinding: Schema.Unknown,
+    policyRevision: Schema.Number,
+    workspaceAuthorizationRevision: Schema.Number,
     operatorConfigRevision: Schema.Number,
     operatorConfigDigest: Schema.String,
   },
@@ -468,8 +489,10 @@ export const DomainEventPayload = Schema.Union([
   ExecutionStopRequested,
   ExecutionSettled,
   PermissionChanged,
+  WorkspaceSandboxAuthorizationChanged,
   SandboxPolicyGrantIssued,
   SandboxPolicyDecisionRecorded,
+  SandboxPolicyDecisionRecordedV2,
   DecisionRecorded,
   EnvironmentChanged,
   WorktreeCreated,
@@ -531,6 +554,7 @@ export const EVENT_CATALOG = {
   ExecutionStopRequested,
   ExecutionSettled,
   PermissionChanged,
+  WorkspaceSandboxAuthorizationChanged,
   SandboxPolicyGrantIssued,
   SandboxPolicyDecisionRecorded,
   DecisionRecorded,

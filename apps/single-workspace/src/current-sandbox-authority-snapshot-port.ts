@@ -23,7 +23,7 @@ export const sandboxPolicyCurrentHostV1 = () => {
   return osFamily !== undefined &&
     osBuild.length > 0 &&
     osBuild.length <= 128 &&
-    /^[A-Za-z0-9][A-Za-z0-9._:-]*$/u.test(osBuild)
+    /^[A-Za-z0-9][A-Za-z0-9._:+-]*$/u.test(osBuild)
     ? { osFamily, osBuild }
     : undefined;
 };

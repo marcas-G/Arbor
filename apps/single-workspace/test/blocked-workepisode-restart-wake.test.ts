@@ -146,7 +146,10 @@ describe.skipIf(!p39PathQualificationAvailable)(
           filename,
           Effect.gen(function* () {
             yield* seedDurableBlockedState;
-            yield* runDaemonOnce({ principalRef: String(p7TestActor) });
+            yield* runDaemonOnce({
+              databaseFile: filename,
+              principalRef: String(p7TestActor),
+            });
             return {
               parentExecutions: yield* executionCount(p7RootWorkspace),
             };
@@ -168,6 +171,7 @@ describe.skipIf(!p39PathQualificationAvailable)(
           Effect.gen(function* () {
             yield* seedDurableBlockedState;
             yield* runDaemonOnce({
+              databaseFile: filename,
               workspaceId: childWorkspaceId as never,
               principalRef: String(p7TestActor),
             });
@@ -182,6 +186,7 @@ describe.skipIf(!p39PathQualificationAvailable)(
             const parentBefore = yield* executionCount(p7RootWorkspace);
 
             yield* runDaemonOnce({
+              databaseFile: filename,
               workspaceId: p7RootWorkspace,
               principalRef: String(p7TestActor),
             });

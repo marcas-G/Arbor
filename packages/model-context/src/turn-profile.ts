@@ -80,6 +80,7 @@ const verifierControls = new Set([
 const decisionControls = new Set(["core.control.select-current-work"]);
 
 const workControls = new Set([
+  "core.control.allocate-workspace-sandbox",
   "core.control.assign-work",
   "core.control.accept-result",
   "core.control.list-workspaces",
@@ -97,6 +98,7 @@ const workControls = new Set([
 /** Cross-Workspace Inbox cognition reopens only with the complete MAC-P3
  * declare/produce/deliver/satisfy/wake path. */
 const inputControls = new Set([
+  "core.control.allocate-workspace-sandbox",
   "core.control.accept-result",
   "core.control.send-message",
   "core.control.list-workspaces",
@@ -107,6 +109,7 @@ const inputControls = new Set([
  * current root Workspace. Formation and cross-Workspace placement reopen in
  * MAC-P2; executable tools remain WorkEpisode-only. */
 const conversationControls = new Set([
+  "core.control.allocate-workspace-sandbox",
   "core.control.assign-work",
   "core.control.accept-result",
   "core.control.list-workspaces",

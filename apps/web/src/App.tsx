@@ -4,6 +4,7 @@
  */
 
 import { AppRouter } from "./pages/AppRouter.js";
+import { ModelSetupGate } from "./pages/ModelSetupGate.js";
 import { AppProviders } from "./providers/AppProviders.js";
 import { LoginCard } from "./session/LoginCard.js";
 import { useSession } from "./session/SessionContext.js";
@@ -27,8 +28,10 @@ function SessionGate() {
 
 export function App() {
   return (
-    <AppProviders>
-      <SessionGate />
-    </AppProviders>
+    <ModelSetupGate>
+      <AppProviders>
+        <SessionGate />
+      </AppProviders>
+    </ModelSetupGate>
   );
 }

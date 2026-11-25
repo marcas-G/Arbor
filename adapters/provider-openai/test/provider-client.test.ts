@@ -101,7 +101,103 @@ const byteChunkedEventStream = (
   };
 };
 
+const openEndedTerminalEventStream = (
+  ...events: ReadonlyArray<unknown>
+): {
+  readonly response: OpenAICompatibleFetchResponse;
+  readonly wasCancelled: () => boolean;
+} => {
+  let cancelled = false;
+  const bytes = new TextEncoder().encode(
+    events
+      .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+      .concat("data: [DONE]\n\n")
+      .join(""),
+  );
+  return {
+    response: {
+      ok: true,
+      status: 200,
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(bytes);
+        },
+        cancel() {
+          cancelled = true;
+        },
+      }),
+    },
+    wasCancelled: () => cancelled,
+  };
+};
+
 describe("OpenAI-compatible fetch provider", () => {
+  it("settles after [DONE] when the provider keeps the HTTP stream open", async () => {
+    const stream = openEndedTerminalEventStream({
+      choices: [{ delta: { content: "OK" }, finish_reason: "stop" }],
+    });
+    const client = OpenAICompatibleFetchClient({
+      baseUrl: "http://provider.test/v1",
+      fetch: async () => stream.response,
+    });
+
+    await expect(chunks(client)).resolves.toEqual([
+      { type: "response_started" },
+      { type: "text", text: "OK" },
+      { type: "completed", finishReason: "stop" },
+    ]);
+    expect(stream.wasCancelled()).toBe(true);
+  });
+
+  it("rejects a terminal marker without a finish reason and releases the connection", async () => {
+    const stream = openEndedTerminalEventStream({
+      choices: [{ delta: { content: "incomplete" }, finish_reason: null }],
+    });
+    const client = OpenAICompatibleFetchClient({
+      baseUrl: "http://provider.test/v1",
+      fetch: async () => stream.response,
+    });
+    await expect(chunks(client)).rejects.toMatchObject({
+      name: "OpenAIProtocolError",
+      safeCode: "stream-termination-incomplete",
+    });
+    expect(stream.wasCancelled()).toBe(true);
+  });
+
+  it("assembles terminal tool calls before returning from an open HTTP stream", async () => {
+    const stream = openEndedTerminalEventStream({
+      choices: [
+        {
+          delta: {
+            tool_calls: [
+              {
+                index: 0,
+                id: "call-open-stream",
+                function: { name: "read", arguments: '{"path":"README.md"}' },
+              },
+            ],
+          },
+          finish_reason: "tool_calls",
+        },
+      ],
+    });
+    const client = OpenAICompatibleFetchClient({
+      baseUrl: "http://provider.test/v1",
+      fetch: async () => stream.response,
+    });
+    await expect(chunks(client)).resolves.toEqual([
+      { type: "response_started" },
+      {
+        type: "tool_call",
+        callRef: "call-open-stream",
+        toolName: "read",
+        argumentsJson: '{"path":"README.md"}',
+      },
+      { type: "completed", finishReason: "tool_calls" },
+    ]);
+    expect(stream.wasCancelled()).toBe(true);
+  });
+
   it("maps the portable request and parses streamed text, usage, and finish", async () => {
     let observedUrl = "";
     let observedHeaders: Readonly<Record<string, string>> | undefined;

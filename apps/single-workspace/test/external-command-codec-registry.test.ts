@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import {
   CommandHandlerRegistry,
   CommandInputContractRegistry,
+  type DecideSandboxPolicyPreparation,
   makeAcceptWorkOutcomeHandler,
   makeCancelConversationResponseHandler,
   makeCommandInputContractRegistry,
@@ -27,6 +28,7 @@ import {
   makeStartVerificationHandler,
   makeSteerWorkHandler,
   makeSubmitHumanMessageHandler,
+  makeWorkspaceSandboxAuthorizationHandlers,
 } from "@arbor/application";
 import { makeP2CommandHandlers } from "@arbor/execution-runtime";
 import {
@@ -52,13 +54,14 @@ import {
   WorkContractRevisionRepository,
   WorkRepository,
   WorkspaceRepository,
+  WorkspaceSandboxAuthorizationStore,
   WorkWaitStore,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import { makeProjectResourceProfilePort } from "../src/project-resource-profiles.js";
-import { SingleWorkspaceCommandHandlerRegistryLive } from "../src/registry.js";
+import { makeSingleWorkspaceCommandHandlerRegistryLive } from "../src/registry.js";
 
 describe("external command codec registry parity", () => {
   it("has exactly one descriptor for every composed production handler", () => {
@@ -87,6 +90,8 @@ describe("external command codec registry parity", () => {
       "ConcludeVerification",
       "GrantPermission",
       "DecideSandboxPolicy",
+      "AuthorizeWorkspaceSandbox",
+      "RevokeWorkspaceSandboxAuthorization",
       "RevokePermission",
       "SubmitHumanMessage",
       "ResumeConversationResponse",
@@ -103,6 +108,9 @@ describe("external command codec registry parity", () => {
       throw new Error("could not locate production command handler array");
     }
     const productionArray = productionSource.slice(arrayStart, arrayEnd);
+    // BindWorkspaceSandboxPolicy is an internal System command. It is
+    // deliberately present in the production handler registry but has no
+    // external command codec descriptor.
     const directFactories = [
       ...productionArray.matchAll(/\b(make[A-Z]\w+Handler)\s*\(/g),
     ].map((match) => match[1] ?? "");
@@ -130,13 +138,30 @@ describe("external command codec registry parity", () => {
       makeSteerWorkHandler,
       makeSubmitHumanMessageHandler,
     } as const;
-    const productionHandlerTypes = directFactories.map((name) => {
-      const factory = factories[name as keyof typeof factories];
-      if (factory === undefined) {
-        throw new Error(`unhandled production command factory: ${name}`);
-      }
-      return factory(unused).commandType;
-    });
+    const internalOnlyFactories = new Set([
+      "makeBindWorkspaceSandboxPolicyHandler",
+    ]);
+    const productionHandlerTypes = directFactories
+      .filter((name) => !internalOnlyFactories.has(name))
+      .map((name) => {
+        const factory = factories[name as keyof typeof factories];
+        if (factory === undefined) {
+          throw new Error(`unhandled production command factory: ${name}`);
+        }
+        return factory(unused).commandType;
+      });
+    expect(directFactories).toContain("makeBindWorkspaceSandboxPolicyHandler");
+    expect(productionArray).toContain(
+      "makeWorkspaceSandboxAuthorizationHandlers",
+    );
+    productionHandlerTypes.push(
+      ...makeWorkspaceSandboxAuthorizationHandlers({
+        workspaces: unused,
+        executions: unused,
+        authorizations: unused,
+        clock: unused,
+      }).map((handler) => handler.commandType),
+    );
     if (productionArray.includes("...makeP1CommandHandlers(")) {
       productionHandlerTypes.push(
         ...makeP1CommandHandlers(unused).map((handler) => handler.commandType),
@@ -163,8 +188,8 @@ describe("external command codec registry parity", () => {
     }
 
     const registry = makeCommandInputContractRegistry(productionHandlerTypes);
-    expect(registry.commandTypes).toHaveLength(30);
-    expect(new Set(registry.commandTypes).size).toBe(30);
+    expect(registry.commandTypes).toHaveLength(32);
+    expect(new Set(registry.commandTypes).size).toBe(32);
     expect(
       registry.commandTypes
         .filter(
@@ -189,6 +214,7 @@ describe("external command codec registry parity", () => {
     );
     expect(registry.lookup("ReviseDependencyContract")).toBeUndefined();
     expect(registry.lookup("CreateWorktree")).toBeUndefined();
+    expect(registry.lookup("BindWorkspaceSandboxPolicy")).toBeUndefined();
   });
 
   it("fails closed when the handler set has a missing, duplicate, or extra command", () => {
@@ -225,6 +251,7 @@ describe("external command codec registry parity", () => {
         Layer.succeed(AcceptanceRepository, {} as never),
         Layer.succeed(PermissionGrantRepository, {} as never),
         Layer.succeed(SandboxPolicyDecisionStore, {} as never),
+        Layer.succeed(WorkspaceSandboxAuthorizationStore, {} as never),
         Layer.succeed(HumanMessageStore, {} as never),
         Layer.succeed(ConversationResponseJobStore, {} as never),
         Layer.succeed(DependencyRepository, {} as never),
@@ -240,7 +267,11 @@ describe("external command codec registry parity", () => {
           )
         : Layer.mergeAll(...baseServices);
       const registryLayer = Layer.provide(
-        SingleWorkspaceCommandHandlerRegistryLive,
+        makeSingleWorkspaceCommandHandlerRegistryLive(
+          undefined,
+          undefined,
+          {} as DecideSandboxPolicyPreparation,
+        ),
         services,
       );
       const registry = Effect.runSync(
@@ -250,6 +281,9 @@ describe("external command codec registry parity", () => {
           }),
           registryLayer,
         ),
+      );
+      expect(Option.isSome(registry.lookup("BindWorkspaceSandboxPolicy"))).toBe(
+        true,
       );
       return CommandInputContractRegistry.commandTypes.filter((type) =>
         Option.isSome(registry.lookup(type)),
@@ -261,10 +295,10 @@ describe("external command codec registry parity", () => {
     const fullRegistry = makeCommandInputContractRegistry(withApproval);
     const reducedRegistry = makeCommandInputContractRegistry(withoutApproval);
 
-    expect(withApproval).toHaveLength(30);
-    expect(fullRegistry.commandTypes).toHaveLength(30);
-    expect(withoutApproval).toHaveLength(29);
-    expect(reducedRegistry.commandTypes).toHaveLength(29);
+    expect(withApproval).toHaveLength(32);
+    expect(fullRegistry.commandTypes).toHaveLength(32);
+    expect(withoutApproval).toHaveLength(31);
+    expect(reducedRegistry.commandTypes).toHaveLength(31);
     expect(reducedRegistry.lookup("ResolveControlApproval")).toBeUndefined();
     expect(withApproval.toSorted()).toEqual(
       CommandInputContractRegistry.commandTypes.toSorted(),

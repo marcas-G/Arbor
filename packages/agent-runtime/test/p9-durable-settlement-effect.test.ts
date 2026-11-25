@@ -5,8 +5,10 @@ import { executeAgentLoopActions } from "../src/agent-loop-actions.js";
 import { fixtureExecutionProviderTurnId } from "./fixtures/provider-turn.js";
 
 const executionId = "exe_00000000-0000-7000-8000-000000000006";
+const projectId = "prj_00000000-0000-7000-8000-000000000006";
 const sessionId = "ses_p9_control_settlement";
 const workspaceId = "ws_p9_control_settlement";
+const workId = "wrk_00000000-0000-7000-8000-000000000006";
 const providerTurnId = fixtureExecutionProviderTurnId(executionId);
 const callRef = "call_p9_control_settlement";
 
@@ -142,8 +144,21 @@ describe("P9 direct Control settlement effect commit", () => {
         input: {
           execution: {
             executionId,
+            projectId,
             sessionId,
             workspaceId,
+            binding: {
+              _tag: "WorkspaceExecution",
+              workspaceId,
+              episode: {
+                _tag: "WorkEpisode",
+                workId,
+                targetWorkRevision: 0,
+              },
+            },
+            admittedAt: "2026-10-17T00:00:00.000Z",
+            stopRequestedAt: null,
+            state: { status: "Active", settlement: null },
           } as never,
           context: {} as never,
         },

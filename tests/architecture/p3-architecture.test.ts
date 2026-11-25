@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, posix } from "node:path";
+import { parse } from "@babel/parser";
 import { describe, expect, it } from "vitest";
 import { checkEdges, type PackageManifest } from "./package-dag.js";
 
@@ -52,7 +53,12 @@ describe("P3 package DAG", () => {
       join(repoRoot, "packages/model-context/src/projector.ts"),
       "utf8",
     );
-    expect(decisionTurn).toContain("projectSessionTimeline");
+    const sessionContext = readFileSync(
+      join(repoRoot, "packages/agent-runtime/src/decision/context/session.ts"),
+      "utf8",
+    );
+    expect(decisionTurn).toContain("loadDecisionSessionContext(");
+    expect(sessionContext).toContain("projectSessionTimeline(");
     expect(decisionTurn).toContain("listRecentEntries");
     expect(decisionTurn).toContain("SESSION_TIMELINE_ENTRY_LIMIT");
     expect(
@@ -63,10 +69,24 @@ describe("P3 package DAG", () => {
     expect(
       existsSync(join(repoRoot, "packages/agent-runtime/src/inbox-context.ts")),
     ).toBe(false);
-    expect(decisionTurn).not.toContain("listUnconsumed");
-    expect(decisionTurn).not.toContain("assembleInboxContext");
-    expect(decisionTurn).not.toContain("PortableLegacyMessage");
-    expect(decisionTurn).toContain("projectConversationCheckpointHistory");
+    for (const source of [decisionTurn, sessionContext]) {
+      expect(source).not.toContain("listUnconsumed");
+      expect(source).not.toContain("assembleInboxContext");
+      expect(source).not.toContain("PortableLegacyMessage");
+    }
+    const conversationContext = readFileSync(
+      join(
+        repoRoot,
+        "packages/agent-runtime/src/decision/conversation-context.ts",
+      ),
+      "utf8",
+    );
+    expect(decisionTurn).toContain("loadConversationDecisionContext(");
+    expect(conversationContext).toContain(
+      "projectConversationCheckpointHistory",
+    );
+    expect(decisionTurn).toContain('conversationContext._tag === "Restart"');
+    expect(decisionTurn).toContain('conversationContext._tag === "Complete"');
     expect(decisionTurn).toContain("inputItems");
     expect(projector).toContain('case "ToolCall"');
     expect(projector).toContain('case "ToolResult"');
@@ -134,12 +154,259 @@ describe("P3 package DAG", () => {
     expect(errors).toContain("ExecutionDriverInvariantFailure");
     expect(errors).not.toContain('readonly _tag: "ExecutionDriverError"');
     expect(translation).toContain('tag === "LeaseFencingRejected"');
-    expect(decision).toContain("providerFailureSettlement");
-    expect(decision).toContain('reason: "ContextUnsatisfiable"');
+    const invocation = readFileSync(
+      join(
+        repoRoot,
+        "packages/agent-runtime/src/decision/provider/invocation.ts",
+      ),
+      "utf8",
+    );
+    const turn = readFileSync(
+      join(repoRoot, "packages/agent-runtime/src/decision/preparation/turn.ts"),
+      "utf8",
+    );
+    expect(decision).toContain("invokePreparedProviderTurn(");
+    expect(decision).toContain("prepareTurnForDecision(");
+    expect(invocation).toContain("providerFailureSettlement");
+    expect(turn).toContain('reason: "ContextUnsatisfiable"');
     expect(preparation).not.toContain("Effect.catchIf");
   });
 
   it("allows the provider-fake adapter only domain/ports", () => {
     expect([...depsOf("provider-fake")].sort()).toEqual(["domain", "ports"]);
+  });
+});
+
+describe("Agent Runtime internal directory ownership", () => {
+  const src = "packages/agent-runtime/src";
+  const compatibility = new Set([
+    "submitted-decision-replay",
+    "native-checkpoint-evidence",
+    "conversation-checkpoint-binding",
+    "conversation-checkpoint-compaction",
+    "conversation-checkpoint-evidence",
+    "conversation-checkpoint-projection",
+  ]);
+  const driverModules = new Set([
+    "index",
+    "model-decision",
+    "agent-loop-driver",
+    "agent-loop-actions",
+  ]);
+  const moduleIdentity = (path: string) => path.replace(/\.(?:js|ts)$/u, "");
+
+  const forbiddenEdge = (from: string, specifier: string) => {
+    if (!specifier.startsWith(".")) return false;
+    const target = moduleIdentity(
+      posix.normalize(posix.join(posix.dirname(from), specifier)),
+    );
+    return (
+      compatibility.has(target) ||
+      driverModules.has(target) ||
+      (from.startsWith("checkpoint/") && target.startsWith("decision/")) ||
+      ((from.startsWith("checkpoint/") || from.startsWith("decision/")) &&
+        target.startsWith("agent-loop-actions/")) ||
+      (from.startsWith("agent-loop-actions/") &&
+        (target.startsWith("checkpoint/") || target.startsWith("decision/")))
+    );
+  };
+
+  it("keeps decision phases and checkpoint implementation below the drivers", () => {
+    expect(
+      forbiddenEdge("decision/startup-recovery.ts", "../model-decision.js"),
+    ).toBe(true);
+    expect(
+      forbiddenEdge(
+        "checkpoint/conversation/evidence.ts",
+        "../../decision/contract.js",
+      ),
+    ).toBe(true);
+    expect(
+      forbiddenEdge(
+        "decision/conversation-context.ts",
+        "../checkpoint/conversation/evidence.js",
+      ),
+    ).toBe(false);
+    expect(
+      forbiddenEdge(
+        "decision/startup-recovery.ts",
+        "../native-checkpoint-evidence.js",
+      ),
+    ).toBe(true);
+
+    expect(
+      forbiddenEdge("agent-loop-actions/ledger.ts", "../agent-loop-actions.js"),
+    ).toBe(true);
+    expect(forbiddenEdge("agent-loop-actions/ledger.ts", "./types.js")).toBe(
+      false,
+    );
+    expect(
+      forbiddenEdge(
+        "agent-loop-actions/executable.ts",
+        "../decision/contract.js",
+      ),
+    ).toBe(true);
+    expect(
+      forbiddenEdge(
+        "decision/startup-recovery.ts",
+        "../agent-loop-actions/ledger.js",
+      ),
+    ).toBe(true);
+
+    const violations: string[] = [];
+    for (const directory of ["decision", "checkpoint", "agent-loop-actions"]) {
+      const entries = readdirSync(join(repoRoot, src, directory), {
+        recursive: true,
+        encoding: "utf8",
+      });
+      for (const entry of entries.filter((name) => name.endsWith(".ts"))) {
+        const path = `${directory}/${entry.replaceAll("\\", "/")}`;
+        const ast = parse(readFileSync(join(repoRoot, src, path), "utf8"), {
+          sourceType: "module",
+          plugins: ["typescript"],
+        });
+        for (const statement of ast.program.body) {
+          if (
+            statement.type !== "ImportDeclaration" &&
+            statement.type !== "ExportNamedDeclaration" &&
+            statement.type !== "ExportAllDeclaration"
+          )
+            continue;
+          const specifier = statement.source?.value;
+          if (specifier !== undefined && forbiddenEdge(path, specifier)) {
+            violations.push(`${path}: ${specifier}`);
+          }
+        }
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+
+  it("keeps startup recovery and prepared settlement as explicit decision phases", () => {
+    const driver = readFileSync(
+      join(repoRoot, src, "model-decision.ts"),
+      "utf8",
+    );
+    const startup = readFileSync(
+      join(repoRoot, src, "decision/startup-recovery.ts"),
+      "utf8",
+    );
+    const settlement = readFileSync(
+      join(repoRoot, src, "decision/settlement.ts"),
+      "utf8",
+    );
+    expect(driver).toContain("recoverStartupDecision(dependencies,");
+    expect(driver).toContain("turn = startupRecovery.cursor.turn;");
+    expect(driver).toContain(
+      "repairAttempt = startupRecovery.cursor.repairAttempt;",
+    );
+    expect(startup).toContain("findNativeCompactionsBySessionEpoch");
+    expect(driver).toContain("proposePreparedStepSettlement(dependencies,");
+    expect(settlement).toContain("loopSteps.transition");
+    expect(settlement).toContain("providerTurns.failTurn");
+    expect(settlement).toContain("AH4BeforeSettlementProposal");
+    expect(settlement).toContain("AH4AfterSettlementProposal");
+  });
+});
+
+describe("durable step recovery responsibility", () => {
+  it("delegates overflow recovery to the exact conversation or Session owner", () => {
+    const src = "packages/agent-runtime/src/decision";
+    const driver = readFileSync(
+      join(repoRoot, src, "step-recovery.ts"),
+      "utf8",
+    );
+    const conversation = readFileSync(
+      join(repoRoot, src, "recovery/conversation-overflow.ts"),
+      "utf8",
+    );
+    const work = readFileSync(
+      join(repoRoot, src, "recovery/work-overflow.ts"),
+      "utf8",
+    );
+    const summary = readFileSync(
+      join(repoRoot, src, "recovery/settled-summary-overflow.ts"),
+      "utf8",
+    );
+    expect(driver).toContain("recoverConversationOverflow(");
+    expect(driver).toContain("recoverWorkOverflow(");
+    expect(conversation).toContain("conversationCheckpoints.findOwner(");
+    expect(work).toContain("recoverSettledSummaryOverflow(");
+    expect(summary).toContain("commitRecoveredSummaryCompaction(");
+    for (const source of [driver, conversation, work, summary]) {
+      const lines = source.split(/\r\n|\n|\r/u);
+      const physicalLines = lines.length - (lines.at(-1) === "" ? 1 : 0);
+      expect(physicalLines).toBeLessThanOrEqual(800);
+    }
+  });
+});
+
+describe("decision context and native rebase ownership", () => {
+  const src = "packages/agent-runtime/src";
+  const read = (path: string) =>
+    readFileSync(join(repoRoot, src, path), "utf8");
+
+  it("keeps context construction and native checkpoint recovery behind phases", () => {
+    const driver = read("model-decision.ts");
+    const session = read("decision/context/session.ts");
+    const workspace = read("decision/context/workspace.ts");
+    const recovery = read("decision/recovery/native-rebase.ts");
+    const producer = read("decision/recovery/native-checkpoint-source.ts");
+    const frontier = read("decision/recovery/native-portable-frontier.ts");
+    const committed = read("decision/recovery/committed-rebase-step.ts");
+    const workPlan = read("decision/recovery/work-plan-rebase.ts");
+    expect(driver).toContain("loadDecisionSessionContext(");
+    expect(driver).toContain("loadDecisionWorkspaceContext(");
+    expect(driver).toContain("recoverNativeCheckpointContext(");
+    expect(driver).toContain("rebaseWorkPlanCheckpoint(");
+    expect(driver).toContain('nativeRecovery._tag === "Restart"');
+    expect(driver).toContain('nativeRecovery._tag === "Complete"');
+    expect(session).toContain("makeAgentStepContext(");
+    expect(workspace).toContain("localPlans.findByWork(");
+    expect(recovery).toContain("validateNativeCheckpointSource(");
+    expect(recovery).toContain("reconstructNativePortableFrontier(");
+    expect(recovery).toContain("recoverCommittedRebaseStep(");
+    expect(producer).toContain("checkpointSourceStep");
+    expect(frontier).toContain("postCheckpointProjection");
+    expect(committed).toContain("loopSteps.transition(");
+    expect(workPlan).toContain("runSummaryCompaction(");
+  });
+});
+
+describe("prepared Provider lifecycle ownership", () => {
+  const src = "packages/agent-runtime/src";
+  const read = (path: string) =>
+    readFileSync(join(repoRoot, src, path), "utf8");
+
+  it("prepares and replays before admitting inference", () => {
+    const driver = read("model-decision.ts");
+    const preparation = read("decision/preparation/turn.ts");
+    const instructions = read("decision/preparation/instructions.ts");
+    const resume = read("decision/recovery/resume-overflow-compaction.ts");
+    const replay = read("decision/provider/replay.ts");
+    const invocation = read("decision/provider/invocation.ts");
+    const result = read("decision/provider/result.ts");
+    const prepareAt = driver.indexOf("yield* prepareTurnForDecision(");
+    const replayAt = driver.indexOf("yield* replayPreparedProviderTurn(");
+    const invokeAt = driver.indexOf("yield* invokePreparedProviderTurn(");
+    expect(prepareAt).toBeGreaterThanOrEqual(0);
+    expect(replayAt).toBeGreaterThan(prepareAt);
+    expect(invokeAt).toBeGreaterThan(replayAt);
+    expect(driver).not.toContain("providerRuntime.runTurn(");
+    expect(preparation).toContain("assembleDecisionInstructions(");
+    expect(preparation).toContain("resumePinnedOverflowCompaction(");
+    expect(preparation).toContain("modelContext.prepareTurn(");
+    expect(instructions).toContain("isPinnedSubmittedDecisionReplay(");
+    expect(resume).toContain("loopSteps.ensureProviderTurnLink(");
+    expect(replay).toContain("providerTurns.findSettledResult(");
+    expect(replay).toContain("adoptSettledSuccessEvidence(");
+    expect(replay).not.toContain("providerRuntime.runTurn(");
+    expect(invocation).toContain("admitProviderTurn(");
+    expect(invocation).toContain("providerRuntime.runTurn(");
+    expect(invocation).toContain("processSuccessfulProviderResult(");
+    expect(result).toContain("completeProviderTurn(");
+    expect(result).toContain("decideRepair(");
+    expect(result).toContain("loopSteps.ensureSuccessor(");
+    expect(result).not.toContain("providerRuntime.runTurn(");
   });
 });

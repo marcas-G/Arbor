@@ -9,13 +9,10 @@ import { executionEpisode } from "@arbor/domain";
 import {
   ModelContext,
   makeTurnProfileResolver,
-  projectSessionTimeline,
-  SESSION_TIMELINE_ENTRY_LIMIT,
   type TurnProfileResolverService,
 } from "@arbor/model-context";
 import {
   type AgentLoopStepFence,
-  type AgentLoopStepRecord,
   AgentLoopStepStore,
   BlobStorePort,
   Clock,
@@ -36,6 +33,7 @@ import {
   P39RecoveryEvidenceStore,
   type PortableOperationKind,
   ProjectRepository,
+  type ProviderCancellationSignal,
   type ProviderExecutionPolicyOverrides,
   ProviderRuntime,
   ProviderTurnStore,
@@ -44,7 +42,6 @@ import {
   type RuntimeSafetyObservation,
   type SecretRef,
   SessionRepository,
-  sha256Hex,
   ToolInvocationStore,
   TransactionPort,
   WorkRepository,
@@ -53,17 +50,11 @@ import {
   WorkspaceRepository,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
+import type { ReconciliationEscalationRecorderError } from "./agent-loop-actions/types.js";
 import { executeAgentLoopActions } from "./agent-loop-actions.js";
+import { recoverAgentLoopFrontier } from "./agent-loop-driver/recovery.js";
 import { MAX_TURNS, type ModelDecisionOutcome } from "./agent-loop-policy.js";
 import { completeAgentLoopStep } from "./agent-loop-step-completion.js";
-import {
-  decodeExhaustedRepairDisposition,
-  isP20OverflowReplacementManifestBound,
-  p20OverflowReplacementManifestBindingFailures,
-  resolveP20OverflowReplacementChain,
-  retryDispositionMatchesSuccessor,
-  submittedDecisionManifestMismatchOutcome,
-} from "./agent-loop-step-recovery.js";
 import {
   type ControlToolRegistryService,
   type ExecutableInvocationHandler,
@@ -72,182 +63,24 @@ import {
 import type { ControlActionAuthorizerService } from "./control-authorization.js";
 import { makeControlBasisResolver } from "./control-basis-resolver.js";
 import { toExecutionDriverError } from "./execution-driver-failure.js";
-import {
-  classifySubmittedDecisionBindingFailure,
-  runModelDecision,
-} from "./model-decision.js";
+import { runModelDecision } from "./model-decision.js";
 import { recordAcceptedModelOutput } from "./model-output-journal.js";
 import { providerTurnSafetyFingerprint } from "./p12-safety-identity.js";
 import type { AgentLoopQualificationProbe } from "./qualification-probe.js";
 import { selectPendingInputPromotions } from "./safe-input-drain.js";
 import { settlementProposal } from "./settlement-proposal.js";
 
-export interface AgentLoopStepCursor {
-  readonly logicalStepNo: number;
-  readonly repairAttempt: number;
-}
-
-const sameStepIdentity = (
-  left: AgentLoopStepRecord["identity"],
-  right: AgentLoopStepRecord["identity"],
-): boolean =>
-  left.executionId === right.executionId &&
-  left.logicalStepNo === right.logicalStepNo &&
-  left.repairAttempt === right.repairAttempt;
-
-const compareStepIdentity = (
-  left: AgentLoopStepRecord,
-  right: AgentLoopStepRecord,
-): number =>
-  left.identity.logicalStepNo - right.identity.logicalStepNo ||
-  left.identity.repairAttempt - right.identity.repairAttempt;
-
-/** Validate the entire durable predecessor/successor chain before choosing its
- * only resumable frontier. A valid history has one exact root, consecutive
- * repairs/steps, and every earlier row durably closed into the next row. */
-export const selectInitialAgentLoopStepCursor = (
-  steps: ReadonlyArray<AgentLoopStepRecord>,
-): AgentLoopStepCursor | undefined => {
-  if (steps.length === 0) return { logicalStepNo: 0, repairAttempt: 0 };
-
-  const ordered = [...steps].sort(compareStepIdentity);
-  const root = ordered[0];
-  if (
-    root === undefined ||
-    root.identity.logicalStepNo !== 0 ||
-    root.identity.repairAttempt !== 0 ||
-    root.predecessor !== undefined
-  ) {
-    return undefined;
-  }
-
-  const identities = new Set<string>();
-  for (let index = 0; index < ordered.length; index += 1) {
-    const current = ordered[index];
-    if (
-      current === undefined ||
-      current.identity.executionId !== root.identity.executionId ||
-      !Number.isSafeInteger(current.identity.logicalStepNo) ||
-      current.identity.logicalStepNo < 0 ||
-      !Number.isSafeInteger(current.identity.repairAttempt) ||
-      current.identity.repairAttempt < 0 ||
-      current.providerTurnId.length === 0
-    ) {
-      return undefined;
-    }
-    const key = `${current.identity.executionId}:${current.identity.logicalStepNo}:${current.identity.repairAttempt}`;
-    if (identities.has(key)) return undefined;
-    identities.add(key);
-
-    if (index === 0) continue;
-    const previous = ordered[index - 1];
-    if (
-      previous === undefined ||
-      current.predecessor === undefined ||
-      !sameStepIdentity(current.predecessor, previous.identity) ||
-      previous.successor === undefined ||
-      !sameStepIdentity(previous.successor, current.identity) ||
-      previous.successor.providerTurnId !== current.providerTurnId
-    ) {
-      return undefined;
-    }
-    const isRepairSuccessor =
-      current.identity.logicalStepNo === previous.identity.logicalStepNo &&
-      current.identity.repairAttempt === previous.identity.repairAttempt + 1;
-    const isNextStepSuccessor =
-      current.identity.logicalStepNo === previous.identity.logicalStepNo + 1 &&
-      current.identity.repairAttempt === 0;
-    if (
-      (previous.state === "OutputRejected" && !isRepairSuccessor) ||
-      (previous.state === "NextStepReady" && !isNextStepSuccessor) ||
-      (previous.state !== "OutputRejected" &&
-        previous.state !== "NextStepReady")
-    ) {
-      return undefined;
-    }
-    if (
-      previous.state === "OutputRejected" &&
-      !retryDispositionMatchesSuccessor(previous, current)
-    ) {
-      return undefined;
-    }
-  }
-
-  const current = ordered.at(-1);
-  if (
-    current === undefined ||
-    current.successor !== undefined ||
-    current.state === "NextStepReady" ||
-    (current.state === "OutputRejected" &&
-      decodeExhaustedRepairDisposition(current.repairDisposition) === undefined)
-  ) {
-    return undefined;
-  }
-  return {
-    logicalStepNo: current.identity.logicalStepNo,
-    repairAttempt: current.identity.repairAttempt,
-  };
-};
-
-/** A Prepared row is still bound to the ProviderTurn manifest allocated for
- * that exact Execution/session/cursor; recovery must not trust the row state
- * to skip this binding check. */
-export const isAgentLoopStepManifestBound = (
-  step: AgentLoopStepRecord,
-  executionId: Execution["executionId"],
-  sessionId: Execution["sessionId"],
-  persistedManifest: {
-    readonly manifestId: string;
-    readonly manifestJson: string;
-  } | null,
-): boolean => {
-  if (persistedManifest === null || step.providerTurnId.length === 0) {
-    return false;
-  }
-  let manifest: Record<string, unknown>;
-  try {
-    const parsed: unknown = JSON.parse(persistedManifest.manifestJson);
-    if (
-      typeof parsed !== "object" ||
-      parsed === null ||
-      Array.isArray(parsed)
-    ) {
-      return false;
-    }
-    manifest = parsed as Record<string, unknown>;
-  } catch {
-    return false;
-  }
-  return (
-    manifest.providerTurnId === step.providerTurnId &&
-    manifest.executionId === executionId &&
-    manifest.sessionId === sessionId &&
-    manifest.logicalStepNo === step.identity.logicalStepNo &&
-    manifest.repairAttempt === step.identity.repairAttempt &&
-    (step.manifestId === undefined ||
-      step.manifestId === persistedManifest.manifestId)
-  );
-};
-
-/** A durable Prepared step is created before model-context preparation. In
- * particular, Native compaction can be the first ProviderTurn operation for
- * that step, so a crash before its owner/session commit may leave only the
- * Native manifest while the ordinary inference turn has not been manifested
- * yet. Defer the inference-manifest check only for that exact pre-provider
- * state; model-decision recovery validates any Native source manifest before
- * it resumes, and ProviderRuntime binds the eventual inference request. */
-export const isPreparedStepAwaitingInitialManifest = (
-  step: AgentLoopStepRecord,
-  persistedManifest: {
-    readonly manifestId: string;
-    readonly manifestJson: string;
-  } | null,
-): boolean =>
-  step.state === "Prepared" &&
-  step.manifestId === undefined &&
-  persistedManifest === null;
+export {
+  type AgentLoopStepCursor,
+  isAgentLoopStepManifestBound,
+  isPreparedStepAwaitingInitialManifest,
+  selectInitialAgentLoopStepCursor,
+} from "./agent-loop-driver/cursor.js";
 
 export interface AgentLoopDriverOptions {
+  /** Durable StopExecution is relayed to the active Provider transport through
+   * the standard AbortSignal contract. */
+  readonly cancellationSignal?: ProviderCancellationSignal;
   /** P12 `03` §3: the credential reference the driver binds to a ProviderTurn.
    * Comes from Composition-Root config; the driver never hardcodes a raw ref.
    * The raw credential is resolved by ProviderRuntime at the execution
@@ -268,7 +101,7 @@ export interface AgentLoopDriverOptions {
     readonly fence: AgentLoopStepFence;
     readonly principal: import("@arbor/domain").Principal;
     readonly invocationRefs: ReadonlyArray<string>;
-  }) => Effect.Effect<void, unknown>;
+  }) => Effect.Effect<void, ReconciliationEscalationRecorderError>;
   /** Adapter identity recorded on manifests (P14 conversation audit). */
   readonly providerRef?: string;
   /** Exact protocol family used to bind P16 reasoning attachments. */
@@ -300,6 +133,20 @@ export const AgentLoopDriverLive = (
   | ProjectRepository
   | WorkRepository
   | WorkspaceRepository
+  | InboxProjectionStore
+  | InputPromotionService
+  | ConversationCheckpointStore
+  | BlobStorePort
+  | ConversationResponseJobStore
+  | ConversationAttemptStore
+  | ExecutionRepository
+  | RecoveryAttentionFactStore
+  | WorkspaceKnowledgePort
+  | WorkspacePlacementPort
+  | LocalPlanStore
+  | DecisionRequestStore
+  | ToolInvocationStore
+  | P39RecoveryEvidenceStore
   | Clock
 > =>
   Layer.effect(
@@ -310,30 +157,31 @@ export const AgentLoopDriverLive = (
       const capabilityPort = yield* ModelCapabilityPort;
       const sessions = yield* SessionRepository;
       const humanMessages = yield* HumanMessageStore;
-      const conversationCheckpointOption = yield* Effect.serviceOption(
-        ConversationCheckpointStore,
-      );
-      const blobStoreOption = yield* Effect.serviceOption(BlobStorePort);
-      const responseJobsOption = yield* Effect.serviceOption(
-        ConversationResponseJobStore,
-      );
-      const responseAttemptsOption = yield* Effect.serviceOption(
-        ConversationAttemptStore,
-      );
-      const executionRepositoryOption =
-        yield* Effect.serviceOption(ExecutionRepository);
-      const inboxOption = yield* Effect.serviceOption(InboxProjectionStore);
-      const inputPromotionOption = yield* Effect.serviceOption(
-        InputPromotionService,
-      );
+      // E06 normalization (object 1, batch two): every service the
+      // production composition always provides becomes a typed Layer
+      // requirement. Only AgentLoopStepStore/ProviderTurnStore keep their
+      // optionality — their absence carries schema-migration gating that
+      // must stay fail-closed rather than become a type-level demand.
+      const conversationCheckpointStore = yield* ConversationCheckpointStore;
+      const blobStore = yield* BlobStorePort;
+      const responseJobs = yield* ConversationResponseJobStore;
+      const responseAttempts = yield* ConversationAttemptStore;
+      const executions = yield* ExecutionRepository;
+      // E06 normalization (architecture-evolution object 1, first seam):
+      // inbox draining is production-required — the composition root
+      // always provides both services — and a missing pair previously
+      // silently disabled workspace input promotion. They are now typed
+      // requirements of the driver Layer.
+      const inbox = yield* InboxProjectionStore;
+      const inputPromotion = yield* InputPromotionService;
       const tx = yield* TransactionPort;
+      const invocationStore = yield* ToolInvocationStore;
+      const p39Recovery = yield* P39RecoveryEvidenceStore;
       const loopStepStoreOption =
         yield* Effect.serviceOption(AgentLoopStepStore);
       const providerTurnStoreOption =
         yield* Effect.serviceOption(ProviderTurnStore);
-      const recoveryAttentionFactStoreOption = yield* Effect.serviceOption(
-        RecoveryAttentionFactStore,
-      );
+      const recoveryAttentionFacts = yield* RecoveryAttentionFactStore;
       const configuredLoopSteps = Option.isSome(loopStepStoreOption)
         ? loopStepStoreOption.value
         : undefined;
@@ -344,15 +192,40 @@ export const AgentLoopDriverLive = (
       const projects = yield* ProjectRepository;
       const workspaces = yield* WorkspaceRepository;
       const works = yield* WorkRepository;
-      const workspaceKnowledgeOption = yield* Effect.serviceOption(
-        WorkspaceKnowledgePort,
-      );
-      const workspacePlacementOption = yield* Effect.serviceOption(
-        WorkspacePlacementPort,
-      );
-      const localPlansOption = yield* Effect.serviceOption(LocalPlanStore);
-      const decisionRequestsOption =
-        yield* Effect.serviceOption(DecisionRequestStore);
+      const _workspaceKnowledge = yield* WorkspaceKnowledgePort;
+      const _workspacePlacement = yield* WorkspacePlacementPort;
+      const localPlans = yield* LocalPlanStore;
+      // E05 sink: decision submodules declare these capabilities in their R
+      // channel; the port contract keeps drive at R = never, so the driver
+      // provides them here at the boundary.
+      const provideDecisionCapabilities = <A, E>(
+        effect: Effect.Effect<
+          A,
+          E,
+          | LocalPlanStore
+          | WorkspaceKnowledgePort
+          | WorkspacePlacementPort
+          | RecoveryAttentionFactStore
+          | HumanMessageStore
+          | ConversationResponseJobStore
+          | ConversationAttemptStore
+          | ExecutionRepository
+        >,
+      ): Effect.Effect<A, E> =>
+        effect.pipe(
+          Effect.provideService(WorkspaceKnowledgePort, _workspaceKnowledge),
+          Effect.provideService(WorkspacePlacementPort, _workspacePlacement),
+          Effect.provideService(LocalPlanStore, localPlans),
+          Effect.provideService(
+            RecoveryAttentionFactStore,
+            recoveryAttentionFacts,
+          ),
+          Effect.provideService(HumanMessageStore, humanMessages),
+          Effect.provideService(ConversationResponseJobStore, responseJobs),
+          Effect.provideService(ConversationAttemptStore, responseAttempts),
+          Effect.provideService(ExecutionRepository, executions),
+        );
+      const decisionRequests = yield* DecisionRequestStore;
       const clock = yield* Clock;
       const controlRegistry =
         options.controlRegistry ?? makeControlToolRegistry();
@@ -374,6 +247,7 @@ export const AgentLoopDriverLive = (
         readonly wakeReason: WakeReason;
         readonly context: import("@arbor/domain").CommandSubmissionContext;
         readonly safetyGate: RuntimeSafetyGateService;
+        readonly cancellationSignal?: ProviderCancellationSignal;
       }): Effect.Effect<ExecutionDriveOutcome, ExecutionDriverError> =>
         Effect.gen(function* () {
           const commitSettlementProposal = (
@@ -398,531 +272,25 @@ export const AgentLoopDriverLive = (
               .pipe(Effect.mapError(failure)))
               ? configuredLoopSteps
               : undefined;
-          const invocationStoreOption =
-            yield* Effect.serviceOption(ToolInvocationStore);
-          const p39RecoveryOption = yield* Effect.serviceOption(
-            P39RecoveryEvidenceStore,
+          const frontier = yield* recoverAgentLoopFrontier(
+            input,
+            loopSteps,
+            providerTurns,
+            invocationStore,
+            p39Recovery,
+            conversationCheckpointStore,
+            decisionRequests,
+            sessions,
+            tx,
+            failure,
+            options,
           );
-          // Resume from the latest durable P9 cursor, not turn zero. Without
-          // this, a restart after a completed earlier step can re-open its
-          // old executable output and repair later unresolved ToolCalls as
-          // interrupted, even though a successor step is already persisted.
-          let firstLogicalStepNo = 0;
-          let firstRepairAttempt = 0;
-          let exactNotAdmittedRecovery:
-            | {
-                readonly executionId: Execution["executionId"];
-                readonly logicalStepNo: number;
-                readonly repairAttempt: number;
-                readonly providerTurnId: string;
-                readonly logicalActionId: string;
-                readonly actionIndex: number;
-                readonly callRef: string;
-              }
-            | undefined;
-          if (loopSteps !== undefined) {
-            const persistedSteps = yield* tx
-              .transact(loopSteps.listByExecution(input.execution.executionId))
-              .pipe(Effect.mapError(failure));
-            const cursor = selectInitialAgentLoopStepCursor(persistedSteps);
-            if (cursor === undefined) {
-              return yield* Effect.fail(
-                failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-              );
-            }
-            firstLogicalStepNo = cursor.logicalStepNo;
-            firstRepairAttempt = cursor.repairAttempt;
-            if (
-              Option.isSome(invocationStoreOption) &&
-              Option.isSome(p39RecoveryOption)
-            ) {
-              const unsettled = yield* tx
-                .transact(
-                  invocationStoreOption.value.findUnsettled(
-                    input.execution.executionId,
-                  ),
-                )
-                .pipe(Effect.mapError(failure));
-              const candidates: (typeof exactNotAdmittedRecovery)[] = [];
-              for (const invocation of unsettled) {
-                if (
-                  invocation.effectAdmissionState !== "NotAdmitted" ||
-                  invocation.settledAt !== null ||
-                  invocation.settlement !== null
-                ) {
-                  continue;
-                }
-                const bindingOption = yield* tx
-                  .transact(
-                    p39RecoveryOption.value.findBinding(
-                      invocation.invocationId,
-                    ),
-                  )
-                  .pipe(Effect.mapError(failure));
-                if (Option.isNone(bindingOption)) {
-                  continue;
-                }
-                const binding = bindingOption.value.value;
-                const source = persistedSteps.find(
-                  (step) =>
-                    step.identity.logicalStepNo === binding.logicalStepNo &&
-                    step.identity.repairAttempt === binding.repairAttempt &&
-                    step.providerTurnId === binding.providerTurnId,
-                );
-                if (
-                  binding.executionId !== input.execution.executionId ||
-                  binding.invocationId !== invocation.invocationId ||
-                  source === undefined ||
-                  (source.state !== "NextStepReady" &&
-                    source.state !== "ActionsInProgress") ||
-                  (source.state === "NextStepReady" &&
-                    source.successor === undefined)
-                ) {
-                  continue;
-                }
-                const actions = yield* tx
-                  .transact(loopSteps.listActions(source.identity))
-                  .pipe(Effect.mapError(failure));
-                const action = actions.find(
-                  (candidate) =>
-                    candidate.actionIndex === binding.actionIndex &&
-                    candidate.logicalActionId === binding.logicalActionId &&
-                    candidate.callRef === binding.callRef,
-                );
-                if (
-                  (action?.state !== "Applied" &&
-                    action?.state !== "Pending") ||
-                  action.routeKind !== "Executable" ||
-                  action.actionKind !== binding.toolName
-                ) {
-                  continue;
-                }
-                candidates.push({
-                  executionId: input.execution.executionId,
-                  logicalStepNo: binding.logicalStepNo,
-                  repairAttempt: binding.repairAttempt,
-                  providerTurnId: binding.providerTurnId,
-                  logicalActionId: binding.logicalActionId,
-                  actionIndex: binding.actionIndex,
-                  callRef: binding.callRef,
-                });
-              }
-              if (candidates.length > 1) {
-                return { _tag: "RecoveryBlocked" } as const;
-              }
-              exactNotAdmittedRecovery = candidates[0];
-              if (exactNotAdmittedRecovery !== undefined) {
-                firstLogicalStepNo = exactNotAdmittedRecovery.logicalStepNo;
-                firstRepairAttempt = exactNotAdmittedRecovery.repairAttempt;
-              }
-            }
-            if (persistedSteps.length > 0) {
-              const current = persistedSteps.find(
-                (step) =>
-                  step.identity.logicalStepNo === cursor.logicalStepNo &&
-                  step.identity.repairAttempt === cursor.repairAttempt,
-              );
-              if (
-                current === undefined ||
-                current.identity.executionId !== input.execution.executionId
-              ) {
-                return yield* Effect.fail(
-                  failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-                );
-              }
-              if (providerTurns === undefined) {
-                return yield* Effect.fail(
-                  failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-                );
-              }
-              const priorManifest = yield* tx
-                .transact(
-                  providerTurns.findManifestByTurn(current.providerTurnId),
-                )
-                .pipe(Effect.mapError(failure));
-              let manifestBound = isAgentLoopStepManifestBound(
-                current,
-                input.execution.executionId,
-                input.execution.sessionId,
-                priorManifest,
-              );
-              let p20ReplacementGateStage = "primary-manifest-bound";
-              if (
-                !manifestBound &&
-                current.manifestId !== undefined &&
-                priorManifest?.manifestId !== current.manifestId
-              ) {
-                const providerLinks = yield* tx
-                  .transact(loopSteps.listProviderTurnLinks(current.identity))
-                  .pipe(Effect.mapError(failure));
-                const chain = resolveP20OverflowReplacementChain(
-                  providerLinks,
-                  current.identity,
-                  String(current.providerTurnId),
-                );
-                p20ReplacementGateStage = `chain=${chain !== undefined}`;
-                if (chain !== undefined) {
-                  const [
-                    sourceInferenceReceipt,
-                    replacementManifest,
-                    replacementReceipt,
-                    compactionManifest,
-                    compactionReceipt,
-                  ] = yield* Effect.all(
-                    [
-                      tx.transact(
-                        providerTurns.findSettledResult(
-                          chain.inference.providerTurnId,
-                        ),
-                      ),
-                      tx.transact(
-                        providerTurns.findManifestByTurn(
-                          chain.replacement.providerTurnId,
-                        ),
-                      ),
-                      tx.transact(
-                        providerTurns.findSettledResult(
-                          chain.replacement.providerTurnId,
-                        ),
-                      ),
-                      tx.transact(
-                        providerTurns.findManifestByTurn(
-                          chain.compaction.providerTurnId,
-                        ),
-                      ),
-                      tx.transact(
-                        providerTurns.findSettledResult(
-                          chain.compaction.providerTurnId,
-                        ),
-                      ),
-                    ],
-                    { concurrency: 1 },
-                  ).pipe(Effect.mapError(failure));
-                  const replacementManifestBound =
-                    isP20OverflowReplacementManifestBound({
-                      step: current,
-                      sessionId: String(input.execution.sessionId),
-                      chain,
-                      manifest: replacementManifest,
-                      settled: replacementReceipt,
-                    });
-                  const replacementManifestFailures =
-                    p20OverflowReplacementManifestBindingFailures({
-                      step: current,
-                      sessionId: String(input.execution.sessionId),
-                      chain,
-                      manifest: replacementManifest,
-                      settled: replacementReceipt,
-                    });
-                  p20ReplacementGateStage += `;replacement=${replacementManifestBound}:${replacementManifestFailures.join(",")}`;
-                  const parseManifest = (value: string | null) => {
-                    try {
-                      const parsed: unknown = JSON.parse(value ?? "null");
-                      return typeof parsed === "object" &&
-                        parsed !== null &&
-                        !Array.isArray(parsed)
-                        ? (parsed as Record<string, unknown>)
-                        : undefined;
-                    } catch {
-                      return undefined;
-                    }
-                  };
-                  const nativeManifest = parseManifest(
-                    compactionManifest?.manifestJson ?? null,
-                  );
-                  const nativeSourceStep = parseManifest(
-                    JSON.stringify(
-                      nativeManifest?.sourceAgentLoopStep ?? null,
-                    ) ?? null,
-                  );
-                  const nativeRequest = parseManifest(
-                    compactionManifest?.portableRequestJson ?? null,
-                  );
-                  const nativeSuccess =
-                    sourceInferenceReceipt._tag === "SettledFailure" &&
-                    sourceInferenceReceipt.failureKind ===
-                      "ContextLimitExceeded" &&
-                    sourceInferenceReceipt.turn.providerTurnId ===
-                      chain.inference.providerTurnId &&
-                    sourceInferenceReceipt.turn.executionId ===
-                      input.execution.executionId &&
-                    sourceInferenceReceipt.turn.sessionId ===
-                      input.execution.sessionId &&
-                    sourceInferenceReceipt.turn.contextEpoch ===
-                      chain.inference.contextEpoch &&
-                    compactionManifest !== null &&
-                    compactionReceipt._tag === "SettledSuccess" &&
-                    compactionReceipt.evidenceVersion ===
-                      "provider-success-v1" &&
-                    compactionReceipt.finishReason === "Stop" &&
-                    compactionReceipt.manifestId ===
-                      compactionManifest.manifestId &&
-                    compactionReceipt.manifestJson ===
-                      compactionManifest.manifestJson &&
-                    compactionReceipt.turn.providerTurnId ===
-                      chain.compaction.providerTurnId &&
-                    compactionReceipt.turn.executionId ===
-                      input.execution.executionId &&
-                    compactionReceipt.turn.sessionId ===
-                      input.execution.sessionId &&
-                    compactionReceipt.turn.contextEpoch ===
-                      chain.compaction.contextEpoch &&
-                    compactionReceipt.turn.outputContractRef ===
-                      "provider-native-compaction-v1" &&
-                    nativeManifest !== undefined &&
-                    nativeRequest !== undefined &&
-                    nativeManifest?.providerTurnId ===
-                      chain.compaction.providerTurnId &&
-                    nativeManifest.executionId ===
-                      input.execution.executionId &&
-                    nativeManifest.sessionId === input.execution.sessionId &&
-                    nativeManifest.logicalStepNo ===
-                      current.identity.logicalStepNo &&
-                    nativeManifest.contextEpoch ===
-                      chain.compaction.contextEpoch &&
-                    nativeManifest.operationKind === "CompactionNative" &&
-                    nativeManifest.outputContractRef ===
-                      "provider-native-compaction-v1" &&
-                    typeof nativeManifest.resolvedModelBindingFingerprint ===
-                      "string" &&
-                    nativeManifest.compiledRequestHash ===
-                      sha256Hex(compactionManifest.portableRequestJson) &&
-                    nativeRequest?.operationKind === "CompactionNative" &&
-                    nativeRequest.outputContractRef ===
-                      "provider-native-compaction-v1" &&
-                    nativeRequest.modelRef === nativeManifest.modelRef &&
-                    compactionReceipt.canonicalEvents.filter(
-                      (event) =>
-                        event._tag === "ContinuationState" &&
-                        event.stateRef.length > 0,
-                    ).length === 1;
-                  let checkpointOwnerCurrent = false;
-                  if (
-                    replacementManifestBound &&
-                    nativeSuccess &&
-                    nativeManifest !== undefined &&
-                    compactionReceipt._tag === "SettledSuccess"
-                  ) {
-                    const episode = executionEpisode(input.execution);
-                    const nativeStateRef =
-                      compactionReceipt.canonicalEvents.find(
-                        (event) => event._tag === "ContinuationState",
-                      );
-                    const nativeStateRefValue =
-                      nativeStateRef?._tag === "ContinuationState"
-                        ? nativeStateRef.stateRef
-                        : undefined;
-                    if (
-                      episode?._tag === "ConversationResponseEpisode" &&
-                      Option.isSome(conversationCheckpointOption)
-                    ) {
-                      const ownerOption = yield* tx
-                        .transact(
-                          conversationCheckpointOption.value.findOwner(
-                            input.execution.workspaceId,
-                          ),
-                        )
-                        .pipe(Effect.mapError(failure));
-                      if (Option.isSome(ownerOption)) {
-                        const owner = ownerOption.value;
-                        const ownerSource = parseManifest(
-                          owner.sourceManifestJson,
-                        );
-                        const nested = parseManifest(
-                          JSON.stringify(nativeManifest.conversationCheckpoint),
-                        );
-                        checkpointOwnerCurrent =
-                          owner.contextEpoch ===
-                            chain.replacement.contextEpoch &&
-                          owner.checkpointKind === "ProviderNative" &&
-                          owner.producerExecutionId ===
-                            input.execution.executionId &&
-                          owner.producerProviderTurnId ===
-                            chain.compaction.providerTurnId &&
-                          typeof owner.bindingFingerprint === "string" &&
-                          owner.bindingFingerprint ===
-                            nativeManifest.resolvedModelBindingFingerprint &&
-                          owner.checkpointRef !== null &&
-                          nativeStateRef?._tag === "ContinuationState" &&
-                          owner.checkpointRef === nativeStateRef.stateRef &&
-                          ownerSource !== undefined &&
-                          ownerSource.rootWorkspaceId ===
-                            input.execution.workspaceId &&
-                          ownerSource.fromEpoch ===
-                            chain.compaction.contextEpoch &&
-                          ownerSource.toEpoch === owner.contextEpoch &&
-                          ownerSource.currentMessageId === episode.messageId &&
-                          ownerSource.producerExecutionId ===
-                            input.execution.executionId &&
-                          ownerSource.producerProviderTurnId ===
-                            chain.compaction.providerTurnId &&
-                          nested !== undefined &&
-                          nested.rootWorkspaceId ===
-                            ownerSource.rootWorkspaceId &&
-                          nested.fromEpoch === ownerSource.fromEpoch &&
-                          nested.toEpoch === ownerSource.toEpoch &&
-                          nested.currentMessageId ===
-                            ownerSource.currentMessageId &&
-                          JSON.stringify(nested.coveredSources) ===
-                            JSON.stringify(ownerSource.coveredSources) &&
-                          JSON.stringify(nested.coveredThrough) ===
-                            JSON.stringify(ownerSource.coveredThrough) &&
-                          JSON.stringify(nested.fromFrontier) ===
-                            JSON.stringify(ownerSource.fromFrontier) &&
-                          nested.currentRunningJobRevision ===
-                            ownerSource.currentRunningJobRevision &&
-                          nested.currentRunningAttemptNo ===
-                            ownerSource.currentRunningAttemptNo &&
-                          nested.currentAdmissionJobRevision ===
-                            ownerSource.currentAdmissionJobRevision;
-                      }
-                    } else {
-                      const nativeSourceStepMatches =
-                        nativeSourceStep !== undefined &&
-                        nativeSourceStep.executionId ===
-                          current.identity.executionId &&
-                        nativeSourceStep.logicalStepNo ===
-                          current.identity.logicalStepNo &&
-                        nativeSourceStep.repairAttempt ===
-                          current.identity.repairAttempt &&
-                        nativeSourceStep.providerTurnId ===
-                          current.providerTurnId;
-                      const sessionOption = yield* tx
-                        .transact(sessions.findById(input.execution.sessionId))
-                        .pipe(Effect.mapError(failure));
-                      if (Option.isSome(sessionOption)) {
-                        const timeline = yield* tx
-                          .transact(
-                            sessions.listRecentEntries(
-                              input.execution.sessionId,
-                              SESSION_TIMELINE_ENTRY_LIMIT,
-                            ),
-                          )
-                          .pipe(Effect.mapError(failure));
-                        const projection = projectSessionTimeline(
-                          timeline,
-                          String(
-                            nativeManifest.resolvedModelBindingFingerprint,
-                          ),
-                          true,
-                        );
-                        const checkpoint = projection.nativeCheckpoint;
-                        checkpointOwnerCurrent =
-                          Number(sessionOption.value.contextEpoch) ===
-                            Number(chain.replacement.contextEpoch) &&
-                          nativeSourceStepMatches &&
-                          checkpoint !== undefined &&
-                          checkpoint.providerTurnId ===
-                            chain.compaction.providerTurnId &&
-                          checkpoint.fromEpoch ===
-                            Number(chain.compaction.contextEpoch) &&
-                          checkpoint.toEpoch ===
-                            Number(chain.replacement.contextEpoch) &&
-                          checkpoint.bindingMatches &&
-                          checkpoint.bindingFingerprint ===
-                            nativeManifest.resolvedModelBindingFingerprint &&
-                          checkpoint.opaqueItemRef === nativeStateRefValue;
-                      }
-                    }
-                  }
-                  manifestBound =
-                    replacementManifestBound &&
-                    nativeSuccess &&
-                    checkpointOwnerCurrent;
-                  p20ReplacementGateStage += `;native=${nativeSuccess};owner=${checkpointOwnerCurrent};bound=${manifestBound}`;
-                }
-              }
-              if (
-                p20ReplacementGateStage !== "primary-manifest-bound" &&
-                options.qualificationProbe !== undefined
-              ) {
-                yield* Effect.promise(
-                  () =>
-                    options.qualificationProbe?.({
-                      boundary: "AH19NativeCheckpointRecovery",
-                      stage: `P20ReplacementStepManifestGate:${p20ReplacementGateStage}`,
-                      executionId: String(input.execution.executionId),
-                      providerTurnId: String(current.providerTurnId),
-                    }) ?? Promise.resolve(),
-                );
-              }
-              let submittedDecisionBindingMismatch:
-                | ReturnType<typeof submittedDecisionManifestMismatchOutcome>
-                | undefined;
-              const episode = executionEpisode(input.execution);
-              if (
-                !manifestBound &&
-                episode?._tag === "DecisionEpisode" &&
-                Option.isSome(decisionRequestsOption)
-              ) {
-                const [request, actions, settledResult] = yield* Effect.all(
-                  [
-                    tx.transact(
-                      decisionRequestsOption.value.findById(episode.decisionId),
-                    ),
-                    tx.transact(loopSteps.listActions(current.identity)),
-                    tx.transact(
-                      providerTurns.findSettledResult(current.providerTurnId),
-                    ),
-                  ],
-                  { concurrency: 1 },
-                ).pipe(Effect.mapError(failure));
-                const pendingAction = actions.find(
-                  (action) =>
-                    action.actionIndex === current.nextActionIndex &&
-                    action.routeKind === "Control" &&
-                    action.actionKind === "select_current_work" &&
-                    action.state === "Pending",
-                );
-                if (
-                  Option.isSome(request) &&
-                  settledResult?._tag === "SettledSuccess"
-                ) {
-                  const failureCode = classifySubmittedDecisionBindingFailure({
-                    executionWorkspaceId: String(input.execution.workspaceId),
-                    episode,
-                    request: request.value,
-                    workspace: undefined,
-                    step: current,
-                    pendingAction,
-                    providerTurnId: String(current.providerTurnId),
-                    providerResult: {
-                      _tag: "SettledSuccess",
-                      manifestId: String(settledResult.manifestId),
-                    },
-                  });
-                  submittedDecisionBindingMismatch =
-                    submittedDecisionManifestMismatchOutcome({
-                      decisionEpisode: true,
-                      failureCode,
-                      step: current,
-                      executionId: String(input.execution.executionId),
-                      sessionId: String(input.execution.sessionId),
-                      manifest: priorManifest,
-                      settledManifestId: String(settledResult.manifestId),
-                      logicalActionId: pendingAction?.logicalActionId,
-                    });
-                }
-              }
-              if (submittedDecisionBindingMismatch !== undefined) {
-                // Return the typed outcome directly to ExecutionRuntime's
-                // existing P9 fact transaction before context, Provider, or
-                // action replay can observe the corrupted Step manifest.
-                return submittedDecisionBindingMismatch;
-              }
-              if (
-                !isPreparedStepAwaitingInitialManifest(
-                  current,
-                  priorManifest,
-                ) &&
-                !manifestBound
-              ) {
-                return yield* Effect.fail(
-                  failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-                );
-              }
-            }
-          }
+          if (frontier._tag === "Terminal") return frontier.outcome;
+          const {
+            firstLogicalStepNo,
+            firstRepairAttempt,
+            exactNotAdmittedRecovery,
+          } = frontier;
           const agentBinding: AgentBinding =
             input.execution.binding._tag === "WorkspaceExecution"
               ? {
@@ -944,12 +312,6 @@ export const AgentLoopDriverLive = (
               tx,
               projects,
               workspaces,
-              ...(Option.isSome(workspaceKnowledgeOption)
-                ? { workspaceKnowledge: workspaceKnowledgeOption.value }
-                : {}),
-              ...(Option.isSome(workspacePlacementOption)
-                ? { workspacePlacement: workspacePlacementOption.value }
-                : {}),
               works,
               environmentRevisions,
               failure,
@@ -1046,69 +408,51 @@ export const AgentLoopDriverLive = (
               readonly repairAttempt: number;
             },
           ): Effect.Effect<ModelDecisionOutcome, ExecutionDriverError> =>
-            runModelDecision(
-              {
-                input: {
-                  execution: input.execution,
-                  agentExecutionState: input.agentExecutionState,
+            provideDecisionCapabilities(
+              runModelDecision(
+                {
+                  input: {
+                    execution: input.execution,
+                    agentExecutionState: input.agentExecutionState,
+                  },
+                  agentBinding,
+                  capability,
+                  currentControlBasis,
+                  modelContext,
+                  providerRuntime,
+                  tx,
+                  sessions,
+                  conversationCheckpoints: conversationCheckpointStore,
+                  blobs: blobStore,
+                  turnProfileResolver,
+                  works,
+                  decisionRequests,
+                  workspaces,
+                  options: {
+                    ...options,
+                    ...((input.cancellationSignal ??
+                      options.cancellationSignal) === undefined
+                      ? {}
+                      : {
+                          cancellationSignal:
+                            input.cancellationSignal ??
+                            options.cancellationSignal,
+                        }),
+                    ...(resumeExactActionStepIdentity === undefined
+                      ? {}
+                      : { resumeExactActionStepIdentity }),
+                  },
+                  admitProviderTurn,
+                  completeProviderTurn,
+                  failure,
+                  now,
+                  ...(loopSteps === undefined ? {} : { loopSteps }),
+                  ...(loopStepFence === undefined ? {} : { loopStepFence }),
+                  ...(providerTurns === undefined ? {} : { providerTurns }),
                 },
-                agentBinding,
-                capability,
-                currentControlBasis,
-                modelContext,
-                providerRuntime,
-                tx,
-                sessions,
-                humanMessages,
-                ...(Option.isSome(conversationCheckpointOption)
-                  ? {
-                      conversationCheckpoints:
-                        conversationCheckpointOption.value,
-                    }
-                  : {}),
-                ...(Option.isSome(blobStoreOption)
-                  ? { blobs: blobStoreOption.value }
-                  : {}),
-                turnProfileResolver,
-                ...(Option.isSome(responseJobsOption)
-                  ? { responseJobs: responseJobsOption.value }
-                  : {}),
-                ...(Option.isSome(responseAttemptsOption)
-                  ? { responseAttempts: responseAttemptsOption.value }
-                  : {}),
-                ...(Option.isSome(executionRepositoryOption)
-                  ? { executions: executionRepositoryOption.value }
-                  : {}),
-                works,
-                ...(Option.isSome(localPlansOption)
-                  ? { localPlans: localPlansOption.value }
-                  : {}),
-                ...(Option.isSome(decisionRequestsOption)
-                  ? { decisionRequests: decisionRequestsOption.value }
-                  : {}),
-                workspaces,
-                options: {
-                  ...options,
-                  ...(resumeExactActionStepIdentity === undefined
-                    ? {}
-                    : { resumeExactActionStepIdentity }),
-                },
-                admitProviderTurn,
-                completeProviderTurn,
-                failure,
-                now,
-                ...(loopSteps === undefined ? {} : { loopSteps }),
-                ...(loopStepFence === undefined ? {} : { loopStepFence }),
-                ...(providerTurns === undefined ? {} : { providerTurns }),
-                ...(Option.isSome(recoveryAttentionFactStoreOption)
-                  ? {
-                      recoveryAttentionFacts:
-                        recoveryAttentionFactStoreOption.value,
-                    }
-                  : {}),
-              },
-              turn,
-              repairAttempt,
+                turn,
+                repairAttempt,
+              ),
             );
 
           for (
@@ -1116,24 +460,22 @@ export const AgentLoopDriverLive = (
             turn < MAX_TURNS;
             turn += 1, repairAttempt = 0
           ) {
-            if (
-              Option.isSome(inboxOption) &&
-              Option.isSome(inputPromotionOption) &&
-              loopStepFence !== undefined
-            ) {
+            if (loopStepFence !== undefined) {
               const pending = yield* tx
-                .transact(
-                  inboxOption.value.listUnconsumed(input.execution.workspaceId),
-                )
+                .transact(inbox.listUnconsumed(input.execution.workspaceId))
                 .pipe(Effect.mapError(failure));
-              const workExecution =
+              const workspaceInputExecution =
                 input.execution.binding._tag === "WorkspaceExecution" &&
-                executionEpisode(input.execution)?._tag === "WorkEpisode";
+                (executionEpisode(input.execution)?._tag === "WorkEpisode" ||
+                  executionEpisode(input.execution)?._tag === "InboxEpisode");
               // Child PASS notifications are addressed to the owning Parent
-              // Work. A RootConversation must not consume them before that
-              // Work is admitted; doing so loses the ready result from the
-              // Work's durable frontier.
-              const eligiblePending = workExecution
+              // Workspace. They are consumable by a WorkEpisode or the
+              // InboxEpisode admitted for that Workspace, both of which expose
+              // the placement/accept_result control surface. A
+              // RootConversation must not consume them before a workspace
+              // execution is admitted; doing so loses the ready result from
+              // the Work's durable frontier.
+              const eligiblePending = workspaceInputExecution
                 ? pending
                 : pending.filter(
                     (entry) => !entry.entryKey.startsWith("child-result:"),
@@ -1144,7 +486,7 @@ export const AgentLoopDriverLive = (
                   freshDrain: turn === 0,
                 },
               )) {
-                yield* inputPromotionOption.value
+                yield* inputPromotion
                   .promoteInbox({
                     workspaceId: input.execution.workspaceId,
                     entryKey: selected.entry.entryKey,
@@ -1184,15 +526,10 @@ export const AgentLoopDriverLive = (
                 : { currentLoopStep: modelDecision.loopStep }),
               ...(loopSteps === undefined ? {} : { loopSteps }),
               ...(providerTurns === undefined ? {} : { providerTurns }),
-              ...(Option.isSome(inboxOption)
-                ? { inboxSequence: inboxOption.value }
-                : {}),
+
               ...(loopStepFence === undefined ? {} : { loopStepFence }),
               tx,
               sessions,
-              ...(Option.isSome(blobStoreOption)
-                ? { blobs: blobStoreOption.value }
-                : {}),
               failure,
               now,
               ...(options.qualificationProbe === undefined
@@ -1207,6 +544,7 @@ export const AgentLoopDriverLive = (
               ...(currentLoopStep === undefined ? {} : { currentLoopStep }),
               ...(loopSteps === undefined ? {} : { loopSteps }),
               ...(providerTurns === undefined ? {} : { providerTurns }),
+              inboxSequence: inbox,
               ...(loopStepFence === undefined ? {} : { loopStepFence }),
               tx,
               sessions,

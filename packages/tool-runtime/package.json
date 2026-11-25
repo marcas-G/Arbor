@@ -14,7 +14,9 @@
   ],
   "dependencies": {
     "@arbor/domain": "workspace:*",
-    "@arbor/ports": "workspace:*"
+    "@arbor/ports": "workspace:*",
+    "effect": "4.0.0-rc.115",
+    "re2js": "2.10.0"
   },
   "scripts": {
     "build": "tsc -b"

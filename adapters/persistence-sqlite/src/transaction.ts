@@ -4,7 +4,7 @@ import {
   type TransactionPortService,
   TransactionScope,
 } from "@arbor/ports";
-import { Effect, Exit, Layer, Option, Semaphore } from "effect";
+import { Duration, Effect, Exit, Layer, Option, Semaphore } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 
 const operationalFailure = (
@@ -35,6 +35,49 @@ export const makeTransactionPortLive = (
             Effect.mapError((cause) => operationalFailure(statement, cause)),
           );
 
+      const isLockTimeout = (cause: unknown): boolean => {
+        let current: unknown = cause;
+        for (let depth = 0; depth < 8; depth += 1) {
+          if (
+            typeof current === "object" &&
+            current !== null &&
+            "_tag" in current &&
+            current._tag === "LockTimeoutError"
+          ) {
+            return true;
+          }
+          if (
+            typeof current !== "object" ||
+            current === null ||
+            !("cause" in current)
+          ) {
+            return false;
+          }
+          current = current.cause;
+        }
+        return false;
+      };
+
+      /**
+       * SQLite's busy timeout covers one BEGIN attempt. A second daemon may
+       * still be finishing its startup recovery transaction when that
+       * timeout expires, so retry only the side-effect-free BEGIN boundary.
+       * The transaction body is never replayed by this contention path.
+       */
+      const begin = (
+        remainingAttempts: number,
+      ): Effect.Effect<void, TransactionOperationalFailure> =>
+        run("BEGIN IMMEDIATE").pipe(
+          Effect.catch((cause) => {
+            if (!isLockTimeout(cause) || remainingAttempts <= 0) {
+              return Effect.fail(cause);
+            }
+            return Effect.sleep(Duration.millis(100)).pipe(
+              Effect.flatMap(() => begin(remainingAttempts - 1)),
+            );
+          }),
+        );
+
       const transact: TransactionPortService["transact"] = <A, E, R>(
         body: Effect.Effect<A, E, R | TransactionScope>,
       ) =>
@@ -56,7 +99,9 @@ export const makeTransactionPortLive = (
                   }
                 });
               }
-              yield* run("BEGIN IMMEDIATE");
+              // Each attempt already has the configured SQLite busy timeout;
+              // the bounded outer retries cover cross-process startup races.
+              yield* begin(5);
               const exit = yield* Effect.exit(
                 Effect.provideService(body, TransactionScope, {
                   session: { id: "sqlite" },

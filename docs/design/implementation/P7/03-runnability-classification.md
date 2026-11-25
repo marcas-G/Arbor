@@ -45,7 +45,8 @@ current    = workspace.currentWorkId 指向的 Work w，当 w ∈ Open ∧ ¬wai
 runnable   = { w ∈ Open(workspace) | ¬waiting(w) ∧ ¬held(w, w.revision) } − { current }
 ```
 
-RAI-DG-02 将 `TerminalProviderFailureSettlement` 加入 P2 gate 的封闭源集合。
+RAI-DG-02 将 `TerminalProviderFailureSettlement` 加入 P2 gate 的封闭源集合，
+覆盖所有非取消型最终 `TerminalFailure + Stop` Provider failure。
 P7 只消费该 exact-revision 结果：精确 Open revision 被 hold 时不得出现在
 `current` 或 `runnable`；授权 `SteerWork` 推进 revision 后按新 revision 重新
 分类。P7 不解析 Provider 证据、不读 P10 Attention、不创建 WorkWait/

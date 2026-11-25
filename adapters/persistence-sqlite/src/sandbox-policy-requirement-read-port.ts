@@ -61,6 +61,7 @@ interface RequirementRow {
   readonly step_provider_turn_id: string | null;
   readonly step_state: string | null;
   readonly step_next_action_index: number | null;
+  readonly is_open_verifier_execution: number;
 }
 
 interface EffectAttemptRow {
@@ -89,6 +90,35 @@ const makeLayer = () =>
         Effect.fail<ToolObservationEvidenceStoreError>(
           persistenceCorruption(REPOSITORY, OPERATION, reason),
         );
+      // This port is also used by replay/qualification fixtures that predate
+      // the Verification tables. Keep the compatibility read at the schema
+      // boundary: an older schema cannot prove a Verifier execution, but it
+      // must still retain the ordinary Workspace policy checks below.
+      const openVerifierProjection = (hasVerificationTables: boolean) =>
+        hasVerificationTables
+          ? `CASE WHEN EXISTS(
+                        SELECT 1
+                          FROM verification_executions ve
+                          JOIN verifications v
+                            ON v.verification_id = ve.verification_id
+                         WHERE ve.execution_id = e.execution_id
+                           AND v.state = 'Open'
+                      ) THEN 1 ELSE 0 END AS is_open_verifier_execution`
+          : "0 AS is_open_verifier_execution";
+
+      const readOpenVerifierProjection = () =>
+        Effect.gen(function* () {
+          const verificationTables = yield* run(
+            sql.unsafe<{ readonly name: string }>(
+              "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('verification_executions', 'verifications')",
+            ),
+          );
+          return openVerifierProjection(
+            verificationTables.some(
+              (row) => row.name === "verification_executions",
+            ) && verificationTables.some((row) => row.name === "verifications"),
+          );
+        });
 
       const findPreIntentRequirement = (input: {
         readonly projectId: ProjectId;
@@ -96,6 +126,7 @@ const makeLayer = () =>
         readonly executionId: ExecutionId;
       }) =>
         Effect.gen(function* () {
+          const verifierProjection = yield* readOpenVerifierProjection();
           interface PreIntentRow {
             readonly project_id: string;
             readonly workspace_id: string;
@@ -127,6 +158,7 @@ const makeLayer = () =>
             readonly approval_binding_proven: number | null;
             readonly matching_approval_count: number;
             readonly invocation_exists: number;
+            readonly is_open_verifier_execution: number;
           }
           const rows = yield* run(
             sql.unsafe<PreIntentRow>(
@@ -158,7 +190,8 @@ const makeLayer = () =>
                       CASE WHEN aa.tool_invocation_id IS NOT NULL AND EXISTS(
                         SELECT 1 FROM tool_invocations ti
                          WHERE ti.invocation_id = aa.tool_invocation_id
-                      ) THEN 1 ELSE 0 END AS invocation_exists
+                      ) THEN 1 ELSE 0 END AS invocation_exists,
+                      ${verifierProjection}
                  FROM executions e
                  JOIN agent_execution_state es ON es.execution_id = e.execution_id
                  JOIN agent_loop_steps s ON s.execution_id = e.execution_id
@@ -229,6 +262,15 @@ const makeLayer = () =>
             row.episode_json === null
               ? undefined
               : decodeCanonicalExecutionEpisodeBinding(row.episode_json);
+          // Execution-bound Verifiers intentionally have no WorkEpisode;
+          // their shell policy is materialized from the captured Verification
+          // environment by the independent resolver. They must not be
+          // misclassified as corrupt ordinary Workspace policy evidence.
+          if (
+            episodeBinding === undefined &&
+            row.is_open_verifier_execution === 1
+          )
+            return Option.none();
           let providerTurnId: import("@arbor/domain").ProviderTurnId;
           let inputHash: import("@arbor/domain").Sha256;
           try {
@@ -475,6 +517,7 @@ const makeLayer = () =>
       const findPendingByExecution: SandboxPolicyRequirementReadPortService["findPendingByExecution"] =
         (input) =>
           Effect.gen(function* () {
+            const verifierProjection = yield* readOpenVerifierProjection();
             const rows = yield* run(
               sql.unsafe<RequirementRow>(
                 `SELECT e.project_id, e.workspace_id, e.execution_id,
@@ -498,7 +541,8 @@ const makeLayer = () =>
                         a.repair_attempt AS action_repair_attempt,
                         s.provider_turn_id AS step_provider_turn_id,
                         s.state AS step_state,
-                        s.next_action_index AS step_next_action_index
+                        s.next_action_index AS step_next_action_index,
+                        ${verifierProjection}
                    FROM executions e
                    JOIN tool_invocations i
                      ON i.execution_id = e.execution_id
@@ -542,6 +586,11 @@ const makeLayer = () =>
 
             const candidates: RequirementRow[] = [];
             for (const row of rows) {
+              // Verification executions have an ExecutionBoundEpisode and use
+              // the captured Verification environment. They intentionally do
+              // not carry the ordinary Workspace episode revision or policy
+              // proof, so they must not enter this Workspace-policy reader.
+              if (row.is_open_verifier_execution === 1) continue;
               const attempts = yield* run(
                 sql.unsafe<EffectAttemptRow>(
                   `SELECT attempt_no, admission_state, side_effect_semantics,

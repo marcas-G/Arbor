@@ -25,7 +25,6 @@ import {
   MIN_TREE_BASIS,
   useWorkbenchLayoutPreference,
 } from "./layoutPreference.js";
-import styles from "./workbench.module.css";
 
 type ProjectId = ViewRequestMap["responsibility-tree"]["projectId"];
 
@@ -57,16 +56,18 @@ function TreePane({
   );
   return (
     <section
-      className={`${styles.pane} ${styles.treePane} ${hiddenOnMobile ? styles.mobileHidden : ""}`}
+      className={`flex min-h-[32rem] min-w-0 flex-col gap-3 p-5 max-[80rem]:p-3 max-[64rem]:min-h-64 max-[48rem]:min-h-[22rem] border-0 border-r border-solid border-border bg-background/45 group-data-[order=conversation-first]/workbench:border-r-0 group-data-[order=conversation-first]/workbench:border-l max-[64rem]:border-r-0 max-[64rem]:border-b max-[64rem]:group-data-[order=conversation-first]/workbench:border-l-0 ${hiddenOnMobile ? "max-[48rem]:hidden" : ""}`}
       aria-labelledby="workbench-tree-title"
     >
-      <header className={styles.paneHeader}>
-        <div className={styles.paneTitleGroup}>
-          <span className={styles.paneIcon}>
+      <header className="flex min-h-11 items-center justify-between gap-2 border-0 border-b border-solid border-border pb-3 [&_h2]:m-0 [&_h2]:text-title [&_h2]:font-bold [&_h2]:tracking-tight">
+        <div className="flex items-center gap-2">
+          <span className="grid size-[34px] place-items-center rounded-sm border border-solid border-border bg-card text-primary">
             <Icon name="tree" size={18} />
           </span>
           <div>
-            <p className={styles.eyebrow}>项目结构</p>
+            <p className="m-0 mb-0.5 text-caption font-bold tracking-[0.08em] text-primary uppercase">
+              项目结构
+            </p>
             <h2 id="workbench-tree-title">工作分工</h2>
           </div>
         </div>
@@ -92,7 +93,10 @@ function TreePane({
         <Empty>项目结构暂不可用，请刷新后重试</Empty>
       ) : (
         <>
-          <ul className={styles.treeList} aria-label="工作分工">
+          <ul
+            className="m-0 flex list-none flex-col gap-2 p-0"
+            aria-label="工作分工"
+          >
             {tree.data.nodes.map((node) => {
               const depth =
                 presented.depths.get(node.workspaceId as string) ?? 0;
@@ -100,7 +104,7 @@ function TreePane({
                 <li key={node.workspaceId}>
                   <button
                     type="button"
-                    className={styles.treeNode}
+                    className="relative ms-[calc(var(--workbench-tree-depth,0)*var(--arbor-space-4))] flex w-[calc(100%-(var(--workbench-tree-depth,0)*var(--arbor-space-4)))] cursor-pointer flex-col gap-1 rounded-md border border-solid border-border bg-card p-3 text-left font-sans text-foreground transition hover:-translate-y-px hover:border-border-strong hover:shadow-card aria-pressed:border-primary/45 aria-pressed:bg-accent aria-pressed:shadow-[inset_3px_0_0_var(--arbor-leaf)]"
                     aria-pressed={node.workspaceId === selectedId}
                     style={
                       {
@@ -111,18 +115,18 @@ function TreePane({
                       setSelectedId(node.workspaceId);
                     }}
                   >
-                    <span className={styles.treeNodeHead}>
+                    <span className="flex flex-wrap items-center justify-between gap-1 [&>span:first-child]:font-semibold">
                       <span>{node.name}</span>
                       <StatusBadge label={node.status} />
                     </span>
                     {node.currentWork === undefined ? null : (
-                      <span className={styles.treeNodeSummary}>
+                      <span className="line-clamp-2 text-small leading-[1.45] text-muted-foreground">
                         {node.currentWork.objective}
                       </span>
                     )}
                     {node.subtreeAttention.attention === 0 &&
                     node.subtreeAttention.actionRequired === 0 ? null : (
-                      <span className={styles.treeNodeBadges}>
+                      <span className="flex flex-wrap items-center gap-1">
                         {node.subtreeAttention.attention === 0 ? null : (
                           <Badge tone="attention">{`需关注 ${String(node.subtreeAttention.attention)}`}</Badge>
                         )}
@@ -137,9 +141,11 @@ function TreePane({
             })}
           </ul>
           {selected === undefined ? (
-            <p className={styles.treeInspection}>选择一项分工查看当前工作。</p>
+            <p className="mt-auto flex flex-col gap-2 rounded-md border border-solid border-border bg-card p-3 text-small text-muted-foreground">
+              选择一项分工查看当前工作。
+            </p>
           ) : (
-            <div className={styles.treeInspection}>
+            <div className="mt-auto flex flex-col gap-2 rounded-md border border-solid border-border bg-card p-3 text-small text-muted-foreground">
               <strong>{selected.name}</strong>
               <span>{selected.currentWork?.objective ?? "无当前工作"}</span>
               <Button
@@ -179,20 +185,24 @@ function ConversationPane({
       : presentResponsibilityTree(tree.data.nodes);
   return (
     <section
-      className={`${styles.pane} ${styles.conversationPane} ${hiddenOnMobile ? styles.mobileHidden : ""}`}
+      className={`flex min-h-[32rem] min-w-0 flex-col gap-3 p-5 max-[80rem]:p-3 max-[64rem]:min-h-64 max-[48rem]:min-h-[22rem] bg-card ${hiddenOnMobile ? "max-[48rem]:hidden" : ""}`}
       aria-labelledby="workbench-conversation-title"
     >
-      <header className={styles.paneHeader}>
-        <div className={styles.paneTitleGroup}>
-          <span className={styles.paneIcon}>
+      <header className="flex min-h-11 items-center justify-between gap-2 border-0 border-b border-solid border-border pb-3 [&_h2]:m-0 [&_h2]:text-title [&_h2]:font-bold [&_h2]:tracking-tight">
+        <div className="flex items-center gap-2">
+          <span className="grid size-[34px] place-items-center rounded-sm border border-solid border-border bg-card text-primary">
             <Icon name="conversation" size={18} />
           </span>
           <div>
-            <p className={styles.eyebrow}>项目对话</p>
+            <p className="m-0 mb-0.5 text-caption font-bold tracking-[0.08em] text-primary uppercase">
+              项目对话
+            </p>
             <h2 id="workbench-conversation-title">对话</h2>
           </div>
         </div>
-        <span className={styles.paneState}>项目主对话</span>
+        <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-solid border-primary/20 bg-accent px-2 py-1 text-caption font-semibold text-primary before:size-1.5 before:rounded-full before:bg-accent-foreground before:content-['']">
+          项目主对话
+        </span>
       </header>
       {tree.isPending ? (
         <Empty>正在准备项目对话</Empty>
@@ -338,27 +348,32 @@ export function RootWorkbenchPage({
   } as CSSProperties;
 
   return (
-    <div className={styles.page}>
-      <header className={styles.pageHeader}>
-        <div className={styles.headingBlock}>
-          <span className={styles.headingIcon}>
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
+      <header className="flex items-center justify-between gap-ui-5 pt-2 pb-3 max-[80rem]:flex-col max-[80rem]:items-start max-[80rem]:gap-3 [&_h1]:m-0 [&_h1]:text-display [&_h1]:font-bold [&_h1]:tracking-tight">
+        <div className="flex min-w-0 items-start gap-3">
+          <span className="grid size-[42px] shrink-0 place-items-center rounded-md border border-solid border-primary/20 bg-accent text-primary max-[48rem]:hidden">
             <Icon name="workbench" size={21} />
           </span>
           <div>
-            <p className={styles.eyebrow}>项目主页</p>
+            <p className="m-0 mb-0.5 text-caption font-bold tracking-[0.08em] text-primary uppercase">
+              项目主页
+            </p>
             <h1>工作台</h1>
-            <p className={styles.intro}>
+            <p className="m-0 mt-1 max-w-[40rem] text-small text-muted-foreground">
               从一次对话开始，让项目分工承接持续推进的工作。
             </p>
           </div>
         </div>
         {projectOverview === undefined ? null : (
-          <section className={styles.projectOverview} aria-label="项目概览">
-            <div className={styles.projectRoot}>
-              <span className={styles.liveDot} />
+          <section
+            className="flex min-w-0 items-center gap-5 rounded-md border border-solid border-border bg-card px-3 py-2 shadow-card max-[80rem]:w-full max-[64rem]:flex-col max-[64rem]:items-stretch"
+            aria-label="项目概览"
+          >
+            <div className="grid min-w-36 grid-cols-[auto_1fr] items-center gap-x-2 gap-y-px text-caption text-muted-foreground [&_strong]:col-start-2 [&_strong]:truncate [&_strong]:text-small [&_strong]:font-semibold [&_strong]:text-foreground">
+              <span className="row-start-1 size-2 rounded-full border-2 border-solid border-card bg-accent-foreground shadow-[0_0_0_3px_var(--arbor-leaf-pale)]" />
               <strong>{`主要分工：${projectOverview.rootName}`}</strong>
             </div>
-            <dl className={styles.projectStats}>
+            <dl className="m-0 grid flex-1 grid-cols-4 gap-3 border-0 border-l border-solid border-border pl-5 max-[64rem]:border-t max-[64rem]:border-l-0 max-[64rem]:pt-3 max-[64rem]:pl-0 max-[48rem]:grid-cols-2 [&>div]:min-w-0 [&_dt]:truncate [&_dt]:text-caption [&_dt]:text-muted-foreground [&_dd]:m-0 [&_dd]:mt-0.5 [&_dd]:text-title [&_dd]:font-bold">
               <div>
                 <dt>分工数量</dt>
                 <dd>{projectOverview.workspaceCount}</dd>
@@ -380,12 +395,17 @@ export function RootWorkbenchPage({
         )}
       </header>
 
-      <fieldset className={styles.mobileTabs} aria-label="工作台面板">
+      <fieldset
+        className="m-0 hidden min-w-0 gap-2 border-0 p-0 max-[48rem]:flex"
+        aria-label="工作台面板"
+      >
         <button
           type="button"
           aria-pressed={mobilePane === "tree"}
           className={
-            mobilePane === "tree" ? styles.mobileTabActive : styles.mobileTab
+            mobilePane === "tree"
+              ? "min-h-[var(--arbor-row-height)] flex-1 rounded-sm border border-solid border-primary bg-accent font-sans text-small font-semibold text-primary"
+              : "min-h-[var(--arbor-row-height)] flex-1 rounded-sm border border-solid border-border bg-card font-sans text-small font-semibold text-muted-foreground"
           }
           onClick={() => setMobilePane("tree")}
         >
@@ -396,8 +416,8 @@ export function RootWorkbenchPage({
           aria-pressed={mobilePane === "conversation"}
           className={
             mobilePane === "conversation"
-              ? styles.mobileTabActive
-              : styles.mobileTab
+              ? "min-h-[var(--arbor-row-height)] flex-1 rounded-sm border border-solid border-primary bg-accent font-sans text-small font-semibold text-primary"
+              : "min-h-[var(--arbor-row-height)] flex-1 rounded-sm border border-solid border-border bg-card font-sans text-small font-semibold text-muted-foreground"
           }
           onClick={() => setMobilePane("conversation")}
         >
@@ -405,9 +425,11 @@ export function RootWorkbenchPage({
         </button>
       </fieldset>
 
-      <div className={styles.layoutActions}>
-        <span className={styles.layoutHint}>工作台布局</span>
-        <div className={styles.layoutButtons}>
+      <div className="flex min-h-9 items-center justify-between gap-3 max-[48rem]:hidden">
+        <span className="text-caption font-semibold text-muted-foreground">
+          工作台布局
+        </span>
+        <div className="flex gap-1 [&_.arbor-button]:min-h-8 [&_.arbor-button]:py-0 [&_.arbor-button]:text-caption [&_.arbor-button]:text-muted-foreground">
           <Button variant="quiet" onClick={swapPanes}>
             交换分工与对话位置
           </Button>
@@ -419,7 +441,7 @@ export function RootWorkbenchPage({
 
       <div
         ref={layoutRef}
-        className={styles.workbench}
+        className="group/workbench grid min-h-0 flex-1 grid-cols-[minmax(0,var(--workbench-tree-basis))_6px_minmax(0,1fr)] items-stretch overflow-hidden rounded-lg border border-solid border-border bg-card shadow-card data-[order=conversation-first]:grid-cols-[minmax(0,1fr)_6px_minmax(0,var(--workbench-tree-basis))] max-[64rem]:grid-cols-1 max-[64rem]:overflow-visible max-[64rem]:data-[order=conversation-first]:grid-cols-1"
         style={layoutStyle}
         data-testid="workbench-layout"
         data-order={layout.order}
@@ -434,7 +456,7 @@ export function RootWorkbenchPage({
           aria-valuemax={MAX_TREE_BASIS}
           aria-valuenow={layout.treeBasis}
           tabIndex={0}
-          className={styles.divider}
+          className="relative z-10 m-0 w-full cursor-col-resize touch-none border-0 bg-background after:absolute after:top-1/2 after:left-1/2 after:h-[var(--arbor-space-5)] after:w-[3px] after:-translate-1/2 after:rounded-full after:bg-border-strong after:content-[''] hover:after:bg-accent-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring max-[64rem]:hidden"
           onPointerDown={startResize}
           onDoubleClick={resetTreeBasis}
           onKeyDown={(event) => {

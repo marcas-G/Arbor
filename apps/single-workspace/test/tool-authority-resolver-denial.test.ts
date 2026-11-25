@@ -48,6 +48,8 @@ describe("ToolAuthorityResolver policy denial mapping", () => {
           findById: () =>
             Effect.succeed(
               Option.some({
+                projectId: "project-test",
+                lifecycle: "Active",
                 workspacePolicy: makeWorkspacePolicy({ delegationCeiling: 0 }),
                 workspacePolicyRevision: 0,
               }),
@@ -145,6 +147,8 @@ describe("ToolAuthorityResolver policy denial mapping", () => {
         findById: () =>
           Effect.succeed(
             Option.some({
+              projectId: "project-test",
+              lifecycle: "Active",
               workspacePolicy: makeWorkspacePolicy({ delegationCeiling: 0 }),
               workspacePolicyRevision: 0,
             }),

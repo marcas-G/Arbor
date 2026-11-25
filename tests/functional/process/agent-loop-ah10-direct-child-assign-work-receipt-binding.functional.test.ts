@@ -317,7 +317,7 @@ const schemaSnapshot = (db: DatabaseSync) => {
 };
 
 /**
- * Build a disposable frozen-v44 image from the real current-v54 fixture.
+ * Build a disposable frozen-v44 image from the real current-v57 fixture.
  * The destination's schema is produced only by the trusted migration chain;
  * its table/column contract drives this explicit projection. In particular,
  * this does not lower user_version or infer a column intersection. P45 inbox
@@ -327,7 +327,7 @@ const schemaSnapshot = (db: DatabaseSync) => {
  * retained, and the P52 Work revision ledger is explicitly excluded because
  * it has no schema-44 representation.
  */
-const projectSchema54IntoSchema44Image = (
+const projectCurrentSchemaIntoSchema44Image = (
   sourceFilename: string,
   targetFilename: string,
   committedCommandId: string,
@@ -343,9 +343,9 @@ const projectSchema54IntoSchema44Image = (
       (target.prepare("PRAGMA user_version").get() as { user_version: number })
         .user_version,
     );
-    if (sourceVersion !== 54 || targetVersion !== 44) {
+    if (sourceVersion !== 57 || targetVersion !== 44) {
       throw new Error(
-        `Legacy projection requires exact schema 54 -> 44; got ${sourceVersion} -> ${targetVersion}`,
+        `Legacy projection requires exact schema 57 -> 44; got ${sourceVersion} -> ${targetVersion}`,
       );
     }
 
@@ -602,7 +602,7 @@ const makePreBindingP32Copy = async (
         qualifyLegacyP39ShortPaths({ root: shortTempRoot, ...paths }),
     });
     try {
-      projectSchema54IntoSchema44Image(
+      projectCurrentSchemaIntoSchema44Image(
         currentSource,
         schema44.databaseFilename,
         priorCommittedCommandId,
@@ -1194,7 +1194,27 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
               arguments: { query: marker },
             };
           }
-          const ref = /wref_[a-f0-9]{64}/u.exec(context)?.[0];
+          let ref: string | undefined;
+          for (const message of [...call.messages].reverse()) {
+            if (typeof message.content !== "string") continue;
+            try {
+              const result = JSON.parse(message.content) as {
+                directChildren?: ReadonlyArray<{
+                  name?: string;
+                  ref?: string;
+                }>;
+              };
+              const child = result.directChildren?.find(
+                (candidate) => candidate.name === childName,
+              );
+              if (child?.ref !== undefined) {
+                ref = child.ref;
+                break;
+              }
+            } catch {
+              // Other provider messages are not control results.
+            }
+          }
           if (ref === undefined || !available.has("assign_work")) {
             return { _tag: "HttpError", status: 422 };
           }
@@ -2295,35 +2315,35 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
         await upgradeSchema44ToCurrentTestDatabase({
           databaseFilename: recoveryDatabaseFile,
         });
-        const schema54 = new DatabaseSync(recoveryDatabaseFile, {
+        const schema57 = new DatabaseSync(recoveryDatabaseFile, {
           readOnly: true,
         });
         try {
           expect(
             Number(
               (
-                schema54.prepare("PRAGMA user_version").get() as {
+                schema57.prepare("PRAGMA user_version").get() as {
                   user_version: number;
                 }
               ).user_version,
             ),
-          ).toBe(54);
+          ).toBe(57);
           expect(
-            schema54
+            schema57
               .prepare(
                 "SELECT resolution, result_json FROM commands WHERE command_id = ?",
               )
               .get(priorCommittedCommandId ?? ""),
           ).toEqual({ resolution: "Committed", result_json: v44ReceiptJson });
           expect(
-            schema54
+            schema57
               .prepare(
                 "SELECT command_id FROM assign_work_target_bindings WHERE command_id = ?",
               )
               .all(priorCommittedCommandId ?? ""),
           ).toHaveLength(0);
         } finally {
-          schema54.close();
+          schema57.close();
         }
       }
 
@@ -2365,7 +2385,7 @@ describe("AH10 direct-child AssignWork generation takeover", () => {
       }
       if (crashSide === "legacy-p32-upgrade") {
         const upgraded = readRows(recoveryDatabaseFile);
-        expect(upgraded.schemaVersion).toBe(54);
+        expect(upgraded.schemaVersion).toBe(57);
         expect(upgraded.assignWorkTargetBindings).toHaveLength(0);
         expect(
           upgraded.commands.find(

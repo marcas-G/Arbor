@@ -738,7 +738,7 @@ describe("P14 production conversation model context", () => {
       { role: "user", content: humanQuestion },
     ]);
     // Root Human Conversation is a response episode, not a Work execution.
-    // MAC-P1 exposes only the current-Workspace work-initiation control.
+    // MAC controls and bounded Workspace allocation are available here;
     // Actual executable tools and completion remain unavailable until the
     // Scheduler admits the resulting WorkEpisode.
     const toolNames = (
@@ -750,6 +750,7 @@ describe("P14 production conversation model context", () => {
       .sort();
     expect(toolNames).toEqual([
       "accept_result",
+      "allocate_workspace_sandbox",
       "assign_work",
       "list_workspaces",
       "propose_workspace",

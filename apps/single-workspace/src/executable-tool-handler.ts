@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type {
   ExecutableInvocationHandler,
   ExecutableInvocationOutcome,
@@ -7,18 +9,23 @@ import type { ParentUserGovernanceFacts } from "@arbor/application";
 import {
   AuthorityResolverPort,
   issueExecutableApproval,
+  loadWorkspaceSandboxAuthorizationSnapshot,
+  workspaceSandboxAuthorizationCapabilities,
 } from "@arbor/application";
 import {
   executionEpisode,
   ProviderTurnId,
   parse,
+  resolveWorkspaceSandboxAuthorization,
   ToolInvocationId,
 } from "@arbor/domain";
 import type { TrustedHostConfigurationSourceService } from "@arbor/ports";
 import {
+  BlobStorePort,
   type BoundedObservation,
   type CanonicalToolObservation,
   Clock,
+  CurrentSandboxAuthoritySnapshotPort,
   EnvironmentResolverPort,
   type ExecutableApprovalBinding,
   ExecutableApprovalStore,
@@ -28,6 +35,7 @@ import {
   type InvocationAuthority,
   PermissionGrantRepository,
   ResourceOwnershipRepository,
+  SandboxPolicyCandidateBoundaryReadPort,
   SandboxPolicyDecisionStore,
   type SandboxProcessPolicyResolution,
   sha256Hex,
@@ -40,11 +48,19 @@ import {
   ToolInvocationStore,
   ToolRuntimePort,
   TransactionPort,
+  VerificationRepository,
+  WorkRepository,
   WorkspaceRepository,
+  WorkspaceSandboxAuthorizationStore,
+  WorkspaceSandboxPolicyBindingPort,
   WorktreeStore,
 } from "@arbor/ports";
 import { Context, Effect, Layer, Option } from "effect";
-import { materializeCurrentSandboxProcessPolicy } from "./sandbox-process-policy-materializer.js";
+import {
+  materializeCurrentSandboxProcessPolicy,
+  materializeIndependentVerificationProcessPolicy,
+} from "./sandbox-process-policy-materializer.js";
+import { makeVerificationCommandEnvironmentPreparation } from "./verification-command-environment.js";
 
 export class ExecutableToolHandler extends Context.Service<
   ExecutableToolHandler,
@@ -290,6 +306,7 @@ export const makeExecutableToolHandler = (
       readonly requestedAt: string;
       readonly requestedCapabilities: ReadonlyArray<string>;
       readonly delegationDepth: number;
+      readonly executionRole?: "Verifier";
     }) => Effect.Effect<
       { readonly approvalId: string; readonly expiresAt: string },
       unknown
@@ -302,6 +319,22 @@ export const makeExecutableToolHandler = (
     readonly executionId: import("@arbor/domain").ExecutionId;
     readonly now: string;
   }) => Effect.Effect<SandboxProcessPolicyResolution | undefined>,
+  findVerification?: (
+    executionId: import("@arbor/domain").ExecutionId,
+  ) => Effect.Effect<
+    Option.Option<import("@arbor/domain").Verification>,
+    unknown
+  >,
+  prepareIndependentVerificationProcessPolicy?: (input: {
+    readonly executionId: import("@arbor/domain").ExecutionId;
+    readonly now: string;
+  }) => Effect.Effect<SandboxProcessPolicyResolution | undefined>,
+  ensureWorkspacePolicy?: (
+    executionId: import("@arbor/domain").ExecutionId,
+  ) => Effect.Effect<
+    import("@arbor/ports").WorkspaceSandboxPolicyBindingOutcome,
+    unknown
+  >,
 ): ExecutableInvocationHandler => ({
   handle: ({
     invocation,
@@ -502,19 +535,86 @@ export const makeExecutableToolHandler = (
         // lookup; no model-facing argument can set it.
         intent = { ...intent, approvalId: currentApproval.approvalId };
       }
+      const currentEpisode = executionEpisode(execution);
+      let independentVerificationTarget:
+        | ToolExecutionContext["independentVerificationTarget"]
+        | undefined;
       if (invocation.toolName === "shell") {
-        const currentEpisode = executionEpisode(execution);
-        if (currentEpisode === undefined) {
-          return { _tag: "SandboxPolicyRequiredInterruption" as const };
+        if (
+          currentEpisode === undefined &&
+          (execution.binding._tag !== "ExecutionBoundAgentBinding" ||
+            findVerification === undefined)
+        ) {
+          // The policy ledger currently accepts Workspace episodes only.
+          // There is no durable policy request that an execution-bound
+          // Verifier could resume. Returning a pending interruption here
+          // repeatedly redispatches the action until RuntimeSafetyStop.
+          return yield* Effect.fail({
+            _tag: "AgentActionRejected" as const,
+            code: "action/tool-unavailable" as const,
+            safeMessage:
+              "shell has no supported sandbox policy binding for this execution; no command ran. Use available read-only evidence and report unverified criteria as Unknown.",
+            correction: "ChooseAlternative" as const,
+          });
+        }
+        if (currentEpisode === undefined && findVerification !== undefined) {
+          const verification = yield* findVerification(
+            execution.executionId,
+          ).pipe(
+            Effect.mapError((cause) => ({
+              _tag: "AgentActionOperationalFailure" as const,
+              operation: "VerificationTargetLookup",
+              cause,
+            })),
+          );
+          if (
+            Option.isNone(verification) ||
+            verification.value.state.status !== "Open" ||
+            verification.value.ownerWorkspaceId !== execution.workspaceId ||
+            !verification.value.verificationExecutionIds.includes(
+              execution.executionId,
+            )
+          ) {
+            return yield* Effect.fail({
+              _tag: "AgentActionRejected" as const,
+              code: "action/tool-unavailable" as const,
+              safeMessage:
+                "verifier execution is not bound to an open Verification; no command ran",
+              correction: "ChooseAlternative" as const,
+            });
+          }
+          independentVerificationTarget = {
+            verificationId: verification.value.verificationId,
+            workId: verification.value.workId,
+            targetWorkRevision: verification.value.targetWorkRevision,
+          };
         }
       }
+      if (
+        invocation.toolName === "shell" &&
+        ensureWorkspacePolicy !== undefined &&
+        currentEpisode !== undefined
+      ) {
+        yield* ensureWorkspacePolicy(execution.executionId).pipe(
+          Effect.mapError((cause) => ({
+            _tag: "AgentActionOperationalFailure" as const,
+            operation: "WorkspaceSandboxPolicyBinding",
+            cause,
+          })),
+        );
+        // P4 owns the durable intent/policy wait (or exact authority denial).
+        // An early interruption here has no intent/requirement to park the
+        // action, so each scheduler tick replays it until the safety gate stops.
+      }
       const controlBasisDigest = sha256Hex(JSON.stringify(controlBasis));
-      const currentEpisode = executionEpisode(execution);
       const toolContext: ToolExecutionContext = {
         executionId: execution.executionId,
         ...(currentEpisode === undefined
           ? {}
           : { executionEpisodeBinding: currentEpisode }),
+        ...(independentVerificationTarget === undefined
+          ? {}
+          : { independentVerificationTarget }),
         workspaceId: execution.workspaceId,
         sessionId: execution.sessionId,
         projectId: execution.projectId,
@@ -534,21 +634,35 @@ export const makeExecutableToolHandler = (
           execution.binding._tag === "ExecutionBoundAgentBinding" ? 1 : 0,
         requestedAt,
         ...(invocation.toolName === "shell" &&
-        materializeSandboxProcessPolicy !== undefined
+        independentVerificationTarget !== undefined &&
+        prepareIndependentVerificationProcessPolicy !== undefined
           ? {
               resolveSandboxProcessPolicy: ({
                 now,
               }: {
                 readonly now: string;
               }) =>
-                materializeSandboxProcessPolicy({
-                  projectId: execution.projectId,
-                  workspaceId: execution.workspaceId,
+                prepareIndependentVerificationProcessPolicy({
                   executionId: execution.executionId,
                   now,
                 }),
             }
-          : {}),
+          : invocation.toolName === "shell" &&
+              materializeSandboxProcessPolicy !== undefined
+            ? {
+                resolveSandboxProcessPolicy: ({
+                  now,
+                }: {
+                  readonly now: string;
+                }) =>
+                  materializeSandboxProcessPolicy({
+                    projectId: execution.projectId,
+                    workspaceId: execution.workspaceId,
+                    executionId: execution.executionId,
+                    now,
+                  }),
+              }
+            : {}),
         ...(currentApproval === undefined
           ? {}
           : {
@@ -731,6 +845,9 @@ export const makeExecutableToolHandler = (
                     execution.binding._tag === "ExecutionBoundAgentBinding"
                       ? 1
                       : 0,
+                  ...(independentVerificationTarget === undefined
+                    ? {}
+                    : { executionRole: "Verifier" as const }),
                 })
                 .pipe(
                   Effect.mapError((cause) => ({
@@ -786,6 +903,10 @@ export const ExecutableToolHandlerLive = (
   },
   qualificationProbe?: ExecutableToolHandlerQualificationProbe,
   sandboxAuthoritySource?: TrustedHostConfigurationSourceService,
+  verificationRuntimeDirectory = join(
+    tmpdir(),
+    `arbor-verification-${process.getuid?.() ?? "user"}`,
+  ),
 ): Layer.Layer<
   ExecutableToolHandler,
   never,
@@ -803,6 +924,12 @@ export const ExecutableToolHandlerLive = (
   | ResourceOwnershipRepository
   | WorktreeStore
   | EnvironmentResolverPort
+  | WorkRepository
+  | VerificationRepository
+  | BlobStorePort
+  | CurrentSandboxAuthoritySnapshotPort
+  | SandboxPolicyCandidateBoundaryReadPort
+  | WorkspaceSandboxAuthorizationStore
 > =>
   Layer.effect(
     ExecutableToolHandler,
@@ -818,9 +945,24 @@ export const ExecutableToolHandlerLive = (
       const workspaces = yield* WorkspaceRepository;
       const executions = yield* ExecutionRepository;
       const decisions = yield* SandboxPolicyDecisionStore;
+      const authorizations = yield* WorkspaceSandboxAuthorizationStore;
+      const workspacePolicyBinding = yield* Effect.serviceOption(
+        WorkspaceSandboxPolicyBindingPort,
+      );
       const ownership = yield* ResourceOwnershipRepository;
       const worktrees = yield* WorktreeStore;
       const environmentResolver = yield* EnvironmentResolverPort;
+      // These services are mandatory in the production composition: an
+      // execution-bound Verifier must be able to resolve its exact open
+      // Verification and materialize the captured isolated environment. Using
+      // serviceOption here silently converted a valid Verifier shell into a
+      // pre-approval HandlerRejected when the layer graph did not retain an
+      // optional service.
+      const works = yield* WorkRepository;
+      const verifications = yield* VerificationRepository;
+      const blobs = yield* BlobStorePort;
+      const currentHost = yield* CurrentSandboxAuthoritySnapshotPort;
+      const boundary = yield* SandboxPolicyCandidateBoundaryReadPort;
       const materialize = (input: {
         readonly projectId: import("@arbor/domain").ProjectId;
         readonly workspaceId: import("@arbor/domain").WorkspaceId;
@@ -837,11 +979,52 @@ export const ExecutableToolHandlerLive = (
             Layer.succeed(WorkspaceRepository, workspaces),
             Layer.succeed(ExecutionRepository, executions),
             Layer.succeed(SandboxPolicyDecisionStore, decisions),
+            Layer.succeed(WorkspaceSandboxAuthorizationStore, authorizations),
             Layer.succeed(ResourceOwnershipRepository, ownership),
             Layer.succeed(WorktreeStore, worktrees),
             Layer.succeed(EnvironmentResolverPort, environmentResolver),
           ),
         );
+      const prepareIndependent = (input: {
+        readonly executionId: import("@arbor/domain").ExecutionId;
+        readonly now: string;
+      }) => {
+        const preparation = makeVerificationCommandEnvironmentPreparation({
+          transaction: tx,
+          clock,
+          executions,
+          works,
+          verifications,
+          workspaces,
+          authorizations,
+          boundary,
+          currentHost,
+          blobs,
+          runtimeDirectory: verificationRuntimeDirectory,
+        });
+        return preparation.prepareUnmanaged(input.executionId).pipe(
+          Effect.flatMap((prepared) =>
+            materializeIndependentVerificationProcessPolicy({
+              prepared,
+              now: input.now,
+              blobs,
+            }).pipe(
+              Effect.flatMap((materialized) =>
+                materialized === undefined
+                  ? prepared.dispose().pipe(Effect.as(undefined))
+                  : Effect.succeed({
+                      ...materialized,
+                      dispose: prepared.dispose(),
+                    }),
+              ),
+              Effect.catch((cause) =>
+                Effect.flatMap(prepared.dispose(), () => Effect.fail(cause)),
+              ),
+            ),
+          ),
+          Effect.catch(() => Effect.succeed(undefined)),
+        );
+      };
       return ExecutableToolHandler.of(
         makeExecutableToolHandler(
           tools,
@@ -861,7 +1044,13 @@ export const ExecutableToolHandlerLive = (
                     const activeGrants = yield* grants.activeGrants(
                       input.binding.projectId,
                     );
-                    return { workspace, activeGrants };
+                    const workspaceSandbox =
+                      yield* loadWorkspaceSandboxAuthorizationSnapshot(
+                        { workspaces, authorizations },
+                        input.binding.projectId,
+                        input.binding.workspaceId,
+                      );
+                    return { workspace, activeGrants, workspaceSandbox };
                   }),
                 );
                 if (Option.isNone(snapshot.workspace)) {
@@ -871,6 +1060,15 @@ export const ExecutableToolHandlerLive = (
                       "workspace disappeared before P12 approval resolution",
                   });
                 }
+                const workspaceAuthorizationCapabilities =
+                  workspaceSandboxAuthorizationCapabilities(
+                    resolveWorkspaceSandboxAuthorization({
+                      ...snapshot.workspaceSandbox,
+                      projectId: input.binding.projectId,
+                      workspaceId: input.binding.workspaceId,
+                      now: input.requestedAt,
+                    }),
+                  );
                 const candidate = yield* authorityResolver.resolveApproval({
                   principal: input.authority.principal,
                   projectId: input.binding.projectId,
@@ -887,9 +1085,17 @@ export const ExecutableToolHandlerLive = (
                   },
                   controlBasisDigest: input.binding.controlBasisDigest,
                   grants: snapshot.activeGrants,
+                  ...(workspaceAuthorizationCapabilities === undefined
+                    ? {}
+                    : {
+                        workspaceAuthorizationCapabilities,
+                      }),
                   governance,
                   policy: snapshot.workspace.value.workspacePolicy,
                   delegationDepth: input.delegationDepth,
+                  ...(input.executionRole === undefined
+                    ? {}
+                    : { executionRole: input.executionRole }),
                   now: input.requestedAt,
                   approvalIdentity: {
                     logicalStepNo: input.binding.logicalStepNo,
@@ -908,6 +1114,12 @@ export const ExecutableToolHandlerLive = (
           },
           qualificationProbe,
           materialize,
+          (executionId) =>
+            tx.transact(verifications.findByExecutionId(executionId)),
+          prepareIndependent,
+          Option.isSome(workspacePolicyBinding)
+            ? workspacePolicyBinding.value.ensureForExecution
+            : undefined,
         ),
       );
     }),

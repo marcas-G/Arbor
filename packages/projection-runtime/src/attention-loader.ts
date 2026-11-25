@@ -77,6 +77,7 @@ export interface ExecutionSettlementReadFact {
  * adapters so malformed/unknown versions fail closed in the projection. */
 export interface AttentionSourceExecutionBinding {
   readonly executionId: string;
+  readonly bindingKind?: "workspace" | "execution_bound";
   readonly projectId: ProjectId;
   readonly workspaceId: WorkspaceId;
   readonly episodeJson: string | null;
@@ -460,6 +461,43 @@ const activeWorkBoundExecutions = (
       }
       if (binding.episodeJson === null) {
         return yield* Effect.fail(fail("SourceEpisodeStateMissing"));
+      }
+      // P8 Verifiers have an execution-scoped identity, not a Workspace
+      // episode. P10 still owns their safety-stop Attention at the execution
+      // Workspace. Require the canonical binding and exact identity before
+      // applying that exception; never infer a Work from the owning Workspace.
+      if (
+        source.sourceKind === "RuntimeSafetyEnvelope" &&
+        binding.bindingKind === "execution_bound"
+      ) {
+        let identity: unknown;
+        try {
+          identity = JSON.parse(binding.episodeJson);
+        } catch {
+          return yield* Effect.fail(fail("EpisodeMalformed"));
+        }
+        if (
+          typeof identity !== "object" ||
+          identity === null ||
+          Array.isArray(identity) ||
+          Object.keys(identity).length !== 2 ||
+          !("_tag" in identity) ||
+          identity._tag !== "ExecutionBoundEpisode" ||
+          !("executionId" in identity) ||
+          identity.executionId !== binding.executionId
+        ) {
+          return yield* Effect.fail(fail("EpisodeMalformed"));
+        }
+        if (
+          binding.workId !== null ||
+          binding.workProjectId !== null ||
+          binding.workWorkspaceId !== null ||
+          binding.workRevision !== null
+        ) {
+          return yield* Effect.fail(fail("WorkScopeMismatch"));
+        }
+        active.add(source.executionId);
+        continue;
       }
       const episode = decodeAttentionSourceEpisode(binding.episodeJson);
       if ("reason" in episode) {
@@ -1497,7 +1535,7 @@ export const deriveProjectAttention = (
                 targetWorkspaceId: fact.workspaceId,
                 dedupKey: `terminal-provider-failure:${fact.workId}:${String(fact.workRevision)}:${fact.source.failureFingerprint}`,
                 summary:
-                  "The model provider rejected this Work execution. Review the provider configuration or request compatibility, then explicitly steer the Work to retry.",
+                  "The model provider could not complete this Work execution. Review the provider configuration or connection, then explicitly steer the Work to retry.",
                 occurredAt: fact.occurredAt,
                 failureCode: fact.source.failureKind,
                 workId: fact.workId,

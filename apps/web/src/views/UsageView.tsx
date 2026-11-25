@@ -7,7 +7,8 @@ import type { UsageReq, UsageRes } from "@arbor/api-contracts";
 import { Button } from "../components/Button.js";
 import { Empty } from "../components/Empty.js";
 import { useCompactLayout } from "../components/useCompactLayout.js";
-import styles from "../pages/usage/usage.module.css";
+import { cn } from "../lib/utils.js";
+import styles from "../pages/usage/usage.styles.js";
 import { formatCost, Mono } from "./shared.js";
 
 const GROUP_BY_OPTIONS: ReadonlyArray<UsageReq["groupBy"]> = [
@@ -36,8 +37,14 @@ export function UsageView({
   const knownGroup = GROUP_BY_OPTIONS.includes(groupBy);
   const compact = useCompactLayout();
   return (
-    <div className="arbor-view-stack">
-      <fieldset className="arbor-segmented" aria-label="统计范围">
+    <div className={cn("arbor-view-stack", "flex flex-col gap-ui-3")}>
+      <fieldset
+        className={cn(
+          "arbor-segmented",
+          "flex flex-wrap items-center gap-ui-2",
+        )}
+        aria-label="统计范围"
+      >
         {GROUP_BY_OPTIONS.map((option) => (
           <Button
             key={option}
@@ -82,7 +89,12 @@ export function UsageView({
           ))}
         </ul>
       ) : (
-        <table className="arbor-table">
+        <table
+          className={cn(
+            "arbor-table",
+            "w-full border-collapse text-small block overflow-x-auto [overscroll-behavior-inline:contain] [&_th]:wrap-anywhere [&_td]:wrap-anywhere [&_th]:p-[var(--arbor-space-1)_var(--arbor-space-2)] [&_th]:border-b [&_th]:border-solid [&_th]:border-border [&_th]:text-muted-foreground [&_th]:font-sans [&_th]:text-caption [&_th]:font-semibold [&_th]:text-left [&_td]:p-ui-2 [&_td]:border-b [&_td]:border-solid [&_td]:border-border [&_td]:text-left [&_td]:[vertical-align:top]",
+          )}
+        >
           <thead>
             <tr>
               <th scope="col">分工</th>

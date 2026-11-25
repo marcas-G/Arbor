@@ -1,0 +1,52 @@
+/* Keep Arbor's reset; migrate components without importing Preflight. */
+@import "tailwindcss/theme.css";
+@import "tailwindcss/utilities.css";
+
+/* Map utility names to the existing product tokens rather than duplicating
+ * color, typography or spacing values in every component. */
+@theme inline {
+  --color-background: var(--arbor-paper);
+  --color-foreground: var(--arbor-ink);
+  --color-card: var(--arbor-surface);
+  --color-card-foreground: var(--arbor-ink);
+  --color-popover: var(--arbor-surface-raised);
+  --color-popover-foreground: var(--arbor-ink);
+  --color-primary: var(--arbor-leaf);
+  --color-primary-foreground: var(--arbor-paper-2);
+  --color-accent: var(--arbor-leaf-pale);
+  --color-accent-foreground: var(--arbor-leaf-bright);
+  --color-muted: var(--arbor-paper);
+  --color-muted-foreground: var(--arbor-ink-soft);
+  --color-destructive: var(--arbor-danger);
+  --color-border: var(--arbor-line);
+  --color-input: var(--arbor-line);
+  --color-ring: var(--arbor-focus);
+  --color-border-strong: var(--arbor-line-strong);
+  --color-branch: var(--arbor-branch);
+  --color-attention: var(--arbor-attention);
+  --color-subtle: var(--arbor-muted);
+  --color-sky: var(--arbor-sky);
+  --color-rail: var(--arbor-rail);
+  --color-rail-raised: var(--arbor-rail-raised);
+  --color-rail-line: var(--arbor-rail-line);
+  --color-rail-ink: var(--arbor-rail-ink);
+  --color-rail-muted: var(--arbor-rail-muted);
+  --spacing-ui-1: var(--arbor-space-1);
+  --spacing-ui-2: var(--arbor-space-2);
+  --spacing-ui-3: var(--arbor-space-3);
+  --spacing-ui-4: var(--arbor-space-4);
+  --spacing-ui-5: var(--arbor-space-5);
+  --spacing-ui-6: var(--arbor-space-6);
+  --font-sans: var(--arbor-font-sans);
+  --font-mono: var(--arbor-font-mono);
+  --text-body: var(--arbor-text-body);
+  --text-small: var(--arbor-text-small);
+  --text-caption: var(--arbor-text-caption);
+  --text-title: var(--arbor-text-title);
+  --text-display: var(--arbor-text-display);
+  --radius-sm: var(--arbor-radius-small);
+  --radius-md: var(--arbor-radius);
+  --radius-lg: var(--arbor-radius-large);
+  --shadow-card: var(--arbor-shadow);
+  --shadow-float: var(--arbor-shadow-float);
+}

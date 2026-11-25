@@ -223,6 +223,7 @@ describe("P12-013 §3 sandbox trajectory + env allow-list", () => {
     expect(windowsPackage.dependencies).toEqual({
       "@arbor/domain": "workspace:*",
       "@arbor/ports": "workspace:*",
+      effect: "4.0.0-rc.115",
     });
     const windowsSource = readRepoFile("adapters/sandbox-windows/src/index.ts");
     expect(windowsSource).toContain('status: "Experimental"');

@@ -12,7 +12,10 @@ import {
   WorkWaitStore,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
-import { makeAdmitExecutionHandler } from "./admit-execution.js";
+import {
+  type AdmitExecutionDependencies,
+  makeAdmitExecutionHandler,
+} from "./admit-execution.js";
 import { makeSettleExecutionHandler } from "./settle-execution.js";
 import { makeStopExecutionHandler } from "./stop-execution.js";
 
@@ -37,6 +40,7 @@ export interface P2CommandDependencies {
     import("@arbor/ports").ExecutableApprovalStoreService,
     "cancelForExecution"
   >;
+  readonly conversationResponse?: AdmitExecutionDependencies["conversationResponse"];
 }
 
 export const makeP2CommandHandlers = (
@@ -68,8 +72,14 @@ export const makeP2CommandHandlers = (
   };
   return [
     makeAdmitExecutionHandler({
-      ...dependencies,
+      projects: dependencies.projects,
+      workspaces: dependencies.workspaces,
+      sessions: dependencies.sessions,
+      executions: dependencies.executions,
       readmissionGate,
+      ...(dependencies.conversationResponse === undefined
+        ? {}
+        : { conversationResponse: dependencies.conversationResponse }),
     }) as unknown as CommandHandler<unknown, unknown>,
     makeStopExecutionHandler({
       executions: dependencies.executions,

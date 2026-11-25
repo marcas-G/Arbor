@@ -1,7 +1,7 @@
 import type {
-  CommandAuthorityFact,
   DecideSandboxPolicyPayload,
   DecideSandboxPolicyPreparation,
+  SandboxPolicyPreparationAuthority,
 } from "@arbor/application";
 import {
   canonicalRegionString,
@@ -11,16 +11,20 @@ import {
   type Execution,
   encodeExecutionEpisodeBinding,
   encodeSandboxEnforcementRuleSetV1,
+  encodeSandboxEnforcementRuleSetV2,
   executionEpisode,
   isIsoTimestamp,
   networkBrokerControlsV1ForMode,
+  networkBrokerControlsV2ForMode,
   networkPolicyDigestV1,
   produceSandboxBoundaryV1,
+  type ResourceAddress,
   type SandboxAuthorityBundleSnapshotCurrent,
   type SandboxPolicyPreconditionsV1,
   type SandboxProfile,
   type SandboxProviderQualificationEntryV1,
   sandboxEnforcementRuleSetV1ForProvider,
+  sandboxEnforcementRuleSetV2ForProvider,
   sandboxEnvironmentBasisDigestOfV1,
   type Workspace,
 } from "@arbor/domain";
@@ -53,10 +57,7 @@ import {
 import { Effect, Option } from "effect";
 import { sandboxPolicyCurrentHostV1 } from "./current-sandbox-authority-snapshot-port.js";
 
-type DecisionAuthority = Extract<
-  CommandAuthorityFact,
-  { readonly _tag: "SandboxPolicyDecisionAuthority" }
->;
+type DecisionAuthority = SandboxPolicyPreparationAuthority;
 
 export type SandboxPolicyPreparationReasonCode =
   | "AuthoritySnapshotUnavailable"
@@ -156,9 +157,11 @@ interface PreparedInputs {
   readonly resolvedRegions: ReadonlyArray<
     import("@arbor/domain").CanonicalResourceRegion
   >;
-  readonly primaryWorktree: WorktreeRecord;
+  readonly primaryAddress: ResourceAddress;
   readonly primaryRegion: import("@arbor/domain").CanonicalResourceRegion;
-  readonly summary: EffectivePolicySummaryV1;
+  readonly summary:
+    | EffectivePolicySummaryV1
+    | import("@arbor/domain").EffectivePolicySummaryV2;
   readonly kind: SandboxPolicyPreconditionsV1["kind"];
   readonly profile: SandboxProfile;
   readonly preIntentRequirement?: SandboxPolicyPreIntentRequirementV1;
@@ -261,21 +264,25 @@ const capture = (
       ),
     );
 
-const exactActiveWorktree = (
+const primaryAddressOf = (
+  workspace: Workspace,
   worktrees: ReadonlyArray<WorktreeRecord>,
-): WorktreeRecord | undefined => {
+): ResourceAddress | undefined => {
   const active = worktrees.filter((record) => record.state === "Active");
-  return active.length === 1 ? active[0] : undefined;
+  if (active.length > 1) return undefined;
+  const managed = active[0];
+  if (managed !== undefined) return managed.address;
+  const fileTrees = workspace.resourceBoundary.addresses.filter(
+    (address): address is Extract<ResourceAddress, { _tag: "FileTree" }> =>
+      address._tag === "FileTree" && address.path.length > 0,
+  );
+  return fileTrees.length === 1 ? fileTrees[0] : undefined;
 };
 
-const sameWorktree = (left: WorktreeRecord, right: WorktreeRecord): boolean =>
-  left.worktreeId === right.worktreeId &&
-  left.projectId === right.projectId &&
-  left.workspaceId === right.workspaceId &&
-  left.state === right.state &&
-  left.address.path === right.address.path &&
-  left.address.repositoryRef === right.address.repositoryRef &&
-  left.address.branch === right.address.branch;
+const samePrimaryAddress = (
+  left: ResourceAddress,
+  right: ResourceAddress,
+): boolean => JSON.stringify(left) === JSON.stringify(right);
 
 const resolvedObservationIsConsistent = (observation: {
   readonly entries: ReadonlyArray<{
@@ -331,6 +338,40 @@ const exactSupportedProviderEntry = (
       entry.providerVersion === payload.providerVersion &&
       entry.capabilityRevision === payload.capabilityRevision &&
       entry.osFamily === currentHost.osFamily &&
+      entry.osBuild === currentHost.osBuild &&
+      entry.tuple.profile === payload.profile &&
+      entry.tuple.networkMode === payload.networkPolicy.policy.mode &&
+      entry.tuple.networkPolicyCodecVersion === 1 &&
+      entry.tuple.enforcementRuleSetDigest === ruleSetDigest,
+  );
+  return exact.length === 1 &&
+    exact[0]?.status === "Supported" &&
+    exact[0].qualificationEvidenceRef !== null
+    ? exact[0]
+    : undefined;
+};
+
+const exactSupportedProviderEntryV2 = (
+  snapshot: SandboxAuthorityBundleSnapshotCurrent,
+  payload: DecideSandboxPolicyPayload,
+  currentHost: ReturnType<typeof sandboxPolicyCurrentHostV1>,
+): SandboxProviderQualificationEntryV1 | undefined => {
+  if (
+    currentHost?.osFamily !== "Linux" ||
+    payload.networkPolicy.kind !== "OsEnforced" ||
+    payload.providerVersion === undefined ||
+    payload.capabilityRevision === undefined
+  )
+    return undefined;
+  const ruleSet = sandboxEnforcementRuleSetV2ForProvider(payload.providerId);
+  if (ruleSet === undefined) return undefined;
+  const ruleSetDigest = sha256Hex(encodeSandboxEnforcementRuleSetV2(ruleSet));
+  const exact = snapshot.bundle.providerRegistry.entries.filter(
+    (entry) =>
+      entry.providerId === payload.providerId &&
+      entry.providerVersion === payload.providerVersion &&
+      entry.capabilityRevision === payload.capabilityRevision &&
+      entry.osFamily === "Linux" &&
       entry.osBuild === currentHost.osBuild &&
       entry.tuple.profile === payload.profile &&
       entry.tuple.networkMode === payload.networkPolicy.policy.mode &&
@@ -550,6 +591,7 @@ export const makeSandboxPolicyDecisionPreparation = (
           );
         }
         let selectedOsEntry: SandboxProviderQualificationEntryV1 | undefined;
+        let selectedPolicySchema: 1 | 2 = 1;
         let policyKind: PreparedInputs["kind"];
         let profile: SandboxProfile;
         if (selection.kind === "TrustedLocalUnconfinedV1") {
@@ -579,13 +621,27 @@ export const makeSandboxPolicyDecisionPreparation = (
             payload,
             currentHost,
           );
+          if (selectedOsEntry === undefined) {
+            selectedOsEntry = exactSupportedProviderEntryV2(
+              authoritySnapshot,
+              payload,
+              currentHost,
+            );
+            if (selectedOsEntry !== undefined) selectedPolicySchema = 2;
+          }
           const now = yield* dependencies.clock.now();
           if (
             currentHost === undefined ||
             selectedOsEntry === undefined ||
             !isIsoTimestamp(now) ||
-            currentHost.osFamily !== "Windows" ||
-            selectedOsEntry.providerId !== "windows-restricted-appcontainer-job"
+            (currentHost.osFamily === "Windows" &&
+              selectedOsEntry.providerId !==
+                "windows-restricted-appcontainer-job") ||
+            (currentHost.osFamily === "Linux" &&
+              (selectedOsEntry.providerId !== "linux-bwrap" ||
+                selectedPolicySchema !== 2)) ||
+            (currentHost.osFamily !== "Windows" &&
+              currentHost.osFamily !== "Linux")
           ) {
             yield* probe(
               "Selection",
@@ -602,14 +658,16 @@ export const makeSandboxPolicyDecisionPreparation = (
             );
           }
           const inspection =
-            inspectWindowsNativeQualificationForRegistryEntryV3(
-              fixedWindowsNativeProductionArtifactPaths(),
-              selectedOsEntry,
-              authoritySnapshot,
-              currentHost,
-              now,
-              dependencies.qualificationIo,
-            );
+            currentHost.osFamily === "Windows"
+              ? inspectWindowsNativeQualificationForRegistryEntryV3(
+                  fixedWindowsNativeProductionArtifactPaths(),
+                  selectedOsEntry,
+                  authoritySnapshot,
+                  currentHost,
+                  now,
+                  dependencies.qualificationIo,
+                )
+              : { _tag: "ManifestVerified" as const };
           if (inspection._tag !== "ManifestVerified") {
             yield* probe(
               "Selection",
@@ -632,18 +690,18 @@ export const makeSandboxPolicyDecisionPreparation = (
           profile = payload.profile;
         }
         yield* probe("Selection", "Pass");
-        const primaryWorktree = exactActiveWorktree(captured.worktrees);
-        if (primaryWorktree === undefined) {
+        const primaryAddress = primaryAddressOf(workspace, captured.worktrees);
+        if (primaryAddress === undefined) {
           yield* probe(
             "PrimaryWorktree",
             "Failure",
             operationalFailure(
-              "exactly one active managed P11 Worktree is required",
+              "exactly one primary managed Worktree or admitted FileTree is required",
             ),
           );
           return yield* Effect.fail(
             operationalFailure(
-              "exactly one active managed P11 Worktree is required",
+              "exactly one primary managed Worktree or admitted FileTree is required",
             ),
           );
         }
@@ -677,11 +735,11 @@ export const makeSandboxPolicyDecisionPreparation = (
           );
         }
         const primary = yield* dependencies.environmentResolver
-          .observe(workspace.projectId, [primaryWorktree.address])
+          .observe(workspace.projectId, [primaryAddress])
           .pipe(
             Effect.mapError((cause) =>
               operationalFailure(
-                "primary P11 Worktree observation failed: " +
+                "primary workspace resource observation failed: " +
                   errorMessage(cause),
               ),
             ),
@@ -695,7 +753,7 @@ export const makeSandboxPolicyDecisionPreparation = (
             "PrimaryWorktreeObservation",
             "Failure",
             operationalFailure(
-              "primary managed Worktree did not resolve exactly once",
+              "primary workspace resource did not resolve exactly once",
             ),
           );
           return yield* Effect.fail(
@@ -709,7 +767,7 @@ export const makeSandboxPolicyDecisionPreparation = (
             "PrimaryWorktreeObservation",
             "Failure",
             operationalFailure(
-              "primary P11 observation entries and normalized set differ",
+              "primary workspace resource observation entries and normalized set differ",
             ),
           );
           return yield* Effect.fail(
@@ -726,7 +784,7 @@ export const makeSandboxPolicyDecisionPreparation = (
             responsibilityRevision: workspace.responsibilityRevision,
             boundary: workspace.resourceBoundary,
             resolvedRegions: resolved.entries.map((entry) => entry.resolved),
-            primaryManagedGitWorktreeRegion: primaryRegion,
+            primaryResourceRegion: primaryRegion,
             ownershipClaims: captured.ownershipClaims,
             policyKind,
             profile,
@@ -817,59 +875,121 @@ export const makeSandboxPolicyDecisionPreparation = (
           operatorConfigRevision: bundle.operatorConfigRevision,
           operatorConfigDigest: bundle.operatorConfigDigest,
         };
-        const summary: EffectivePolicySummaryV1 =
+        const summary:
+          | EffectivePolicySummaryV1
+          | import("@arbor/domain").EffectivePolicySummaryV2 =
           policyKind === "OsEnforced" && selectedOsEntry !== undefined
-            ? {
-                version: 1,
-                kind: "OsEnforced",
-                projectId: commonSummary.projectId,
-                workspaceId: commonSummary.workspaceId,
-                executionId: commonSummary.executionId,
-                episodeBinding: commonSummary.episodeBinding,
-                workspaceRevision: commonSummary.workspaceRevision,
-                resourceBoundaryRevision:
-                  commonSummary.resourceBoundaryRevision,
-                resourceBoundaryDigest: commonSummary.resourceBoundaryDigest,
-                sandboxEnvironmentBasisDigest:
-                  commonSummary.sandboxEnvironmentBasisDigest,
-                policyRevision: commonSummary.policyRevision,
-                expiresAt: payload.decisionExpiresAt,
-                profile: payload.profile as "ReadOnly" | "WorkspaceWrite",
-                providerId: selectedOsEntry.providerId,
-                providerVersion: selectedOsEntry.providerVersion,
-                capabilityRevision: selectedOsEntry.capabilityRevision,
-                osFamily: selectedOsEntry.osFamily,
-                osBuild: selectedOsEntry.osBuild,
-                qualificationEvidenceRef:
-                  selectedOsEntry.qualificationEvidenceRef as string,
-                networkPolicy: (
-                  selection as Extract<typeof selection, { kind: "OsEnforced" }>
-                ).policy,
-                networkPolicyDigest: networkPolicyDigestV1(
-                  (
+            ? selectedPolicySchema === 2
+              ? {
+                  version: 2,
+                  kind: "OsEnforced",
+                  projectId: commonSummary.projectId,
+                  workspaceId: commonSummary.workspaceId,
+                  executionId: commonSummary.executionId,
+                  episodeBinding: commonSummary.episodeBinding,
+                  workspaceRevision: commonSummary.workspaceRevision,
+                  resourceBoundaryRevision:
+                    commonSummary.resourceBoundaryRevision,
+                  resourceBoundaryDigest: commonSummary.resourceBoundaryDigest,
+                  sandboxEnvironmentBasisDigest:
+                    commonSummary.sandboxEnvironmentBasisDigest,
+                  policyRevision: commonSummary.policyRevision,
+                  expiresAt: payload.decisionExpiresAt,
+                  profile: payload.profile as "ReadOnly" | "WorkspaceWrite",
+                  providerId: selectedOsEntry.providerId,
+                  providerVersion: selectedOsEntry.providerVersion,
+                  capabilityRevision: selectedOsEntry.capabilityRevision,
+                  osFamily: "Linux",
+                  osBuild: selectedOsEntry.osBuild,
+                  qualificationEvidenceRef:
+                    selectedOsEntry.qualificationEvidenceRef as string,
+                  networkPolicy: (
                     selection as Extract<
                       typeof selection,
                       { kind: "OsEnforced" }
                     >
                   ).policy,
-                  sha256Hex,
-                ),
-                networkBrokerControls: networkBrokerControlsV1ForMode(
-                  selectedOsEntry.tuple.networkMode,
-                ),
-                providerRegistryRevision: bundle.providerRegistryRevision,
-                providerRegistryDigest: bundle.providerRegistryDigest,
-                sandboxHandleBindingDigest:
-                  commonSummary.sandboxHandleBindingDigest,
-                mounts: commonSummary.mounts,
-                environmentAllowlist: commonSummary.environmentAllowlist,
-                limits: commonSummary.limits,
-                auditRefs: commonSummary.auditRefs,
-                authorityBundleRevision: commonSummary.authorityBundleRevision,
-                authorityBundleDigest: commonSummary.authorityBundleDigest,
-                operatorConfigRevision: commonSummary.operatorConfigRevision,
-                operatorConfigDigest: commonSummary.operatorConfigDigest,
-              }
+                  networkPolicyDigest: networkPolicyDigestV1(
+                    (
+                      selection as Extract<
+                        typeof selection,
+                        { kind: "OsEnforced" }
+                      >
+                    ).policy,
+                    sha256Hex,
+                  ),
+                  networkBrokerControls: networkBrokerControlsV2ForMode(
+                    selectedOsEntry.tuple.networkMode,
+                  ),
+                  providerRegistryRevision: bundle.providerRegistryRevision,
+                  providerRegistryDigest: bundle.providerRegistryDigest,
+                  sandboxHandleBindingDigest:
+                    commonSummary.sandboxHandleBindingDigest,
+                  mounts: commonSummary.mounts,
+                  environmentAllowlist: commonSummary.environmentAllowlist,
+                  limits: commonSummary.limits,
+                  auditRefs: commonSummary.auditRefs,
+                  authorityBundleRevision:
+                    commonSummary.authorityBundleRevision,
+                  authorityBundleDigest: commonSummary.authorityBundleDigest,
+                  operatorConfigRevision: commonSummary.operatorConfigRevision,
+                  operatorConfigDigest: commonSummary.operatorConfigDigest,
+                }
+              : {
+                  version: 1,
+                  kind: "OsEnforced",
+                  projectId: commonSummary.projectId,
+                  workspaceId: commonSummary.workspaceId,
+                  executionId: commonSummary.executionId,
+                  episodeBinding: commonSummary.episodeBinding,
+                  workspaceRevision: commonSummary.workspaceRevision,
+                  resourceBoundaryRevision:
+                    commonSummary.resourceBoundaryRevision,
+                  resourceBoundaryDigest: commonSummary.resourceBoundaryDigest,
+                  sandboxEnvironmentBasisDigest:
+                    commonSummary.sandboxEnvironmentBasisDigest,
+                  policyRevision: commonSummary.policyRevision,
+                  expiresAt: payload.decisionExpiresAt,
+                  profile: payload.profile as "ReadOnly" | "WorkspaceWrite",
+                  providerId: selectedOsEntry.providerId,
+                  providerVersion: selectedOsEntry.providerVersion,
+                  capabilityRevision: selectedOsEntry.capabilityRevision,
+                  osFamily: selectedOsEntry.osFamily,
+                  osBuild: selectedOsEntry.osBuild,
+                  qualificationEvidenceRef:
+                    selectedOsEntry.qualificationEvidenceRef as string,
+                  networkPolicy: (
+                    selection as Extract<
+                      typeof selection,
+                      { kind: "OsEnforced" }
+                    >
+                  ).policy,
+                  networkPolicyDigest: networkPolicyDigestV1(
+                    (
+                      selection as Extract<
+                        typeof selection,
+                        { kind: "OsEnforced" }
+                      >
+                    ).policy,
+                    sha256Hex,
+                  ),
+                  networkBrokerControls: networkBrokerControlsV1ForMode(
+                    selectedOsEntry.tuple.networkMode,
+                  ),
+                  providerRegistryRevision: bundle.providerRegistryRevision,
+                  providerRegistryDigest: bundle.providerRegistryDigest,
+                  sandboxHandleBindingDigest:
+                    commonSummary.sandboxHandleBindingDigest,
+                  mounts: commonSummary.mounts,
+                  environmentAllowlist: commonSummary.environmentAllowlist,
+                  limits: commonSummary.limits,
+                  auditRefs: commonSummary.auditRefs,
+                  authorityBundleRevision:
+                    commonSummary.authorityBundleRevision,
+                  authorityBundleDigest: commonSummary.authorityBundleDigest,
+                  operatorConfigRevision: commonSummary.operatorConfigRevision,
+                  operatorConfigDigest: commonSummary.operatorConfigDigest,
+                }
             : {
                 version: 1,
                 kind: "TrustedLocalUnconfinedV1",
@@ -904,7 +1024,7 @@ export const makeSandboxPolicyDecisionPreparation = (
           captured,
           boundary: workspace.resourceBoundary,
           resolvedRegions: resolved.entries.map((entry) => entry.resolved),
-          primaryWorktree,
+          primaryAddress,
           primaryRegion,
           summary,
           kind: policyKind,
@@ -955,10 +1075,13 @@ export const makeSandboxPolicyDecisionPreparation = (
               undefined,
               dependencies.authoritySnapshot,
             );
-          const activePrimary = exactActiveWorktree(captured.worktrees);
+          const activePrimary = primaryAddressOf(
+            captured.workspace,
+            captured.worktrees,
+          );
           if (
             activePrimary === undefined ||
-            !sameWorktree(activePrimary, prepared.primaryWorktree)
+            !samePrimaryAddress(activePrimary, prepared.primaryAddress)
           )
             return makeCurrentPreconditions(
               payload,
@@ -974,7 +1097,7 @@ export const makeSandboxPolicyDecisionPreparation = (
               responsibilityRevision: captured.workspace.responsibilityRevision,
               boundary: captured.workspace.resourceBoundary,
               resolvedRegions: prepared.resolvedRegions,
-              primaryManagedGitWorktreeRegion: prepared.primaryRegion,
+              primaryResourceRegion: prepared.primaryRegion,
               ownershipClaims: captured.ownershipClaims,
               policyKind: prepared.kind,
               profile: prepared.profile,

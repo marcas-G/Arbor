@@ -56,9 +56,9 @@ describe("Native OS Sandbox schema 0049/0050 storage", () => {
         offlineOnly: true,
       },
     );
-    expect(CURRENT_SCHEMA_VERSION).toBe(55);
-    expect(CURRENT_MIGRATIONS.map(({ id }) => id).slice(-8)).toEqual([
-      48, 49, 50, 51, 52, 53, 54, 55,
+    expect(CURRENT_SCHEMA_VERSION).toBe(57);
+    expect(CURRENT_MIGRATIONS.map(({ id }) => id).slice(-10)).toEqual([
+      48, 49, 50, 51, 52, 53, 54, 55, 56, 57,
     ]);
     const fingerprint = (requires: number, name: string, sql: string) =>
       createHash("sha256")
@@ -130,8 +130,8 @@ describe("Native OS Sandbox schema 0049/0050 storage", () => {
       ).toBe(1);
       expect(
         CURRENT_MIGRATIONS.filter(({ id }) => id > 50).map(({ id }) => id),
-      ).toEqual([51, 52, 53, 54]);
-      expect(await run(fixture.databaseFilename)).toBe(4);
+      ).toEqual([51, 52, 53, 54, 55, 56, 57]);
+      expect(await run(fixture.databaseFilename)).toBe(7);
       const db = new DatabaseSync(fixture.databaseFilename, { readOnly: true });
       try {
         expect(
@@ -140,7 +140,7 @@ describe("Native OS Sandbox schema 0049/0050 storage", () => {
               user_version: number;
             }
           ).user_version,
-        ).toBe(54);
+        ).toBe(57);
         expect(
           db
             .prepare(
@@ -183,6 +183,8 @@ describe("Native OS Sandbox schema 0049/0050 storage", () => {
           "decision_command_id",
           "issued_at",
           "expires_at",
+          "authority_kind",
+          "workspace_authorization_revision",
         ]);
         expect(tableColumns(db, "sandbox_provider_unavailable_facts")).toEqual([
           "attention_fact_id",
@@ -255,6 +257,7 @@ describe("Native OS Sandbox schema 0049/0050 storage", () => {
           "commands",
           "executions",
           "sandbox_policy_grant_issuer_provenance",
+          "workspace_sandbox_authorizations",
         ]);
         expect(
           foreignKeyTables("sandbox_provider_unavailable_facts").sort(),

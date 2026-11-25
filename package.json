@@ -1,6 +1,7 @@
 {
   "name": "arbor",
   "version": "0.0.0",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@12.4.2",
@@ -12,9 +13,11 @@
   },
   "scripts": {
     "build": "tsc -b",
+    "dev": "node scripts/dev.mjs",
     "start": "node scripts/start-local.mjs",
     "typecheck": "tsc -b && tsc -p tsconfig.test.json",
     "test": "node scripts/testing/run-core-tests.mjs",
+    "test:coverage": "vitest run --coverage --config vitest.config.ts --maxWorkers=4",
     "test:functional": "node scripts/testing/run-suite.mjs release",
     "test:functional:process": "node scripts/testing/run-suite.mjs process",
     "test:functional:ui": "node scripts/testing/run-suite.mjs ui",
@@ -35,19 +38,25 @@
     "test:capability": "node scripts/testing/run-capability.mjs gray-box",
     "test:capability:real": "node scripts/testing/run-capability.mjs real-provider",
     "test:real-provider:gate-harness": "vitest run --config vitest.response-gate-harness.config.ts",
+    "health:metrics": "node scripts/ci/health-metrics.mjs",
     "lint": "biome check .",
     "format": "biome format --write .",
     "architecture": "vitest run --config vitest.architecture.config.ts",
     "drill:restore": "pnpm build && node apps/single-workspace/dist/restore-drill.js",
     "assess:storage": "pnpm build && node apps/single-workspace/dist/storage-assessment-harness.js",
     "schema:upgrade": "pnpm build && node apps/single-workspace/dist/schema-upgrade.js",
-    "check": "pnpm lint && pnpm typecheck && pnpm architecture && pnpm test && pnpm --filter @arbor/web typecheck && pnpm --filter @arbor/web build && pnpm --filter @arbor/web test"
+    "check": "pnpm lint && pnpm typecheck && pnpm architecture && pnpm test && pnpm --filter @arbor/web typecheck && pnpm --filter @arbor/web build && pnpm --filter @arbor/web test",
+    "check:source-lines": "node scripts/governance/check-source-lines.mjs",
+    "test:source-lines": "node --test scripts/governance/source-lines-lib.test.mjs"
   },
   "devDependencies": {
+    "@babel/parser": "7.28.5",
     "@biomejs/biome": "2.5.14",
     "@playwright/test": "1.63.0",
     "@types/node": "^24.13.5",
+    "@vitest/coverage-v8": "5.0.1",
     "effect": "4.0.0-rc.115",
+    "jscpd": "5.4.3",
     "typescript": "7.0.2",
     "vitest": "5.0.1"
   },

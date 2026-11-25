@@ -53,6 +53,44 @@ describe("MAC-P2 workspace placement controls", () => {
     });
   });
 
+  it("decodes explicit bounded Child allocation and rejects model-authored authority", async () => {
+    const selected = {
+      targetWorkspaceRef: "wref_child",
+      profile: "WorkspaceWrite",
+      networkPolicy: { version: 1, mode: "Enabled", destinations: [] },
+      expiresAt: null,
+    };
+    await expect(
+      Effect.runPromise(
+        decodeControlInvocation(
+          invocation("allocate_workspace_sandbox", JSON.stringify(selected)),
+        ),
+      ),
+    ).resolves.toMatchObject({
+      action: { _tag: "AllocateWorkspaceSandbox", ...selected },
+    });
+    for (const change of [
+      { targetWorkspaceRef: "current" },
+      { workspaceId: "ws_forged" },
+      { providerId: "linux-bwrap" },
+      { expectedParentAuthorizationRevision: 999 },
+      { profile: "FullAccess" },
+      { expiresAt: "never" },
+      { networkPolicy: { version: 1, mode: "Enabled", destinations: ["*"] } },
+    ]) {
+      await expect(
+        Effect.runPromise(
+          decodeControlInvocation(
+            invocation(
+              "allocate_workspace_sandbox",
+              JSON.stringify({ ...selected, ...change }),
+            ),
+          ),
+        ),
+      ).rejects.toMatchObject({ _tag: "InvalidControlArguments" });
+    }
+  });
+
   it("rejects raw ids and malformed list cursors as read refs", async () => {
     const missing = await Effect.runPromise(
       Effect.flip(

@@ -2,6 +2,7 @@ import {
   ExecutionId,
   grantPermission,
   isIsoTimestamp,
+  isPersistentWorkspaceToolPermission,
   type PermissionGrantId,
   type PermissionGrantLifecycle,
   type PermissionSubject,
@@ -14,6 +15,7 @@ import type {
   ExecutionRepositoryService,
   PendingDomainEvent,
   PermissionGrantRepositoryService,
+  WorkspaceRepositoryService,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { commandErr, commandOk } from "../command-result.js";
@@ -33,7 +35,7 @@ export interface GrantPermissionPayload {
   readonly subject: PermissionSubject;
   readonly capability: string;
   readonly target: string;
-  readonly expiresAt: string;
+  readonly expiresAt: string | null;
 }
 
 export interface GrantPermissionResult {
@@ -44,6 +46,7 @@ export interface GrantPermissionResult {
 export interface GrantPermissionDependencies {
   readonly grants: PermissionGrantRepositoryService;
   readonly executions?: Pick<ExecutionRepositoryService, "findById">;
+  readonly workspaces?: Pick<WorkspaceRepositoryService, "findById">;
   readonly clock?: Pick<ClockService, "now">;
   readonly sandboxPolicyGrantIssuerConfigSnapshot?: SandboxPolicyAuthoritySnapshotV2;
 }
@@ -52,7 +55,8 @@ export const makeGrantPermissionHandler = (
   dependencies: GrantPermissionDependencies,
 ): CommandHandler<GrantPermissionPayload, GrantPermissionResult> => ({
   commandType: "GrantPermission",
-  schemaVersion: "1",
+  schemaVersion: "2",
+  priorReceiptSchemaVersions: ["1"],
   authority: {
     tag: "GrantPermissionAuthority",
     targetMatches: (authority, payload) => {
@@ -62,6 +66,15 @@ export const makeGrantPermissionHandler = (
       ) {
         return false;
       }
+      if (payload.expiresAt === null) {
+        return (
+          isPersistentWorkspaceToolPermission(payload) &&
+          authority.workspacePermissionBinding?.workspaceId ===
+            payload.target &&
+          authority.sandboxPolicyIssuerBinding === undefined
+        );
+      }
+      if (authority.workspacePermissionBinding !== undefined) return false;
       return payload.capability === "DecideSandboxPolicy"
         ? authority.sandboxPolicyIssuerBinding?.executionId === payload.target
         : authority.sandboxPolicyIssuerBinding === undefined;
@@ -83,7 +96,46 @@ export const makeGrantPermissionHandler = (
         ? Date.parse(envelope.issuedAt)
         : Number.NaN;
       const sandboxPolicyCapability = capability === "DecideSandboxPolicy";
+      const persistent = isPersistentWorkspaceToolPermission(payload);
       let trustedNow: string | undefined;
+      if (payload.expiresAt === null) {
+        const authority = envelope.resolvedAuthority;
+        if (
+          !persistent ||
+          dependencies.workspaces === undefined ||
+          dependencies.clock === undefined ||
+          authority?._tag !== "GrantPermissionAuthority" ||
+          authority.workspacePermissionBinding === undefined ||
+          authority.sandboxPolicyIssuerBinding !== undefined ||
+          authority.principal !== context.principal ||
+          authority.projectId !== envelope.projectId ||
+          authority.workspacePermissionBinding.workspaceId !== target
+        ) {
+          return commandErr({
+            _tag: "AuthorityDenied",
+            reason:
+              "persistent permission requires current Workspace governance",
+          });
+        }
+        const binding = authority.workspacePermissionBinding;
+        const workspace = yield* dependencies.workspaces.findById(
+          binding.workspaceId,
+        );
+        trustedNow = yield* dependencies.clock.now();
+        if (
+          !isIsoTimestamp(trustedNow) ||
+          Option.isNone(workspace) ||
+          workspace.value.workspaceId !== binding.workspaceId ||
+          workspace.value.projectId !== envelope.projectId ||
+          workspace.value.lifecycle !== "Active" ||
+          workspace.value.revision !== binding.workspaceRevision
+        ) {
+          return commandErr({
+            _tag: "AuthorityDenied",
+            reason: "persistent permission Workspace changed",
+          });
+        }
+      }
       let sandboxExecutionId: ExecutionId | undefined;
       let sandboxAuthorityBinding:
         | {
@@ -177,10 +229,11 @@ export const makeGrantPermissionHandler = (
         target.length === 0 ||
         target !== target.trim() ||
         payload.issuer !== context.principal ||
-        !Number.isFinite(expiresAt) ||
+        (!persistent && !Number.isFinite(expiresAt)) ||
         (!sandboxPolicyCapability && !Number.isFinite(issuedAt)) ||
-        expiresAt <=
-          (trustedNow === undefined ? issuedAt : Date.parse(trustedNow))
+        (!persistent &&
+          expiresAt <=
+            (trustedNow === undefined ? issuedAt : Date.parse(trustedNow)))
       ) {
         return commandErr({
           _tag: "AuthorityDenied",
@@ -192,7 +245,7 @@ export const makeGrantPermissionHandler = (
         permissionGrantId: payload.permissionGrantId,
         scope: `${capability}@${target}`,
         issuer: payload.issuer,
-        lifetime: payload.expiresAt,
+        lifetime: persistent ? "Workspace" : (payload.expiresAt as string),
         subject: payload.subject,
         capability,
         target,

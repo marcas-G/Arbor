@@ -158,6 +158,19 @@ const pathsFor = (root: string) => ({
   sourceIdentity,
 });
 
+const p39QualificationAvailable = (() => {
+  const root = makeP39PrivateTestDirectory(
+    tmpdir(),
+    "arbor-sandbox-p39-qualification-",
+    false,
+  );
+  try {
+    return validateP39ProtectedDirectory(root);
+  } finally {
+    removeP39PrivateTestDirectory(root);
+  }
+})();
+
 const seed = (root: string) => {
   if (process.platform !== "win32") chmodSync(root, 0o700);
   const forensic = join(root, "forensic");
@@ -190,235 +203,243 @@ const seed = (root: string) => {
     setP39PrivateWindowsAcl(join(root, filename), "file");
 };
 
-describe("P5 operator-only V1→V2 sandbox authority provisioning", () => {
-  it("runs the explicit file-based offline CLI over protected disposable inputs", async () => {
-    const root = makeP39PrivateTestDirectory(
-      tmpdir(),
-      "arbor-sandbox-provision-cli-",
-    );
-    try {
-      seed(root);
-      const result = await Effect.runPromise(
-        runSandboxAuthorityProvisioningCommand([
-          "--offline-v1-to-v2",
-          "--protected-root",
-          root,
-          "--source-file",
-          join(root, "authority.json"),
-          "--high-water-file",
-          join(root, "high-water.json"),
-          "--forensic-directory",
-          join(root, "forensic"),
-          "--operator-config-file",
-          join(root, "operator-config.json"),
-          "--source-identity",
-          sourceIdentity,
-        ]),
-      );
-      expect(result.v2Bundle.bundleRevision).toBe(2);
-      expect(
-        JSON.parse(readFileSync(join(root, "authority.json"), "utf8")),
-      ).toMatchObject({ version: 2, bundleRevision: 2, sourceIdentity });
-      expect(
-        decodeCanonicalSandboxAuthorityHighWaterV2(
-          readFileSync(join(root, "high-water.json"), "utf8"),
-        ),
-      ).toMatchObject({ version: 2, bundleRevision: 2, sourceIdentity });
-    } finally {
-      removeP39PrivateTestDirectory(root);
-    }
-  }, 60_000);
-
-  it("preserves V1 raw evidence and refuses invalid operator config before writes", async () => {
-    const root = makeP39PrivateTestDirectory(
-      tmpdir(),
-      "arbor-sandbox-provision-refusal-",
-    );
-    try {
-      seed(root);
-      expect(validateP39ProtectedDirectory(root)).toBe(true);
-      expect(validateP39ProtectedFile(join(root, "authority.json"))).toBe(true);
-      expect(validateP39ProtectedFile(join(root, "high-water.json"))).toBe(
-        true,
-      );
-      const store = await Effect.runPromise(
-        makeSandboxAuthorityProvisioningFileStore(pathsFor(root)),
-      );
-      const invalid = await Effect.runPromise(
-        Effect.result(
-          Effect.provideService(
-            provisionSandboxAuthorityV1ToV2({ operatorConfig: {} }),
-            SandboxAuthorityProvisioningStore,
-            store,
-          ),
-        ),
-      );
-      expect(invalid._tag).toBe("Failure");
-      expect(readFileSync(join(root, "authority.json"), "utf8")).toBe(
-        v1BundleJson,
-      );
-      expect(readFileSync(join(root, "high-water.json"), "utf8")).toBe(
-        v1HighWaterJson,
-      );
-      expect(existsSync(join(root, "forensic"))).toBe(true);
-      expect(
-        readdirSync(join(root, "forensic")).filter((name) =>
-          name.endsWith(".raw"),
-        ),
-      ).toEqual([]);
-    } finally {
-      removeP39PrivateTestDirectory(root);
-    }
-  }, 60_000);
-
-  it("fails closed when evidence preservation or V2 source readback cannot be proven", async () => {
-    const root = makeP39PrivateTestDirectory(
-      tmpdir(),
-      "arbor-sandbox-provision-failures-",
-    );
-    try {
-      seed(root);
-      const store = await Effect.runPromise(
-        makeSandboxAuthorityProvisioningFileStore(pathsFor(root)),
-      );
-      const run = (override: typeof store) =>
-        Effect.runPromise(
-          Effect.result(
-            Effect.provideService(
-              provisionSandboxAuthorityV1ToV2({ operatorConfig }),
-              SandboxAuthorityProvisioningStore,
-              override,
-            ),
-          ),
-        );
-      const preservationFailure = await run({
-        ...store,
-        preserveForensicEvidence: () => Effect.succeed(false),
-      });
-      expect(preservationFailure._tag).toBe("Failure");
-      expect(readFileSync(join(root, "authority.json"), "utf8")).toBe(
-        v1BundleJson,
-      );
-      expect(readFileSync(join(root, "high-water.json"), "utf8")).toBe(
-        v1HighWaterJson,
-      );
-
-      const sourceVerificationFailure = await run({
-        ...store,
-        writeSandboxAuthorityBundleAtomically: () => Effect.succeed(true),
-      });
-      expect(sourceVerificationFailure._tag).toBe("Failure");
-      expect(readFileSync(join(root, "authority.json"), "utf8")).toBe(
-        v1BundleJson,
-      );
-      expect(readFileSync(join(root, "high-water.json"), "utf8")).toBe(
-        v1HighWaterJson,
-      );
-    } finally {
-      removeP39PrivateTestDirectory(root);
-    }
-  }, 60_000);
-
-  it.each([
-    ["before-high-water", "before-high-water"],
-    ["after-high-water", "after-high-water"],
-  ] as const)(
-    "process kill at %s preserves only the state allowed by the atomic boundary",
-    async (stage, markerStage) => {
+describe.skipIf(!p39QualificationAvailable)(
+  "P5 operator-only V1→V2 sandbox authority provisioning",
+  () => {
+    it("runs the explicit file-based offline CLI over protected disposable inputs", async () => {
       const root = makeP39PrivateTestDirectory(
         tmpdir(),
-        `arbor-sandbox-provision-${stage}-`,
+        "arbor-sandbox-provision-cli-",
       );
       try {
         seed(root);
-        const nonce = randomUUID();
-        const child = spawnSync(
-          process.execPath,
-          provisionArgs(root, stage, nonce),
-          {
-            cwd: process.cwd(),
-            encoding: "utf8",
-            timeout: 120_000,
-          },
-        );
-        assertExactKill(child, nonce, markerStage);
-        const restarted = restartProbe(root, nonce);
-        expect(restarted.error).toBeUndefined();
-        expect(restarted.status).toBe(0);
-        expect(restarted.signal).toBeNull();
-        expect(restarted.stderr).toBe("");
-        const restartMarker = new RegExp(
-          `^ARBOR_SANDBOX_AUTHORITY_RESTART_PROBE_V1:${nonce}:(.+)$`,
-          "mu",
-        );
-        const restartMatch = String(restarted.stdout ?? "").match(
-          restartMarker,
-        );
-        expect(restartMatch, JSON.stringify(restarted)).not.toBeNull();
-        const restartedSnapshot = JSON.parse(restartMatch?.[1] ?? "null") as {
-          readonly _tag: string;
-        };
-        const sourceBytes = readFileSync(join(root, "authority.json"), "utf8");
-        const activeHighWater = readFileSync(
-          join(root, "high-water.json"),
-          "utf8",
-        );
-        const bundleEvidenceId = `v1-bundle-${sha(v1BundleJson)}`;
-        const highWaterEvidenceId = `v1-high-water-${sha(v1HighWaterJson)}`;
-        expect(
-          readFileSync(
-            join(root, "forensic", `${bundleEvidenceId}.raw`),
-            "utf8",
-          ),
-        ).toBe(v1BundleJson);
-        expect(
-          readFileSync(
-            join(root, "forensic", `${highWaterEvidenceId}.raw`),
-            "utf8",
-          ),
-        ).toBe(v1HighWaterJson);
-
-        const store = await Effect.runPromise(
-          makeSandboxAuthorityProvisioningFileStore(pathsFor(root)),
-        );
-        const v2 = await Effect.runPromise(
-          loadSandboxAuthorityBundleSnapshotV2(
-            store,
-            "2026-10-19T00:00:00.000Z",
-            SANDBOX_ENV_ALLOWLIST,
-          ),
-        );
-        if (stage === "before-high-water") {
-          expect(activeHighWater).toBe(v1HighWaterJson);
-          expect(JSON.parse(sourceBytes).version).toBe(2);
-          expect(v2).toMatchObject({ _tag: "Unavailable" });
-          expect(restartedSnapshot._tag).toBe("Unavailable");
-          const forensic = await Effect.runPromise(
-            loadSandboxAuthorityBundleSnapshotV1Forensic(store),
-          );
-          expect(forensic).toMatchObject({ _tag: "Unavailable" });
-        } else {
-          expect(JSON.parse(sourceBytes).bundleRevision).toBe(2);
-          expect(activeHighWater).not.toBe(v1HighWaterJson);
-          expect(
-            decodeCanonicalSandboxAuthorityHighWaterV2(activeHighWater),
-          ).toMatchObject({
-            version: 2,
+        const result = await Effect.runPromise(
+          runSandboxAuthorityProvisioningCommand([
+            "--offline-v1-to-v2",
+            "--protected-root",
+            root,
+            "--source-file",
+            join(root, "authority.json"),
+            "--high-water-file",
+            join(root, "high-water.json"),
+            "--forensic-directory",
+            join(root, "forensic"),
+            "--operator-config-file",
+            join(root, "operator-config.json"),
+            "--source-identity",
             sourceIdentity,
-            bundleRevision: 2,
-          });
-          expect(v2).toMatchObject({
-            _tag: "Available",
-            snapshot: {
-              bundle: { version: 2, sourceIdentity, bundleRevision: 2 },
-            },
-          });
-          expect(restartedSnapshot._tag).toBe("Available");
-        }
+          ]),
+        );
+        expect(result.v2Bundle.bundleRevision).toBe(2);
+        expect(
+          JSON.parse(readFileSync(join(root, "authority.json"), "utf8")),
+        ).toMatchObject({ version: 2, bundleRevision: 2, sourceIdentity });
+        expect(
+          decodeCanonicalSandboxAuthorityHighWaterV2(
+            readFileSync(join(root, "high-water.json"), "utf8"),
+          ),
+        ).toMatchObject({ version: 2, bundleRevision: 2, sourceIdentity });
       } finally {
         removeP39PrivateTestDirectory(root);
       }
-    },
-    120_000,
-  );
-});
+    }, 60_000);
+
+    it("preserves V1 raw evidence and refuses invalid operator config before writes", async () => {
+      const root = makeP39PrivateTestDirectory(
+        tmpdir(),
+        "arbor-sandbox-provision-refusal-",
+      );
+      try {
+        seed(root);
+        expect(validateP39ProtectedDirectory(root)).toBe(true);
+        expect(validateP39ProtectedFile(join(root, "authority.json"))).toBe(
+          true,
+        );
+        expect(validateP39ProtectedFile(join(root, "high-water.json"))).toBe(
+          true,
+        );
+        const store = await Effect.runPromise(
+          makeSandboxAuthorityProvisioningFileStore(pathsFor(root)),
+        );
+        const invalid = await Effect.runPromise(
+          Effect.result(
+            Effect.provideService(
+              provisionSandboxAuthorityV1ToV2({ operatorConfig: {} }),
+              SandboxAuthorityProvisioningStore,
+              store,
+            ),
+          ),
+        );
+        expect(invalid._tag).toBe("Failure");
+        expect(readFileSync(join(root, "authority.json"), "utf8")).toBe(
+          v1BundleJson,
+        );
+        expect(readFileSync(join(root, "high-water.json"), "utf8")).toBe(
+          v1HighWaterJson,
+        );
+        expect(existsSync(join(root, "forensic"))).toBe(true);
+        expect(
+          readdirSync(join(root, "forensic")).filter((name) =>
+            name.endsWith(".raw"),
+          ),
+        ).toEqual([]);
+      } finally {
+        removeP39PrivateTestDirectory(root);
+      }
+    }, 60_000);
+
+    it("fails closed when evidence preservation or V2 source readback cannot be proven", async () => {
+      const root = makeP39PrivateTestDirectory(
+        tmpdir(),
+        "arbor-sandbox-provision-failures-",
+      );
+      try {
+        seed(root);
+        const store = await Effect.runPromise(
+          makeSandboxAuthorityProvisioningFileStore(pathsFor(root)),
+        );
+        const run = (override: typeof store) =>
+          Effect.runPromise(
+            Effect.result(
+              Effect.provideService(
+                provisionSandboxAuthorityV1ToV2({ operatorConfig }),
+                SandboxAuthorityProvisioningStore,
+                override,
+              ),
+            ),
+          );
+        const preservationFailure = await run({
+          ...store,
+          preserveForensicEvidence: () => Effect.succeed(false),
+        });
+        expect(preservationFailure._tag).toBe("Failure");
+        expect(readFileSync(join(root, "authority.json"), "utf8")).toBe(
+          v1BundleJson,
+        );
+        expect(readFileSync(join(root, "high-water.json"), "utf8")).toBe(
+          v1HighWaterJson,
+        );
+
+        const sourceVerificationFailure = await run({
+          ...store,
+          writeSandboxAuthorityBundleAtomically: () => Effect.succeed(true),
+        });
+        expect(sourceVerificationFailure._tag).toBe("Failure");
+        expect(readFileSync(join(root, "authority.json"), "utf8")).toBe(
+          v1BundleJson,
+        );
+        expect(readFileSync(join(root, "high-water.json"), "utf8")).toBe(
+          v1HighWaterJson,
+        );
+      } finally {
+        removeP39PrivateTestDirectory(root);
+      }
+    }, 60_000);
+
+    it.each([
+      ["before-high-water", "before-high-water"],
+      ["after-high-water", "after-high-water"],
+    ] as const)(
+      "process kill at %s preserves only the state allowed by the atomic boundary",
+      async (stage, markerStage) => {
+        const root = makeP39PrivateTestDirectory(
+          tmpdir(),
+          `arbor-sandbox-provision-${stage}-`,
+        );
+        try {
+          seed(root);
+          const nonce = randomUUID();
+          const child = spawnSync(
+            process.execPath,
+            provisionArgs(root, stage, nonce),
+            {
+              cwd: process.cwd(),
+              encoding: "utf8",
+              timeout: 120_000,
+            },
+          );
+          assertExactKill(child, nonce, markerStage);
+          const restarted = restartProbe(root, nonce);
+          expect(restarted.error).toBeUndefined();
+          expect(restarted.status).toBe(0);
+          expect(restarted.signal).toBeNull();
+          expect(restarted.stderr).toBe("");
+          const restartMarker = new RegExp(
+            `^ARBOR_SANDBOX_AUTHORITY_RESTART_PROBE_V1:${nonce}:(.+)$`,
+            "mu",
+          );
+          const restartMatch = String(restarted.stdout ?? "").match(
+            restartMarker,
+          );
+          expect(restartMatch, JSON.stringify(restarted)).not.toBeNull();
+          const restartedSnapshot = JSON.parse(restartMatch?.[1] ?? "null") as {
+            readonly _tag: string;
+          };
+          const sourceBytes = readFileSync(
+            join(root, "authority.json"),
+            "utf8",
+          );
+          const activeHighWater = readFileSync(
+            join(root, "high-water.json"),
+            "utf8",
+          );
+          const bundleEvidenceId = `v1-bundle-${sha(v1BundleJson)}`;
+          const highWaterEvidenceId = `v1-high-water-${sha(v1HighWaterJson)}`;
+          expect(
+            readFileSync(
+              join(root, "forensic", `${bundleEvidenceId}.raw`),
+              "utf8",
+            ),
+          ).toBe(v1BundleJson);
+          expect(
+            readFileSync(
+              join(root, "forensic", `${highWaterEvidenceId}.raw`),
+              "utf8",
+            ),
+          ).toBe(v1HighWaterJson);
+
+          const store = await Effect.runPromise(
+            makeSandboxAuthorityProvisioningFileStore(pathsFor(root)),
+          );
+          const v2 = await Effect.runPromise(
+            loadSandboxAuthorityBundleSnapshotV2(
+              store,
+              "2026-10-19T00:00:00.000Z",
+              SANDBOX_ENV_ALLOWLIST,
+            ),
+          );
+          if (stage === "before-high-water") {
+            expect(activeHighWater).toBe(v1HighWaterJson);
+            expect(JSON.parse(sourceBytes).version).toBe(2);
+            expect(v2).toMatchObject({ _tag: "Unavailable" });
+            expect(restartedSnapshot._tag).toBe("Unavailable");
+            const forensic = await Effect.runPromise(
+              loadSandboxAuthorityBundleSnapshotV1Forensic(store),
+            );
+            expect(forensic).toMatchObject({ _tag: "Unavailable" });
+          } else {
+            expect(JSON.parse(sourceBytes).bundleRevision).toBe(2);
+            expect(activeHighWater).not.toBe(v1HighWaterJson);
+            expect(
+              decodeCanonicalSandboxAuthorityHighWaterV2(activeHighWater),
+            ).toMatchObject({
+              version: 2,
+              sourceIdentity,
+              bundleRevision: 2,
+            });
+            expect(v2).toMatchObject({
+              _tag: "Available",
+              snapshot: {
+                bundle: { version: 2, sourceIdentity, bundleRevision: 2 },
+              },
+            });
+            expect(restartedSnapshot._tag).toBe("Available");
+          }
+        } finally {
+          removeP39PrivateTestDirectory(root);
+        }
+      },
+      120_000,
+    );
+  },
+);

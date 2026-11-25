@@ -7,7 +7,9 @@ const source = (path: string) => readFileSync(join(root, path), "utf8");
 
 describe("DID v1.31 MAC architecture", () => {
   it("keeps active LocalPlan cognition outside the core Domain contract", () => {
-    const controls = source("apps/single-workspace/src/control-actions.ts");
+    const controls = source(
+      "apps/single-workspace/src/control-actions/work-lifecycle.ts",
+    );
     const driver = source("packages/agent-runtime/src/agent-loop-driver.ts");
     const decision = source("packages/agent-runtime/src/model-decision.ts");
     const adapter = source("adapters/persistence-sqlite/src/work-plan.ts");
@@ -16,8 +18,12 @@ describe("DID v1.31 MAC architecture", () => {
     expect(controls).toContain("LocalPlanStore");
     expect(controls).not.toContain("reviseWorkPlan");
     expect(driver).toContain("LocalPlanStore");
-    expect(decision).toContain("localPlans");
-    expect(decision).toContain("local-plan:");
+    const workspaceContext = source(
+      "packages/agent-runtime/src/decision/context/workspace.ts",
+    );
+    expect(decision).toContain("loadDecisionWorkspaceContext(");
+    expect(workspaceContext).toContain("localPlans");
+    expect(workspaceContext).toContain("local-plan:");
     expect(adapter).toContain("LocalPlanStoreLive");
     expect(adapter).toContain("work_plans");
   });

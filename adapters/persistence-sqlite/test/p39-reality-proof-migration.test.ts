@@ -59,6 +59,15 @@ const crossPlatformP39PathQualificationAvailable =
   );
 const windowsAclQualificationAvailable =
   process.platform === "win32" && p39WindowsAclQualificationAvailable();
+const inheritedTempQualificationAvailable = (() => {
+  const directory = mkdtempSync(join(tmpdir(), "arbor-p39-temp-probe-"));
+  try {
+    if (process.platform !== "win32") chmodSync(directory, 0o700);
+    return validateP39ProtectedDirectory(directory);
+  } finally {
+    removeP39PrivateTestDirectory(directory);
+  }
+})();
 
 const executorWithP39ScriptTransform =
   (transform: (script: string) => string): P39WindowsSecurityQueryExecutor =>
@@ -484,14 +493,19 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
     }
   });
 
-  it("inherits the invocation-wide private TEMP ACL for worker-created directories", () => {
-    const directory = mkdtempSync(join(tmpdir(), "arbor-p39-inherited-temp-"));
-    try {
-      expect(validateP39ProtectedDirectory(directory)).toBe(true);
-    } finally {
-      removeP39PrivateTestDirectory(directory);
-    }
-  });
+  it.skipIf(!inheritedTempQualificationAvailable)(
+    "inherits the invocation-wide private TEMP ACL for worker-created directories",
+    () => {
+      const directory = mkdtempSync(
+        join(tmpdir(), "arbor-p39-inherited-temp-"),
+      );
+      try {
+        expect(validateP39ProtectedDirectory(directory)).toBe(true);
+      } finally {
+        removeP39PrivateTestDirectory(directory);
+      }
+    },
+  );
 
   it.skipIf(!crossPlatformP39PathQualificationAvailable)(
     "retains single-path directory and file validation entrypoints",

@@ -184,7 +184,7 @@ describe("p6-architecture", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("packages declare no npm dependency beyond {effect, @arbor/*}", () => {
+  it("packages keep the Effect/Arbor dependency boundary, with the tool-runtime linear regex engine", () => {
     const packagesDir = join(repoRoot, "packages");
     const allowed = (key: string) =>
       key === "effect" || key.startsWith("@arbor/");
@@ -194,7 +194,10 @@ describe("p6-architecture", () => {
         continue;
       }
       const keys = dependencyKeysOf(`packages/${entry}/package.json`);
-      const offenders = keys.filter((key) => !allowed(key));
+      const offenders = keys.filter(
+        (key) =>
+          !allowed(key) && !(entry === "tool-runtime" && key === "re2js"),
+      );
       expect(offenders, `packages/${entry}`).toEqual([]);
     }
   });
@@ -209,7 +212,9 @@ describe("p6-architecture", () => {
         continue;
       }
       const current = [...dependencyKeysOf(relativePath)].sort();
-      const added = current.filter((key) => !head.includes(key));
+      const added = current.filter(
+        (key) => key !== "effect" && !head.includes(key),
+      );
       expect(added, relativePath).toEqual([]);
     }
   });

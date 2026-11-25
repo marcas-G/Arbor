@@ -4,12 +4,14 @@ import {
   type Execution,
   encodeExecutionEpisodeBinding,
   encodeSandboxEnforcementRuleSetV1,
+  encodeSandboxEnforcementRuleSetV2,
   executionEpisode,
   produceSandboxBoundaryV1,
   type SandboxAuthorityBundleSnapshotCurrent,
   type SandboxPolicyCandidateReadV2,
   type SandboxPolicyCurrentHostV1,
   sandboxEnforcementRuleSetV1ForProvider,
+  sandboxEnforcementRuleSetV2ForProvider,
   sandboxPolicyCandidateIdV2,
 } from "@arbor/domain";
 import {
@@ -86,7 +88,7 @@ export const buildSandboxPolicyCandidateReadV2 = (input: {
     responsibilityRevision: workspace.responsibilityRevision,
     boundary: workspace.resourceBoundary,
     resolvedRegions: boundary.resolvedRegions,
-    primaryManagedGitWorktreeRegion: boundary.primaryManagedGitWorktreeRegion,
+    primaryResourceRegion: boundary.primaryResourceRegion,
     ownershipClaims: boundary.ownershipClaims.map((claim) => ({
       workspaceId: claim.workspaceId,
       region: claim.region,
@@ -100,15 +102,22 @@ export const buildSandboxPolicyCandidateReadV2 = (input: {
     SandboxPolicyCandidateReadV2["candidates"][number]
   >();
   for (const entry of bundle.providerRegistry.entries) {
-    const ruleSet = sandboxEnforcementRuleSetV1ForProvider(entry.providerId);
+    const ruleSetV1 = sandboxEnforcementRuleSetV1ForProvider(entry.providerId);
+    const ruleSetV2 = sandboxEnforcementRuleSetV2ForProvider(entry.providerId);
+    const digestMatchesV1 =
+      ruleSetV1 !== undefined &&
+      sha256Hex(encodeSandboxEnforcementRuleSetV1(ruleSetV1)) ===
+        entry.tuple.enforcementRuleSetDigest;
+    const digestMatchesV2 =
+      ruleSetV2 !== undefined &&
+      sha256Hex(encodeSandboxEnforcementRuleSetV2(ruleSetV2)) ===
+        entry.tuple.enforcementRuleSetDigest;
     if (
       entry.status !== "Supported" ||
       entry.osFamily !== currentHost.osFamily ||
       entry.osBuild !== currentHost.osBuild ||
       entry.tuple.networkPolicyCodecVersion !== 1 ||
-      ruleSet === undefined ||
-      sha256Hex(encodeSandboxEnforcementRuleSetV1(ruleSet)) !==
-        entry.tuple.enforcementRuleSetDigest
+      (!digestMatchesV1 && !digestMatchesV2)
     )
       continue;
     const production = produceBoundary({

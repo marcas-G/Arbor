@@ -510,10 +510,10 @@ the Work revision. Each candidate must have one exact settlement-producing
 Step `(logicalStepNo, repairAttempt)`, failed ProviderTurn, final settled
 ProviderAttempt and Manifest. A valid candidate returns the bounded source
 identity including those Step fields, `providerTurnId`, `attemptNo`, the
-closed terminal kind and fingerprint. The closed source kinds are
-`AuthenticationFailed | RequestRejected | ProtocolViolation` with
-`TerminalFailure + Stop`. Retryable kinds never qualify, including exhausted
-or deadline outcomes.
+closed terminal kind and fingerprint. Every non-cancelled Provider failure kind
+qualifies with `TerminalFailure + Stop`; `Cancelled` remains on the
+controlled-interruption path and no final stopped Provider failure can be
+admitted again at the same Work revision.
 
 Extend `ReadmissionGateIntegrityFailure.reasonCode` for exact Step/Turn/
 Attempt/Manifest missing, non-unique and mismatch cases, unsupported taxonomy,

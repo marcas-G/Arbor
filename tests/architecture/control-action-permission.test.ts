@@ -29,9 +29,13 @@ describe("CAPA control permission and approval architecture", () => {
       "packages/execution-runtime/src/execution-runtime.ts",
     );
     const daemon = source("apps/single-workspace/src/production.ts");
-    expect(
-      actions.indexOf('authorization._tag === "ApprovalRequired"'),
-    ).toBeLessThan(actions.indexOf("controlRegistry.handle"));
+    const approvalGate = actions.indexOf(
+      'authorization._tag === "ApprovalRequired"',
+    );
+    const handlerCall = actions.indexOf("controlRegistry.handle");
+    expect(approvalGate).toBeGreaterThanOrEqual(0);
+    expect(handlerCall).toBeGreaterThanOrEqual(0);
+    expect(approvalGate).toBeLessThan(handlerCall);
     expect(runtime).toContain('outcome._tag === "ApprovalRequired"');
     expect(runtime).toContain("leases.release");
     expect(daemon).toContain("controlApprovals.listResolved()");
@@ -39,7 +43,9 @@ describe("CAPA control permission and approval architecture", () => {
   });
 
   it("persists exact approvals and exposes governed MAC-P2 placement", () => {
-    const migrations = source("adapters/persistence-sqlite/src/migrations.ts");
+    const migrations = source(
+      "adapters/persistence-sqlite/src/migrations/v21-v30.ts",
+    );
     const profile = source("packages/model-context/src/turn-profile.ts");
     expect(migrations).toContain('name: "subject_bound_permission_grants"');
     expect(migrations).toContain('name: "control_action_approvals"');

@@ -4,6 +4,7 @@
  */
 import type { InboxUnconsumedEntry, InboxViewRes } from "@arbor/api-contracts";
 import { Empty } from "../components/Empty.js";
+import { cn } from "../lib/utils.js";
 import { EnumBadge } from "./shared.js";
 
 const entryKindLabel = (kind: string): string =>
@@ -21,9 +22,20 @@ export function InboxRows({
   readonly rows: ReadonlyArray<InboxUnconsumedEntry>;
 }) {
   return (
-    <ul className="arbor-row-list">
+    <ul
+      className={cn(
+        "arbor-row-list",
+        "flex flex-col gap-ui-2 m-0 p-0 list-none",
+      )}
+    >
       {rows.map((entry) => (
-        <li key={entry.entryKey} className="arbor-inbox-row">
+        <li
+          key={entry.entryKey}
+          className={cn(
+            "arbor-inbox-row",
+            "flex flex-wrap items-center gap-ui-3 pb-ui-2 border-b border-solid border-border",
+          )}
+        >
           <EnumBadge label={entryKindLabel(entry.kind)} />
           <span>{entry.summary}</span>
         </li>

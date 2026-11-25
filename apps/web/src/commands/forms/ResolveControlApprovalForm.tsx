@@ -2,10 +2,10 @@ import { useState } from "react";
 import { Button } from "../../components/Button.js";
 import { Card } from "../../components/Card.js";
 import { Field } from "../../components/Field.js";
+import { cn } from "../../lib/utils.js";
 import type { CommandReceiptView } from "../submitCommand.js";
 import { useCommandSubmission } from "../useCommandSubmission.js";
 import { FormFeedback } from "./FormFeedback.js";
-import "./forms.css";
 
 function assignmentSummary(summary: string): Record<string, unknown> | null {
   try {
@@ -182,7 +182,7 @@ export function ResolveControlApprovalForm({
   };
   return (
     <Card title="操作审批">
-      <div className="arbor-command-form">
+      <div className={cn("arbor-command-form", "flex flex-col gap-ui-3")}>
         <ApprovalSummary
           summary={summary}
           workspaceId={workspaceId}
@@ -191,9 +191,7 @@ export function ResolveControlApprovalForm({
         <Field
           control="select"
           label="审批决定"
-          disabled={
-            state.phase === "submitting" || state.phase === "transport-failed"
-          }
+          disabled={state.phase === "submitting"}
           value={decision}
           onChange={(next) => setDecision(next as "Approve" | "Reject")}
           options={[

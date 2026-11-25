@@ -25,6 +25,7 @@ import {
   persistenceCorruption,
   repositoryFailure,
 } from "./repository-error.js";
+import { encodeToolObservationEvidence } from "./tool-observation-evidence-codec.js";
 
 interface InvocationRow {
   readonly invocation_id: string;
@@ -179,6 +180,18 @@ export const ToolInvocationStoreLive: Layer.Layer<
         );
         return columns.some(
           (column) => column.name === "recovery_binding_state",
+        );
+      });
+    const hasP40ObservationColumns = () =>
+      Effect.gen(function* () {
+        yield* TransactionScope;
+        const columns = yield* run(
+          sql.unsafe<{ readonly name: string }>(
+            "PRAGMA table_info(tool_invocations)",
+          ),
+        );
+        return columns.some(
+          (column) => column.name === "observation_format_version",
         );
       });
     const checkFenceAndStop = (
@@ -726,21 +739,57 @@ export const ToolInvocationStoreLive: Layer.Layer<
             return false;
           }
           if (record.settlement?._tag === "Interrupted") return true;
-          const updated = yield* run(
-            sql.unsafe(
-              `UPDATE tool_invocations
-                  SET settled_at = ?, settlement_kind = 'Interrupted',
-                      settlement_json = ?, result_ref = NULL
-                WHERE invocation_id = ? AND settled_at IS NULL
-                  AND effect_admission_state = 'NotAdmitted'
-                RETURNING invocation_id`,
-              [
-                settledAt,
-                JSON.stringify({ _tag: "Interrupted" }),
-                invocationId,
-              ],
-            ),
-          );
+          const p40ObservationColumns = yield* hasP40ObservationColumns();
+          const settlement = { _tag: "Interrupted" as const };
+          const encoded = p40ObservationColumns
+            ? encodeToolObservationEvidence({
+                observation: settlement,
+                settlement,
+                resultRef: null,
+              })
+            : undefined;
+          if (encoded?._tag === "Failure") {
+            return yield* Effect.fail(
+              persistenceCorruption(
+                "ToolInvocationStore",
+                "record-no-effect-interruption",
+                `could not encode P40 Interrupted observation: ${encoded.failureCode}`,
+              ),
+            );
+          }
+          const updated = p40ObservationColumns
+            ? yield* run(
+                sql.unsafe(
+                  `UPDATE tool_invocations
+                      SET settled_at = ?, settlement_kind = 'Interrupted',
+                          settlement_json = ?, result_ref = NULL,
+                          observation_format_version = ?, observation_json = ?,
+                          observation_sha256 = ?, settlement_provenance = 'Ordinary',
+                          selected_attempt_no = NULL, selected_fact_id = NULL
+                    WHERE invocation_id = ? AND settled_at IS NULL
+                      AND effect_admission_state = 'NotAdmitted'
+                    RETURNING invocation_id`,
+                  [
+                    settledAt,
+                    JSON.stringify(settlement),
+                    encoded?.evidence.formatVersion,
+                    encoded?.evidence.bytes,
+                    encoded?.evidence.sha256,
+                    invocationId,
+                  ],
+                ),
+              )
+            : yield* run(
+                sql.unsafe(
+                  `UPDATE tool_invocations
+                      SET settled_at = ?, settlement_kind = 'Interrupted',
+                          settlement_json = ?, result_ref = NULL
+                    WHERE invocation_id = ? AND settled_at IS NULL
+                      AND effect_admission_state = 'NotAdmitted'
+                    RETURNING invocation_id`,
+                  [settledAt, JSON.stringify(settlement), invocationId],
+                ),
+              );
           return updated.length > 0;
         }),
       admitEffect: (invocationId, currentAuthority, now, executionFence) =>
@@ -820,6 +869,60 @@ export const ToolInvocationStoreLive: Layer.Layer<
               _tag: "Denied",
               reasonCode: "InvocationAuthorityDenied",
             } as const;
+          }
+          if (currentAuthority.workspaceSandboxSources !== undefined) {
+            const sources = currentAuthority.workspaceSandboxSources;
+            if (
+              !sources.some(
+                (source) => source.workspaceId === record.workspaceId,
+              )
+            ) {
+              return {
+                _tag: "Denied",
+                reasonCode: "InvocationAuthorityDenied",
+              } as const;
+            }
+            // Heads are immutable. Reading the current head and its scope in
+            // this admission transaction closes revocation/reparenting races
+            // after resolver and process-policy materialization have returned.
+            for (const source of sources) {
+              const rows = yield* run(
+                sql.unsafe<{
+                  readonly parent_workspace_id: string | null;
+                  readonly lifecycle: string;
+                  readonly resource_boundary_revision: number;
+                  readonly workspace_policy_revision: number;
+                  readonly authorization_revision: number | null;
+                }>(
+                  `SELECT w.parent_workspace_id, w.lifecycle,
+                  w.resource_boundary_revision, w.workspace_policy_revision,
+                  (SELECT MAX(a.authorization_revision) FROM workspace_sandbox_authorizations a
+                    WHERE a.project_id = w.project_id AND a.workspace_id = w.workspace_id) AS authorization_revision
+                  FROM workspaces w WHERE w.workspace_id = ?
+                    AND w.project_id = (SELECT project_id FROM workspaces WHERE workspace_id = ?)`,
+                  [source.workspaceId, record.workspaceId],
+                ),
+              );
+              const current = rows[0];
+              if (
+                current === undefined ||
+                current.parent_workspace_id !== source.parentWorkspaceId ||
+                current.lifecycle !== source.lifecycle ||
+                Number(current.resource_boundary_revision) !==
+                  source.resourceBoundaryRevision ||
+                Number(current.workspace_policy_revision) !==
+                  source.workspacePolicyRevision ||
+                (current.authorization_revision === null
+                  ? null
+                  : Number(current.authorization_revision)) !==
+                  source.authorizationRevision
+              ) {
+                return {
+                  _tag: "Denied",
+                  reasonCode: "InvocationAuthorityDenied",
+                } as const;
+              }
+            }
           }
           if (currentAuthority.sourceRevision !== undefined) {
             const workspaceRows = yield* run(

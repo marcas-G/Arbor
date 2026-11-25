@@ -406,3 +406,88 @@ process counts in the D2 result. Full `pnpm check` and clean install/package
 smoke are required for D2 closure. D2 does not prove D4–D6 helper execution,
 filesystem lifetime, Disabled network, Stop or broker gates; Windows remains
 Experimental/empty/Unavailable and no Supported tuple is created.
+
+## Linux workspace networking V2 governance supplement
+
+Accepted under `ACCEPT_LINUX_WORKSPACE_NETWORK_V2`; proposal SHA-256 `9801a907a540a7ea2ec5a68e2ac197105c4bf5a1b00191c3801e888dded59111`.
+
+This supplement owns only the Linux V2 changes assigned to this document. For V2 it supersedes the conflicting first-release Windows-only, blanket loopback-denial, V1 broker and discovery clauses; V1/Windows/historical evidence retain their original meaning. It creates no Supported result, migration execution, preserved-database upgrade or release claim. Service registration, cross-command service reuse and preview still require their separate exact contract and acceptance; the full product goal is not reduced. DID 1.66 owns the closed technical definitions.
+
+#### 7. 交付判据与授权边界
+
+下列全部通过，才满足总目标；任何局部实验不替代它们：
+
+1. 同一普通 Linux 发行物，从全新用户数据目录安装，浏览器配置外部真实模型，
+   打开真实项目，使用 read/write/patch/glob/grep 定位并修改文件。
+2. 普通权限/审批流程中完成公网依赖安装、真实构建和测试，并呈现失败；未配置
+   模型不能开始任务，不能预先代办权限或使用 fake Provider。
+3. 两个正式 Workspace 联合证明文件/权限/临时状态/相同内部端口互不串扰；
+   各自能联网开发，经正式交付和接收协作。
+4. 补充指导、停止 A 而 B 继续、命令产生副作用前后 kill/restart；不重复危险效果，
+   结果不明明确呈现。后续命令访问本区服务，浏览器预览含 WebSocket 指向正确项目。
+5. 普通安装包查看改动、独立验证、人工验收、重启历史保留；备份/恢复及声明支持的
+   升级路径有真实证据。当前源码的完整检查、功能和发行资格仍必须单独通过。
+
+本包固定上述行为及第 8 节的联网命令合同。附带 `landing.patch` 是对应 owner 文本的
+精确审阅材料。接受并完成一致性复核后，授权对应 Linux 联网命令实现、追加迁移、
+普通装配及资格工具开发。服务登记/复用/预览仍须形成后续精确合同；总交付目标
+保持不变，不能以本包的局部完成替代。
+本包不签发资格、不修改用户数据库、不批准部署或发布。
+
+##### 8.4 受信 Linux 资格材料
+
+P5 registry entry 的现有字段与 canonical codec 不变；新 row 的
+enforcementRuleSetDigest 必须等于 8.1 模板摘要，精确元组不得从旧 row 推导。
+新增 protected source 只读方法 `readLinuxSandboxQualificationEvidence(ref)`：
+输入只能是 registry 的 blob SHA-256 引用，输出规范 manifest 原字节或 unavailable，
+不能接受模型提供的文件路径、公钥或自定义 verifier。缺少该可选方法时不支持 V2。
+
+Linux manifest version=2 的规范键序为：version,providerId,providerVersion,
+capabilityRevision,osFamily,osBuild,profile,networkMode,networkPolicyCodecVersion,
+enforcementRuleSetDigest,validatedLimits,artifactHashes,cases。其余标量使用对应
+registry/domain 类型及 closed 值；validatedLimits 使用现有 SandboxPolicyLimitsV1
+的完整字段/顺序。artifactHashes 是按 UTF-8 role 唯一排序的
+`{role,sha256}` 数组；role 集合精确为 adapter-runtime,adapter-source,bwrap,
+qualification-control,relay-runtime,relay-source,systemctl,systemd-run。路径由安装产物
+和受信 host 配置固定，manifest 不携带任意可执行路径。每个摘要为实际完整文件
+字节的 SHA-256 小写值；不能仅哈希版本字符串。
+
+cases 是按 caseId UTF-8 排序的 `{caseId,verdict,evidenceRef}`，verdict 仅为 PASS，
+evidenceRef 必须是对应完整资格结果的 `blob:sha256:<lowerhex>`；没有自引用。
+必需 caseId 集合精确为：artifact-drift,cancel-before-spawn,cancel-running-tree,
+dns-mixed-denied,dns-rebinding,env-secret-absent,file-ro,file-rw,file-outside-denied,
+host-loopback-denied,namespace-escape-denied,output-bound,private-target-denied,
+process-limit,public-https,raw-network-denied,readonly-sharing,resource-cpu,
+resource-memory,same-namespace-tcp,socket-outside-denied,timeout-tree。
+Restricted 另必须包括 restricted-allow,restricted-deny；Disabled 不允许公共出站，
+其 public-https 项替换为 disabled-egress-denied。每项为真实控制测试，不接受模拟
+支持能力替代；完整 ordinary install/real-model/双 Workspace 验收另由第 7 节负责。
+
+manifest 摘要必须等于当前受信 registry row 的 qualificationEvidenceRef；
+manifest 的全部元组必须逐项相同。每次 capability 和 effect admission 核对当前
+source/high-water、主机及实际产物字节；请求限制不得超过经过测试的 validatedLimits。
+独立离线资格/安装流程可生成并明确安装材料，daemon/provider 自己不能签发 row，
+不能把运行中的 probe success 自动写成 Supported。Windows 信任/签名源保持不变。
+
+## 2026-11-20 Workspace default execution capability acceptance
+
+Accepted under `ACCEPT_WORKSPACE_DEFAULT_EXECUTION_CAPABILITY`; fixed proposal
+`docs/proposals/2026-11-20-workspace-default-execution-capability.md`, SHA-256
+`8503d5c2663d3098171c57646b78a8408d5f1a28dc7f3cf3a37f2181fddaed66`.
+
+Add the following release story to the P12 matrix:
+
+1. A clean Linux install completes the exact environment check.
+2. Creating/opening a real Project initializes its root Workspace baseline without
+   a second Workspace authorization ceremony.
+3. The same real model performs file read/write, local command/build/test and
+   controlled public HTTPS work inside the Workspace boundary.
+4. A second Workspace cannot read or write the first Workspace's resources;
+   restart preserves the first Workspace baseline; explicit revoke blocks new
+   execution until explicit user restoration.
+5. A Work blocked only by missing initialization capability exposes same-Work
+   retry after initialization, with a new Execution and preserved blocker history.
+
+This story must run against one clean release artifact and fresh acceptance
+database. Fake providers, direct internal routes, pre-created grants and
+host execution are not evidence.

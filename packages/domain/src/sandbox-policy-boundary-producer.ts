@@ -35,8 +35,10 @@ export interface SandboxBoundaryProductionInputV1 {
    * boundary.addresses. The resolver is authoritative for path normalization
    * and may collapse FileTree/GitWorktree aliases before this producer runs. */
   readonly resolvedRegions: ReadonlyArray<CanonicalResourceRegion>;
-  /** Exact active P11 Worktree binding selected as the primary mount. */
-  readonly primaryManagedGitWorktreeRegion: CanonicalResourceRegion;
+  /** Exact admitted primary filesystem region selected as the workspace mount.
+   * A root selected through the host directory admission path is a FileTree;
+   * a P11-managed coding checkout is a GitWorktree. */
+  readonly primaryResourceRegion: CanonicalResourceRegion;
   /** Current Workspace ownership records; stale/released claims never elevate. */
   readonly ownershipClaims: ReadonlyArray<SandboxBoundaryOwnershipClaimInputV1>;
   readonly policyKind: "OsEnforced" | "TrustedLocalUnconfinedV1";
@@ -254,11 +256,10 @@ export const produceSandboxBoundaryV1 = (
   const resolvedSet = resolvedCanonicalSetV1(input.resolvedRegions);
   if (!boundaryAddressesValid || resolvedSet === undefined) return undefined;
 
-  const primaryKind = resolvedRegionKind(input.primaryManagedGitWorktreeRegion);
-  if (primaryKind !== "GitWorktree") return undefined;
-  const primaryCanonical = canonicalRegionString(
-    input.primaryManagedGitWorktreeRegion,
-  );
+  const primaryKind = resolvedRegionKind(input.primaryResourceRegion);
+  if (primaryKind !== "FileTree" && primaryKind !== "GitWorktree")
+    return undefined;
+  const primaryCanonical = canonicalRegionString(input.primaryResourceRegion);
 
   const uniqueRegions = resolvedSet;
   if (uniqueRegions === undefined) return undefined;

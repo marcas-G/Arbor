@@ -250,7 +250,11 @@ describe("W-07 SettingsPage (frozen §2.10)", () => {
         name: button,
       });
       fireEvent.click(action);
-      expect(action).toHaveProperty("disabled", true);
+      const submittedAction = isRename
+        ? action
+        : within(project).getByRole("button", { name: "确认归档" });
+      if (!isRename) fireEvent.click(submittedAction);
+      expect(submittedAction).toHaveProperty("disabled", true);
       expect(await within(project).findByText(pending)).toBeTruthy();
       finishCommand?.({
         status: 403,
@@ -267,8 +271,10 @@ describe("W-07 SettingsPage (frozen §2.10)", () => {
         }),
       });
       expect(await within(project).findByRole("alert")).toBeTruthy();
-      await waitFor(() => expect(action).toHaveProperty("disabled", false));
-      expect(within(project).getByText(reason)).toBeTruthy();
+      await waitFor(() =>
+        expect(submittedAction).toHaveProperty("disabled", false),
+      );
+      expect(within(project).getByRole("alert").textContent).toContain(reason);
     },
   );
 

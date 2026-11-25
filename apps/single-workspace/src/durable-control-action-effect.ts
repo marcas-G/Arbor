@@ -2,6 +2,7 @@ import type {
   AgentActionHandlerInput,
   AgentActionOutcome,
 } from "@arbor/agent-runtime";
+import { workEpisode } from "@arbor/domain";
 import { decodeTurn } from "@arbor/model-context";
 import type {
   AgentLoopStepStoreService,
@@ -10,7 +11,7 @@ import type {
   SessionRepositoryService,
   TransactionPortService,
 } from "@arbor/ports";
-import { sha256Hex } from "@arbor/ports";
+import { sessionCausalBindingForWork, sha256Hex } from "@arbor/ports";
 import { Effect, Option } from "effect";
 
 export interface DurableControlEffect {
@@ -59,6 +60,17 @@ export const commitDurableControlActionEffect = <A>(input: {
         ),
       );
     }
+    const boundWork = workEpisode(handlerInput.execution);
+    const causalBinding =
+      boundWork === null
+        ? undefined
+        : sessionCausalBindingForWork({
+            projectId: handlerInput.execution.projectId,
+            workspaceId: handlerInput.execution.workspaceId,
+            workId: boundWork.workId,
+            executionId: handlerInput.execution.executionId,
+            causedByRef: String(context.providerTurnId),
+          });
     const updatedAt = yield* input.clock.now();
     const committed = yield* input.tx.transact(
       Effect.gen(function* () {
@@ -223,6 +235,7 @@ export const commitDurableControlActionEffect = <A>(input: {
             contextEpoch: context.contextEpoch,
             source: { kind: "AgentLoopAction", ref: observationSourceRef },
             contentHash: sha256Hex(JSON.stringify(item)),
+            ...(causalBinding === undefined ? {} : { causalBinding }),
           },
           fence,
         );

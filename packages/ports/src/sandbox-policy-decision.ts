@@ -2,7 +2,7 @@ import type {
   ExecutionId,
   ProjectId,
   SandboxPolicyDecision,
-  SandboxPolicyDecisionCommittedInternalV1,
+  SandboxPolicyDecisionCommittedInternal,
   WorkspaceId,
 } from "@arbor/domain";
 import { Context, type Effect, type Option } from "effect";
@@ -17,7 +17,7 @@ export type SandboxPolicyDecisionStoreError =
  * returning this joined value. */
 export interface CommittedSandboxPolicyDecisionV1 {
   readonly decision: SandboxPolicyDecision;
-  readonly result: SandboxPolicyDecisionCommittedInternalV1;
+  readonly result: SandboxPolicyDecisionCommittedInternal;
 }
 
 export interface SandboxPolicyDecisionStoreService {
@@ -48,8 +48,9 @@ export interface SandboxPolicyDecisionStoreService {
     SandboxPolicyDecisionStoreError,
     TransactionScope
   >;
-  /** Immutable insert, callable only by DecideSandboxPolicy within Gateway's
-   * transaction. Unique/CAS failures remain typed and are never overwritten. */
+  /** Immutable insert, callable only by the owning DecideSandboxPolicy or
+   * BindWorkspaceSandboxPolicy Gateway handler. Unique/CAS failures remain
+   * typed and are never overwritten. */
   readonly insertCommitted: (
     decision: SandboxPolicyDecision,
   ) => Effect.Effect<void, SandboxPolicyDecisionStoreError, TransactionScope>;

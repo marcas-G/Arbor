@@ -67,8 +67,9 @@ describe("RootConversation bounded Work routing guidance", () => {
 
   it("uses the existing BaseLoop slot to identify the active WorkEpisode executor", () => {
     const workLoop = GENERIC_INSTRUCTION_ASSETS.baseLoop;
-    expect(workLoop.contentRef).toBe("prompt:base-agent-protocol:base-loop:v2");
-    expect(workLoop.revision).toBe(2);
+    expect(workLoop.contentRef).toBe("prompt:base-agent-protocol:base-loop:v3");
+    expect(workLoop.text).toContain("disposition Blocked");
+    expect(workLoop.revision).toBe(3);
     expect(workLoop.text).toContain(
       "you are the executing agent responsible for advancing that Work",
     );

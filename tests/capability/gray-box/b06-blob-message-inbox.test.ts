@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { afterEach, describe, expect } from "vitest";
-import { BlobStorePortLive } from "../../../adapters/blob-local/src/index.js";
+import { describe, expect } from "vitest";
+import { makeBlobStorePortLive } from "../../../adapters/blob-local/src/index.js";
 import {
   P6_MIGRATIONS,
   runMigrations,
@@ -43,13 +43,6 @@ const senderWorkspaceId = parse(WorkspaceId)(
 );
 const senderSessionId = "ses_018f2b3c-4d5e-7abc-8def-0123456789d2";
 const bodyPrefix = "CAPABILITY_B06_BLOB_MESSAGE_";
-const createdBlobRefs: string[] = [];
-
-afterEach(() => {
-  for (const blobRef of createdBlobRefs.splice(0)) {
-    rmSync(join(tmpdir(), "arbor-blobs", blobRef), { force: true });
-  }
-});
 
 const seedChildWorkspace = Effect.gen(function* () {
   const tx = yield* TransactionPort;
@@ -125,7 +118,10 @@ describe("B06 L2 — BlobStore body to durable Message and Inbox", () => {
           urgency: "Normal",
         },
       };
-      const app = Layer.mergeAll(makeP6App(databaseFile), BlobStorePortLive);
+      const app = Layer.mergeAll(
+        makeP6App(databaseFile),
+        makeBlobStorePortLive(join(databaseDirectory, "blobs")),
+      );
       try {
         const result = await runP6(
           Effect.gen(function* () {
@@ -134,7 +130,6 @@ describe("B06 L2 — BlobStore body to durable Message and Inbox", () => {
             yield* seedChildWorkspace;
             const blobStore = yield* BlobStorePort;
             const actualBlobRef = yield* blobStore.put(bytes);
-            createdBlobRefs.push(actualBlobRef);
             const readBack = yield* blobStore.get(actualBlobRef);
             const gateway = yield* CommandGateway;
             const plan = sendMessagePlan({

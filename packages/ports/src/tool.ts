@@ -64,6 +64,17 @@ export interface InvocationAuthority {
   /** Persistence source snapshot used by the fenced pre-effect gate. This is
    * an implementation token, not additional authority. */
   readonly sourceRevision?: string;
+  /** Current immutable heads and scope rows, checked again at effect admission. */
+  readonly workspaceSandboxSources?: ReadonlyArray<WorkspaceSandboxInvocationSource>;
+}
+
+export interface WorkspaceSandboxInvocationSource {
+  readonly workspaceId: string;
+  readonly parentWorkspaceId: string | null;
+  readonly lifecycle: string;
+  readonly resourceBoundaryRevision: number;
+  readonly workspacePolicyRevision: number;
+  readonly authorizationRevision: number | null;
 }
 
 export const invocationAuthoritySourceRevisionOf = (input: {
@@ -123,6 +134,12 @@ export interface RecoveryBindingPolicyRevisions {
 export interface ToolExecutionContext {
   readonly executionId: ExecutionId;
   readonly executionEpisodeBinding?: ExecutionEpisodeBinding;
+  /** Trusted canonical Verifier target; never decoded from model arguments. */
+  readonly independentVerificationTarget?: {
+    readonly verificationId: import("@arbor/domain").VerificationId;
+    readonly workId: import("@arbor/domain").WorkId;
+    readonly targetWorkRevision: import("@arbor/domain").WorkRevision;
+  };
   /** Set only by P9 from the exact durable decision; absence fails closed. */
   readonly sandboxProcessPolicy?: SandboxProcessPolicy;
   /** Process-local full-boundary mounts materialized from the same current
@@ -323,6 +340,8 @@ export interface SandboxMountBinding {
 export interface SandboxProcessPolicyResolution {
   readonly policy: SandboxProcessPolicy;
   readonly mounts: ReadonlyArray<SandboxMountBinding>;
+  /** Process-local cleanup for resources created while resolving the policy. */
+  readonly dispose?: Effect.Effect<void>;
 }
 
 export interface SandboxOpenedMount {

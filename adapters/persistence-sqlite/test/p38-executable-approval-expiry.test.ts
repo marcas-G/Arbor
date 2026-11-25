@@ -116,7 +116,7 @@ const makeStartBarrier = (participants: number) => {
 };
 
 const seedApproval = (input: {
-  readonly state: "Pending" | "Approved";
+  readonly state: "Pending" | "Approved" | "Consumed";
   readonly revision: number;
   readonly inboxConsumedAt: string | null;
   readonly approvalId?: string;
@@ -142,7 +142,7 @@ const seedApproval = (input: {
        ) VALUES (?, 'Executable', ?, ?, ?, 'user:expiry-test', 'write_file',
          '2', 'Idempotent', 'digest-expiry', '{"path":"a.txt"}', '[]',
          '["space-expiry"]', 'basis-expiry', ?, ?,
-         '2026-10-11T00:00:00.000Z', ?, ?, ?, ?, NULL, NULL, 1, NULL,
+         '2026-10-11T00:00:00.000Z', ?, ?, ?, ?, ?, ?, 1, NULL,
          2, 0, 0, ?, 'call-expiry', ?, NULL, NULL, NULL)`,
       [
         rowApprovalId,
@@ -152,9 +152,13 @@ const seedApproval = (input: {
         input.state,
         input.revision,
         expiredAt,
-        input.state === "Approved" ? "2026-10-11T00:01:00.000Z" : null,
-        input.state === "Approved" ? "user:expiry-test" : null,
-        input.state === "Approved" ? "Approve" : null,
+        input.state === "Pending" ? null : "2026-10-11T00:01:00.000Z",
+        input.state === "Pending" ? null : "user:expiry-test",
+        input.state === "Pending" ? null : "Approve",
+        input.state === "Consumed" ? "2026-10-11T00:01:30.000Z" : null,
+        input.state === "Consumed"
+          ? (input.toolInvocationId ?? toolInvocationId)
+          : null,
         rowLogicalActionId,
         rowToolInvocationId,
       ],
@@ -380,6 +384,35 @@ describe("EA-DG-01 executable approval expiration", () => {
         expect(JSON.parse(events[0]?.payload_json ?? "{}")).toMatchObject({
           resolution: "Expired",
           reasonCode: "TTLExpired",
+        });
+      }),
+    ));
+
+  it("treats Consumed as a resolved approval for crash recovery", () =>
+    runDb(
+      Effect.gen(function* () {
+        const tx = yield* TransactionPort;
+        const store = yield* ExecutableApprovalStore;
+        yield* runMigrations(P38_MIGRATIONS);
+        yield* tx.transact(
+          seedApproval({
+            state: "Consumed",
+            revision: 2,
+            inboxConsumedAt: "2026-10-11T00:01:00.000Z",
+            approvalId: "eap_consumed_recovery",
+            logicalActionId: "lac_consumed_recovery",
+            toolInvocationId: "tin_consumed_recovery",
+          }),
+        );
+
+        const resolved = yield* tx.transact(store.listResolved(executionId));
+
+        expect(resolved).toHaveLength(1);
+        expect(resolved[0]).toMatchObject({
+          approvalId: "eap_consumed_recovery",
+          state: "Consumed",
+          revision: 2,
+          consumedBy: "tin_consumed_recovery",
         });
       }),
     ));

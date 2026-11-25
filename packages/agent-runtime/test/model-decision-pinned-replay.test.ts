@@ -98,6 +98,29 @@ describe("pinned Submitted DecisionRequest replay guard", () => {
       }),
     ).toBeUndefined();
   });
+
+  it("rejects stale revisions, missing evidence, and an unrelated action cursor", () => {
+    const original = input();
+    const invalid = [
+      { ...original, request: { ...original.request, revision: 2 } },
+      { ...original, workspace: { ...original.workspace, revision: 12 } },
+      { ...original, request: { ...original.request, candidateWorkIds: [] } },
+      { ...original, workspace: undefined },
+      { ...original, step: undefined },
+      { ...original, pendingAction: undefined },
+      {
+        ...original,
+        pendingAction: { ...original.pendingAction, actionIndex: 1 },
+      },
+      { ...original, providerResult: undefined },
+    ];
+    for (const candidate of invalid) {
+      expect(isPinnedSubmittedDecisionReplay(candidate)).toBe(false);
+      expect(
+        classifySubmittedDecisionBindingFailure(candidate),
+      ).toBeUndefined();
+    }
+  });
 });
 
 describe("Submitted DecisionEpisode Stop-only close plan", () => {
@@ -233,6 +256,33 @@ describe("overflow compaction recovery link guard", () => {
         recoveryCompactionId,
       ),
     ).toBe(true);
+    expect(
+      isValidOverflowCompactionLinkPair(links, recoveryInferenceId, [
+        otherRecoveryInferenceId,
+        recoveryCompactionId,
+      ]),
+    ).toBe(true);
+    expect(
+      isValidOverflowCompactionLinkPair(
+        [...links, ...links],
+        recoveryInferenceId,
+        recoveryCompactionId,
+      ),
+    ).toBe(false);
+    expect(
+      isValidOverflowCompactionLinkPair(
+        links.slice(0, 1),
+        recoveryInferenceId,
+        recoveryCompactionId,
+      ),
+    ).toBe(false);
+    expect(
+      isValidOverflowCompactionLinkPair(
+        links,
+        recoveryInferenceId,
+        otherRecoveryInferenceId,
+      ),
+    ).toBe(false);
   });
 
   it("rejects an OverflowCompaction link whose predecessor is not the failed inference", () => {

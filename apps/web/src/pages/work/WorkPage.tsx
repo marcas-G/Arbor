@@ -14,6 +14,10 @@ import { navigate } from "../../api/router.js";
 import { useViewQuery } from "../../api/useViewQuery.js";
 import { AcceptWorkOutcomeForm } from "../../commands/forms/AcceptWorkOutcomeForm.js";
 import { SteerWorkForm } from "../../commands/forms/SteerWorkForm.js";
+import {
+  WorkspaceCommandPermissionForm,
+  WorkspaceFilePermissionForm,
+} from "../../commands/forms/WorkspaceFilePermissionForm.js";
 import type { CommandReceiptView } from "../../commands/submitCommand.js";
 import { Button } from "../../components/Button.js";
 import { Card } from "../../components/Card.js";
@@ -23,7 +27,7 @@ import { useSession } from "../../session/SessionContext.js";
 import { VerificationView } from "../../views/VerificationView.js";
 import { WorkDetailView } from "../../views/WorkDetailView.js";
 import { WorkProgressView } from "../../views/WorkProgressView.js";
-import styles from "./work.module.css";
+import styles from "./work.styles.js";
 
 /** transport 层抛出的就是 frozen Problem（useViewQuery queryFn 约定）。 */
 const asProblem = (error: unknown): Problem => error as Problem;
@@ -132,6 +136,7 @@ export function WorkPage({
             workspaceId={route.workspaceId}
             steer={governance.steer}
             accept={governance.accept}
+            blocked={workDetail.data?.blockedEpisode !== undefined}
           />
         ) : null}
       </header>
@@ -168,15 +173,19 @@ function WorkGovernance({
   workspaceId,
   steer,
   accept,
+  blocked,
 }: {
   readonly projectId: string;
   readonly workspaceId: string;
   readonly steer: SteerBinding | null;
   readonly accept: AcceptanceBinding | null;
+  readonly blocked: boolean;
 }) {
   const session = useSession();
   const queryClient = useQueryClient();
-  const [mode, setMode] = useState<"accept" | "steer" | null>(null);
+  const [mode, setMode] = useState<
+    "accept" | "steer" | "permission" | "commands" | null
+  >(null);
   const onSubmitted = (_receipt: CommandReceiptView): void => {
     setMode(null);
     void queryClient.invalidateQueries({ queryKey: ["view"] });
@@ -201,7 +210,41 @@ function WorkGovernance({
         >
           调整方向
         </Button>
+        {blocked && steer !== null ? (
+          <>
+            <Button variant="quiet" onClick={() => setMode("permission")}>
+              文件权限
+            </Button>
+            <Button variant="quiet" onClick={() => setMode("commands")}>
+              命令权限
+            </Button>
+          </>
+        ) : null}
       </div>
+      {mode === "permission" && blocked && steer !== null ? (
+        <WorkspaceFilePermissionForm
+          actor={session.actor ?? ""}
+          projectId={projectId}
+          workspaceId={workspaceId}
+          objective={steer.objective}
+          token={session.token ?? undefined}
+          onSubmitted={() => {
+            void queryClient.invalidateQueries({ queryKey: ["view"] });
+          }}
+        />
+      ) : null}
+      {mode === "commands" && blocked && steer !== null ? (
+        <WorkspaceCommandPermissionForm
+          actor={session.actor ?? ""}
+          projectId={projectId}
+          workspaceId={workspaceId}
+          objective={steer.objective}
+          token={session.token ?? undefined}
+          onSubmitted={() => {
+            void queryClient.invalidateQueries({ queryKey: ["view"] });
+          }}
+        />
+      ) : null}
       {mode === "accept" && accept !== null ? (
         <AcceptWorkOutcomeForm
           actor={session.actor ?? ""}

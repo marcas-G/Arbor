@@ -5,6 +5,7 @@ import {
 } from "../support/production-fixture.js";
 import {
   createFunctionalProject,
+  functionalId,
   makePublicClient,
   submitHumanMessage,
   waitForApproval,
@@ -27,7 +28,7 @@ const manualWait = (reason: string) => ({
 });
 
 describe("F07 public human steer", () => {
-  it("delivers the revision-bound correction to the next Agent execution", async () => {
+  it("delivers the revision-bound correction once across retries and restart", async () => {
     const objectiveMarker = `F07-WORK-${crypto.randomUUID().slice(0, 8)}`;
     const guidanceMarker = `F07-STEER-${crypto.randomUUID().slice(0, 8)}`;
     let workProviderCalls = 0;
@@ -158,13 +159,21 @@ describe("F07 public human steer", () => {
       ),
     ).toBe(false);
 
-    await client.command(project.projectId, "SteerWork", {
+    const steerCommandId = functionalId("cmd");
+    const steerPayload = {
       workId,
       workspaceId: project.rootWorkspaceId,
       expectedWorkRevision: 0,
       steer: { severity: "Normal", guidance: guidanceMarker },
       provenance: { source: "HumanInput" },
-    });
+    };
+    const steerReceipt = await client.rawCommand(
+      project.projectId,
+      "SteerWork",
+      steerPayload,
+      steerCommandId,
+    );
+    expect(steerReceipt.status).toBe(200);
 
     const revised = await waitForPublic(
       () =>
@@ -187,6 +196,44 @@ describe("F07 public human steer", () => {
         ) && workProviderCalls > 1,
       30_000,
     );
+    await waitForPublic(
+      () =>
+        client.view<{
+          revision: number;
+          activeExecution?: { executionId: string };
+        } | null>("current-work", { workspaceId: project.rootWorkspaceId }),
+      (work) => work?.revision === 1 && work.activeExecution === undefined,
+    );
+    const callsAfterCorrection = workProviderCalls;
+    const replay = await client.rawCommand(
+      project.projectId,
+      "SteerWork",
+      steerPayload,
+      steerCommandId,
+    );
+    expect(replay.status).toBe(200);
+    expect(replay.payload).toEqual(steerReceipt.payload);
+    // Give the real daemon time to dispatch an erroneous replay wake. The
+    // same receipt must not release the later Manual wait at revision 1.
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    expect(workProviderCalls).toBe(callsAfterCorrection);
+    await fixture.restart();
+    const restartedClient = makePublicClient(fixture.baseUrl);
+    const restartedReplay = await restartedClient.rawCommand(
+      project.projectId,
+      "SteerWork",
+      steerPayload,
+      steerCommandId,
+    );
+    expect(restartedReplay.status).toBe(200);
+    expect(restartedReplay.payload).toEqual(steerReceipt.payload);
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    expect(workProviderCalls).toBe(callsAfterCorrection);
+    expect(
+      await restartedClient.view("current-work", {
+        workspaceId: project.rootWorkspaceId,
+      }),
+    ).toMatchObject({ workId, revision: 1, status: "Open" });
     expect(fixture.daemonErrors).toEqual([]);
-  }, 45_000);
+  }, 60_000);
 });

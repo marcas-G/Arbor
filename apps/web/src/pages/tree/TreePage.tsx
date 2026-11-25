@@ -20,7 +20,7 @@ import { KeyValue, type KeyValuePair } from "../../components/KeyValue.js";
 import { StatusBadge } from "../../components/StatusBadge.js";
 import { ProblemCard } from "../../problems/ProblemCard.js";
 import { formatCost } from "../../views/shared.js";
-import styles from "./tree.module.css";
+import styles from "./tree.styles.js";
 import { presentResponsibilityTree } from "./treePresentation.js";
 
 const DEPTH_OPTIONS: ReadonlyArray<number> = [1, 2, 3, 4, 5, 6];

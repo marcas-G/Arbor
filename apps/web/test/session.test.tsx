@@ -91,7 +91,12 @@ const viewResponse = (url: string) =>
       });
 
 function stubFetch(impl: FetchImpl): FetchFn {
-  const fetchMock = vi.fn(impl);
+  const fetchMock = vi.fn(
+    (url: Parameters<FetchImpl>[0], init: Parameters<FetchImpl>[1] = {}) =>
+      url === "/model-setup"
+        ? Promise.resolve(jsonResponse(200, { configured: true }))
+        : impl(url, init),
+  );
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock as unknown as FetchFn;
 }
@@ -99,7 +104,7 @@ function stubFetch(impl: FetchImpl): FetchFn {
 async function login(actor = "human:root", token = "tok_1"): Promise<void> {
   // The app now opens pre-authenticated (local single-user form); the login
   // card is reached via an explicit disconnect.
-  fireEvent.click(screen.getByRole("button", { name: /断开/ }));
+  fireEvent.click(await screen.findByRole("button", { name: /断开/ }));
   await waitFor(() => expect(screen.getByLabelText("访问凭据")).toBeTruthy());
   fireEvent.change(screen.getByLabelText("访问凭据"), {
     target: { value: token },
@@ -114,8 +119,8 @@ async function login(actor = "human:root", token = "tok_1"): Promise<void> {
 /** W-02: pick a project via the rail ProjectSwitcher (URL is authority). */
 async function switchProject(projectId: string): Promise<void> {
   fireEvent.click(screen.getByText("选择项目"));
-  await waitFor(() => expect(screen.getByText("Demo")).toBeTruthy());
-  fireEvent.click(screen.getByRole("button", { name: /Demo/ }));
+  const panel = within(screen.getByRole("dialog", { name: "项目中心" }));
+  fireEvent.click(await panel.findByRole("button", { name: "Demo" }));
   expect(projectId).toBe("prj_demo");
 }
 
@@ -342,7 +347,9 @@ describe("Web v1 shell integration smoke (W-02)", () => {
     );
     history.replaceState(null, "", "/");
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "打开项目中心" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "打开项目中心" }),
+    );
     fireEvent.click(screen.getByRole("button", { name: "新建项目" }));
     const dialog = screen.getByRole("dialog", { name: "新建项目" });
     expect(within(dialog).getByLabelText("项目名称")).toBeTruthy();

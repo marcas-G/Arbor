@@ -13,12 +13,12 @@ import { useRef } from "react";
 import { type Resolver, useForm } from "react-hook-form";
 import { Button } from "../../components/Button.js";
 import { Field } from "../../components/Field.js";
+import { cn } from "../../lib/utils.js";
 import { submitHumanMessageSchema, zodResolver } from "../schemas.js";
 import type { CommandReceiptView } from "../submitCommand.js";
 import { useCommandSubmission } from "../useCommandSubmission.js";
 import { uuidv7 } from "../uuid7.js";
 import { FormFeedback } from "./FormFeedback.js";
-import "./forms.css";
 
 type MessageValues = { bodyRef: string };
 
@@ -85,7 +85,10 @@ export function SubmitHumanMessageForm({
   };
   return (
     <form
-      className="arbor-command-form arbor-conversation-composer"
+      className={cn(
+        "arbor-command-form arbor-conversation-composer",
+        "flex flex-col gap-ui-3 gap-ui-2 [&_textarea]:min-h-[76px] [&_textarea]:border-0 [&_textarea]:bg-transparent [&_textarea]:leading-[1.55] [&_textarea]:outline-none [&_textarea:focus]:border-0 [&_textarea:focus]:outline-none",
+      )}
       onSubmit={doSubmit}
     >
       <Field
@@ -99,23 +102,42 @@ export function SubmitHumanMessageForm({
           setValue("bodyRef", next);
         }}
         onKeyDown={(event) => {
-          if (event.key === "Enter" && !event.shiftKey) {
+          if (
+            event.key === "Enter" &&
+            !event.shiftKey &&
+            !event.nativeEvent.isComposing &&
+            event.nativeEvent.keyCode !== 229
+          ) {
             event.preventDefault();
             doSubmit();
           }
         }}
       />
       {formState.errors.bodyRef ? (
-        <p className="arbor-command-error">
+        <p
+          className={cn(
+            "arbor-command-error",
+            "m-0 text-small text-destructive",
+          )}
+        >
           {formState.errors.bodyRef.message}
         </p>
       ) : null}
       <FormFeedback state={state} onRetry={() => doSubmit()} />
-      <div className="arbor-composer-footer">
-        <span className="arbor-composer-hint">
+      <div
+        className={cn(
+          "arbor-composer-footer",
+          "flex items-center justify-between gap-ui-3 pt-ui-2 border-t border-solid border-border",
+        )}
+      >
+        <span className={cn("arbor-composer-hint", "text-subtle text-caption")}>
           Enter 发送 · Shift + Enter 换行
         </span>
-        <Button variant="primary" type="submit" disabled={submissionLocked}>
+        <Button
+          variant="primary"
+          type="submit"
+          disabled={state.phase === "submitting"}
+        >
           发送
         </Button>
       </div>

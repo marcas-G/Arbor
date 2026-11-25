@@ -184,13 +184,15 @@ describe("sandbox policy provider selection", () => {
     ).toMatchObject({
       _tag: "Available",
     });
+    // The prerequisite probe fingerprint is a diagnostic fact about the
+    // current host. It is distinct from the operator-issued qualification
+    // evidence that identifies the supported provider tuple.
     expect(
       resolveSandboxProvider(selection, [
         { ...supportedCapability, probeEvidenceRef: "sha256:old-probe" },
       ]),
     ).toMatchObject({
-      _tag: "Unavailable",
-      reason: "QualificationEvidenceMismatch",
+      _tag: "Available",
     });
     expect(
       resolveSandboxProvider(selection, [

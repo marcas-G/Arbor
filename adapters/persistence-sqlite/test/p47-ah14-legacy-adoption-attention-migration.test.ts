@@ -81,8 +81,8 @@ describe("P47 AH14 legacy-adoption evidence Attention migration", () => {
       requiresUserVersion: 46,
       offlineOnly: true,
     });
-    expect(CURRENT_MIGRATIONS.map(({ id }) => id).slice(-7)).toEqual([
-      48, 49, 50, 51, 52, 53, 54,
+    expect(CURRENT_MIGRATIONS.map(({ id }) => id).slice(-9)).toEqual([
+      49, 50, 51, 52, 53, 54, 55, 56, 57,
     ]);
 
     const from46 = await createSchema46Clone();

@@ -1,21 +1,30 @@
 import { realpathSync } from "node:fs";
+import { relative, sep } from "node:path";
+import { workspaceSandboxPolicyBindingIsAuthorized } from "@arbor/application";
+import type { ResourceAddress } from "@arbor/domain";
 import {
   canonicalRegionString,
   compareUtf8BytesV1,
+  decodeCanonicalVerificationSandboxBindingV1,
   encodeExecutionEpisodeBinding,
   encodeNetworkPolicyV1,
   encodeSandboxEnforcementRuleSetV1,
+  encodeSandboxEnforcementRuleSetV2,
+  encodeVerificationSandboxBindingV1,
   executionEpisode,
+  networkBrokerControlsV2ForMode,
   type OsEnforcedPolicySummaryV1,
+  type OsEnforcedPolicySummaryV2,
   produceSandboxBoundaryV1,
-  type SandboxPolicyDecisionCommittedInternalV1,
   type SandboxProviderQualificationEntryV1,
   sandboxEnforcementRuleSetV1ForProvider,
+  sandboxEnforcementRuleSetV2ForProvider,
   sandboxEnvironmentBasisDigestOfV1,
   sandboxTargetRefOfRegionV1,
 } from "@arbor/domain";
 import type { TrustedHostConfigurationSourceService } from "@arbor/ports";
 import {
+  type BlobStorePortService,
   EnvironmentResolverPort,
   ExecutionRepository,
   ResourceOwnershipRepository,
@@ -26,6 +35,7 @@ import {
   sha256Hex,
   TransactionPort,
   WorkspaceRepository,
+  WorkspaceSandboxAuthorizationStore,
   WorktreeStore,
 } from "@arbor/ports";
 import {
@@ -37,6 +47,12 @@ import {
 import { Context, Effect, Option } from "effect";
 import { sandboxPolicyCurrentHostV1 } from "./current-sandbox-authority-snapshot-port.js";
 import { loadSandboxAuthorityBundleSnapshotCurrent } from "./sandbox-authority-bundle.js";
+import type { PreparedVerificationCommandEnvironment } from "./verification-command-environment.js";
+
+type PrimaryResourceAddress = Extract<
+  ResourceAddress,
+  { readonly _tag: "FileTree" | "GitWorktree" }
+>;
 
 /** P4 pre-effect identity gate. It reopens current P5 source/high-water and
  * every fixed installed artifact; a previous capability probe is not enough.
@@ -135,10 +151,249 @@ export const exactSupportedOsProviderEntry = (
   return exact.length === 1 ? exact[0] : undefined;
 };
 
+export const exactSupportedOsProviderEntryV2 = (
+  entries: ReadonlyArray<SandboxProviderQualificationEntryV1>,
+  summary: Pick<
+    OsEnforcedPolicySummaryV2,
+    | "providerId"
+    | "providerVersion"
+    | "capabilityRevision"
+    | "osFamily"
+    | "osBuild"
+    | "qualificationEvidenceRef"
+    | "profile"
+    | "networkPolicy"
+    | "networkBrokerControls"
+  >,
+): SandboxProviderQualificationEntryV1 | undefined => {
+  const ruleSet = sandboxEnforcementRuleSetV2ForProvider(summary.providerId);
+  if (ruleSet === undefined || summary.osFamily !== "Linux") return undefined;
+  const expectedRuleSetDigest = sha256Hex(
+    encodeSandboxEnforcementRuleSetV2(ruleSet),
+  );
+  const exact = entries.filter(
+    (entry) =>
+      entry.status === "Supported" &&
+      entry.providerId === summary.providerId &&
+      entry.providerVersion === summary.providerVersion &&
+      entry.capabilityRevision === summary.capabilityRevision &&
+      entry.osFamily === summary.osFamily &&
+      entry.osBuild === summary.osBuild &&
+      entry.qualificationEvidenceRef === summary.qualificationEvidenceRef &&
+      entry.tuple.profile === summary.profile &&
+      entry.tuple.networkMode === summary.networkPolicy.mode &&
+      entry.tuple.enforcementRuleSetDigest === expectedRuleSetDigest &&
+      entry.tuple.networkPolicyCodecVersion === 1,
+  );
+  return exact.length === 1 ? exact[0] : undefined;
+};
+
 export interface MaterializedSandboxProcessPolicy {
   readonly policy: SandboxProcessPolicy;
   readonly mounts: ReadonlyArray<SandboxMountBinding>;
 }
+
+const contained = (root: string, candidate: string): boolean => {
+  const part = relative(root, candidate);
+  return (
+    part === "" ||
+    (!part.startsWith(`..${sep}`) && part !== ".." && !part.includes("\0"))
+  );
+};
+
+const blobRefDigest = (ref: string): string | undefined =>
+  /^blob:sha256:[0-9a-f]{64}$/u.test(ref)
+    ? ref.slice("blob:sha256:".length)
+    : undefined;
+
+/**
+ * Materialize the process-only policy for a Verifier's captured copy.
+ *
+ * This path is intentionally separate from the Workspace episode policy. It
+ * validates the captured binding and BlobStore records, rechecks the source
+ * authorization, and proves that every writable mount is an owned private
+ * copy below the runtime directory. The ordinary Workspace policy materializer
+ * must never be used as a fallback here.
+ */
+export const materializeIndependentVerificationProcessPolicy = (input: {
+  readonly prepared: PreparedVerificationCommandEnvironment;
+  readonly now: string;
+  readonly blobs: BlobStorePortService;
+}): Effect.Effect<MaterializedSandboxProcessPolicy | undefined> =>
+  Effect.gen(function* () {
+    const prepared = input.prepared;
+    const binding = prepared.verificationBinding;
+    const inputManifestRef = prepared.inputManifestRef;
+    const qualificationRef = prepared.verificationMountQualificationEvidenceRef;
+    const limits = prepared.limits;
+    const environmentAllowlist = prepared.environmentAllowlist;
+    const providerQualificationRef =
+      prepared.providerCandidate.qualificationEvidenceRef;
+    if (
+      binding === undefined ||
+      inputManifestRef === undefined ||
+      qualificationRef === undefined ||
+      limits === undefined ||
+      environmentAllowlist === undefined ||
+      providerQualificationRef === null ||
+      prepared.providerCandidate.providerId !== "linux-bwrap" ||
+      prepared.providerCandidate.osFamily !== "Linux" ||
+      providerQualificationRef === null ||
+      Date.parse(binding.expiresAt) <= Date.parse(input.now) ||
+      binding.inputDigest !== prepared.inputDigest ||
+      binding.sourceBasisDigest !== prepared.basisDigest ||
+      binding.authorizationRevision !== prepared.authorizationRevision ||
+      binding.projectId !== prepared.binding.projectId ||
+      binding.workspaceId !== prepared.binding.workspaceId ||
+      binding.executionId !== prepared.binding.executionId ||
+      binding.verificationId !== prepared.binding.verificationId ||
+      binding.workId !== prepared.binding.workId ||
+      blobRefDigest(inputManifestRef) === undefined ||
+      blobRefDigest(qualificationRef) === undefined
+    )
+      return undefined;
+    if (
+      decodeCanonicalVerificationSandboxBindingV1(
+        encodeVerificationSandboxBindingV1(binding),
+      ) === undefined
+    )
+      return undefined;
+    if (!(yield* prepared.revalidate())) return undefined;
+
+    const blobMatches = (ref: `blob:sha256:${string}`) => {
+      const digest = blobRefDigest(ref);
+      if (digest === undefined) return Effect.succeed(false);
+      return input.blobs.get(digest).pipe(
+        Effect.match({
+          onFailure: () => false,
+          onSuccess: (bytes) =>
+            sha256Hex(new TextDecoder().decode(bytes)) === digest,
+        }),
+      );
+    };
+    if (
+      !(yield* blobMatches(inputManifestRef)) ||
+      !(yield* blobMatches(qualificationRef))
+    )
+      return undefined;
+
+    if (
+      prepared.mounts.length === 0 ||
+      prepared.mounts.length !== prepared.sources.length ||
+      prepared.mounts.some((mount) => mount.access !== "ReadWrite") ||
+      new Set(prepared.mounts.map((mount) => mount.ref)).size !==
+        prepared.mounts.length
+    )
+      return undefined;
+    let runtimeRoot: string;
+    try {
+      runtimeRoot = realpathSync.native(prepared.runtimeDirectory);
+    } catch {
+      return undefined;
+    }
+    const admittedMounts: Array<{
+      readonly ref: string;
+      readonly rootPath: string;
+      readonly access: "ReadWrite";
+    }> = [];
+    const mountRoots = new Set<string>();
+    for (const mount of prepared.mounts) {
+      let rootPath: string;
+      try {
+        rootPath = realpathSync.native(mount.address.path);
+      } catch {
+        return undefined;
+      }
+      if (
+        !contained(runtimeRoot, rootPath) ||
+        rootPath === runtimeRoot ||
+        mountRoots.has(rootPath)
+      )
+        return undefined;
+      mountRoots.add(rootPath);
+      admittedMounts.push({ ref: mount.ref, rootPath, access: "ReadWrite" });
+    }
+    const rule = sandboxEnforcementRuleSetV2ForProvider(
+      prepared.providerCandidate.providerId,
+    );
+    if (rule === undefined) return undefined;
+    const enforcementRuleSetDigest = sha256Hex(
+      encodeSandboxEnforcementRuleSetV2(rule),
+    );
+    if (
+      prepared.providerCandidate.tuple.enforcementRuleSetDigest !==
+        enforcementRuleSetDigest ||
+      prepared.providerCandidate.tuple.profile !== "WorkspaceWrite" ||
+      prepared.providerCandidate.tuple.networkMode !==
+        prepared.networkPolicy.mode ||
+      prepared.providerCandidate.tuple.networkPolicyCodecVersion !== 1
+    )
+      return undefined;
+    if (
+      !environmentAllowlist.every((name) =>
+        /^[A-Za-z_][A-Za-z0-9_]*$/u.test(name),
+      ) ||
+      new Set(environmentAllowlist).size !== environmentAllowlist.length ||
+      !Object.values(limits).every(
+        (value) => Number.isSafeInteger(value) && value > 0,
+      )
+    )
+      return undefined;
+    const networkBrokerControls = networkBrokerControlsV2ForMode(
+      prepared.networkPolicy.mode,
+    );
+    const policyDigest = sha256Hex(
+      JSON.stringify({
+        version: 1,
+        kind: "IndependentVerificationProcessPolicyV1",
+        binding,
+        admittedMounts,
+        environmentAllowlist,
+        limits,
+        provider: {
+          providerId: prepared.providerCandidate.providerId,
+          providerVersion: prepared.providerCandidate.providerVersion,
+          capabilityRevision: String(
+            prepared.providerCandidate.capabilityRevision,
+          ),
+          enforcementRuleSetDigest,
+          qualificationEvidenceRef: providerQualificationRef,
+        },
+        networkPolicy: encodeNetworkPolicyV1(prepared.networkPolicy),
+        networkBrokerControls,
+        verificationMountQualificationEvidenceRef: qualificationRef,
+      }),
+    );
+    const policy = {
+      kind: "IndependentVerificationProcessPolicyV1" as const,
+      executionId: binding.executionId,
+      sandboxHandleId: `sbx_${binding.executionId}`,
+      policyRevision: binding.policyRevision,
+      expiresAt: binding.expiresAt,
+      policyDigest,
+      workspaceAuthorizationRevision: binding.authorizationRevision,
+      admittedMounts,
+      environmentAllowlist,
+      limits,
+      auditRefs: [
+        inputManifestRef,
+        qualificationRef,
+        providerQualificationRef,
+      ].sort(compareUtf8BytesV1),
+      profile: "WorkspaceWrite" as const,
+      providerId: "linux-bwrap" as const,
+      providerVersion: prepared.providerCandidate.providerVersion,
+      capabilityRevision: String(prepared.providerCandidate.capabilityRevision),
+      enforcementRuleSetDigest,
+      qualificationEvidenceRef: providerQualificationRef,
+      boundary: "OsEnforced" as const,
+      networkPolicy: prepared.networkPolicy,
+      networkBrokerControls,
+      verificationBinding: binding,
+      verificationMountQualificationEvidenceRef: qualificationRef,
+    };
+    return { policy, mounts: prepared.mounts };
+  });
 
 /** Rebuilds process-local paths from the current P11 source rows. Nothing from
  * this value is persisted or exposed through a public view. */
@@ -154,6 +409,9 @@ export const materializeCurrentSandboxProcessPolicy = (input: {
     const workspaces = yield* WorkspaceRepository;
     const executions = yield* ExecutionRepository;
     const decisions = yield* SandboxPolicyDecisionStore;
+    const authorizations = yield* Effect.serviceOption(
+      WorkspaceSandboxAuthorizationStore,
+    );
     const ownership = yield* ResourceOwnershipRepository;
     const worktrees = yield* WorktreeStore;
     const resolver = yield* EnvironmentResolverPort;
@@ -180,6 +438,19 @@ export const materializeCurrentSandboxProcessPolicy = (input: {
             input.workspaceId,
             input.executionId,
           );
+          const workspaceAuthorityCurrent =
+            Option.isNone(current) ||
+            current.value.decision.authorityKind !== "WorkspaceAuthorization"
+              ? true
+              : Option.isNone(authorizations)
+                ? false
+                : yield* workspaceSandboxPolicyBindingIsAuthorized(
+                    { workspaces, authorizations: authorizations.value },
+                    {
+                      ...current.value,
+                      now: input.now,
+                    },
+                  );
           const claims = yield* ownership.listActiveByWorkspace(
             input.workspaceId,
           );
@@ -191,6 +462,7 @@ export const materializeCurrentSandboxProcessPolicy = (input: {
             execution,
             episodeRevision,
             current,
+            workspaceAuthorityCurrent,
             claims,
             worktreeRows,
           };
@@ -207,6 +479,7 @@ export const materializeCurrentSandboxProcessPolicy = (input: {
       worktreeRows,
     } = rows.value;
     if (
+      !rows.value.workspaceAuthorityCurrent ||
       Option.isNone(workspaceOption) ||
       Option.isNone(executionOption) ||
       Option.isNone(episodeRevision) ||
@@ -216,13 +489,14 @@ export const materializeCurrentSandboxProcessPolicy = (input: {
     const workspace = workspaceOption.value;
     const execution = executionOption.value;
     const committed = current.value;
-    const result: SandboxPolicyDecisionCommittedInternalV1 = committed.result;
+    const result = committed.result;
     const summary = result.effectivePolicySnapshot;
     const currentEpisode = executionEpisode(execution);
     const bundle = authority.snapshot.bundle;
     if (
       workspace.lifecycle !== "Active" ||
       execution.state.status !== "Active" ||
+      execution.stopRequestedAt !== null ||
       execution.projectId !== input.projectId ||
       execution.workspaceId !== input.workspaceId ||
       execution.executionId !== input.executionId ||
@@ -269,10 +543,16 @@ export const materializeCurrentSandboxProcessPolicy = (input: {
       | SandboxProviderQualificationEntryV1
       | undefined;
     if (summary.kind === "OsEnforced") {
-      const supportedEntry = exactSupportedOsProviderEntry(
-        bundle.providerRegistry.entries,
-        summary,
-      );
+      const supportedEntry =
+        summary.version === 2
+          ? exactSupportedOsProviderEntryV2(
+              bundle.providerRegistry.entries,
+              summary,
+            )
+          : exactSupportedOsProviderEntry(
+              bundle.providerRegistry.entries,
+              summary,
+            );
       if (
         supportedEntry === undefined ||
         summary.providerRegistryRevision !== bundle.providerRegistryRevision ||
@@ -304,19 +584,29 @@ export const materializeCurrentSandboxProcessPolicy = (input: {
     const activeWorktrees = worktreeRows.filter(
       (record) => record.state === "Active",
     );
-    if (activeWorktrees.length !== 1) return undefined;
+    if (activeWorktrees.length > 1) return undefined;
     const worktree = activeWorktrees[0];
+    let primaryAddress: PrimaryResourceAddress | undefined = worktree?.address;
     if (
-      worktree === undefined ||
-      worktree.projectId !== input.projectId ||
-      worktree.workspaceId !== input.workspaceId
+      worktree !== undefined &&
+      (worktree.projectId !== input.projectId ||
+        worktree.workspaceId !== input.workspaceId)
     )
       return undefined;
+    if (primaryAddress === undefined) {
+      const fileTrees = workspace.resourceBoundary.addresses.filter(
+        (address): address is Extract<ResourceAddress, { _tag: "FileTree" }> =>
+          address._tag === "FileTree" && address.path.length > 0,
+      );
+      if (fileTrees.length !== 1) return undefined;
+      primaryAddress = fileTrees[0];
+    }
+    if (primaryAddress === undefined) return undefined;
     const observation = yield* resolver
       .observe(workspace.projectId, workspace.resourceBoundary.addresses)
       .pipe(Effect.option);
     const primaryObservation = yield* resolver
-      .observe(workspace.projectId, [worktree.address])
+      .observe(workspace.projectId, [primaryAddress])
       .pipe(Effect.option);
     if (Option.isNone(observation) || Option.isNone(primaryObservation))
       return undefined;
@@ -345,7 +635,7 @@ export const materializeCurrentSandboxProcessPolicy = (input: {
         responsibilityRevision: workspace.responsibilityRevision,
         boundary: workspace.resourceBoundary,
         resolvedRegions: observed.entries.map((entry) => entry.resolved),
-        primaryManagedGitWorktreeRegion: primaryRegion,
+        primaryResourceRegion: primaryRegion,
         ownershipClaims: claims,
         policyKind: summary.kind,
         profile: summary.profile,
@@ -475,6 +765,12 @@ export const materializeCurrentSandboxProcessPolicy = (input: {
       policyRevision: result.policyRevision,
       expiresAt: summary.expiresAt,
       policyDigest: result.policyDigest,
+      ...(result.version === 3
+        ? {
+            workspaceAuthorizationRevision:
+              result.workspaceAuthorizationRevision,
+          }
+        : {}),
       admittedMounts,
       environmentAllowlist: summary.environmentAllowlist,
       limits: summary.limits,
@@ -484,17 +780,30 @@ export const materializeCurrentSandboxProcessPolicy = (input: {
       summary.kind === "OsEnforced"
         ? osProviderBinding === undefined
           ? undefined
-          : {
-              ...commonPolicy,
-              ...osProviderBinding,
-              kind: "OsEnforcedProcessPolicy",
-              profile: summary.profile,
-              providerId: summary.providerId,
-              providerVersion: summary.providerVersion,
-              capabilityRevision: String(summary.capabilityRevision),
-              boundary: "OsEnforced",
-              networkPolicy: summary.networkPolicy,
-            }
+          : summary.version === 2
+            ? {
+                ...commonPolicy,
+                ...osProviderBinding,
+                kind: "OsEnforcedProcessPolicyV2" as const,
+                profile: summary.profile,
+                providerId: summary.providerId,
+                providerVersion: summary.providerVersion,
+                capabilityRevision: String(summary.capabilityRevision),
+                boundary: "OsEnforced" as const,
+                networkPolicy: summary.networkPolicy,
+                networkBrokerControls: summary.networkBrokerControls,
+              }
+            : {
+                ...commonPolicy,
+                ...osProviderBinding,
+                kind: "OsEnforcedProcessPolicy",
+                profile: summary.profile,
+                providerId: summary.providerId,
+                providerVersion: summary.providerVersion,
+                capabilityRevision: String(summary.capabilityRevision),
+                boundary: "OsEnforced",
+                networkPolicy: summary.networkPolicy,
+              }
         : {
             ...commonPolicy,
             kind: "TrustedLocalUnconfinedRuntimePolicy",

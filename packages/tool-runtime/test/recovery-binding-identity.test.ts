@@ -120,4 +120,38 @@ describe("P4 RecoveryBinding source tuple validation", () => {
       }),
     ).toBe(false);
   });
+
+  it("rejects missing and malformed source identities before recovery", () => {
+    const base = { executionId, invocationId, callRef: identity.callRef };
+    expect(
+      recoveryBindingIdentityMatches({ ...base, identity: undefined }),
+    ).toBe(false);
+    for (const invalid of [
+      { ...identity, logicalStepNo: -1 },
+      { ...identity, repairAttempt: 0.5 },
+      { ...identity, actionIndex: -1 },
+      { ...identity, logicalActionId: " " },
+    ]) {
+      expect(
+        recoveryBindingIdentityMatches({ ...base, identity: invalid }),
+      ).toBe(false);
+    }
+  });
+
+  it("rejects a different invocation in the persisted approval binding", () => {
+    expect(
+      recoveryBindingIdentityMatches({
+        identity,
+        executionId,
+        invocationId,
+        callRef: identity.callRef,
+        approvalBinding: {
+          ...approvalBinding,
+          toolInvocationId: parse(ToolInvocationId)(
+            "tin_018f2b3c-4d5e-7abc-8def-0123456789a7",
+          ),
+        },
+      }),
+    ).toBe(false);
+  });
 });

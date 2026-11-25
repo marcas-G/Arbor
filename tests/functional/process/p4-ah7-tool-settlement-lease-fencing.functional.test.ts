@@ -58,6 +58,9 @@ interface InvocationRow {
   readonly settlement_json: string | null;
   readonly settled_at: string | null;
   readonly settlement_kind: string | null;
+  readonly observation_format_version: string | null;
+  readonly observation_json: Uint8Array | null;
+  readonly observation_sha256: string | null;
 }
 
 interface ToolResultRow {
@@ -152,7 +155,8 @@ const rowsFor = (
           `SELECT invocation_id, execution_id, approval_id, tool_name,
                   tool_version, side_effect_semantics, arguments_json,
                   resolved_regions_json, result_ref, effect_admission_state,
-                  settlement_json, settled_at, settlement_kind
+                  settlement_json, settled_at, settlement_kind,
+                  observation_format_version, observation_json, observation_sha256
              FROM tool_invocations WHERE execution_id = ?
             ORDER BY intent_at DESC LIMIT 1`,
         )
@@ -657,6 +661,9 @@ describe("P4 ToolInvocation settlement under P2 lease takeover", () => {
       result_ref: null,
       settled_at: null,
       settlement_kind: null,
+      observation_format_version: null,
+      observation_json: null,
+      observation_sha256: null,
     });
     const approvedResourceIds = JSON.parse(
       approvalBinding.row.target_resource_space_ids_json,
@@ -735,6 +742,10 @@ describe("P4 ToolInvocation settlement under P2 lease takeover", () => {
 
     const leaseDb = new DatabaseSync(fixture.databaseFile);
     try {
+      // The daemon has independent writers. This fixture connection must wait
+      // for a short writer transaction instead of failing immediately with
+      // SQLITE_BUSY before it can arrange the explicit lease takeover.
+      leaseDb.exec("PRAGMA busy_timeout = 5000");
       const lease = leaseDb
         .prepare(
           "SELECT execution_id, generation, expires_at FROM execution_leases WHERE execution_id = ?",
@@ -828,6 +839,9 @@ describe("P4 ToolInvocation settlement under P2 lease takeover", () => {
       approval_id: executableApproval.approvalId,
       settled_at: null,
       settlement_kind: null,
+      observation_format_version: null,
+      observation_json: null,
+      observation_sha256: null,
     });
     expect.soft(beforeNewDrive.successfulObservations).toEqual([]);
     expect(
@@ -847,13 +861,16 @@ describe("P4 ToolInvocation settlement under P2 lease takeover", () => {
       join(fixture.directory, "p4-fence-gates", "new-new-driver.release"),
       "release current generation",
     );
+    // P4 06 / DID v1.41 requires the current owner to persist the exact
+    // terminal OutcomeUnknown observation. The older pre-P40 assertion that
+    // the invocation stays unsettled is no longer the owning contract.
     const afterCurrentDrive = await waitForPublic(
       async () =>
         rowsFor(fixture.databaseFile, oldExecutionId, oldInvocationId),
       (value) =>
         value.invocation?.effect_admission_state === "MayHaveStarted" &&
-        value.invocation.settled_at === null &&
-        value.invocation.settlement_kind === null &&
+        value.invocation.settled_at !== null &&
+        value.invocation.settlement_kind === "OutcomeUnknown" &&
         value.invocation.result_ref === null &&
         value.execution?.settlement_kind === "OutcomeUnknown" &&
         value.execution.settled_at !== null &&
@@ -870,10 +887,30 @@ describe("P4 ToolInvocation settlement under P2 lease takeover", () => {
       side_effect_semantics: "NonIdempotent",
       effect_admission_state: "MayHaveStarted",
       result_ref: null,
-      settled_at: null,
-      settlement_kind: null,
-      settlement_json: null,
+      settlement_kind: "OutcomeUnknown",
+      observation_format_version: "p4-canonical-tool-observation-v1",
     });
+    const unknownObservation = {
+      _tag: "OutcomeUnknown",
+      reconciliationRefs: [oldInvocationId],
+    };
+    expect(
+      JSON.parse(afterCurrentDrive.invocation?.settlement_json ?? "null"),
+    ).toEqual(unknownObservation);
+    const observationBytes = afterCurrentDrive.invocation?.observation_json;
+    if (observationBytes === null || observationBytes === undefined)
+      throw new Error(
+        "Current P4 owner omitted its durable unknown observation",
+      );
+    expect(JSON.parse(new TextDecoder().decode(observationBytes))).toEqual(
+      unknownObservation,
+    );
+    expect(
+      createHash("sha256")
+        .update("p4-canonical-tool-observation-v1\n", "utf8")
+        .update(observationBytes)
+        .digest("hex"),
+    ).toBe(afterCurrentDrive.invocation?.observation_sha256);
     expect(afterCurrentDrive.execution?.settlement_kind).toBe("OutcomeUnknown");
     expect(
       JSON.parse(String(afterCurrentDrive.execution?.settlement_json)),

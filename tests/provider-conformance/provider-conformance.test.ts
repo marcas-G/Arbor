@@ -173,29 +173,20 @@ const fetchOf = (
       for (let index = 0; index < bytes.length; index += chunkSize) {
         parts.push(bytes.slice(index, index + chunkSize));
       }
-      resolve({
-        ok: true,
-        status,
-        body: {
-          getReader: () => {
-            let position = 0;
-            return {
-              read: () =>
-                new Promise((res) => {
-                  setTimeout(() => {
-                    if (position >= parts.length) {
-                      res({ done: true, value: undefined });
-                      return;
-                    }
-                    res({ done: false, value: parts[position] });
-                    position += 1;
-                  }, 0);
-                }),
-              releaseLock: () => {},
-            };
-          },
-        },
-      });
+      let position = 0;
+      resolve(
+        new Response(
+          new ReadableStream<Uint8Array>({
+            async pull(controller) {
+              await new Promise((resume) => setTimeout(resume, 0));
+              const part = parts[position++];
+              if (part === undefined) controller.close();
+              else controller.enqueue(part);
+            },
+          }),
+          { status },
+        ),
+      );
     });
 };
 

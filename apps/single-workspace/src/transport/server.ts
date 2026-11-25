@@ -10,6 +10,12 @@ import type {
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { type WebSocket, WebSocketServer } from "ws";
+import { type ModelSetup, ModelSetupError } from "../model-setup.js";
+import {
+  type HostProjectDirectories,
+  ProjectDirectoryError,
+} from "../project-directories.js";
+import type { RuntimeInfo } from "../runtime-info.js";
 import type { AuthenticatorService } from "./auth.js";
 import { LOCAL_PRINCIPAL } from "./auth.js";
 import type { TransportResponse } from "./contracts.js";
@@ -45,13 +51,16 @@ export interface WebTransportConfig {
   /** Journal-tail watermark source (SqlClient-backed). */
   readonly sql: SqlClient;
   readonly projectDirectory: ProjectDirectoryService;
-  /** P12 host-owned immutable Profile snapshot; absent means an empty catalog. */
+  /** P12 host-owned Profile registry; absent means an empty catalog. */
   readonly projectResourceProfiles?: ProjectResourceProfilePortService;
+  readonly projectDirectories?: HostProjectDirectories;
   /** Vite build output; absent disables static hosting. */
   readonly staticRoot?: string | undefined;
   readonly host?: string | undefined;
   readonly port?: number | undefined;
   readonly pollIntervalMs?: number | undefined;
+  readonly runtimeInfo?: RuntimeInfo;
+  readonly modelSetup?: ModelSetup;
 }
 
 export interface WebTransportHandle {
@@ -71,9 +80,12 @@ const isStaticCandidate = (method: string, path: string): boolean =>
   (method === "GET" || method === "HEAD") && !isApiPath(path);
 
 const isApiPath = (path: string): boolean =>
+  path === "/model-setup" ||
+  path === "/runtime" ||
   path === "/commands" ||
   path === "/projects" ||
   path === "/project-resources" ||
+  path === "/project-directories" ||
   path.startsWith("/views/") ||
   path === "/views" ||
   path.startsWith("/conversation-progress/");
@@ -94,13 +106,27 @@ const sendBytes = (
   response.end(headOnly ? undefined : bytes);
 };
 
-const readBody = (request: IncomingMessage): Promise<unknown> =>
+/** Default body ceiling for command/view/JSON routes. A command payload is
+ * bounded typed JSON; anything larger is a client defect or abuse, and the
+ * previous unbounded default let a single request buffer without limit. */
+const DEFAULT_MAX_BODY_BYTES = 10 * 1024 * 1024;
+
+const readBody = (
+  request: IncomingMessage,
+  maxBytes = DEFAULT_MAX_BODY_BYTES,
+): Promise<unknown> =>
   new Promise((resolveBody) => {
     const chunks: Buffer[] = [];
+    let bytes = 0;
     request.on("data", (chunk: Buffer) => {
-      chunks.push(chunk);
+      bytes += chunk.byteLength;
+      if (bytes <= maxBytes) chunks.push(chunk);
     });
     request.on("end", () => {
+      if (bytes > maxBytes) {
+        resolveBody(null);
+        return;
+      }
       if (chunks.length === 0) {
         resolveBody(undefined);
         return;
@@ -153,6 +179,56 @@ const isLoopbackListenerHost = (host: string | undefined): boolean => {
     octets.every((octet) => Number(octet) <= 255) &&
     Number(octets[0]) === 127
   );
+};
+
+/** Local-user authority is safe only on the intended loopback origin. Origin
+ * alone is insufficient: a rebinding domain can resolve to the loopback IP.
+ * Native clients may omit Origin; browser-supplied opaque/foreign origins fail.
+ * Forwarded headers never establish local authority. */
+const acceptsBrowserBoundary = (
+  request: IncomingMessage,
+  config: WebTransportConfig,
+): boolean => {
+  const host = request.headers.host;
+  if (host === undefined) return false;
+  try {
+    const target = new URL(`http://${host}`);
+    if (
+      target.username !== "" ||
+      target.password !== "" ||
+      target.pathname !== "/" ||
+      target.search !== "" ||
+      target.hash !== ""
+    )
+      return false;
+    if (!config.authenticatorConfigured) {
+      if (
+        !isLoopbackListenerHost(target.hostname) ||
+        Number(target.port || "80") !== request.socket.localPort
+      )
+        return false;
+    }
+    const origin = request.headers.origin;
+    if (origin !== undefined) {
+      const source = new URL(origin);
+      if (
+        source.origin !== origin ||
+        source.host !== target.host ||
+        (source.protocol !== "http:" &&
+          !(config.authenticatorConfigured && source.protocol === "https:"))
+      )
+        return false;
+    }
+    const path = (request.url ?? "/").split("?")[0] ?? "/";
+    if (
+      request.headers["sec-fetch-site"] === "cross-site" &&
+      (isApiPath(path) || path === "/ws")
+    )
+      return false;
+    return true;
+  } catch {
+    return false;
+  }
 };
 
 const authenticateLocalSensitiveRead = async (
@@ -294,6 +370,28 @@ const readLocalProjectDirectory = async (
     return;
   }
   const rows = await Effect.runPromise(config.projectDirectory.list());
+  const boundaries =
+    config.projectDirectories === undefined
+      ? []
+      : await Effect.runPromise(
+          config.sql.unsafe<{ project_id: string; resource_boundary: string }>(
+            "SELECT p.project_id, w.resource_boundary FROM projects p JOIN workspaces w ON w.workspace_id = p.root_workspace_id",
+          ),
+        );
+  const paths = new Map(
+    boundaries.map((row) => {
+      const boundary = JSON.parse(row.resource_boundary) as {
+        addresses?: ReadonlyArray<{ _tag: string; path?: string }>;
+      };
+      return [
+        row.project_id,
+        boundary.addresses?.find(
+          (address) =>
+            address._tag === "FileTree" && typeof address.path === "string",
+        )?.path,
+      ];
+    }),
+  );
   sendJson(response, 200, {
     ok: true,
     status: 200,
@@ -306,6 +404,9 @@ const readLocalProjectDirectory = async (
         revision: row.revision,
         updatedAt: row.updatedAt,
         resourceSource: row.resourceSource,
+        ...(config.projectDirectories === undefined
+          ? {}
+          : { directoryPath: paths.get(row.projectId) ?? null }),
       })),
     },
   });
@@ -364,8 +465,111 @@ const readLocalProjectResourceProfiles = async (
     body: {
       profiles,
       conversationOnlySupported: true,
+      ...(config.projectDirectories === undefined
+        ? {}
+        : { directorySelectionSupported: true }),
     },
   });
+};
+
+const handleProjectDirectories = async (
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: WebTransportConfig,
+): Promise<void> => {
+  const principal = await authenticateLocalSensitiveRead(
+    request,
+    response,
+    config,
+    { status: 403, code: "project-directories/forbidden" },
+  );
+  if (principal === null) return;
+  const directories = config.projectDirectories;
+  if (directories === undefined) {
+    sendJson(response, 404, {
+      ok: false,
+      problem: { code: "project-directories/unavailable" },
+    });
+    return;
+  }
+  try {
+    if (request.method === "GET") {
+      const query = new URL(request.url ?? "/", "http://localhost")
+        .searchParams;
+      const listing = await directories.browse(query.get("path") ?? undefined);
+      sendJson(response, 200, { ok: true, body: listing });
+      return;
+    }
+    if (
+      request.method !== "POST" ||
+      bearerToken(request.headers.authorization) === null ||
+      !request.headers["content-type"]?.startsWith("application/json") ||
+      (request.headers.origin !== undefined &&
+        new URL(request.headers.origin).host !== request.headers.host)
+    ) {
+      sendJson(response, 403, {
+        ok: false,
+        problem: { code: "project-directories/invalid-request" },
+      });
+      return;
+    }
+    const body = await readBody(request);
+    if (
+      typeof body !== "object" ||
+      body === null ||
+      !("path" in body) ||
+      typeof body.path !== "string" ||
+      !("create" in body) ||
+      typeof body.create !== "boolean" ||
+      Object.keys(body).some((key) => key !== "path" && key !== "create")
+    ) {
+      sendJson(response, 400, {
+        ok: false,
+        problem: { code: "project-directories/invalid-path" },
+      });
+      return;
+    }
+    const prepared = await directories.prepare(body.path, body.create);
+    const existing = await Effect.runPromise(
+      config.sql.unsafe<{
+        project_id: string;
+        root_workspace_id: string;
+        name: string;
+        lifecycle: string;
+      }>(
+        `SELECT p.project_id, p.root_workspace_id, p.name, p.lifecycle
+           FROM projects p JOIN workspaces w ON w.workspace_id = p.root_workspace_id
+          WHERE EXISTS (SELECT 1 FROM json_each(w.resource_boundary, '$.addresses') a
+            WHERE json_extract(a.value, '$._tag') = 'FileTree'
+              AND json_extract(a.value, '$.path') = ?)
+          ORDER BY p.created_at, p.project_id LIMIT 1`,
+        [prepared.path],
+      ),
+    );
+    const project = existing[0];
+    sendJson(response, 200, {
+      ok: true,
+      body: {
+        ...prepared,
+        existingProject:
+          project === undefined
+            ? null
+            : {
+                projectId: project.project_id,
+                rootWorkspaceId: project.root_workspace_id,
+                name: project.name,
+                lifecycle: project.lifecycle,
+              },
+      },
+    });
+  } catch (error) {
+    const code =
+      error instanceof ProjectDirectoryError ? error.code : "unavailable";
+    sendJson(response, 400, {
+      ok: false,
+      problem: { code: `project-directories/${code}` },
+    });
+  }
 };
 
 export const startWebTransport = async (
@@ -382,9 +586,68 @@ export const startWebTransport = async (
 
   const server = createServer((request, response) => {
     void (async () => {
+      if (!acceptsBrowserBoundary(request, config)) {
+        sendJson(response, 403, {
+          ok: false,
+          problem: { code: "transport/untrusted-origin" },
+        });
+        return;
+      }
       const url = request.url ?? "/";
       const path = url.split("?")[0] ?? url;
       const method = (request.method ?? "GET").toUpperCase();
+
+      if (path === "/runtime" && method === "GET") {
+        if (config.runtimeInfo === undefined) {
+          response.writeHead(404).end();
+        } else {
+          sendJson(response, 200, config.runtimeInfo);
+        }
+        return;
+      }
+
+      if (path === "/model-setup") {
+        const setup = config.modelSetup;
+        if (setup === undefined) {
+          response.writeHead(404).end();
+          return;
+        }
+        if (method === "GET") {
+          sendJson(response, 200, setup.status());
+          return;
+        }
+        if (
+          method !== "POST" ||
+          config.authenticatorConfigured ||
+          !isLoopbackListenerHost(config.host) ||
+          !request.headers["content-type"]?.startsWith("application/json")
+        ) {
+          sendJson(response, 403, {
+            ok: false,
+            code: "model-setup/local-configuration-required",
+          });
+          return;
+        }
+        try {
+          await setup.save(await readBody(request, 65536));
+          response.once("finish", setup.requestRestart);
+          sendJson(response, 200, { ok: true, restarting: true });
+        } catch (error) {
+          sendJson(response, 400, {
+            ok: false,
+            code: `model-setup/${error instanceof ModelSetupError ? error.code : "configuration-failed"}`,
+          });
+        }
+        return;
+      }
+
+      if (config.modelSetup?.configured === false && isApiPath(path)) {
+        sendJson(response, 503, {
+          ok: false,
+          problem: { code: "model/configuration-required" },
+        });
+        return;
+      }
 
       const progressMatch = /^\/conversation-progress\/([^/]+)$/.exec(path);
       if (progressMatch !== null && method === "GET") {
@@ -404,6 +667,10 @@ export const startWebTransport = async (
 
       if (path === "/project-resources" && method === "GET") {
         await readLocalProjectResourceProfiles(request, response, config);
+        return;
+      }
+      if (path === "/project-directories") {
+        await handleProjectDirectories(request, response, config);
         return;
       }
 
@@ -516,12 +783,19 @@ export const startWebTransport = async (
   const sockets = new Set<WebSocket>();
 
   server.on("upgrade", (request, socket: Duplex, head: Buffer) => {
+    if (!acceptsBrowserBoundary(request, config)) {
+      socket.end(
+        "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+      );
+      return;
+    }
     const path = (request.url ?? "").split("?")[0];
     if (path !== "/ws") {
       socket.destroy();
       return;
     }
     if (
+      config.modelSetup?.configured === false ||
       (!config.authenticatorConfigured &&
         !isLoopbackListenerHost(config.host)) ||
       (config.authenticatorConfigured && config.authenticator === undefined)

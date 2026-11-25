@@ -82,6 +82,26 @@ const resolve = (decision: AuthorityDecisionInput) =>
   );
 
 describe("ResolveExecutableApproval direct-parent authority", () => {
+  it("allows the implicit local single-user human to resolve the approval", async () => {
+    const base = input({ authenticatedHumans: [], directParentOf: [] });
+    const result = await resolve({
+      ...base,
+      principal: "user:local" as never,
+      submissionContext: { _tag: "External", principal: "user:local" as never },
+      envelope: { ...base.envelope, actor: "user:local" as never },
+    });
+    expect(result._tag).toBe("Right");
+    if (result._tag === "Right") {
+      expect(result.right).toMatchObject({
+        _tag: "ExecutableApprovalDecisionAuthority",
+        principal: "user:local",
+        approvalId,
+        workspaceId,
+        executionId,
+      });
+    }
+  });
+
   it("allows only the exact direct parent of the canonical approval workspace", async () => {
     const result = await resolve(input(governance(principal)));
     expect(result._tag).toBe("Right");

@@ -16,5 +16,15 @@
   },
   "files": {
     "includes": ["**", "!planning"]
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["apps/web/src/styles/tailwind.css"],
+      "css": {
+        "parser": {
+          "tailwindDirectives": true
+        }
+      }
+    }
+  ]
 }

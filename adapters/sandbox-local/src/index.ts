@@ -18,6 +18,13 @@ import { Effect, Layer } from "effect";
  * directly and is deliberately not an OS process-isolation boundary. */
 
 export { TrustedLocalProcessPortLive } from "./trusted-local-process.js";
+export {
+  createVerificationInputCopy,
+  type VerificationInputBinding,
+  type VerificationInputCopy,
+  VerificationInputCopyError,
+  type VerificationInputCopyFailure,
+} from "./verification-input-copy.js";
 /** P4 `04` §4 (debt repaid per P11 `12` §2; shared mechanism per P12 `03` §3):
  * a sandboxed subprocess runs with an allow-listed projection of the ambient
  * environment — secrets and other ambient variables never reach it. The

@@ -17,6 +17,7 @@ import {
   Principal,
   parse,
 } from "@arbor/domain";
+import { validateP39ProtectedDirectory } from "@arbor/persistence-sqlite";
 import { describe, expect, it } from "vitest";
 import {
   makeP39PrivateTestDirectory,
@@ -107,6 +108,20 @@ const childPath = fileURLToPath(
     import.meta.url,
   ),
 );
+
+const p39QualificationAvailable = (() => {
+  const root = makeP39PrivateTestDirectory(
+    tmpdir(),
+    "arbor-sandbox-p39-qualification-",
+    false,
+  );
+  try {
+    return validateP39ProtectedDirectory(root);
+  } finally {
+    removeP39PrivateTestDirectory(root);
+  }
+})();
+
 const runChild = (root: string, stage: string, nonce: string) =>
   spawnSync(
     process.execPath,
@@ -114,92 +129,102 @@ const runChild = (root: string, stage: string, nonce: string) =>
     { cwd: process.cwd(), encoding: "utf8", timeout: 120_000 },
   );
 
-describe("Windows D2 V3 protected file source process-crash cutover", () => {
-  it.each(["before-source", "before-high-water", "after-high-water"] as const)(
-    "%s survives exact process kill/restart without V2 fallback",
-    (stage) => {
-      const root = makeP39PrivateTestDirectory(
-        tmpdir(),
-        `arbor-d2-v3-${stage}-`,
-      );
-      try {
-        const old = seed(root);
-        const nonce = randomUUID();
-        const killed = runChild(root, stage, nonce);
-        const marker = new RegExp(
-          `^ARBOR_D2_V3_KILL:${nonce}:${stage}:([0-9]+)$`,
-          "gmu",
+describe.skipIf(!p39QualificationAvailable)(
+  "Windows D2 V3 protected file source process-crash cutover",
+  () => {
+    it.each([
+      "before-source",
+      "before-high-water",
+      "after-high-water",
+    ] as const)(
+      "%s survives exact process kill/restart without V2 fallback",
+      (stage) => {
+        const root = makeP39PrivateTestDirectory(
+          tmpdir(),
+          `arbor-d2-v3-${stage}-`,
         );
-        const matches = [...String(killed.stdout ?? "").matchAll(marker)];
-        expect(matches, JSON.stringify(killed)).toHaveLength(1);
-        expect(matches[0]?.[1]).toBe(String(killed.pid));
-        expect(killed.error).toBeUndefined();
-        if (process.platform === "win32") {
-          expect(killed.status).toBe(1);
-          expect(killed.signal).toBeNull();
-        } else expect(killed.signal).toBe("SIGKILL");
-        const restarted = runChild(root, "probe", nonce);
-        expect(restarted.status, JSON.stringify(restarted)).toBe(0);
-        const match = String(restarted.stdout ?? "").match(
-          new RegExp(`^ARBOR_D2_V3_RESTART:${nonce}:(.+)$`, "mu"),
-        );
-        expect(match).not.toBeNull();
-        const observation = JSON.parse(match?.[1] ?? "null");
-        const source = readFileSync(join(root, "authority.json"), "utf8");
-        const highWater = readFileSync(join(root, "high-water.json"), "utf8");
-        const evidence = readdirSync(join(root, "forensic")).filter((name) =>
-          name.endsWith(".raw"),
-        );
-        if (stage === "before-source") {
-          expect(source).toBe(old.source);
-          expect(highWater).toBe(old.highWater);
-          expect(evidence).toEqual([]);
-          expect(observation).toMatchObject({ _tag: "Available", version: 2 });
-        } else {
-          expect(JSON.parse(source).version).toBe(3);
-          expect(evidence).toHaveLength(3);
-          expect(
-            readFileSync(
-              join(root, "forensic", `v2-bundle-${hash(old.source)}.raw`),
-              "utf8",
-            ),
-          ).toBe(old.source);
-          expect(
-            readFileSync(
-              join(
-                root,
-                "forensic",
-                `v2-high-water-${hash(old.highWater)}.raw`,
-              ),
-              "utf8",
-            ),
-          ).toBe(old.highWater);
-          const auditEvidence = evidence.filter((name) =>
-            name.startsWith("v2-audit-"),
+        try {
+          const old = seed(root);
+          const nonce = randomUUID();
+          const killed = runChild(root, stage, nonce);
+          const marker = new RegExp(
+            `^ARBOR_D2_V3_KILL:${nonce}:${stage}:([0-9]+)$`,
+            "gmu",
           );
-          expect(auditEvidence).toHaveLength(1);
-          const auditBytes = readFileSync(
-            join(root, "forensic", auditEvidence[0] ?? ""),
-            "utf8",
+          const matches = [...String(killed.stdout ?? "").matchAll(marker)];
+          expect(matches, JSON.stringify(killed)).toHaveLength(1);
+          expect(matches[0]?.[1]).toBe(String(killed.pid));
+          expect(killed.error).toBeUndefined();
+          if (process.platform === "win32") {
+            expect(killed.status).toBe(1);
+            expect(killed.signal).toBeNull();
+          } else expect(killed.signal).toBe("SIGKILL");
+          const restarted = runChild(root, "probe", nonce);
+          expect(restarted.status, JSON.stringify(restarted)).toBe(0);
+          const match = String(restarted.stdout ?? "").match(
+            new RegExp(`^ARBOR_D2_V3_RESTART:${nonce}:(.+)$`, "mu"),
           );
-          expect(auditBytes.startsWith(old.audit)).toBe(true);
-          expect(auditBytes).toContain('"outcome":"Loaded"');
-          expect(auditEvidence[0]).toBe(`v2-audit-${hash(auditBytes)}.raw`);
-          if (stage === "before-high-water") {
+          expect(match).not.toBeNull();
+          const observation = JSON.parse(match?.[1] ?? "null");
+          const source = readFileSync(join(root, "authority.json"), "utf8");
+          const highWater = readFileSync(join(root, "high-water.json"), "utf8");
+          const evidence = readdirSync(join(root, "forensic")).filter((name) =>
+            name.endsWith(".raw"),
+          );
+          if (stage === "before-source") {
+            expect(source).toBe(old.source);
             expect(highWater).toBe(old.highWater);
-            expect(observation).toMatchObject({ _tag: "Unavailable" });
-          } else {
-            expect(JSON.parse(highWater).version).toBe(3);
+            expect(evidence).toEqual([]);
             expect(observation).toMatchObject({
               _tag: "Available",
-              version: 3,
+              version: 2,
             });
+          } else {
+            expect(JSON.parse(source).version).toBe(3);
+            expect(evidence).toHaveLength(3);
+            expect(
+              readFileSync(
+                join(root, "forensic", `v2-bundle-${hash(old.source)}.raw`),
+                "utf8",
+              ),
+            ).toBe(old.source);
+            expect(
+              readFileSync(
+                join(
+                  root,
+                  "forensic",
+                  `v2-high-water-${hash(old.highWater)}.raw`,
+                ),
+                "utf8",
+              ),
+            ).toBe(old.highWater);
+            const auditEvidence = evidence.filter((name) =>
+              name.startsWith("v2-audit-"),
+            );
+            expect(auditEvidence).toHaveLength(1);
+            const auditBytes = readFileSync(
+              join(root, "forensic", auditEvidence[0] ?? ""),
+              "utf8",
+            );
+            expect(auditBytes.startsWith(old.audit)).toBe(true);
+            expect(auditBytes).toContain('"outcome":"Loaded"');
+            expect(auditEvidence[0]).toBe(`v2-audit-${hash(auditBytes)}.raw`);
+            if (stage === "before-high-water") {
+              expect(highWater).toBe(old.highWater);
+              expect(observation).toMatchObject({ _tag: "Unavailable" });
+            } else {
+              expect(JSON.parse(highWater).version).toBe(3);
+              expect(observation).toMatchObject({
+                _tag: "Available",
+                version: 3,
+              });
+            }
           }
+        } finally {
+          removeP39PrivateTestDirectory(root);
         }
-      } finally {
-        removeP39PrivateTestDirectory(root);
-      }
-    },
-    120_000,
-  );
-});
+      },
+      120_000,
+    );
+  },
+);

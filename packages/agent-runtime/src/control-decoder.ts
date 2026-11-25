@@ -26,6 +26,7 @@ import {
   decodeSelectCurrentWorkControl,
   decodeUpdatePlanControl,
 } from "./control-decode-work.js";
+import { decodeAllocateWorkspaceSandboxControl } from "./control-decode-workspace-authorization.js";
 import type {
   ControlToolDecodeError,
   ControlToolInvocation,
@@ -37,6 +38,7 @@ const CONTROL_TOOL_NAMES = new Map<string, string>([
   ["assign_work", "assign_work"],
   ["list_workspaces", "list_workspaces"],
   ["read_workspace", "read_workspace"],
+  ["allocate_workspace_sandbox", "allocate_workspace_sandbox"],
   ["accept_result", "accept_result"],
   ["send_message", "send_message"],
   ["claim_completion", "claim_completion"],
@@ -85,6 +87,8 @@ export const decodeControlInvocation = (
         return yield* decodeListWorkspacesControl(invocation, object);
       case "read_workspace":
         return yield* decodeReadWorkspaceControl(invocation, object);
+      case "allocate_workspace_sandbox":
+        return yield* decodeAllocateWorkspaceSandboxControl(invocation, object);
       case "accept_result":
         return yield* decodeAcceptResultControl(invocation, object);
       case "send_message":

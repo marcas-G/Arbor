@@ -18,7 +18,7 @@
 > approval rows, decide, consume or wake them.
 
 **Authority:** DID v1.14 G2, v1.13 G4, v1.8 G2 and v1.39 EA-DG-01; §4.1 (CommandSubmissionContext), §4.1A, §4.2, §4.3, §6.2 (L2), §12.3, §12.10; SD v1.14 §8.1–§8.5; P1 `01` §2A/§4/§9, P2 `01` §2 + `00` R1, P4 `03` §2/§4, P5 `01` §3.1; P1-DG-11.
-**Status:** DRAFT.
+**Status:** DRAFT for unrelated baseline clauses; Native OS Sandbox authority addendum accepted under `ACCEPT_NATIVE_OS_SANDBOX_COMMAND_AUTHORITY_AMENDMENT_V3`.
 
 ## 1. Boundary (frozen)
 
@@ -107,6 +107,21 @@ policy before the Command Gateway can reveal any receipt or conflict. The
 Resolver itself does not read receipts or mutate state. The Gateway's
 in-transaction exact receipt replay and final authority/precondition checks
 remain authoritative (DID §4.1B; P1 `01` §3; `03` §3.1).
+
+P8 v1.46 adds one declared `canonicalFacts.retryVerificationOrigin` input for
+the permanent non-receipt origin fact. Application/Composition loads this
+immutable origin by candidate CommandId through the P8 origin store after
+strict codec and Actor/Principal binding; it never reads CommandStore or a
+receipt. The Resolver remains pure (`R = never`) and consumes only that
+declared snapshot. The origin contains CommandId, ProjectId, original actor,
+source Verification/Work, successor Verification/verifier Execution and
+createdAt; it contains no fingerprint/schema/algorithm, summary, revision,
+payload, or receipt data.
+An absent origin is no replay authority. A malformed, duplicate, contradictory,
+or unreadable stored origin is not treated as absence: Composition returns
+typed `PersistenceCorruption<"RetryVerificationOriginStore">`, which the
+external boundary maps to the fixed safe non-retryable corruption Problem
+before Gateway. No row contents or receipt data are exposed.
 
 `semanticRequestFingerprint` is **computed by the Application** (P1 `01` §4); the resolver never computes or re-derives it. `canonicalFacts` / `grants` are **declared input snapshots**, not live I/O ports.
 
@@ -217,6 +232,10 @@ VerifiedRuntimeCommandAuthority resolver-producible variants ONLY:
                                 StopExecutionAuthority (submissionOrigin "External");
                                 SettleExecutionAuthority is NOT produced here
                                 (origin ExecutionOrigin | RecoveryController)
+RetryVerificationReplayOnlyAuthority
+                                P8 `01` §3A: only permanent origin plus current
+                                Resolver authorization; Gateway consumes it
+                                only through an existing receipt tuple branch
 InvocationAuthority             P4 `03` §2: tool capability ceiling + resource spaces
                                 (produced by resolveInvocation, NOT resolve — N-03)
 InvocationApproval              P4 `03` §4: Exact-Intent approval
@@ -356,6 +375,57 @@ CREATE INDEX permission_grants_active ON permission_grants (project_id, state);
 
 ## 6. Determinism / purity / replay
 
+### P8 `RetryVerification` human authority
+
+For the accepted P8 orphan governance command, the resolver may produce
+`OrphanConclusionAuthority` only from the authenticated local-human context
+and exact current canonical facts. Root Work is governed by the authenticated
+local human; child Work is governed only by the authenticated human of the
+exact direct Parent Workspace. The authority binds Project, Work, current
+Work revision, exact Open Verification, the complete exact bound verifier
+Execution set and the Work's current governance owner. The P8 handler
+independently revalidates these facts in the canonical transaction, including
+old verifier ownership against the Verification's captured owner snapshot.
+Agent grants, verifier Execution authority, RecoveryController, scheduler,
+Attention and arbitrary External command origin cannot construct this fact.
+
+For a historical source after a successful RetryVerification, the Resolver may
+produce `RetryVerificationReplayOnlyAuthority` only when the declared permanent
+origin fact matches the candidate CommandId, ProjectId, original actor, source
+Work and source Verification; the authenticated principal still equals the
+original actor and currently has the exact Root-local or direct-Parent human
+governance authority for that source. A different source/project/actor,
+missing origin, Agent, revoked authority or changed owner that no longer
+authorizes the original actor yields no fact and the generic denial before
+Gateway. Current visibility is re-evaluated on every replay; origin does not
+preserve authority after revocation or owner change.
+
+For the paired P6 `UnboundLegacy` Governance Inbox entry, current recipient
+visibility is derived from the disposition's Project/Work IDs and current
+canonical Work/Workspace governance owner, then checked against the same
+current Root-local or exact direct-Parent human route. A stored
+`inbox_entries.workspace_id` is a projection target, not an authority fact;
+stale recipient rows cannot make a former owner visible or authorized. The
+Inbox read does not inspect/decode Command receipts and never grants
+`RetryVerificationReplayOnlyAuthority`; an UnboundLegacy external replay
+continues to generic-deny before Gateway.
+
+Origin matching does not compare expected revision, summary, successor
+Verification/Execution IDs, semantic fingerprint, Handler schema version, or
+fingerprint algorithm. The produced authority remains exact-bound to the
+current candidate's commandId/project/fingerprint under P1 `02A`; it does not
+compare those tuple values with the origin row. For the same CommandId and
+source scope, those candidate fields reach Gateway's existing complete tuple
+comparison, which remains the
+only receipt read and returns the existing `IdempotencyConflict` branch before
+decoding either JSON field. The `RetryVerification` handler accepts only
+`RetryVerificationAuthority`; it never accepts replay-only authority. If an
+origin exists but Gateway finds no corresponding receipt, P1 returns the
+fixed safe `PersistenceCorruption<"CommandStore">` disposition without
+handler invocation or writes. An unbound legacy disposition has no replay
+authority and is generic-denied; its human-only P6 Inbox item is not an Agent
+instruction or an Attention source.
+
 - The resolver is a deterministic function of its **declared inputs**: same
   `(principal, submissionContext, envelope, semanticRequestFingerprint, canonicalFacts,
   grants, governance, policy)` → same command fact; same `InvocationDecisionInput` → same
@@ -404,3 +474,157 @@ unauthorized / missing grant → no fact produced → DomainError.AuthorityDenie
 PermissionGrant store: activeGrants loads only state = 'Active' into grants; a revoked
   grant is absent → no matching grant → NoApplicableGrant (no fact), never default-allow
 ```
+
+## Accepted Native OS Sandbox authority amendment V3
+
+Add only `SandboxPolicyDecisionAuthority` for authenticated human
+`DecideSandboxPolicy`. The exact CAPA v2 `PermissionGrant` must bind the same
+HumanPrincipal decision subject, capability exactly `DecideSandboxPolicy`,
+and one canonical `ExecutionId`; Project/Workspace/Episode come from and are
+checked against the canonical Execution relation. Lifetime is finite,
+Execution-bound and checked using trusted `AuthorityNow`; Resolver never
+uses `envelope.issuedAt`.
+
+The issuer must be an authenticated HumanPrincipal in P5's current
+OS-protected operator snapshot and must differ from the decision subject.
+That allowlist authorizes only this exact GrantPermission capability and
+target, never a generalized admin/RBAC permission. `GrantPermissionAuthority`
+for this scope binds the snapshot revision/digest. The immutable
+`SandboxPolicyGrantIssuerProvenanceV1` records exact GrantId, originating
+Committed GrantPermission CommandId, issuer, config revision and digest.
+
+Composition loads the exact Grant via the existing transactional
+`PermissionGrantRepository.findById(permissionGrantId)` and exact provenance
+lookup, together with the canonical Execution facts and trusted clock. P12/02
+remains a pure `R = never` resolver: it reads no repository, receipt or
+decision store. It produces authority only if Grant, provenance, committed
+originating command and current operator snapshot match exactly. Removed or
+re-added operators cannot revive old Grants; a new Grant is required. P1
+Gateway performs its independent same-transaction exact recheck. No other
+P12 command scope or P12/10 authorization path is added.
+
+
+## Accepted full-chain Native Sandbox exact authority projection (V21)
+
+P12/02 remains the only CAPA-v2 resolver. For GrantPermission to create
+sandbox issuer provenance, authenticated actor and configured issuer are the
+same currently listed canonical HumanPrincipal; capability is exactly
+DecideSandboxPolicy; target is exactly one ExecutionId; subject is a distinct
+HumanPrincipal and exactly the later decision actor; lifetime is finite and
+checked with trusted AuthorityNow (validFrom <= now < expiresAt). Preserve
+exact subject/scope/capability/target/revision/state/issuer projection without
+P1 parsing or widening. Committed Grant, provenance, receipt and existing
+PermissionChanged plus SandboxPolicyGrantIssued ordering remain atomic per P1.
+
+SandboxPolicyDecisionAuthority binds authenticated actor, exact Grant ID,
+issuer provenance and current immutable authority/operator bundle revision and
+digest, exact canonical Execution/Episode and human-selected policy CAS
+preconditions. Resolver preflight precedes any receipt disclosure; P1 performs
+an independent exact same-transaction Grant/provenance/current-bundle recheck.
+Removed or re-added issuer cannot revive an old grant; a new exact grant is
+required. Cross-Execution, wildcard, expired/revoked, nonhuman, same-issuer/
+subject or malformed decisions fail closed through existing terminal
+rejections with sanitized details. Authority/config failures are not
+provider-unavailable facts and never trigger FullAccess fallback.
+
+P12 consumes P5's one OS-protected SandboxAuthorityBundleV1 snapshot only
+through explicit injected ports; P12/02 does not read files, SQLite, receipt
+or decision stores. P1 command fields never accept caller-supplied authority,
+issuer, high-water, registry or evidence internals. P12/02 adds no resolver
+route, permission, capability or broader admin/RBAC semantics.
+
+The ordinary initialized Workspace baseline is a separate system-origin source
+for the same exact downstream policy binding. It does not use the explicit
+Grant/issuer path above, does not create a human authority fact and does not
+remove any current Workspace/Execution/provider recheck. `DecideSandboxPolicy`
+continues to govern explicit policy changes, not ordinary Work startup.
+
+
+## 2026-11-16 Workspace permission continuity supplement
+
+Product authorization: the user explicitly accepted persistent Workspace
+permissions across tasks/restarts and explicit direct-Parent distribution within
+its existing ceiling. Decision:
+`docs/decisions/2026-11-16-workspace-scoped-sandbox-authority.md`.
+Engineering landing package: `docs/proposals/2026-11-16-workspace-permission-continuity.md`;
+SHA-256 `d0049ca9e8e4e1c9246813be633b381b2458040741fdb58497d8c0a29ad6ac5f`. Product acceptance is not implementation or release qualification.
+
+For persistent Workspace tool grants, authenticate using explicit governance
+membership, not a user: prefix. Require exact same-Project Active Workspace,
+WorkspaceAgent subject, identical Workspace target, and fs:write or shell:exec.
+Produce GrantPermissionAuthority.workspacePermissionBinding with workspaceId and
+revision. Do not manufacture a human subject or sandbox issuer provenance.
+Gateway must reread the Workspace in the committing transaction. Native policy
+authority is still a distinct integration obligation; old sandbox grants do not
+authorize the new Workspace model. Direct-Parent distribution must additionally
+prove the current direct edge and ceiling at allocation and use time.
+
+
+## 2026-11-16 supplement: Workspace authorization commands and human revocation
+
+Product authority: explicit project-owner answers on persistent Workspace
+authorization, bounded direct-Parent allocation and user-only reversal of
+human revocation. Engineering landing package: `docs/proposals/2026-11-16-workspace-authorization-commands-and-revocation.md`; SHA-256
+`07e2552d26ff41a1b23df398260cda6752c81f4fe0fe5f275eda54f291e65e7c`.
+
+The staged WorkspaceSandboxAuthorizationAuthority is bound to command kind,
+CommandId/fingerprint/Project, target Workspace and authenticated source. Human
+authority requires explicit authenticated governance membership; a principal
+prefix alone is insufficient. Parent allocation requires an active exact
+originating Workspace Execution, direct same-Project Child, current authorization
+source revision and complete current source chain. Grant/provenance from the
+legacy two-human sandbox path does not create this authority. The Gateway
+rereads the target head and rejects Parent replacement of a human Revoked head.
+These handlers are not yet exposed by ordinary transport composition.
+
+
+## 2026-11-16 supplement: Workspace authorization to execution policy
+
+Product authority is the owner's persistent Workspace/bounded Parent/user-only
+revocation decisions. Exact engineering package:
+`docs/proposals/2026-11-16-workspace-execution-policy-binding.md`, SHA-256
+`9d3a968400d89bc9865ac92dd91e143f2390db6037ff4286a4a79d4385c267f4`.
+
+The internal policy binder has a command-bound System authority fact for an
+exact active Execution/Episode and current Workspace authorization revision,
+together with current host/provider evidence. It is not externally invocable as
+a human decision or model-supplied grant. Authentication remains a single human
+principal on the local UI. The old human-grant provenance is retained solely as
+a distinct historical source and is never fabricated for new Workspace bindings.
+
+## 2026-11-16 独立验证命令环境补充
+
+治理修订：`IVE-P12-20261116.1`。负责人已明确接受固定临时副本方案；接受编号
+`ACCEPT_INDEPENDENT_VERIFICATION_COMMAND_ENVIRONMENT`。固定提案
+`docs/proposals/2026-11-16-independent-verification-command-environment.md`，
+SHA-256 `a6e85e9e15301cbc377f3468d5bfca706cf3019e42bc28fe712a1947a0d6108d`。
+以下为该提案分配给本文的完整条款；接受与设计落地不等于实现或发行资格。
+
+1. 命令来源为精确绑定的 Verifier execution，真实调用 actor 继续审计。授权取自
+   当前 owner Workspace 的有效授权及其完整 Parent 来源链；额外验证字段来自
+   Verification/Execution/资源的受信记录，不由模型提交。
+2. 准备与 Gateway/P4 实际执行前均复查当前来源、Verification 归属、Work 修订、
+   捕获输入、副本身份、主机/provider 资格及撤权。旧策略/旧回执只能证明过去动作，
+   不能恢复撤权或迁移到另一执行/工作区/副本。
+3. 验证器无分配工作区权限、修改 Work/Dependency/Deliverable 或原成果的新增通道；
+   原有 RecordVerificationEvidence/ConcludeVerification exact authority 保持不变。
+
+## 2026-11-20 Workspace default execution capability supplement
+
+Accepted under `ACCEPT_WORKSPACE_DEFAULT_EXECUTION_CAPABILITY`; fixed proposal
+`docs/proposals/2026-11-20-workspace-default-execution-capability.md`, SHA-256
+`8503d5c2663d3098171c57646b78a8408d5f1a28dc7f3cf3a37f2181fddaed66`.
+
+The P12 resolver must not model ordinary current-Workspace coding capability
+as a second-human grant. After qualified Linux environment initialization, the
+composition supplies a system-created Workspace baseline fact to the exact
+authority/binding path. The resolver and Gateway still validate the current
+Project, Workspace, ResourceBoundary, Execution/Episode, provider and policy
+facts; the baseline fact is a ceiling, not a caller-supplied authority.
+
+The baseline is not an implicit allow for arbitrary commands: exact sensitive
+action approval, resource admission, process policy and network enforcement
+remain separate. Missing qualification is an environment/installation
+condition, not a reason to manufacture a grant or silently fall back to an
+unisolated provider. User Revoked state remains durable and can be reversed
+only by an explicit user action.

@@ -53,7 +53,7 @@ P39 Windows/sidecar qualification remain gated. P39 sidecar/preflight and
 earlier migration bodies are unchanged.
 
 ```text
-Detailed Implementation Design v1.6 (frozen)
+Detailed Implementation Design v1.68 (frozen)
         ↓ delegates phase-scoped closure
 docs/design/implementation/P1/**   (these contracts)
 ```

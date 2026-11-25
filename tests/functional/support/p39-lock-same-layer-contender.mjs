@@ -65,6 +65,7 @@ try {
   process.stdout.write(
     `${JSON.stringify({ _tag: "Failed", message: String(cause) })}\n`,
   );
+  process.exitCode = 1;
 } finally {
   if (timer !== undefined) clearTimeout(timer);
 }

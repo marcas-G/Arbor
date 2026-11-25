@@ -176,9 +176,13 @@ successful process start alone is not proof.
 Capability probing is fail-closed. All required filesystem roots, network
 authority and anti-bypass, DNS/IP pinning, redirect checks, environment,
 process-tree cleanup, walltime/output/process/memory/CPU limits must be
-enforced and tested. Restricted/Enabled require exact human authority and
-provider enforcement of their destination rules. An unsupported control makes
-that profile/provider unavailable. No automatic TrustedLocal fallback.
+enforced and tested. For an initialized Linux single-user Workspace, the
+qualified `WorkspaceWrite × Enabled` baseline is established by Workspace
+admission; it is not a repeated per-Work human authority ceremony. Any
+capability/boundary expansion or weaker isolation still requires explicit
+human authority, and the provider must enforce its destination rules. An
+unsupported control makes that profile/provider unavailable. No automatic
+TrustedLocal fallback.
 
 T0 contract landing/review → T1 TrustedLocal rename, environment projection,
 child-tree cleanup and durable policy command → T2 per-platform provider
@@ -187,6 +191,21 @@ release matrix. Only after T3 may an individual provider be called Supported.
 Numeric budgets and OS versions remain empirical P12 measurements and are not
 invented by this addendum. This design landing does not authorize runtime
 implementation or release.
+
+## 2026-11-20 Workspace default execution capability supplement
+
+Accepted under `ACCEPT_WORKSPACE_DEFAULT_EXECUTION_CAPABILITY`; fixed proposal
+`docs/proposals/2026-11-20-workspace-default-execution-capability.md`, SHA-256
+`8503d5c2663d3098171c57646b78a8408d5f1a28dc7f3cf3a37f2181fddaed66`.
+
+The security gate is moved to Workspace initialization for the ordinary
+Linux single-user baseline: qualified installation establishes
+`WorkspaceWrite × Enabled` for the current admitted Workspace. This removes
+repeated user authorization, not the security checks. Capability probing,
+provider qualification, boundary/ownership binding, process-tree controls,
+network enforcement and exact per-Execution revalidation remain mandatory.
+Unsupported or drifted environments are unavailable before executable Work
+admission; there is no TrustedLocal, FullAccess or fake fallback.
 
 
 ## Accepted full-chain T2/T3 authority and network enforcement (V21)
@@ -456,3 +475,86 @@ with SHA-256
 canonical manifest KAT SHA-256
 `e502199edae3e7b74c9fe6bd9681d727f537585b99d1b5983bbf9b013b4af234`
 remains separate and requires a non-test operator key in an actual T3 run.
+
+## Linux workspace networking V2 governance supplement
+
+Accepted under `ACCEPT_LINUX_WORKSPACE_NETWORK_V2`; proposal SHA-256 `9801a907a540a7ea2ec5a68e2ac197105c4bf5a1b00191c3801e888dded59111`.
+
+This supplement owns only the Linux V2 changes assigned to this document. For V2 it supersedes the conflicting first-release Windows-only, blanket loopback-denial, V1 broker and discovery clauses; V1/Windows/historical evidence retain their original meaning. It creates no Supported result, migration execution, preserved-database upgrade or release claim. Service registration, cross-command service reuse and preview still require their separate exact contract and acceptance; the full product goal is not reduced. DID 1.66 owns the closed technical definitions.
+
+#### 4. 公网通道的精确语义
+
+通道只接受规范 `CONNECT <lowercase-IDNA-DNS-name>:443`，拒绝 IP literal、
+userinfo、非规范域名及其他端口。Restricted 检查现有精确 HTTPS origin 清单；
+Enabled 允许公共目标；Disabled 不启动外部通道，但同工作区内部 TCP 不因此失效。
+Restricted 限制的是代理请求的 CONNECT 目标；不检查加密 TLS 内部的 SNI/Host，
+不承诺阻止公共服务器的域名前置或应用层转发。这是相较旧严格域名合同的明确取舍。
+
+受信侧每条连接重新查询全部 A/AAAA；任一答案命中既有冻结特殊地址 deny-set 时
+整体拒绝，IPv4-mapped IPv6 先归一化。只选择已验证的 A 记录，以数值 IPv4 拨号，
+不让系统重新解析目标，不连接 AAAA、不复用旧已解析路线。没有可用 A、DNS 错误、
+地址被拒绝或通道失效均产生可读失败。
+
+HTTP CONNECT 由标准 Node HTTP/net/stream 实现；TLS 字节原样转发，客户端使用
+自己的普通受信根验证目标。Arbor 不生成 CA、不关闭证书验证、不声称检查了加密
+HTTP 的 Host/方法/正文。HTTPS 跳转由客户端处理，每条新 CONNECT 重新授权；
+它不是 broker 内的五跳下载器，也不声明限制了所有客户端的重定向总次数。
+未来内置 fetch 的逐跳、大小、来源与取消由其独立工具合同负责。
+
+保留有限建连期限、空闲期限、取消、背压和有界资源使用；停止等待通道及进程树
+清理确认。网络可达不等于发布/部署获准，执行审批不自动扩大后续工具能力。
+
+##### 8.1 新规则和控制字节
+
+新增 `SandboxEnforcementRuleSetV2`。规范键序及唯一 Linux 模板为以下单行 JSON；
+UTF-8、无 BOM、无尾换行、无额外空白，SHA-256 小写摘要不内嵌：
+
+```json
+{"version":2,"networkPolicyCodecVersion":1,"filesystemRuleVersion":1,"environmentRuleVersion":1,"processTreeRuleVersion":1,"resourceLimitRuleVersion":1,"brokerProtocolVersion":2,"addressClassificationSnapshotId":"iana-special-purpose-2025-10-09+sha256:86583d4bbc916863208c3fbb5a75ee3e6500dd12aa4f9bd3a72caaacb4a3da6a","addressFamily":"IPv4OnlyPublicConnect","redirectPolicy":"ReauthorizeEachConnect","tlsPolicy":"ClientVerifiedEndToEnd","localNetwork":"WorkspaceNamespaceTcp","platformPrimitiveSetId":"linux-bwrap-workspace-netns-cgroupv2-connect-v2"}
+```
+
+新增 `SandboxNetworkBrokerControlsV2`，仅允许以下两个 closed 形状，键序如示例。
+第二个形状的 mode 只可取 `Restricted` 或 `Enabled`，必须等于 canonical networkPolicy：
+
+```json
+{"version":2,"mode":"Disabled","directNetwork":"Denied","broker":"Disabled","localNetwork":"WorkspaceNamespaceTcp"}
+{"version":2,"mode":"Enabled","brokerProtocolVersion":2,"directNetwork":"Denied","dns":"BrokerOnly","addressFamily":"IPv4OnlyPublicConnect","ipPinning":"AllAnswersPublicPerConnection","redirectPolicy":"ReauthorizeEachConnect","tlsPolicy":"ClientVerifiedEndToEnd","rawIp":"Denied","udp":"Denied","specialUse":"Denied","localNetwork":"WorkspaceNamespaceTcp"}
+```
+
+NoDns64、Pref64、TLS 解密和 broker 总跳数不属于该 V2 的声明或字段。V1 的 decoder、
+encoder、已记录规范字节、规则摘要和黄金向量完全保留，不允许据新行为重解释旧 V1。
+
+##### 8.4 受信 Linux 资格材料
+
+P5 registry entry 的现有字段与 canonical codec 不变；新 row 的
+enforcementRuleSetDigest 必须等于 8.1 模板摘要，精确元组不得从旧 row 推导。
+新增 protected source 只读方法 `readLinuxSandboxQualificationEvidence(ref)`：
+输入只能是 registry 的 blob SHA-256 引用，输出规范 manifest 原字节或 unavailable，
+不能接受模型提供的文件路径、公钥或自定义 verifier。缺少该可选方法时不支持 V2。
+
+Linux manifest version=2 的规范键序为：version,providerId,providerVersion,
+capabilityRevision,osFamily,osBuild,profile,networkMode,networkPolicyCodecVersion,
+enforcementRuleSetDigest,validatedLimits,artifactHashes,cases。其余标量使用对应
+registry/domain 类型及 closed 值；validatedLimits 使用现有 SandboxPolicyLimitsV1
+的完整字段/顺序。artifactHashes 是按 UTF-8 role 唯一排序的
+`{role,sha256}` 数组；role 集合精确为 adapter-runtime,adapter-source,bwrap,
+qualification-control,relay-runtime,relay-source,systemctl,systemd-run。路径由安装产物
+和受信 host 配置固定，manifest 不携带任意可执行路径。每个摘要为实际完整文件
+字节的 SHA-256 小写值；不能仅哈希版本字符串。
+
+cases 是按 caseId UTF-8 排序的 `{caseId,verdict,evidenceRef}`，verdict 仅为 PASS，
+evidenceRef 必须是对应完整资格结果的 `blob:sha256:<lowerhex>`；没有自引用。
+必需 caseId 集合精确为：artifact-drift,cancel-before-spawn,cancel-running-tree,
+dns-mixed-denied,dns-rebinding,env-secret-absent,file-ro,file-rw,file-outside-denied,
+host-loopback-denied,namespace-escape-denied,output-bound,private-target-denied,
+process-limit,public-https,raw-network-denied,readonly-sharing,resource-cpu,
+resource-memory,same-namespace-tcp,socket-outside-denied,timeout-tree。
+Restricted 另必须包括 restricted-allow,restricted-deny；Disabled 不允许公共出站，
+其 public-https 项替换为 disabled-egress-denied。每项为真实控制测试，不接受模拟
+支持能力替代；完整 ordinary install/real-model/双 Workspace 验收另由第 7 节负责。
+
+manifest 摘要必须等于当前受信 registry row 的 qualificationEvidenceRef；
+manifest 的全部元组必须逐项相同。每次 capability 和 effect admission 核对当前
+source/high-water、主机及实际产物字节；请求限制不得超过经过测试的 validatedLimits。
+独立离线资格/安装流程可生成并明确安装材料，daemon/provider 自己不能签发 row，
+不能把运行中的 probe success 自动写成 Supported。Windows 信任/签名源保持不变。

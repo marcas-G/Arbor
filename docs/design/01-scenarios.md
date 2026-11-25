@@ -1,11 +1,24 @@
 # Arbor 核心场景定义（S1–S4）
 
-**Version:** 1.10
-**Status:** FROZEN — Minimal Architecture Convergence, Native OS Sandbox, accepted S2-RDG-01, S3 child resource ownership/carve-outs, and first-release process-mode governance addenda
-**Date:** 2026-10-26
-**Depends on:** `Arbor Problem Definition & Goals v1.3`
+**Version:** 1.12
+**Status:** FROZEN — Minimal Architecture Convergence, Native OS Sandbox, Workspace default execution capability, accepted S2-RDG-01, S3 child resource ownership/carve-outs, and first-release process-mode governance addenda
+**Date:** 2026-11-20
+**Depends on:** `Arbor Problem Definition & Goals v1.4`
 **Owns:** S1–S4 的参与者、端到端行为、分支、异常与恢复的用户可感知语义  
 **Does not own:** Domain Entity、Runtime/module、数据库、Command/Event、状态机、接口、技术实现
+
+**2026-11-11 accepted project-directory supplement:** The user's explicit
+“继续接入” accepts the directory-first flow recorded in
+`docs/decisions/2026-11-11-project-directory-selection.md`. A human can browse
+or enter a directory on the Arbor service host, use an existing folder without
+overwriting files, or create a folder under an existing parent. Opening an
+already linked canonical directory enters the existing Project; archived
+Projects expose history only. Existing Projects show their bound directory
+and offer open/conversation/copy-path/management actions. Directory selection
+does not require a daemon restart and survives restart. Conversation-only is
+an explicit secondary choice, never an automatic fallback from an invalid
+path. This adds project bootstrap behavior; S1–S4 Work/Verification/Acceptance
+and process-execution boundaries are unchanged.
 
 **Governance clarification (v1.2 → v1.3; `ACCEPT_MINIMAL_ARCHITECTURE_CONVERGENCE`):**
 
@@ -1156,26 +1169,29 @@ ownership by inference. This addendum changes the observable S3 resource
 ownership outcome; it does not authorize implementation or release
 qualification.
 
-## Governance addendum — Native OS Sandbox first-release boundary (v1.9)
+## Governance addendum — Native OS Sandbox first-release boundary (v1.9; historical Windows candidate)
 
 Accepted under `ACCEPT_NATIVE_OS_SANDBOX_FIRST_RELEASE_BOUNDARY_V1` on
 2026-10-26; fixed proposal SHA-256
 `8A5FC8FED5DCED9B6E944397675738F94B43591B23F85869A2D5FA96D6CB32E8`.
-At first release, the human-visible process-execution mode is either
-`Disabled` or `NativeOsSupportedOnly`. The release defaults to `Disabled`;
+For the historical Windows first-release candidate, the human-visible
+process-execution mode is either `Disabled` or `NativeOsSupportedOnly`. That
+candidate defaults to `Disabled`;
 shell is absent from the model-facing catalog and process-capable actions are
 blocked before spawn, including stale or replayed actions, with the existing
 safe unavailable status. Native mode is available only for the exact fully
 qualified provider/version/capability/OS-build/profile-and-network tuple.
 For the current Windows candidate this is `ReadOnly × Disabled`; it does not
 claim support for write or network access. If its signed production materials
-and full qualification are unavailable, the release remains Disabled. There
+and full qualification are unavailable, that candidate remains Disabled. There
 is no TrustedLocal, FullAccess, alternate-provider, or weaker-control
 fallback. Human approval remains separate from sandbox enforcement. Switching
 mode requires a controlled restart; rollback to Disabled stops new process
 admissions and preserves trust/evidence high-water state. This narrows the
-first-release executable surface without changing S1–S4 goals or authorizing
-implementation, Native qualification, or release.
+historical Windows candidate's executable surface without changing S1–S4 goals
+or authorizing implementation, Native qualification, or release. The qualified
+Linux single-user release has a later, more specific supplement below; it
+defaults to `NativeOsSupportedOnly` after the exact Linux qualification passes.
 
 ## Governance addendum — durable process-mode no-effect denial (v1.10)
 
@@ -1197,3 +1213,98 @@ mode or Native qualification claim.
 The acceptance authorizes the exact design supplement and the separately
 stated conditional implementation scope; migration and release qualification
 remain subject to its exact gates.
+
+## Linux workspace networking V2 governance supplement
+
+Accepted under `ACCEPT_LINUX_WORKSPACE_NETWORK_V2`; proposal SHA-256 `9801a907a540a7ea2ec5a68e2ac197105c4bf5a1b00191c3801e888dded59111`.
+
+This supplement owns only the Linux V2 changes assigned to this document. For V2 it supersedes the conflicting first-release Windows-only, blanket loopback-denial, V1 broker and discovery clauses; V1/Windows/historical evidence retain their original meaning. It creates no Supported result, migration execution, preserved-database upgrade or release claim. Service registration, cross-command service reuse and preview still require their separate exact contract and acceptance; the full product goal is not reduced. DID 1.66 owns the closed technical definitions.
+
+#### 1. 用户实际得到什么
+
+1. 安装后检查本机执行条件；通过完整检查后，普通工作台可运行获准项目中的
+   文件操作、依赖安装、构建和测试。失败明确说明缺少什么，不静默退回宿主命令，
+   不把只能对话或只能改文件称为完整安装成功。
+2. A、B 工作区有各自的文件权限、运行环境、临时状态和服务归属。A 不能借 shell
+   访问 B 未分配的文件，也不能停止或冒认 B 的进程/服务。明确的只读共享、写入
+   所有权及正式交付保持现有语义。
+3. 一个工作区自己的测试和服务可以通过其内部 localhost 通信；后续命令需要
+   访问该工作区已登记服务时，复用同一工作环境。两个工作区可使用相同内部端口。
+   这不开放宿主 localhost、其他工作区或内网。
+4. 公网 HTTPS 使用普通 Git/npm/curl 等客户端及其正常 TLS 验证，不安装临时 CA，
+   不解密 TLS，不要求工具改用 Arbor 专有下载协议。默认通道仅支持公开 HTTPS
+   DNS 目标及端口 443；具体生态必须实测，不能写成所有协议已经支持。
+5. 停止只影响选中的运行及其拥有的进程/服务；工作区服务必须有明确拥有者、
+   关闭行为和可见状态。重启后不冒认旧服务，不盲目重放可能已发生的写入。
+   模型自述完成和命令退出零都不替代独立 Verification 与 Acceptance。
+
+本包不开放任意宿主/内网连接、继承主机账号、sudo、远程多用户或已有用户库升级。
+Child 仍是独立 Workspace，经 Work/Message/Inbox/Deliverable/Dependency 协作；
+没有把 Child 改为目录、容器、子进程或 Parent 目录的一部分。
+
+
+## 2026-11-16 Workspace permission continuity supplement
+
+Product authorization: the user explicitly accepted persistent Workspace
+permissions across tasks/restarts and explicit direct-Parent distribution within
+its existing ceiling. Decision:
+`docs/decisions/2026-11-16-workspace-scoped-sandbox-authority.md`.
+Engineering landing package: `docs/proposals/2026-11-16-workspace-permission-continuity.md`;
+SHA-256 `d0049ca9e8e4e1c9246813be633b381b2458040741fdb58497d8c0a29ad6ac5f`. Product acceptance is not implementation or release qualification.
+
+For S1–S4, a Workspace already authorized to edit files, execute commands or use
+network does not require a new human grant merely because a new task/Execution
+starts or Arbor restarts. Sensitive action approval remains independent. Parent
+may explicitly distribute capabilities inside its current ceiling to a direct
+Child operating inside that Child's own admitted resources. Capability/resource
+expansion and invalid prior authority escalate to the user. This supersedes
+the Native sandbox requirement for repeated human policy selection per Execution;
+exact current execution-policy validation remains required.
+
+
+## 2026-11-16 supplement: Workspace authorization commands and human revocation
+
+Product authority: explicit project-owner answers on persistent Workspace
+authorization, bounded direct-Parent allocation and user-only reversal of
+human revocation. Engineering landing package: `docs/proposals/2026-11-16-workspace-authorization-commands-and-revocation.md`; SHA-256
+`07e2552d26ff41a1b23df398260cda6752c81f4fe0fe5f275eda54f291e65e7c`.
+
+A user revoking a Child Workspace's permission can close and reopen Arbor
+without losing that decision. A valid Parent cannot undo it by allocating again.
+The user must explicitly authorize that Child again to clear the revocation.
+A denied reallocation leaves the revoked head and its history unchanged. This is
+accepted product behavior; the staged implementation has no ordinary UI yet.
+
+## 2026-11-20 Workspace default execution capability supplement
+
+Accepted under `ACCEPT_WORKSPACE_DEFAULT_EXECUTION_CAPABILITY`; fixed proposal
+`docs/proposals/2026-11-20-workspace-default-execution-capability.md`, SHA-256
+`8503d5c2663d3098171c57646b78a8408d5f1a28dc7f3cf3a37f2181fddaed66`.
+
+For the Linux single-user first-release journey, after the installer has
+verified the exact isolated execution tuple, initializing a Project/Workspace
+establishes the baseline execution capability for that Workspace. Ordinary
+S1–S4 coding work can therefore read and modify admitted project resources,
+run local build/test commands and use the controlled public HTTPS network
+without a second Workspace-authorization ceremony for each Work or restart.
+
+This does not make the Workspace unconfined: the capability is restricted to
+the Workspace's current ResourceBoundary and ownership, cannot reach another
+Workspace or arbitrary host resources, and does not select FullAccess or
+TrustedLocal. Boundary expansion, Child resource allocation, user restoration
+after revocation and sensitive/high-impact side effects retain their existing
+human-governed paths. If the exact isolated tuple is unavailable, the journey
+stops with a repair/install explanation before an executable Work is admitted;
+it does not silently become conversation-only, host execution or fake execution.
+
+If an earlier Work was blocked solely because this baseline capability was not
+yet initialized, successful initialization exposes an explicit retry/resume
+for that same Work. Retry creates a new Execution while preserving the Work,
+revision, blocker and audit history.
+
+For a qualified Linux release, the startup process-mode snapshot defaults to
+`NativeOsSupportedOnly`, so the baseline capability is usable for ordinary
+coding immediately after initialization. `Disabled` remains an explicit
+stop/rollback or unavailable-environment state. The older Windows
+`ReadOnly × Disabled` candidate above remains historical and does not define
+the qualified Linux release path.

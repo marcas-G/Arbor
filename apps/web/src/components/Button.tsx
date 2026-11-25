@@ -1,6 +1,6 @@
-import type { ReactNode } from "react";
-import styles from "./Button.module.css";
+import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { cx } from "./cx.js";
+import { Button as UiButton } from "./ui/button.js";
 
 export type ButtonVariant = "primary" | "quiet" | "danger";
 
@@ -13,29 +13,32 @@ export function Button({
   loading = false,
   onClick,
   children,
+  className,
+  ...props
 }: {
   readonly variant?: ButtonVariant | undefined;
   readonly type?: "button" | "submit" | undefined;
   readonly disabled?: boolean | undefined;
   readonly loading?: boolean | undefined;
-  readonly onClick?: (() => void) | undefined;
+  readonly onClick?: ButtonHTMLAttributes<HTMLButtonElement>["onClick"];
+  readonly className?: string | undefined;
   readonly children: ReactNode;
-}) {
+} & Omit<
+  ButtonHTMLAttributes<HTMLButtonElement>,
+  "children" | "className" | "disabled" | "onClick" | "type"
+>) {
   const inert = disabled || loading;
   return (
-    <button
+    <UiButton
+      variant={variant}
       type={type}
       disabled={inert}
-      aria-busy={loading}
       onClick={inert ? undefined : onClick}
-      className={cx([
-        "arbor-button",
-        `arbor-button-${variant}`,
-        styles.button,
-        loading ? styles.loading : undefined,
-      ])}
+      loading={loading}
+      className={cx(["arbor-button", `arbor-button-${variant}`, className])}
+      {...props}
     >
       {children}
-    </button>
+    </UiButton>
   );
 }

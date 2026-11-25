@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import styles from "./KeyValue.module.css";
+import styles from "./KeyValue.styles.js";
 
 export type KeyValuePair = {
   readonly label: string;

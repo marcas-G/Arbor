@@ -1,6 +1,5 @@
 import { statusTone } from "../tokens.js";
 import { Badge } from "./Badge.js";
-import styles from "./StatusBadge.module.css";
 
 const STATUS_LABELS: Readonly<Record<string, string>> = {
   executing: "执行中",
@@ -16,7 +15,7 @@ const STATUS_LABELS: Readonly<Record<string, string>> = {
 export function StatusBadge({ label }: { readonly label: string }) {
   const presented = STATUS_LABELS[label] ?? label;
   return (
-    <span className={styles.badge}>
+    <span className={"inline-flex items-center"}>
       <Badge tone={statusTone(label)}>{presented}</Badge>
     </span>
   );

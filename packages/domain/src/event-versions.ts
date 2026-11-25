@@ -1,4 +1,5 @@
 import { EVENT_CATALOG, type EventTypeName } from "./events.js";
+import { decodeCanonicalExecutionEpisodeBinding } from "./sandbox-policy.js";
 
 export interface EventVersionCapability {
   readonly writer: ReadonlyArray<number>;
@@ -49,8 +50,8 @@ const OTHER_EVENT_V1_NAMES = [
   "ExecutionStopRequested",
   "ExecutionSettled",
   "PermissionChanged",
+  "WorkspaceSandboxAuthorizationChanged",
   "SandboxPolicyGrantIssued",
-  "SandboxPolicyDecisionRecorded",
   "DecisionRecorded",
   "EnvironmentChanged",
   "WorktreeCreated",
@@ -78,6 +79,10 @@ export const EVENT_VERSION_REGISTRY: Partial<
   Readonly<Record<EventTypeName, EventVersionCapability>>
 > = Object.freeze({
   ...Object.fromEntries(OTHER_EVENT_V1_NAMES.map((name) => [name, v1])),
+  SandboxPolicyDecisionRecorded: Object.freeze({
+    writer: Object.freeze([1, 2]),
+    reader: Object.freeze([1, 2]),
+  }),
   VerificationConcluded: Object.freeze({
     writer: Object.freeze([2]),
     reader: Object.freeze([1, 2]),
@@ -406,6 +411,42 @@ const strictResourceOwnershipChangedV2 = (value: unknown): boolean => {
   );
 };
 
+const strictSandboxPolicyDecisionRecordedV2 = (value: unknown): boolean => {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      "workspaceId",
+      "executionId",
+      "episodeBinding",
+      "policyRevision",
+      "workspaceAuthorizationRevision",
+      "operatorConfigRevision",
+      "operatorConfigDigest",
+    ])
+  )
+    return false;
+  const positive = (revision: unknown) =>
+    typeof revision === "number" &&
+    Number.isSafeInteger(revision) &&
+    revision >= 1;
+  try {
+    return (
+      typeof value.workspaceId === "string" &&
+      typeof value.executionId === "string" &&
+      decodeCanonicalExecutionEpisodeBinding(
+        JSON.stringify(value.episodeBinding),
+      ) !== undefined &&
+      positive(value.policyRevision) &&
+      positive(value.workspaceAuthorizationRevision) &&
+      positive(value.operatorConfigRevision) &&
+      typeof value.operatorConfigDigest === "string" &&
+      /^[0-9a-f]{64}$/u.test(value.operatorConfigDigest)
+    );
+  } catch {
+    return false;
+  }
+};
+
 export type SupportedEventPayloadDecode =
   | { readonly _tag: "Decoded"; readonly payload: unknown }
   | { readonly _tag: "UnsupportedPair" }
@@ -419,6 +460,13 @@ export const decodeSupportedEventPayload = (
 ): SupportedEventPayloadDecode => {
   if (!isSupportedEventReadPair(eventType, eventVersion)) {
     return { _tag: "UnsupportedPair" };
+  }
+  if (
+    eventType === "SandboxPolicyDecisionRecorded" &&
+    eventVersion === 2 &&
+    !strictSandboxPolicyDecisionRecordedV2(payload)
+  ) {
+    return { _tag: "MalformedPayload" };
   }
   if (
     eventType === "VerificationConcluded" &&

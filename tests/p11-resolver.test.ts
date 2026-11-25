@@ -116,6 +116,31 @@ describe("p11-resolver real environment resolver (observation-only)", () => {
     );
   });
 
+  it("GitWorktree probe follows a linked-worktree .git file", async () => {
+    const wt = join(root, "linked-worktree");
+    const gitDir = join(root, "git-meta", "worktrees", "linked");
+    await mkdir(wt, { recursive: true });
+    await mkdir(gitDir, { recursive: true });
+    await writeFile(join(wt, ".git"), "gitdir: ../git-meta/worktrees/linked\n");
+    await writeFile(join(gitDir, "HEAD"), "ref: refs/heads/linked\n");
+
+    await run(
+      Effect.gen(function* () {
+        yield* migrate;
+        const resolver = yield* EnvironmentResolverPort;
+        const observed = yield* resolver.observe(PROJECT_A, [
+          { _tag: "GitWorktree", path: wt },
+        ]);
+        expect(observed.entries[0]?.probe).toEqual({
+          kind: "GitWorktree",
+          exists: true,
+          head: "ref: refs/heads/linked",
+          dirty: false,
+        });
+      }),
+    );
+  });
+
   it("deterministic: same addresses twice => same fingerprint; shuffled order => same fingerprint", async () => {
     const a = join(root, "tree");
     const b = join(root, "worktree");

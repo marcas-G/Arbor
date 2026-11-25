@@ -1,10 +1,10 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
-import { BlobStorePortLive } from "../adapters/blob-local/src/index.js";
+import { afterAll, describe, expect, it } from "vitest";
+import { makeBlobStorePortLive } from "../adapters/blob-local/src/index.js";
 import {
   ArtifactMetadataRepositoryLive,
   ClockLive,
@@ -61,6 +61,8 @@ const invocationId = parse(ToolInvocationId)(
 );
 
 const root = mkdtempSync(join(tmpdir(), "p4-int-"));
+const BlobStorePortLive = makeBlobStorePortLive(join(root, "blobs"));
+afterAll(() => rmSync(root, { recursive: true, force: true }));
 writeFileSync(join(root, "a.txt"), "integration read");
 
 const authority = {

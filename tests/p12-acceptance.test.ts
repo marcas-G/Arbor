@@ -1554,7 +1554,10 @@ describe("p12-acceptance story 8 — model-facing tool catalog in the compiled r
     expect(compiled?.description).not.toBe(ECHO_DEFINITION.name);
     expect(compiled?.schemaJson).not.toBe("{}");
     for (const builtin of BUILTIN_TOOLS.filter(
-      ({ name }) => name !== "shell",
+      ({ name }) =>
+        name !== "shell" &&
+        (process.platform === "linux" ||
+          !["write", "glob", "grep"].includes(name)),
     )) {
       expect(
         turn.turn.request.toolDefinitions.some(

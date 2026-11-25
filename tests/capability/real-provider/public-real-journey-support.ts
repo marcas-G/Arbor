@@ -410,7 +410,6 @@ export const startRealProviderFixture = async (input: {
     : undefined;
   const captureFile = join(evidenceDirectory, "provider-captures.jsonl");
   createP39PrivateTestFile(captureFile);
-  const previousCapturePath = process.env[CAPTURE_FILE_ENV];
   let fixture: ProductionFixture | undefined;
   const daemonSetup = createRealProviderFixtureDaemonSetup({
     baseDaemonEnvironment: {
@@ -418,6 +417,7 @@ export const startRealProviderFixture = async (input: {
       ARBOR_MODEL_BASE_URL: "",
       ARBOR_MODEL_NAME: "",
       ARBOR_MODEL_API_KEY_VAR: "",
+      [CAPTURE_FILE_ENV]: captureFile,
       [CAPTURE_ENDPOINT_ENV]: safeEndpoint(input.config.endpoint),
       ...(responseGateDirectory === undefined
         ? {}
@@ -431,7 +431,6 @@ export const startRealProviderFixture = async (input: {
     ...(input.setupProbe === undefined ? {} : { setupProbe: input.setupProbe }),
   });
   try {
-    process.env[CAPTURE_FILE_ENV] = captureFile;
     fixture = await startProductionFixture({
       admitWorkspaceDirectory: true,
       preserveDirectoryOnStop: true,
@@ -459,9 +458,6 @@ export const startRealProviderFixture = async (input: {
     throw new Error(
       `REAL NOT QUALIFIED: production fixture startup failed; private evidence retained at ${evidencePath}; ${safeError}`,
     );
-  } finally {
-    if (previousCapturePath === undefined) delete process.env[CAPTURE_FILE_ENV];
-    else process.env[CAPTURE_FILE_ENV] = previousCapturePath;
   }
   if (fixture === undefined) {
     throw new Error(

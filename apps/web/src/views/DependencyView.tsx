@@ -6,6 +6,7 @@
 import type { DependencyRes, DependencyRow } from "@arbor/api-contracts";
 import { Badge } from "../components/Badge.js";
 import { Empty } from "../components/Empty.js";
+import { cn } from "../lib/utils.js";
 
 export function formatBinding(binding: DependencyRow["binding"]): string {
   switch (binding._tag) {
@@ -44,7 +45,12 @@ export function DependencyTable({
   readonly rows: ReadonlyArray<DependencyRow>;
 }) {
   return (
-    <table className="arbor-table">
+    <table
+      className={cn(
+        "arbor-table",
+        "w-full border-collapse text-small block overflow-x-auto [overscroll-behavior-inline:contain] [&_th]:wrap-anywhere [&_td]:wrap-anywhere [&_th]:p-[var(--arbor-space-1)_var(--arbor-space-2)] [&_th]:border-b [&_th]:border-solid [&_th]:border-border [&_th]:text-muted-foreground [&_th]:font-sans [&_th]:text-caption [&_th]:font-semibold [&_th]:text-left [&_td]:p-ui-2 [&_td]:border-b [&_td]:border-solid [&_td]:border-border [&_td]:text-left [&_td]:[vertical-align:top]",
+      )}
+    >
       <thead>
         <tr>
           <th scope="col">事项</th>

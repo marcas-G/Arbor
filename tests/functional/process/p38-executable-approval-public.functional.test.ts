@@ -1238,6 +1238,7 @@ describe("pending P38 public Executable approval qualification", () => {
       } else {
         const db = new DatabaseSync(run.fixture.databaseFile);
         try {
+          db.exec("PRAGMA busy_timeout = 5000");
           db.prepare(
             "UPDATE action_approvals SET expires_at = ? WHERE approval_id = ? AND route_kind = 'Executable' AND state = 'Pending' AND revision = ?",
           ).run("2000-01-01T00:00:00.000Z", run.approvalId, run.revision);
@@ -2600,7 +2601,7 @@ describe("pending P38 public Executable approval qualification", () => {
           snapshot.step?.state === "SettlementProposed" &&
           snapshot.action?.state === "ReconciliationPending" &&
           snapshot.invocation?.effect_admission_state === "MayHaveStarted" &&
-          snapshot.invocation.settlement_kind === null &&
+          snapshot.invocation.settlement_kind === "OutcomeUnknown" &&
           snapshot.effectCount === 1 &&
           snapshot.matchingInvocationCount === 1 &&
           snapshot.executionApprovalCount === 1,
@@ -2630,7 +2631,7 @@ describe("pending P38 public Executable approval qualification", () => {
         invocation_id: run.before.approval?.tool_invocation_id,
         approval_id: run.approvalId,
         effect_admission_state: "MayHaveStarted",
-        settlement_kind: null,
+        settlement_kind: "OutcomeUnknown",
       });
       expect(recovered.recoveryBinding).toEqual(afterEffect.recoveryBinding);
       expect(recovered.attempt0).toEqual(afterEffect.attempt0);

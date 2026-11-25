@@ -17,8 +17,8 @@ export interface TrustedProjectResourceProfile
   >;
 }
 
-/** P1 application port backed by a host-owned immutable P12 startup snapshot.
- * It exposes no path on its list face and performs no filesystem I/O. */
+/** P1 application port backed by startup Profiles and append-only host
+ * directory registrations. Its list is path-free; resolution performs no I/O. */
 export interface ProjectResourceProfilePortService {
   readonly list: () => Effect.Effect<
     ReadonlyArray<ProjectResourceProfileSummary>,

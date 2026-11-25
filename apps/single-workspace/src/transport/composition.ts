@@ -49,10 +49,10 @@ import type {
   WorkspacePolicy,
 } from "@arbor/domain";
 import {
-  decodeCanonicalSandboxPolicyDecisionCommittedInternalV1,
+  decodeCanonicalSandboxPolicyDecisionCommittedInternal,
   executionEpisode,
   makeProjectPolicy,
-  sandboxPolicyCommittedViewOf,
+  sandboxPolicyCommittedViewOfCurrent,
 } from "@arbor/domain";
 import type {
   ProjectionQueryError,
@@ -450,6 +450,10 @@ export const makeRepositoryInputsLoader = (
         const workspaceId = (payloadString(payload, "workspaceId") ??
           payloadString(payload, "targetWorkspaceId") ??
           payloadString(payload, "parentWorkspaceId") ??
+          (envelope.commandType === "GrantPermission" &&
+          payloadString(payload, "target")?.startsWith("ws_")
+            ? payloadString(payload, "target")
+            : null) ??
           (Option.isSome(executableApproval)
             ? executableApproval.value.workspaceId
             : null)) as WorkspaceId | null;
@@ -586,6 +590,8 @@ export const makeRepositoryInputsLoader = (
                   workspaceId: workspace.value.workspaceId,
                   projectId: workspace.value.projectId,
                   parentWorkspaceId: workspace.value.parentWorkspaceId,
+                  lifecycle: workspace.value.lifecycle,
+                  revision: workspace.value.revision,
                 },
               }
             : {}),
@@ -708,7 +714,7 @@ const receiptToView = (
           commandType === "DecideSandboxPolicy"
             ? (() => {
                 const decoded =
-                  decodeCanonicalSandboxPolicyDecisionCommittedInternalV1(
+                  decodeCanonicalSandboxPolicyDecisionCommittedInternal(
                     JSON.stringify(receipt.resolution.result),
                     sha256Hex,
                   );
@@ -717,7 +723,7 @@ const receiptToView = (
                     "committed sandbox policy receipt failed strict view projection",
                   );
                 }
-                return sandboxPolicyCommittedViewOf(decoded);
+                return sandboxPolicyCommittedViewOfCurrent(decoded);
               })()
             : receipt.resolution.result,
       }
@@ -1282,14 +1288,19 @@ export const makeExternalSubmissionFromServices = (
             yield* deliverWakeSignal(
               {
                 workspaceId: work.value.workspaceId,
-                reason: "InputArrived",
-                detail: { inboxSequence: sequence },
+                reason: "HumanIntervention",
+                detail: {
+                  inboxSequence: sequence,
+                  workId,
+                  entryKey: `steer:${workId}:${Number(payload.expectedWorkRevision) + 1}`,
+                },
               },
               {
                 tx,
                 waits: workWaitStoreOption.value,
                 works,
                 scheduler,
+                inbox: inboxProjectionOption.value,
               },
             );
           });

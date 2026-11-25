@@ -526,6 +526,7 @@ describe("P12-006 remote worker mediation", () => {
     expect(Object.keys(manifest.dependencies).sort()).toEqual([
       "@arbor/domain",
       "@arbor/ports",
+      "effect",
     ]);
   });
 

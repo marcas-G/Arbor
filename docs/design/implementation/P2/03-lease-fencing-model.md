@@ -13,6 +13,10 @@ proposal SHA-256 `E4F1B2935E0397292049BB3FDB1AB5847B02443CCE1B55A9827F823C63F145
 Execution-originated NormalExecutionMutation covered by this existing fence
 contract. This note adds no lease predicate, mutation class, or P2 command.
 
+**Accepted cross-phase application (DID v1.37 AH10):** P7 DeliverMessage is an
+Execution-originated NormalExecutionMutation covered by this existing fence
+contract. This note adds no lease predicate, mutation class, or P2 command.
+
 This document freezes the P2 lease/fencing mechanism. DID §9.7 freezes the
 *guarantees* (expiry + generation + authoritative same-transaction check); P2
 freezes the concrete mechanism.

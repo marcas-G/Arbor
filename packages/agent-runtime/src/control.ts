@@ -172,6 +172,7 @@ export const makeControlToolRegistry = (
     "core.control.assign-work": "AssignWork",
     "core.control.list-workspaces": "ListWorkspaces",
     "core.control.read-workspace": "ReadWorkspace",
+    "core.control.allocate-workspace-sandbox": "AllocateWorkspaceSandbox",
     "core.control.accept-result": "AcceptResult",
     "core.control.update-plan": "UpdatePlan",
     "core.control.select-current-work": "SelectCurrentWork",

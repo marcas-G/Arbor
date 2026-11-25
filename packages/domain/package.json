@@ -14,5 +14,8 @@
   ],
   "scripts": {
     "build": "tsc -b"
+  },
+  "dependencies": {
+    "effect": "4.0.0-rc.115"
   }
 }

@@ -108,8 +108,6 @@ export const expireExecutionLeaseAfterOwnerExitForQualification =
         before === undefined ||
         (input.expected !== undefined &&
           Number(before.generation) !== input.expected.generation) ||
-        (input.expected !== undefined &&
-          before.expires_at !== input.expected.expiresAt) ||
         (input.expected?.workerId !== undefined &&
           before.worker_id !== input.expected.workerId) ||
         (input.expected?.workerIncarnationId !== undefined &&

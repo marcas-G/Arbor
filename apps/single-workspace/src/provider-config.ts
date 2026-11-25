@@ -126,7 +126,9 @@ const candidatePaths = (): ReadonlyArray<string> => {
   const paths: string[] = [];
   const explicit = process.env.ARBOR_CONFIG;
   if (explicit !== undefined && explicit.length > 0) {
-    paths.push(explicit);
+    // An explicit installation/configuration location must not borrow a model
+    // or runtime mode from an unrelated user's default configuration.
+    return [explicit];
   }
   paths.push(resolve(process.cwd(), DEFAULT_CONFIG_FILENAME));
   const home = process.env.HOME;

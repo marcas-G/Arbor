@@ -13,6 +13,7 @@ import type {
   ProjectionIntegrityFailure,
   ProjectionNotFound,
   ReadmissionGateIntegrityFailure,
+  TerminalProviderFailureKind,
   TerminalProviderFailureSource,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
@@ -50,10 +51,7 @@ export interface WorkDetailView extends WorkDetailRequest {
         readonly workId: WorkId;
         readonly workRevision: number;
         readonly occurredAt: string;
-        readonly failureCode:
-          | "AuthenticationFailed"
-          | "RequestRejected"
-          | "ProtocolViolation";
+        readonly failureCode: TerminalProviderFailureKind;
       }
     | {
         readonly kind: "TerminalProviderFailureIntegrity";
