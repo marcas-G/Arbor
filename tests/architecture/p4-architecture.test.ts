@@ -69,7 +69,12 @@ describe("P4 package DAG", () => {
       'effectDisposition: "NotStarted" | "OutcomeUncertain"',
     );
     expect(errors).not.toContain('readonly _tag: "ToolRuntimeError"');
-    expect(runtime).not.toContain("Effect.orDie");
+    const runtimeDirectory = join(repoRoot, "packages/tool-runtime/src/runtime");
+    const runtimeModules = readdirSync(runtimeDirectory, { recursive: true })
+      .filter((name) => name.endsWith(".ts"))
+      .map((name) => readFileSync(join(runtimeDirectory, name), "utf8"));
+    const runtimeSource = [runtime, ...runtimeModules].join("\n");
+    expect(runtimeSource).not.toContain("Effect.orDie");
     for (const stage of [
       "WorkspaceLookup",
       "EnvironmentResolution",
@@ -82,7 +87,7 @@ describe("P4 package DAG", () => {
       "SettlementJournal",
       "SandboxClose",
     ]) {
-      expect(runtime).toContain(stage);
+      expect(runtimeSource).toContain(stage);
     }
   });
 
