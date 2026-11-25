@@ -2,6 +2,8 @@
 
 Scope: repository implementation, review and maintenance. Product semantics remain owned by the frozen design chain. This guide complements, not replaces, AGENTS.md, ARCHITECTURE.md and ENGINEERING_HEALTH.md.
 
+Companion documents: [code-organization.md](code-organization.md) (placement and naming rules), [effect-conventions.md](effect-conventions.md) (the E01–E12 Effect development standard), [architecture-evolution.md](architecture-evolution.md) (the sequenced capability-oriented refactor plan and its measurement discipline).
+
 ## Module boundaries and code
 
 Use the existing pnpm workspace: packages for domain/ports/application/runtimes/contracts, adapters for replaceable implementations, apps for composition and transport. Do not create a package merely to lower file count. Every materially changed module must have a stated responsibility, owned state and write authority, public API, allowed dependencies, failure/recovery semantics and test boundary. Put that information in the existing architecture map or a nearby module README only if needed; link rather than copy the DID.
@@ -14,7 +16,7 @@ Imports use declared package public APIs; prohibit cross-package relative/deep i
 
 Owner direction: handwritten source files, tests and engineering scripts must contain at most **800 physical lines**, including comments and blank lines. The check counts LF, CRLF and CR, without treating a final newline as an extra line. Markdown, lock/config data and build output are not covered by the source-extension check. No new oversized source file, reformatting trick, minification, artificial truncation, or permanent exception is allowed. Split by cohesive responsibility, not arbitrary line ranges.
 
-`pnpm check:source-lines` is the strict repository-wide gate; it reports every over-limit tracked source path and fails until all are at or below 800. It is part of `pnpm check` (and therefore `pnpm check:release`). Existing oversized files are explicit unresolved refactor work; the branch cannot pass the strict gate while they remain.
+`pnpm check:source-lines` is the strict repository-wide gate; it reports every over-limit tracked source path and fails until all are at or below 800. It is **not** part of `pnpm check` while its baseline is open (GOVERNANCE requires a validated baseline before a gate becomes mandatory); it remains required on the exact release promotion SHA and CI surfaces it as an advisory step. Existing oversized files are explicit unresolved refactor work; the branch cannot pass the strict gate while they remain.
 
 During staged refactoring, run `node scripts/governance/check-source-lines.mjs --baseline <pre-change-commit>` to reject new oversized files or growth of existing oversized files relative to that specific commit. This transition command is not a replacement for strict qualification. It reports legacy violations and does not certify them. Use the actual parent or reviewed PR baseline, not an arbitrarily older baseline. Run `pnpm test:source-lines` for the rule's tests. Stage new files before running the check because it enumerates the Git index. Do not modify frozen historical evidence to satisfy a source line limit.
 
