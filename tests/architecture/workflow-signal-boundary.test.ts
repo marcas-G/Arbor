@@ -21,6 +21,11 @@ function forbiddenControlEdge(from: string, specifier: string): boolean {
     posix.normalize(posix.join(posix.dirname(from), specifier)),
   );
   if (target === controlDirectory) return true;
+  // AssignWork owns its private receipt validator; no other capability may import it.
+  if (
+    moduleIdentity(from) === `${controlDirectory}/assign-work` &&
+    target === `${controlDirectory}/assign-work/receipt-binding`
+  ) return false;
   return (
     target.startsWith(`${controlDirectory}/`) &&
     (target !== `${controlDirectory}/command-receipts` ||
@@ -69,6 +74,9 @@ describe("control action capability boundary", () => {
     const from = `${controlDirectory}/assign-work.ts`;
     expect(forbiddenControlEdge(from, "../control-actions.js")).toBe(true);
     expect(forbiddenControlEdge(from, "./delivery.js")).toBe(true);
+    expect(forbiddenControlEdge(from, "./assign-work/receipt-binding.js")).toBe(false);
+    expect(forbiddenControlEdge(`${controlDirectory}/delivery.ts`, "./assign-work/receipt-binding.js")).toBe(true);
+    expect(forbiddenControlEdge(`${controlDirectory}/assign-work/receipt-binding.ts`, "../assign-work.js")).toBe(true);
     expect(forbiddenControlEdge(from, "./command-receipts.js")).toBe(false);
     expect(forbiddenControlEdge(from, "../durable-control-action-effect.js")).toBe(
       false,

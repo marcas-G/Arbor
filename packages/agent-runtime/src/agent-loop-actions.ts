@@ -1,44 +1,23 @@
-import {
-  blockedFailureFingerprint,
-  verifyBlockedActionRefs,
-  workBlockerIdentity,
-} from "@arbor/application";
 import type {
-  BlockedActionRef,
-  CommandSubmissionContext,
   Execution,
   ExecutionSettlement,
   TerminalActionDenial,
   ToolInvocationId,
-  WorkRevision,
 } from "@arbor/domain";
 import {
-  workEpisode as exactWorkEpisode,
   providerTurnInferenceId,
   workEpisode,
 } from "@arbor/domain";
 import {
-  type ControlBasis,
-  decodeTurn,
-  type ModelOutput,
-  type PreparedModelTurn,
   type ToolInvocation,
 } from "@arbor/model-context";
 import type {
   AgentLoopStepActionRecord,
   AgentLoopStepFence,
   AgentLoopStepRecord,
-  AgentLoopStepStoreService,
   BoundedObservation,
-  ExecutionActivity,
   ExecutionDriverError,
-  InboxProjectionStoreService,
   LeaseFencingRejected,
-  ProviderTurnStoreService,
-  RuntimeSafetyObservation,
-  SandboxProviderUnavailableOutcome,
-  SessionRepositoryService,
-  TransactionPortService,
 } from "@arbor/ports";
 import {
   SandboxPolicyDecisionStore,
@@ -54,23 +33,21 @@ import {
 } from "./agent-loop-policy.js";
 import {
   type AgentActionError,
-  type ControlToolRegistryService,
   classifyToolRoute,
-  type ExecutableInvocationHandler,
 } from "./control.js";
-import type { ControlActionAuthorizerService } from "./control-authorization.js";
 import { checkFreshness, requirementForAction } from "./freshness.js";
 import {
   agentActionSafetyFingerprint,
   isDurableSuccessfulActionProgress,
 } from "./p12-safety-identity.js";
-import { matchesPersistedModelOutput } from "./persisted-model-output.js";
-import type { AgentLoopQualificationProbe } from "./qualification-probe.js";
 import {
   recoveryBindingIdentityFor,
   recoveryBindingPolicyRevisionsFor,
 } from "./recovery-binding-source.js";
-import { verifySandboxUnavailableStepActionResume } from "./sandbox-unavailable-recovery.js";
+
+import type { AgentLoopActionDependencies, AgentLoopActionOutcome } from "./agent-loop-actions/types.js";
+import { makeBlockedSettlement } from "./agent-loop-actions/blocked-settlement.js";
+import { verifyCommittedStep } from "./agent-loop-actions/committed-step.js";
 
 export {
   recoveryBindingIdentityFor,
@@ -97,306 +74,8 @@ const isLeaseFencingRejected = (
   "_tag" in cause &&
   cause._tag === "LeaseFencingRejected";
 
-const terminalDenialOf = (
-  value: unknown,
-): BlockedActionRef["terminalDenial"] | null => {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return null;
-  }
-  const record = value as Record<string, unknown>;
-  if (record._tag === "HandlerRejected" && record.routeKind === "Executable") {
-    return { _tag: "HandlerRejected", routeKind: "Executable" };
-  }
-  if (
-    record._tag === "P4NoEffectDenied" &&
-    typeof record.reasonCode === "string" &&
-    record.reasonCode !== "ApprovalRequired"
-  ) {
-    return {
-      _tag: "P4NoEffectDenied",
-      reasonCode: record.reasonCode as Extract<
-        BlockedActionRef["terminalDenial"],
-        { readonly _tag: "P4NoEffectDenied" }
-      >["reasonCode"],
-    };
-  }
-  return null;
-};
-
-const compareActionOrder = (
-  left: {
-    readonly logicalStepNo: number;
-    readonly repairAttempt: number;
-    readonly actionIndex?: number;
-  },
-  right: {
-    readonly logicalStepNo: number;
-    readonly repairAttempt: number;
-    readonly actionIndex?: number;
-  },
-): number =>
-  left.logicalStepNo - right.logicalStepNo ||
-  left.repairAttempt - right.repairAttempt ||
-  (left.actionIndex ?? 0) - (right.actionIndex ?? 0);
-
-export const makeBlockedSettlement = (
-  dependencies: AgentLoopActionDependencies,
-  request: string,
-  currentLoopStep: AgentLoopStepRecord | undefined,
-): Effect.Effect<ExecutionSettlement | null, ExecutionDriverError> =>
-  Effect.gen(function* () {
-    const execution = dependencies.input.execution;
-    const episode = exactWorkEpisode(execution);
-    const current = currentLoopStep;
-    const steps = dependencies.loopSteps;
-    const turns = dependencies.providerTurns;
-    const inbox = dependencies.inboxSequence;
-    if (
-      episode === null ||
-      current === undefined ||
-      steps === undefined ||
-      turns === undefined ||
-      inbox === undefined
-    ) {
-      return null;
-    }
-
-    const chain: AgentLoopStepRecord[] = [];
-    let step: AgentLoopStepRecord | undefined = current;
-    for (let count = 0; step !== undefined && count < 256; count += 1) {
-      chain.push(step);
-      if (step.predecessor === undefined) break;
-      const previous: Option.Option<AgentLoopStepRecord> =
-        yield* dependencies.tx
-          .transact(steps.find(step.predecessor))
-          .pipe(Effect.mapError(dependencies.failure));
-      if (previous._tag === "None") return null;
-      step = previous.value;
-    }
-    if (step?.predecessor !== undefined) return null;
-    chain.sort((left, right) =>
-      compareActionOrder(left.identity, right.identity),
-    );
-
-    const actions: Array<{
-      readonly step: AgentLoopStepRecord;
-      readonly action: AgentLoopStepActionRecord;
-    }> = [];
-    for (const candidate of chain) {
-      const records = yield* dependencies.tx
-        .transact(steps.listActions(candidate.identity))
-        .pipe(Effect.mapError(dependencies.failure));
-      for (const action of records) actions.push({ step: candidate, action });
-    }
-    actions.sort(
-      (left, right) =>
-        compareActionOrder(left.action.identity, right.action.identity) ||
-        left.action.actionIndex - right.action.actionIndex,
-    );
-    const terminalDenials: Array<{
-      readonly step: AgentLoopStepRecord;
-      readonly action: AgentLoopStepActionRecord;
-      readonly terminalDenial: BlockedActionRef["terminalDenial"];
-    }> = [];
-    for (const row of actions) {
-      if (
-        row.action.state !== "TerminalRejected" ||
-        row.action.routeKind !== "Executable"
-      ) {
-        continue;
-      }
-      const disposition = row.action.disposition;
-      const record =
-        typeof disposition === "object" &&
-        disposition !== null &&
-        !Array.isArray(disposition)
-          ? (disposition as Record<string, unknown>)
-          : null;
-      const terminalDenial = terminalDenialOf(record?.terminalDenial);
-      if (
-        record?.status !== "Denied" ||
-        terminalDenial === null ||
-        row.action.resultRef === undefined ||
-        row.action.settlementRef === undefined ||
-        row.action.observationSourceRef === undefined
-      ) {
-        // A legacy or malformed P9 row is not upgraded from its free-form
-        // disposition. The Agent must explicitly repair/dispose it first.
-        return null;
-      }
-      terminalDenials.push({ ...row, terminalDenial });
-    }
-    const unresolved = terminalDenials.filter((denied) => {
-      const laterSuccess = actions.some(
-        (candidate) =>
-          candidate.action.routeKind === "Executable" &&
-          candidate.action.state === "Applied" &&
-          candidate.action.actionKind === denied.action.actionKind &&
-          candidate.action.inputHash === denied.action.inputHash &&
-          compareActionOrder(
-            candidate.action.identity,
-            denied.action.identity,
-          ) > 0 &&
-          candidate.action.disposition !== undefined &&
-          typeof candidate.action.disposition === "object" &&
-          candidate.action.disposition !== null &&
-          (candidate.action.disposition as Record<string, unknown>).status ===
-            "Succeeded",
-      );
-      return !laterSuccess;
-    });
-    if (unresolved.length === 0) return null;
-    const mappedRefs = unresolved.map(
-      ({ step: item, action, terminalDenial }) => ({
-        executionId: execution.executionId,
-        providerTurnId: item.providerTurnId,
-        logicalStepNo: item.identity.logicalStepNo,
-        repairAttempt: item.identity.repairAttempt,
-        actionIndex: action.actionIndex,
-        logicalActionId: action.logicalActionId,
-        callRef: action.callRef,
-        resultRef: action.resultRef as string,
-        settlementRef: action.settlementRef as string,
-        observationSourceRef: action.observationSourceRef as string,
-        terminalDenial,
-      }),
-    );
-    const firstRef = mappedRefs[0];
-    if (firstRef === undefined) return null;
-    const refs = [firstRef, ...mappedRefs.slice(1)] as const;
-    const verification = yield* Effect.match(
-      dependencies.tx.transact(
-        verifyBlockedActionRefs(
-          { executionId: execution.executionId, refs },
-          { loopSteps: steps, providerTurns: turns },
-        ),
-      ),
-      {
-        onFailure: (cause) => ({ ok: false as const, cause }),
-        onSuccess: (value) => ({ ok: true as const, value }),
-      },
-    );
-    if (!verification.ok) {
-      if (
-        typeof verification.cause === "object" &&
-        verification.cause !== null &&
-        "_tag" in verification.cause &&
-        verification.cause._tag === "BlockedActionEvidenceInvalid"
-      ) {
-        return null;
-      }
-      return yield* Effect.fail(dependencies.failure(verification.cause));
-    }
-    const verified = verification.value;
-    const failureFingerprint = blockedFailureFingerprint(verified);
-    const blockerId = workBlockerIdentity({
-      projectId: execution.projectId,
-      workId: episode.workId,
-      targetWorkRevision: episode.targetWorkRevision,
-      failureFingerprint,
-    });
-    const observedSequence = yield* dependencies.tx
-      .transact(inbox.currentSequence(execution.workspaceId))
-      .pipe(Effect.mapError(dependencies.failure));
-    return {
-      _tag: "Completed",
-      result: {
-        _tag: "Blocked",
-        workId: episode.workId,
-        targetWorkRevision: episode.targetWorkRevision as WorkRevision,
-        blockerId: blockerId as never,
-        waitFor: {
-          mode: "Any",
-          conditions: [
-            { _tag: "Manual" },
-            {
-              _tag: "InboxAdvanced",
-              workspaceId: execution.workspaceId,
-              observedSequence,
-            },
-          ],
-        },
-        request,
-        failedActionRefs: refs,
-      },
-    };
-  });
-
-export interface AgentLoopActionDependencies {
-  readonly input: {
-    readonly execution: Execution;
-    readonly context: CommandSubmissionContext;
-  };
-  readonly preparedTurn: PreparedModelTurn;
-  readonly decodedOutput: ModelOutput;
-  readonly turn: number;
-  readonly currentLoopStep?: AgentLoopStepRecord;
-  readonly loopSteps?: AgentLoopStepStoreService;
-  readonly providerTurns?: Pick<
-    ProviderTurnStoreService,
-    "findManifestByTurn" | "findSettledResult"
-  >;
-  readonly inboxSequence?: Pick<InboxProjectionStoreService, "currentSequence">;
-  readonly loopStepFence?: AgentLoopStepFence;
-  readonly tx: TransactionPortService;
-  readonly sessions: SessionRepositoryService;
-  readonly controlRegistry: ControlToolRegistryService;
-  readonly controlAuthorizer?: ControlActionAuthorizerService;
-  readonly executableInvocationHandler?: ExecutableInvocationHandler;
-  readonly recoverExactNotAdmittedAction?: {
-    readonly executionId: string;
-    readonly logicalStepNo: number;
-    readonly repairAttempt: number;
-    readonly providerTurnId: string;
-    readonly logicalActionId: string;
-    readonly actionIndex: number;
-    readonly callRef: string;
-  };
-  /** P9-owned durable escalation for an unresolved P4 effect. It runs before
-   * P3 persists the terminal OutcomeUnknown action so P9 can use the current
-   * Worker fence and unsettled Execution required by DID v1.40. */
-  readonly recordReconciliationEscalation?: (input: {
-    readonly execution: Execution;
-    readonly fence: AgentLoopStepFence;
-    readonly principal: import("@arbor/domain").Principal;
-    readonly invocationRefs: ReadonlyArray<string>;
-  }) => Effect.Effect<void, unknown>;
-  readonly currentControlBasis: () => Effect.Effect<
-    ControlBasis,
-    ExecutionDriverError
-  >;
-  readonly admit: (
-    activity: ExecutionActivity,
-    observation: RuntimeSafetyObservation,
-  ) => Effect.Effect<"Continue" | "Stop">;
-  readonly failure: (cause: unknown) => ExecutionDriverError;
-  readonly now: () => Effect.Effect<string>;
-  readonly qualificationProbe?: AgentLoopQualificationProbe;
-}
-
-export type AgentLoopActionOutcome =
-  | {
-      readonly _tag: "Completed";
-      readonly loopStep?: AgentLoopStepRecord;
-      readonly observations: ReadonlyArray<{
-        readonly source: "Runtime" | "Tool";
-        readonly observation: BoundedObservation;
-      }>;
-      readonly durableProgress: boolean;
-    }
-  | { readonly _tag: "DecisionStale" }
-  | { readonly _tag: "RecoveryBlocked" }
-  | {
-      readonly _tag: "ApprovalRequired";
-      readonly approvalId: string;
-      readonly revision: number;
-    }
-  | { readonly _tag: "Settle"; readonly settlement: ExecutionSettlement }
-  | {
-      readonly _tag: "SandboxProviderUnavailable";
-      readonly outcome: SandboxProviderUnavailableOutcome;
-    }
-  | { readonly _tag: "SandboxPolicyRequiredInterruption" };
+export type { AgentLoopActionDependencies, AgentLoopActionOutcome } from "./agent-loop-actions/types.js";
+export { makeBlockedSettlement } from "./agent-loop-actions/blocked-settlement.js";
 
 /**
  * Owns one decoded turn's action phase. This boundary deliberately includes
@@ -452,247 +131,14 @@ export const executeAgentLoopActions = (
     }> = [];
     let durableProgress = false;
 
-    // This state may advance only when its exact accepted ProviderTurn output,
-    // cursor, and every terminal action row still agree. Otherwise a corrupt
-    // ledger could be mistaken for completed effects during recovery.
+    // A committed step can advance only after exact ledger verification.
     if (currentLoopStep?.state === "StepEffectsCommitted") {
-      const committedStep = currentLoopStep;
-      if (
-        loopSteps === undefined ||
-        loopStepFence === undefined ||
-        providerTurns === undefined
-      ) {
-        return yield* Effect.fail(
-          failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-        );
-      }
-      const expectedOutput = {
-        providerTurnId: preparedTurn.manifest.providerTurnId,
-        outputContractRef: preparedTurn.manifest.outputContractRef,
-        decoderVersion: "decode-turn-v1",
-        text: decodedOutput.text,
-        finishReason: decodedOutput.finishReason,
-        toolInvocations: decodedOutput.toolInvocations,
-      } as const;
-      const expectedOutputHash = sha256Hex(JSON.stringify(expectedOutput));
-      const verification = yield* tx
-        .transact(
-          Effect.gen(function* () {
-            const stepOption = yield* loopSteps.find(committedStep.identity);
-            if (!Option.isSome(stepOption)) return undefined;
-            const step = stepOption.value;
-            if (
-              step.state !== "StepEffectsCommitted" ||
-              step.revision !== committedStep.revision ||
-              step.providerTurnId !== preparedTurn.manifest.providerTurnId ||
-              step.manifestId === undefined ||
-              step.decodedOutputHash !== expectedOutputHash ||
-              step.decoderVersion !== "decode-turn-v1" ||
-              step.modelOutputSessionSequence === undefined ||
-              !Number.isSafeInteger(step.nextActionIndex) ||
-              step.nextActionIndex < 0 ||
-              step.nextActionIndex > decodedOutput.toolInvocations.length
-            ) {
-              return undefined;
-            }
-
-            const providerResult = yield* providerTurns.findSettledResult(
-              step.providerTurnId,
-            );
-            const persistedManifest = yield* providerTurns.findManifestByTurn(
-              step.providerTurnId,
-            );
-            if (
-              providerResult._tag !== "SettledSuccess" ||
-              providerResult.evidenceVersion !== "provider-success-v1" ||
-              persistedManifest === null ||
-              providerResult.manifestId !== step.manifestId ||
-              providerResult.manifestJson !== persistedManifest.manifestJson ||
-              providerResult.turn.providerTurnId !== step.providerTurnId ||
-              providerResult.turn.executionId !== input.execution.executionId ||
-              providerResult.turn.sessionId !== input.execution.sessionId ||
-              providerResult.turn.contextEpoch !==
-                preparedTurn.manifest.contextEpoch ||
-              providerResult.turn.modelRef !== preparedTurn.manifest.modelRef ||
-              providerResult.turn.outputContractRef !==
-                preparedTurn.manifest.outputContractRef ||
-              providerResult.finishReason !== decodedOutput.finishReason
-            ) {
-              return undefined;
-            }
-
-            let manifest: Record<string, unknown>;
-            try {
-              const parsed = JSON.parse(
-                persistedManifest.manifestJson,
-              ) as unknown;
-              if (
-                typeof parsed !== "object" ||
-                parsed === null ||
-                Array.isArray(parsed)
-              ) {
-                return undefined;
-              }
-              manifest = parsed as Record<string, unknown>;
-            } catch {
-              return undefined;
-            }
-            const manifestRoutes = manifest.toolRoutes;
-            if (
-              manifest.providerTurnId !== step.providerTurnId ||
-              manifest.executionId !== input.execution.executionId ||
-              manifest.sessionId !== input.execution.sessionId ||
-              manifest.contextEpoch !== preparedTurn.manifest.contextEpoch ||
-              manifest.modelRef !== preparedTurn.manifest.modelRef ||
-              manifest.outputContractRef !==
-                preparedTurn.manifest.outputContractRef ||
-              manifest.logicalStepNo !== step.identity.logicalStepNo ||
-              manifest.repairAttempt !== step.identity.repairAttempt ||
-              !Array.isArray(manifestRoutes) ||
-              JSON.stringify(manifestRoutes) !==
-                JSON.stringify(preparedTurn.manifest.toolRoutes) ||
-              JSON.stringify(manifestRoutes) !==
-                JSON.stringify(preparedTurn.toolRoutes)
-            ) {
-              return undefined;
-            }
-
-            const providerOutput = decodeTurn(providerResult.canonicalEvents);
-            if (
-              !providerOutput.ok ||
-              JSON.stringify({
-                providerTurnId: step.providerTurnId,
-                outputContractRef: manifest.outputContractRef,
-                decoderVersion: "decode-turn-v1",
-                text: providerOutput.output.text,
-                finishReason: providerOutput.output.finishReason,
-                toolInvocations: providerOutput.output.toolInvocations,
-              }) !== JSON.stringify(expectedOutput)
-            ) {
-              return undefined;
-            }
-
-            const outputRows = yield* sessions.listEntries(
-              input.execution.sessionId,
-              step.modelOutputSessionSequence - 1,
-              1,
-            );
-            const outputEntry = outputRows[0];
-            if (
-              outputRows.length !== 1 ||
-              !matchesPersistedModelOutput({
-                providerTurnId: step.providerTurnId,
-                outputContractRef: preparedTurn.manifest.outputContractRef,
-                text: decodedOutput.text,
-                finishReason: decodedOutput.finishReason,
-                toolInvocations: decodedOutput.toolInvocations,
-                decodedOutputHash: step.decodedOutputHash,
-                modelOutputSessionSequence: step.modelOutputSessionSequence,
-                entry: outputEntry,
-              })
-            ) {
-              return undefined;
-            }
-            const actions = yield* loopSteps.listActions(step.identity);
-            const terminalSandboxActions = actions.filter(
-              (action) =>
-                action.state === "TerminalRejected" &&
-                typeof action.disposition === "object" &&
-                action.disposition !== null &&
-                "_tag" in action.disposition &&
-                action.disposition._tag === "SandboxUnavailableV1",
-            );
-            const hasSandboxUnavailableResume =
-              terminalSandboxActions.length === 1 &&
-              Option.isSome(sandboxUnavailableFacts) &&
-              Option.isSome(sandboxPolicyDecisions) &&
-              actions.length === step.nextActionIndex &&
-              actions.at(-1) === terminalSandboxActions[0] &&
-              step.nextActionIndex ===
-                (terminalSandboxActions[0]?.actionIndex ?? -2) + 1 &&
-              (yield* verifySandboxUnavailableStepActionResume({
-                execution: input.execution,
-                step,
-                action: terminalSandboxActions[0] as AgentLoopStepActionRecord,
-                facts: sandboxUnavailableFacts.value,
-                decisions: sandboxPolicyDecisions.value,
-                now: yield* now(),
-              }));
-            if (
-              actions.length !== step.nextActionIndex ||
-              (!hasSandboxUnavailableResume &&
-                actions.length !== decodedOutput.toolInvocations.length) ||
-              new Set(actions.map((action) => action.actionIndex)).size !==
-                actions.length
-            ) {
-              return undefined;
-            }
-            for (
-              let actionIndex = 0;
-              actionIndex < actions.length;
-              actionIndex += 1
-            ) {
-              const invocation = decodedOutput.toolInvocations[actionIndex];
-              const action = actions.find(
-                (candidate) => candidate.actionIndex === actionIndex,
-              );
-              if (invocation === undefined || action === undefined) {
-                return undefined;
-              }
-              const routes = manifestRoutes.filter(
-                (
-                  route,
-                ): route is { name: string; route: "Executable" | "Control" } =>
-                  typeof route === "object" &&
-                  route !== null &&
-                  "name" in route &&
-                  typeof route.name === "string" &&
-                  "route" in route &&
-                  (route.route === "Executable" || route.route === "Control"),
-              );
-              const matchingRoutes = routes.filter(
-                (route) => route.name === invocation.toolName,
-              );
-              const route = matchingRoutes[0];
-              const logicalActionId = `lac_${sha256Hex(
-                JSON.stringify({
-                  executionId: input.execution.executionId,
-                  providerTurnId: step.providerTurnId,
-                  callRef: invocation.callRef,
-                  routeKind: route?.route,
-                  actionKind: invocation.toolName,
-                }),
-              )}`;
-              if (
-                matchingRoutes.length !== 1 ||
-                action.identity.executionId !== step.identity.executionId ||
-                action.identity.logicalStepNo !== step.identity.logicalStepNo ||
-                action.identity.repairAttempt !== step.identity.repairAttempt ||
-                action.logicalActionId !== logicalActionId ||
-                action.callRef !== invocation.callRef ||
-                action.routeKind !== route?.route ||
-                action.actionKind !== invocation.toolName ||
-                action.inputHash !== sha256Hex(invocation.argumentsJson) ||
-                (action.state === "Applied"
-                  ? action.resultRef === undefined ||
-                    action.observationSourceRef === undefined
-                  : !(
-                      hasSandboxUnavailableResume &&
-                      action === terminalSandboxActions[0]
-                    ))
-              ) {
-                return undefined;
-              }
-            }
-            return step;
-          }),
-        )
-        .pipe(Effect.mapError(failure));
-      if (verification === undefined) {
-        return yield* Effect.fail(
-          failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-        );
-      }
+      const verification = yield* verifyCommittedStep(
+        dependencies,
+        currentLoopStep,
+        sandboxUnavailableFacts,
+        sandboxPolicyDecisions,
+      );
       return {
         _tag: "Completed",
         loopStep: verification,
@@ -700,6 +146,7 @@ export const executeAgentLoopActions = (
         durableProgress,
       };
     }
+
 
     for (const [
       actionIndex,
