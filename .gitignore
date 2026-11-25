@@ -29,3 +29,4 @@ p12-production-template-*/
 
 # Local provider configuration — may contain inline credentials
 arbor.config.json
+.dev-data/
