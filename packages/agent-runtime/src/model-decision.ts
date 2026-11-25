@@ -15,6 +15,7 @@ import {
 import type {
   ExecutionDriverError,
   LocalPlanStore,
+  RecoveryAttentionFactStore,
   SessionEntryRecord,
   WorkspaceKnowledgePort,
   WorkspacePlacementPort,
@@ -65,7 +66,10 @@ export const runModelDecision = (
   ModelDecisionOutcome,
   ExecutionDriverError,
   // E05 sink: capabilities acquired directly by decision submodules.
-  LocalPlanStore | WorkspaceKnowledgePort | WorkspacePlacementPort
+  | LocalPlanStore
+  | WorkspaceKnowledgePort
+  | WorkspacePlacementPort
+  | RecoveryAttentionFactStore
 > => {
   const {
     input,

@@ -201,13 +201,20 @@ export const AgentLoopDriverLive = (
         effect: Effect.Effect<
           A,
           E,
-          LocalPlanStore | WorkspaceKnowledgePort | WorkspacePlacementPort
+          | LocalPlanStore
+          | WorkspaceKnowledgePort
+          | WorkspacePlacementPort
+          | RecoveryAttentionFactStore
         >,
       ): Effect.Effect<A, E> =>
         effect.pipe(
           Effect.provideService(WorkspaceKnowledgePort, _workspaceKnowledge),
           Effect.provideService(WorkspacePlacementPort, _workspacePlacement),
           Effect.provideService(LocalPlanStore, localPlans),
+          Effect.provideService(
+            RecoveryAttentionFactStore,
+            recoveryAttentionFacts,
+          ),
         );
       const decisionRequests = yield* DecisionRequestStore;
       const clock = yield* Clock;
@@ -437,7 +444,6 @@ export const AgentLoopDriverLive = (
                   ...(loopSteps === undefined ? {} : { loopSteps }),
                   ...(loopStepFence === undefined ? {} : { loopStepFence }),
                   ...(providerTurns === undefined ? {} : { providerTurns }),
-                  recoveryAttentionFacts,
                 },
                 turn,
                 repairAttempt,

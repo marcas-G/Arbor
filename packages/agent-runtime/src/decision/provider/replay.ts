@@ -4,6 +4,7 @@ import type { AgentLoopStepRecord, ExecutionDriverError } from "@arbor/ports";
 import {
   canonicalizeLegacyAdoptionEvidenceV1,
   LEGACY_ADOPTION_MISSING,
+  RecoveryAttentionFactStore,
   sha256Hex,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
@@ -17,7 +18,6 @@ type ReplayDependencies = Pick<
   | "loopSteps"
   | "loopStepFence"
   | "providerTurns"
-  | "recoveryAttentionFacts"
   | "options"
   | "failure"
   | "now"
@@ -40,7 +40,11 @@ export const replayPreparedProviderTurn = (
     readonly conversationExecution: boolean;
     readonly replayPersistedContextLimit: boolean;
   },
-): Effect.Effect<ReplayResult, ExecutionDriverError> => {
+): Effect.Effect<
+  ReplayResult,
+  ExecutionDriverError,
+  RecoveryAttentionFactStore
+> => {
   const {
     input,
     tx,
@@ -118,11 +122,13 @@ export const replayPreparedProviderTurn = (
           loopStep.state === "Prepared"
         ) {
           const episode = executionEpisode(input.execution);
-          const recoveryStore = dependencies.recoveryAttentionFacts;
+          // E05 sink: acquired from the environment; production-required
+          // since the E06 normalization.
+          const recoveryStore = yield* RecoveryAttentionFactStore;
           const recordLegacyAdoptionFailure =
-            recoveryStore?.recordLegacyAdoptionFailure;
+            recoveryStore.recordLegacyAdoptionFailure;
           const resolveLegacyAdoptionFailure =
-            recoveryStore?.resolveLegacyAdoptionFailure;
+            recoveryStore.resolveLegacyAdoptionFailure;
           if (
             loopStepFence === undefined ||
             recordLegacyAdoptionFailure === undefined ||

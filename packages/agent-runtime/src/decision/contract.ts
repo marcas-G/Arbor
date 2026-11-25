@@ -72,7 +72,6 @@ export interface ModelDecisionDependencies {
   readonly loopSteps?: AgentLoopStepStoreService;
   readonly loopStepFence?: AgentLoopStepFence;
   readonly providerTurns?: ProviderTurnStoreService;
-  readonly recoveryAttentionFacts?: RecoveryAttentionFactStoreService;
   readonly sessions: SessionRepositoryService;
   readonly humanMessages: HumanMessageStoreService;
   readonly conversationCheckpoints?: ConversationCheckpointStoreService;
