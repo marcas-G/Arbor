@@ -27,9 +27,24 @@ describe("workflow signal boundary", () => {
   });
 
   it("keeps verification wake delivery out of the synchronous control handler", () => {
-    const controls = source("apps/single-workspace/src/control-actions.ts");
-    expect(controls).not.toContain("channel1Release");
-    expect(controls).not.toContain("consumeConclusionSignals");
-    expect(controls).not.toContain("deliverVerificationWake");
+    const controls = [
+      "apps/single-workspace/src/control-actions.ts",
+      ...[
+        "command-receipts",
+        "assign-work",
+        "workspace",
+        "work-lifecycle",
+        "send-message",
+        "dependency-deliverable",
+        "delivery",
+        "verification",
+      ].map((name) => `apps/single-workspace/src/control-actions/${name}.ts`),
+    ];
+    for (const path of controls) {
+      const handler = source(path);
+      expect(handler).not.toContain("channel1Release");
+      expect(handler).not.toContain("consumeConclusionSignals");
+      expect(handler).not.toContain("deliverVerificationWake");
+    }
   });
 });
