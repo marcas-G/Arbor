@@ -57,6 +57,7 @@ import {
   WorkspaceSandboxPolicyBindingPort,
   WorktreeStore,
 } from "@arbor/ports";
+import { bounded } from "@arbor/tool-runtime";
 import { Context, Effect, Layer, Option } from "effect";
 import {
   materializeCurrentSandboxProcessPolicy,
@@ -104,11 +105,6 @@ export type ExecutableToolHandlerQualificationProbe = (event: {
     readonly callRef: string;
   };
 }) => Promise<void>;
-
-const bounded = (text: string, limit = 2000): BoundedObservation => ({
-  text: text.length > limit ? text.slice(0, limit) : text,
-  truncated: text.length > limit,
-});
 
 export const toExecutableOutcome = (
   result: Exclude<
