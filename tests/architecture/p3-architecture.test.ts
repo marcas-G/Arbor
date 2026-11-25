@@ -66,7 +66,14 @@ describe("P3 package DAG", () => {
     expect(decisionTurn).not.toContain("listUnconsumed");
     expect(decisionTurn).not.toContain("assembleInboxContext");
     expect(decisionTurn).not.toContain("PortableLegacyMessage");
-    expect(decisionTurn).toContain("projectConversationCheckpointHistory");
+    const conversationContext = readFileSync(
+      join(repoRoot, "packages/agent-runtime/src/conversation-decision-context.ts"),
+      "utf8",
+    );
+    expect(decisionTurn).toContain("loadConversationDecisionContext(");
+    expect(conversationContext).toContain("projectConversationCheckpointHistory");
+    expect(decisionTurn).toContain('conversationContext._tag === "Restart"');
+    expect(decisionTurn).toContain('conversationContext._tag === "Complete"');
     expect(decisionTurn).toContain("inputItems");
     expect(projector).toContain('case "ToolCall"');
     expect(projector).toContain('case "ToolResult"');
