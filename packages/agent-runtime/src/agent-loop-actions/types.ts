@@ -23,6 +23,25 @@ import type {
   TransactionPortService,
 } from "@arbor/ports";
 import type { Effect } from "effect";
+
+/** E09: the reconciliation-escalation callback owns a typed failure
+ * surface instead of `unknown`; the execution-runtime recorder
+ * implements it (architecture DAG: execution-runtime depends on
+ * agent-runtime, never the reverse). */
+export type ReconciliationEscalationRecorderError =
+  | {
+      readonly _tag: "ReconciliationEscalationBindingMismatch";
+      readonly executionId: import("@arbor/domain").ExecutionId;
+    }
+  | {
+      readonly _tag: "ReconciliationEscalationExecutionNotActive";
+      readonly executionId: import("@arbor/domain").ExecutionId;
+    }
+  | import("@arbor/ports").ExecutionRepositoryError
+  | import("@arbor/ports").DomainEventJournalError
+  | import("@arbor/ports").LeaseFencingRejected
+  | import("@arbor/ports").TransactionOperationalFailure;
+
 import type {
   ControlToolRegistryService,
   ExecutableInvocationHandler,
@@ -68,7 +87,7 @@ export interface AgentLoopActionDependencies {
     readonly fence: AgentLoopStepFence;
     readonly principal: import("@arbor/domain").Principal;
     readonly invocationRefs: ReadonlyArray<string>;
-  }) => Effect.Effect<void, unknown>;
+  }) => Effect.Effect<void, ReconciliationEscalationRecorderError>;
   readonly currentControlBasis: () => Effect.Effect<
     ControlBasis,
     ExecutionDriverError

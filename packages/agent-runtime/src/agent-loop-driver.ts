@@ -50,6 +50,7 @@ import {
   WorkspaceRepository,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
+import type { ReconciliationEscalationRecorderError } from "./agent-loop-actions/types.js";
 import { executeAgentLoopActions } from "./agent-loop-actions.js";
 import { recoverAgentLoopFrontier } from "./agent-loop-driver/recovery.js";
 import { MAX_TURNS, type ModelDecisionOutcome } from "./agent-loop-policy.js";
@@ -100,7 +101,7 @@ export interface AgentLoopDriverOptions {
     readonly fence: AgentLoopStepFence;
     readonly principal: import("@arbor/domain").Principal;
     readonly invocationRefs: ReadonlyArray<string>;
-  }) => Effect.Effect<void, unknown>;
+  }) => Effect.Effect<void, ReconciliationEscalationRecorderError>;
   /** Adapter identity recorded on manifests (P14 conversation audit). */
   readonly providerRef?: string;
   /** Exact protocol family used to bind P16 reasoning attachments. */

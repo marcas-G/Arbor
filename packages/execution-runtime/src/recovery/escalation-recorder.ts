@@ -1,11 +1,12 @@
-import type { Execution, Principal } from "@arbor/domain";
-import { type AgentLoopStepFence, IdGenerator } from "@arbor/ports";
-import { Effect, Option } from "effect";
-
 /** P9 `07` / DID v1.40: record the existing escalation source while the
  * originating action still has its current Worker fence and its Execution is
  * unsettled. P3 calls this before persisting its terminal OutcomeUnknown
  * action; the event identity matches the recovery-sweep path below. */
+import type { ReconciliationEscalationRecorderError } from "@arbor/agent-runtime";
+import type { Execution, Principal } from "@arbor/domain";
+import { type AgentLoopStepFence, IdGenerator } from "@arbor/ports";
+import { Effect, Option } from "effect";
+
 export const makeReconciliationEscalationRecorder =
   (dependencies: {
     readonly tx: import("@arbor/ports").TransactionPortService;
@@ -20,7 +21,7 @@ export const makeReconciliationEscalationRecorder =
     readonly fence: AgentLoopStepFence;
     readonly principal: Principal;
     readonly invocationRefs: ReadonlyArray<string>;
-  }) =>
+  }): Effect.Effect<void, ReconciliationEscalationRecorderError> =>
     Effect.gen(function* () {
       const { tx, repository, leases, journal, clock, ids } = dependencies;
       const { execution, fence, invocationRefs } = input;
@@ -28,7 +29,7 @@ export const makeReconciliationEscalationRecorder =
         invocationRefs.length === 0 ||
         fence.executionId !== execution.executionId
       ) {
-        return yield* Effect.fail({
+        return yield* Effect.fail<ReconciliationEscalationRecorderError>({
           _tag: "ReconciliationEscalationBindingMismatch",
           executionId: execution.executionId,
         });
@@ -49,7 +50,7 @@ export const makeReconciliationEscalationRecorder =
             current.value.state.status !== "Active" ||
             current.value.projectId !== execution.projectId
           ) {
-            return yield* Effect.fail({
+            return yield* Effect.fail<ReconciliationEscalationRecorderError>({
               _tag: "ReconciliationEscalationExecutionNotActive",
               executionId: execution.executionId,
             });

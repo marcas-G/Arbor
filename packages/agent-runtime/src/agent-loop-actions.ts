@@ -39,6 +39,7 @@ export { makeBlockedSettlement } from "./agent-loop-actions/blocked-settlement.j
 export type {
   AgentLoopActionDependencies,
   AgentLoopActionOutcome,
+  ReconciliationEscalationRecorderError,
 } from "./agent-loop-actions/types.js";
 export {
   recoveryBindingIdentityFor,

@@ -1,3 +1,4 @@
+export * from "./agent-loop-actions/types.js";
 export * from "./agent-loop-driver.js";
 export * from "./checkpoint/conversation/compaction.js";
 export * from "./checkpoint/conversation/projection.js";
