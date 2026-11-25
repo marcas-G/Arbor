@@ -7,6 +7,7 @@ import {
   ControlBasisResolverLive,
   ControlToolRegistry,
   ControlToolRegistryLive,
+  ModelDecisionServiceLive,
 } from "@arbor/agent-runtime";
 import {
   type AttentionPollPolicyConfig,
@@ -53,7 +54,6 @@ import {
   type ModelCatalog,
   ModelContextLive,
   resolveModelCatalogEntry,
-  TurnProfileResolver,
   TurnProfileResolverLive,
 } from "@arbor/model-context";
 import {
@@ -254,6 +254,10 @@ import {
   SqlClient,
   type SqlClient as SqlClientService,
 } from "effect/unstable/sql/SqlClient";
+import {
+  makeAgentLoopDriverOptions,
+  makeModelDecisionServiceOptions,
+} from "./agent-loop-composition.js";
 import { ControlActionAuthorizerLive } from "./control-action-authorizer.js";
 import {
   type AssignWorkBindingAttentionQualificationProbe,
@@ -1242,7 +1246,6 @@ const buildSingleWorkspaceLayerInternal = (
       Effect.gen(function* () {
         const registryService = yield* ControlToolRegistry;
         const executableHandler = yield* ExecutableToolHandler;
-        const turnProfileResolver = yield* TurnProfileResolver;
         const authorizer = yield* ControlActionAuthorizer;
         const reconciliationEscalationRecorder =
           makeReconciliationEscalationRecorder({
@@ -1253,49 +1256,43 @@ const buildSingleWorkspaceLayerInternal = (
             clock: yield* Clock,
             ids: yield* IdGenerator,
           });
-        return Layer.provide(
-          AgentLoopDriverLive({
-            ...(config.secretRef !== undefined
-              ? { secretRef: config.secretRef }
-              : {}),
-            ...(deploymentBinding?.deployment.secretRef !== undefined
-              ? { secretRef: deploymentBinding.deployment.secretRef }
-              : {}),
-            ...(deploymentBinding?.deployment.executionPolicyOverrides !==
-            undefined
-              ? {
-                  executionPolicyOverrides:
-                    deploymentBinding.deployment.executionPolicyOverrides,
-                }
-              : {}),
+        const modelDecisionOptions = makeModelDecisionServiceOptions({
+          secretRef:
+            deploymentBinding?.deployment.secretRef ?? config.secretRef,
+          executionPolicyOverrides:
+            deploymentBinding?.deployment.executionPolicyOverrides,
+          providerRef:
+            deploymentBinding?.adapter.adapterId ?? config.provider?.adapterId,
+          protocolFamily: modelAdapter.profile.protocolFamily,
+          onProviderProgress: publishConversationProgress,
+          qualificationProbe: config.qualificationProbe,
+        });
+        const driverOptions = makeAgentLoopDriverOptions(
+          {
             controlRegistry: registryService,
             controlAuthorizer: authorizer,
-            turnProfileResolver,
             executableInvocationHandler: executableHandler,
             recordReconciliationEscalation: reconciliationEscalationRecorder,
-            ...(config.provider !== undefined
-              ? { providerRef: config.provider.adapterId }
-              : {}),
-            ...(deploymentBinding !== undefined
-              ? { providerRef: deploymentBinding.adapter.adapterId }
-              : {}),
-            protocolFamily: modelAdapter.profile.protocolFamily,
-            onProviderProgress: publishConversationProgress,
-            ...(config.qualificationProbe !== undefined
-              ? { qualificationProbe: config.qualificationProbe }
-              : {}),
-          }),
+          },
+          config.qualificationProbe,
+        );
+        const modelDecision = Layer.provide(
+          ModelDecisionServiceLive(modelDecisionOptions),
           Layer.mergeAll(
             modelContext,
             providerRuntime,
+            turnProfiles,
             capability,
+            Layer.provide(ControlBasisResolverLive, repos),
             repos,
             workspaceKnowledge,
             workspacePlacement,
-            inputPromotion,
-            Layer.provide(ControlBasisResolverLive, repos),
             infra,
           ),
+        );
+        return Layer.provide(
+          AgentLoopDriverLive(driverOptions),
+          Layer.mergeAll(modelDecision, repos, inputPromotion, infra),
         );
       }),
     ),

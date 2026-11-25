@@ -10,6 +10,7 @@ export * from "./execution-driver-failure.js";
 export * from "./freshness.js";
 export * from "./legacy-directive.js";
 export * from "./local-plan.js";
+export * from "./model-decision-service.js";
 export * from "./persisted-model-output.js";
 export * from "./prompt-assets.js";
 export * from "./qualification-probe.js";

@@ -48,6 +48,7 @@ import {
   type ControlActionAuthorizerService,
   ControlBasisResolverLive,
   type ExecutableInvocationHandler,
+  ModelDecisionServiceLive,
   makeControlToolRegistry,
 } from "../packages/agent-runtime/src/index.js";
 import { InputPromotionServiceLive } from "../packages/application/src/index.js";
@@ -70,6 +71,7 @@ import {
   ModelContext,
   ModelContextLive,
   projectSessionTimeline,
+  TurnProfileResolver,
   type TurnProfileResolverService,
 } from "../packages/model-context/src/index.js";
 import {
@@ -356,15 +358,104 @@ const makeApp = (
     } satisfies TurnProfileResolverService);
   const modelContext = Layer.provide(
     ModelContextLive,
-    Layer.mergeAll(capabilityLayer, skills),
+    Layer.merge(capabilityLayer, skills),
   );
+  const turnProfiles = Layer.succeed(TurnProfileResolver, turnProfileResolver);
   const environmentRevisions =
     options.environmentRevisions ??
     Layer.provide(EnvironmentRevisionStoreLive, infra);
+  const controlBasisResolver = Layer.provide(
+    ControlBasisResolverLive,
+    Layer.mergeAll(
+      infra,
+      Layer.provide(TransactionPortLive, infra),
+      Layer.provide(ProjectRepositoryLive, infra),
+      Layer.provide(WorkspaceRepositoryLive, infra),
+      Layer.provide(WorkRepositoryLive, infra),
+      environmentRevisions,
+    ),
+  );
+  const driverDependencies = Layer.mergeAll(
+    infra,
+    modelContext,
+    providerRuntime,
+    capabilityLayer,
+    controlBasisResolver,
+    turnProfiles,
+    sessions,
+    providerTurnStore,
+    agentLoopSteps,
+    Layer.provide(ProjectRepositoryLive, infra),
+    Layer.provide(WorkspaceRepositoryLive, infra),
+    Layer.provide(WorkRepositoryLive, infra),
+    Layer.provide(TransactionPortLive, infra),
+    Layer.provide(HumanMessageStoreLive, infra),
+    Layer.provide(ExecutionRepositoryLive, infra),
+    Layer.provide(ConversationResponseJobStoreLive, infra),
+    Layer.provide(ConversationAttemptStoreLive, infra),
+    Layer.provide(ConversationCheckpointStoreLive, infra),
+    Layer.provide(InboxProjectionStoreLive, infra),
+    Layer.provide(
+      InputPromotionServiceLive,
+      Layer.mergeAll(
+        infra,
+        Layer.provide(TransactionPortLive, infra),
+        sessions,
+        Layer.provide(InboxProjectionStoreLive, infra),
+        Layer.provide(ExecutionRepositoryLive, infra),
+      ),
+    ),
+    BlobStorePortLive,
+    Layer.provide(
+      RecoveryAttentionFactStoreLive,
+      Layer.mergeAll(infra, Layer.provide(DomainEventJournalLive, infra)),
+    ),
+    Layer.provide(ToolInvocationStoreLive, infra),
+    Layer.provide(P39RecoveryEvidenceStoreLive, infra),
+    Layer.provide(LocalPlanStoreLive, infra),
+    Layer.provide(DecisionRequestStoreLive, infra),
+    Layer.provide(
+      WorkspaceKnowledgePortLive,
+      Layer.mergeAll(
+        infra,
+        Layer.provide(TransactionPortLive, infra),
+        Layer.provide(WorkRepositoryLive, infra),
+        Layer.provide(VerificationRepositoryLive, infra),
+        Layer.provide(AcceptanceRepositoryLive, infra),
+        Layer.provide(FormationProposalStoreLive, infra),
+        Layer.provide(FormationFulfillmentStoreLive, infra),
+        Layer.provide(WorkspaceRepositoryLive, infra),
+      ),
+    ),
+    Layer.provide(
+      WorkspacePlacementPortLive,
+      Layer.mergeAll(
+        infra,
+        Layer.provide(TransactionPortLive, infra),
+        Layer.provide(WorkRepositoryLive, infra),
+        Layer.provide(VerificationRepositoryLive, infra),
+        Layer.provide(AcceptanceRepositoryLive, infra),
+        Layer.provide(FormationProposalStoreLive, infra),
+        Layer.provide(FormationFulfillmentStoreLive, infra),
+        Layer.provide(WorkspaceRepositoryLive, infra),
+      ),
+    ),
+    environmentRevisions,
+  );
+  const modelDecision = Layer.provide(
+    ModelDecisionServiceLive({
+      ...(options.executionPolicyOverrides === undefined
+        ? {}
+        : { executionPolicyOverrides: options.executionPolicyOverrides }),
+      ...(options.qualificationProbe === undefined
+        ? {}
+        : { qualificationProbe: options.qualificationProbe }),
+    }),
+    driverDependencies,
+  );
   const driver = Layer.provide(
     AgentLoopDriverLive({
       controlRegistry,
-      turnProfileResolver,
       ...(options.executableHandler !== undefined
         ? { executableInvocationHandler: options.executableHandler }
         : {}),
@@ -374,9 +465,6 @@ const makeApp = (
             recordReconciliationEscalation:
               options.recordReconciliationEscalation,
           }),
-      ...(options.executionPolicyOverrides !== undefined
-        ? { executionPolicyOverrides: options.executionPolicyOverrides }
-        : {}),
       ...(options.controlAuthorizer === undefined
         ? {}
         : { controlAuthorizer: options.controlAuthorizer }),
@@ -384,97 +472,9 @@ const makeApp = (
         ? {}
         : { qualificationProbe: options.qualificationProbe }),
     }),
-    Layer.mergeAll(
-      infra,
-      modelContext,
-      providerRuntime,
-      capabilityLayer,
-      sessions,
-      providerTurnStore,
-      agentLoopSteps,
-      Layer.provide(ProjectRepositoryLive, infra),
-      Layer.provide(WorkspaceRepositoryLive, infra),
-      Layer.provide(WorkRepositoryLive, infra),
-      Layer.provide(TransactionPortLive, infra),
-      Layer.provide(HumanMessageStoreLive, infra),
-      Layer.provide(ExecutionRepositoryLive, infra),
-      Layer.provide(ConversationResponseJobStoreLive, infra),
-      Layer.provide(ConversationAttemptStoreLive, infra),
-      Layer.provide(ConversationCheckpointStoreLive, infra),
-      Layer.provide(
-        ControlBasisResolverLive,
-        Layer.mergeAll(
-          infra,
-          Layer.provide(TransactionPortLive, infra),
-          Layer.provide(ProjectRepositoryLive, infra),
-          Layer.provide(WorkspaceRepositoryLive, infra),
-          Layer.provide(WorkRepositoryLive, infra),
-          environmentRevisions,
-        ),
-      ),
-      Layer.provide(InboxProjectionStoreLive, infra),
-      Layer.provide(
-        InputPromotionServiceLive,
-        Layer.mergeAll(
-          infra,
-          Layer.provide(TransactionPortLive, infra),
-          sessions,
-          Layer.provide(InboxProjectionStoreLive, infra),
-          Layer.provide(ExecutionRepositoryLive, infra),
-        ),
-      ),
-      BlobStorePortLive,
-      Layer.provide(
-        RecoveryAttentionFactStoreLive,
-        Layer.mergeAll(infra, Layer.provide(DomainEventJournalLive, infra)),
-      ),
-      Layer.provide(ToolInvocationStoreLive, infra),
-      Layer.provide(P39RecoveryEvidenceStoreLive, infra),
-      Layer.provide(LocalPlanStoreLive, infra),
-      Layer.provide(DecisionRequestStoreLive, infra),
-      Layer.provide(
-        WorkspaceKnowledgePortLive,
-        Layer.mergeAll(
-          infra,
-          Layer.provide(TransactionPortLive, infra),
-          Layer.provide(WorkRepositoryLive, infra),
-          Layer.provide(VerificationRepositoryLive, infra),
-          Layer.provide(AcceptanceRepositoryLive, infra),
-          Layer.provide(FormationProposalStoreLive, infra),
-          Layer.provide(FormationFulfillmentStoreLive, infra),
-          Layer.provide(WorkspaceRepositoryLive, infra),
-        ),
-      ),
-      Layer.provide(
-        WorkspacePlacementPortLive,
-        Layer.mergeAll(
-          infra,
-          Layer.provide(TransactionPortLive, infra),
-          Layer.provide(WorkRepositoryLive, infra),
-          Layer.provide(VerificationRepositoryLive, infra),
-          Layer.provide(AcceptanceRepositoryLive, infra),
-          Layer.provide(FormationProposalStoreLive, infra),
-          Layer.provide(FormationFulfillmentStoreLive, infra),
-          Layer.provide(WorkspaceRepositoryLive, infra),
-        ),
-      ),
-      environmentRevisions,
-    ),
+    Layer.merge(driverDependencies, modelDecision),
   );
-  return Layer.mergeAll(
-    infra,
-    driver,
-    sessions,
-    providerRuntime,
-    modelContext,
-    capabilityLayer,
-    Layer.provide(TransactionPortLive, infra),
-    Layer.provide(HumanMessageStoreLive, infra),
-    Layer.provide(ExecutionRepositoryLive, infra),
-    Layer.provide(ConversationResponseJobStoreLive, infra),
-    Layer.provide(ConversationAttemptStoreLive, infra),
-    Layer.provide(ConversationCheckpointStoreLive, infra),
-  );
+  return Layer.merge(driverDependencies, driver);
 };
 
 const seed = Effect.gen(function* () {
