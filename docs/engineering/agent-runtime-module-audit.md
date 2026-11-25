@@ -203,3 +203,18 @@ Future layout, introduced only when a complete responsibility is moved:
 - Driver entry points remain at the existing root paths until the remaining large phases are qualified; later relocation must retain the supported entry and update architecture checks.
 
 At this point model-decision.ts is 5,175 split lines (643 fewer than this batch's base). Source migration equality and the two startup exit reversals were checked in the extraction scripts; the phase and test changes are still unqualified. DNS clone failure reproduced in the current session; Node v22.16.0, no pnpm, no installed repository dependency graph. No full build, Biome, architecture, Vitest, recovery or release run is claimed. Run the existing full checks and AH4/AH17/AH19/P20 and exact-action recovery cases; verify repeated effect execution and interrupted phase behavior. No master merge or CI authorization.
+
+## R2 durable step and overflow recovery — mandatory 800-line ceiling
+
+Base 13a588ea11cec0b572b522f0e8590bae02e07a38. Owner requires source files at most 800 physical lines, not a soft metric.
+
+- 10645b15267d82d412e89163d07ae4022cd0a633: extract durable step recovery from model-decision.ts (5,175 to 4,119 split lines). Four outer continues become Restart outcomes; three terminal returns become Complete outcomes. The extraction verified the inverse transformation against the original body.
+- 72eb43fc24a320c1475b4f1c465394afcdf8757f: split Conversation overflow and explicit process-local overflow state.
+- 5e3b789cf061a9acaf89d1b624b26e7feb002c04: split non-conversation Session overflow; step-recovery.ts becomes 254 split lines.
+- 6158ec141b490cb66b30589fa932c12d81e97e8f: split settled Summary receipt/replacement recovery; work-overflow.ts becomes 693 split lines and settled-summary-overflow.ts 246 split lines. All new recovery modules are below 800 lines. Source equivalence checks covered moved body text and explicit continuation adapters, not full runtime behavior.
+
+Canonical directory: decision/step-recovery.ts is the step driver; decision/recovery/overflow-state.ts owns only local continuation data; conversation-overflow.ts owns conversation checkpoint recovery; work-overflow.ts owns non-conversation Session recovery; settled-summary-overflow.ts owns settled summary receipt promotion. No new compatibility facades. Existing durable Step and ProviderTurn stores, transactions and fencing remain authoritative.
+
+A strict source-size checker is introduced in this batch and wired into pnpm check; its transition mode compares actual parent/PR base and prevents new/growing violations while listing all historical violations. Source scope is extension-based and tracked paths only (including tests and scripts), not a limit on Markdown or generated build artifacts. The full repository still has oversized files; the strict gate is intentionally not green. The next largest remaining target in Agent Runtime is model-decision.ts, especially Session/checkpoint and provider lifecycle phases. Tool Runtime, Action Runtime, assign-work, persistence, and large tests remain to be inventoried and split.
+
+Validation: 15 standalone JavaScript assertions on the line-rule helpers passed in the execution isolate; no full CLI/Node test-suite or project build was run here. Git network clone remains blocked by DNS, Node 22.16.0 is not the pinned runtime, pnpm unavailable. Do not claim the branch is qualified or merge until full checks pass. The new strict gate is intended to fail until all over-limit source files are eliminated. No workflow or branch protection changes.

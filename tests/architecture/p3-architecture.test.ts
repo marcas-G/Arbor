@@ -240,3 +240,30 @@ describe("Agent Runtime internal directory ownership", () => {
     expect(settlement).toContain("AH4AfterSettlementProposal");
   });
 });
+
+describe("durable step recovery responsibility", () => {
+  it("delegates overflow recovery to the exact conversation or Session owner", () => {
+    const src = "packages/agent-runtime/src/decision";
+    const driver = readFileSync(join(repoRoot, src, "step-recovery.ts"), "utf8");
+    const conversation = readFileSync(
+      join(repoRoot, src, "recovery/conversation-overflow.ts"),
+      "utf8",
+    );
+    const work = readFileSync(
+      join(repoRoot, src, "recovery/work-overflow.ts"),
+      "utf8",
+    );
+    const summary = readFileSync(
+      join(repoRoot, src, "recovery/settled-summary-overflow.ts"),
+      "utf8",
+    );
+    expect(driver).toContain("recoverConversationOverflow(");
+    expect(driver).toContain("recoverWorkOverflow(");
+    expect(conversation).toContain("conversationCheckpoints.findOwner(");
+    expect(work).toContain("recoverSettledSummaryOverflow(");
+    expect(summary).toContain("commitRecoveredSummaryCompaction(");
+    for (const source of [driver, conversation, work, summary]) {
+      expect(source.split(/\r?\n/u).length).toBeLessThanOrEqual(801);
+    }
+  });
+});

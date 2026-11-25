@@ -10,6 +10,14 @@ Keep pure domain decisions pure; use closed ADTs, branded identifiers and exhaus
 
 Imports use declared package public APIs; prohibit cross-package relative/deep imports. Maintain the DID package DAG and existing architecture tests. Use the installed Effect version (4.0.0-rc.115 at the audited base); do not mix v3 examples or change dependencies opportunistically. Biome and TypeScript strict configuration are the formatting/type baseline. Keep code understandable; extract coherent responsibilities, not arbitrary line-count chunks. A refactor must preserve public contracts, transaction boundaries, order of side effects, interruption and replay semantics.
 
+### Mandatory source file size limit
+
+Owner direction: handwritten source files, tests and engineering scripts must contain at most **800 physical lines**, including comments and blank lines. The check counts LF, CRLF and CR, without treating a final newline as an extra line. Markdown, lock/config data and build output are not covered by the source-extension check. No new oversized source file, reformatting trick, minification, artificial truncation, or permanent exception is allowed. Split by cohesive responsibility, not arbitrary line ranges.
+
+`pnpm check:source-lines` is the strict repository-wide gate; it reports every over-limit tracked source path and fails until all are at or below 800. It is part of `pnpm check` (and therefore `pnpm check:release`). Existing oversized files are explicit unresolved refactor work; the branch cannot pass the strict gate while they remain.
+
+During staged refactoring, run `node scripts/governance/check-source-lines.mjs --baseline <pre-change-commit>` to reject new oversized files or growth of existing oversized files relative to that specific commit. This transition command is not a replacement for strict qualification. It reports legacy violations and does not certify them. Use the actual parent or reviewed PR baseline, not an arbitrarily older baseline. Run `pnpm test:source-lines` for the rule's tests. Stage new files before running the check because it enumerates the Git index. Do not modify frozen historical evidence to satisfy a source line limit.
+
 ## Tests and health
 
 Use the existing proof-level/test manifest strategy. Distinguish pure, port, application, process and public tests. Unit tests do not qualify real providers or native isolation. New tests should express a behavioral invariant rather than mirror implementation details. Include negative, recovery and interruption cases where risk warrants. Preserve historical migration tests and proof fixtures until their consumers and compatibility obligations are understood.
