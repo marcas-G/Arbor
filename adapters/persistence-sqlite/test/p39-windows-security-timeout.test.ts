@@ -8,7 +8,7 @@ import {
   isP39WindowsPowerShellPathSafe,
   WINDOWS_POWERSHELL_EXECUTABLE,
   WINDOWS_SECURITY_QUERY_TIMEOUT_MS,
-  type P39WindowsSecurityQueryExecutor,
+  type WindowsSecurityQueryExecutor,
   p39WindowsProtectedPathsScript,
   validateWindowsProtectedPaths,
 } from "../src/p39-windows-security.js";
@@ -40,7 +40,7 @@ describe("Windows security query timeout", () => {
       args: ReadonlyArray<string>;
       timeout: number;
     }> = [];
-    const executor: P39WindowsSecurityQueryExecutor = (
+    const executor: WindowsSecurityQueryExecutor = (
       command,
       args,
       options,
@@ -123,10 +123,10 @@ describe("Windows security query timeout", () => {
     const paths = [
       { path: "C:\\private\\primary.sqlite", kind: "file" as const },
     ];
-    const failedExecutor: P39WindowsSecurityQueryExecutor = () => {
+    const failedExecutor: WindowsSecurityQueryExecutor = () => {
       throw new Error("simulated PowerShell failure");
     };
-    const unexpectedExecutor: P39WindowsSecurityQueryExecutor = () =>
+    const unexpectedExecutor: WindowsSecurityQueryExecutor = () =>
       "anything else";
 
     expect(validateWindowsProtectedPaths(paths, failedExecutor)).toBe(false);
@@ -140,7 +140,7 @@ describe("Windows security query timeout", () => {
 
   it("keeps the shared timeout and fails closed for a timed-out batch", () => {
     let observedTimeout: number | undefined;
-    const timedOutExecutor: P39WindowsSecurityQueryExecutor = (
+    const timedOutExecutor: WindowsSecurityQueryExecutor = (
       _command,
       _args,
       options,
@@ -162,7 +162,7 @@ describe("Windows security query timeout", () => {
 
   it("allows a simulated probe slower than 5s but below the shared bound", () => {
     let observedTimeout: number | undefined;
-    const delayedExecutor: P39WindowsSecurityQueryExecutor = (
+    const delayedExecutor: WindowsSecurityQueryExecutor = (
       _command,
       _args,
       options,
@@ -185,7 +185,7 @@ describe("Windows security query timeout", () => {
   });
 
   it("propagates timeout at the shared 30s bound for fail-closed callers", () => {
-    const timedOutExecutor: P39WindowsSecurityQueryExecutor = (
+    const timedOutExecutor: WindowsSecurityQueryExecutor = (
       _command,
       _args,
       options,

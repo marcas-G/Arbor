@@ -383,7 +383,7 @@ export interface SelectedP39EffectAttempt {
   readonly profileProtocol: string | null;
   readonly effectKey: string | null;
   readonly admittedAt: string | null;
-  readonly admissionSource: "P36Backfill" | "P39Claim" | "P39Admission";
+  readonly admissionSource: "P36Backfill" | "Claim" | "Admission";
   readonly admissionTimePrecision:
     | "NotAdmitted"
     | "TransactionTimestamp"
@@ -414,7 +414,7 @@ export interface SelectedP39RecoveryEvidence {
   readonly fact: SelectedP39ReconciliationFact;
 }
 
-export interface P39RecoveryEvidenceStoreService {
+export interface RecoveryEvidenceStoreService {
   /** Inserts the immutable V1 binding and attempt-0 NotAdmitted row, then
    * changes the same invocation to Bound. The caller provides the surrounding
    * fenced TransactionScope that also records intent and consumes approval. */
@@ -423,7 +423,7 @@ export interface P39RecoveryEvidenceStoreService {
     readonly createdAt: string;
   }) => Effect.Effect<
     "Bound" | "AlreadyBound",
-    RepositoryFailure<"P39RecoveryEvidenceStore">,
+    RepositoryFailure<"RecoveryEvidenceStore">,
     TransactionScope
   >;
   /** Returns the latest exact bound attempt, including a not-yet-settled
@@ -432,7 +432,7 @@ export interface P39RecoveryEvidenceStoreService {
     invocationId: ToolInvocationId,
   ) => Effect.Effect<
     Option.Option<SelectedP39EffectAttempt>,
-    RepositoryFailure<"P39RecoveryEvidenceStore">,
+    RepositoryFailure<"RecoveryEvidenceStore">,
     TransactionScope
   >;
   /** Marks the claimed attempt 0 as MayHaveStarted in the same fenced
@@ -442,7 +442,7 @@ export interface P39RecoveryEvidenceStoreService {
     admittedAt: string,
   ) => Effect.Effect<
     void,
-    RepositoryFailure<"P39RecoveryEvidenceStore">,
+    RepositoryFailure<"RecoveryEvidenceStore">,
     TransactionScope
   >;
   /** Creates attempt 1 only from an exact attempt-0 authoritative
@@ -454,7 +454,7 @@ export interface P39RecoveryEvidenceStoreService {
     readonly admittedAt: string;
   }) => Effect.Effect<
     void,
-    RepositoryFailure<"P39RecoveryEvidenceStore">,
+    RepositoryFailure<"RecoveryEvidenceStore">,
     TransactionScope
   >;
   /** Read-only terminal storage projection for a P4 no-effect Denied that
@@ -467,7 +467,7 @@ export interface P39RecoveryEvidenceStoreService {
       readonly invocationId: ToolInvocationId;
       readonly recoveryBindingState: "DeniedUnbound";
     }>,
-    RepositoryFailure<"P39RecoveryEvidenceStore">,
+    RepositoryFailure<"RecoveryEvidenceStore">,
     TransactionScope
   >;
   /** Read-only replay lookup. Persisted canonical bytes and digest are checked
@@ -476,7 +476,7 @@ export interface P39RecoveryEvidenceStoreService {
     invocationId: ToolInvocationId,
   ) => Effect.Effect<
     Option.Option<VerifiedRecoveryBindingV1>,
-    RepositoryFailure<"P39RecoveryEvidenceStore">,
+    RepositoryFailure<"RecoveryEvidenceStore">,
     TransactionScope
   >;
   /** Returns only the exact terminal selected tuple after V1 bytes/hash and
@@ -485,12 +485,12 @@ export interface P39RecoveryEvidenceStoreService {
     invocationId: ToolInvocationId,
   ) => Effect.Effect<
     Option.Option<SelectedP39RecoveryEvidence>,
-    RepositoryFailure<"P39RecoveryEvidenceStore">,
+    RepositoryFailure<"RecoveryEvidenceStore">,
     TransactionScope
   >;
 }
 
-export class P39RecoveryEvidenceStore extends Context.Service<
-  P39RecoveryEvidenceStore,
-  P39RecoveryEvidenceStoreService
->()("arbor/P39RecoveryEvidenceStore") {}
+export class RecoveryEvidenceStore extends Context.Service<
+  RecoveryEvidenceStore,
+  RecoveryEvidenceStoreService
+>()("arbor/RecoveryEvidenceStore") {}

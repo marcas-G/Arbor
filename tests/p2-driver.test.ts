@@ -69,7 +69,7 @@ import {
   ExecutableApprovalStore,
   type ExecutionDriveOutcome,
   ExecutionDriverPort,
-  P39RecoveryEvidenceStore,
+  RecoveryEvidenceStore,
   RuntimeSafetyGate,
   SandboxPolicyDecisionStore,
   SandboxPolicyRequirementReadPort,
@@ -523,7 +523,7 @@ describe("P2-014 driver / dispatch / safety", () => {
         ]),
     } as never);
     const recoveryEvidence = Layer.succeed(
-      P39RecoveryEvidenceStore,
+      RecoveryEvidenceStore,
       {} as never,
     );
     const program = Effect.gen(function* () {

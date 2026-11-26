@@ -5,7 +5,7 @@ import {
   ExecutableApprovalStore,
   type ExecutableApprovalStoreService,
   makeToolReconciliationProfileRegistry,
-  P39RecoveryEvidenceStore,
+  RecoveryEvidenceStore,
   type RecoveryBindingV1,
   recoveryBindingV1Digest,
   ToolAuthorityResolver,
@@ -198,7 +198,7 @@ export const p39DepsBuilder = (
           record: () => Effect.void,
           lazyInitAnchor: () => Effect.void,
         }),
-        Layer.succeed(P39RecoveryEvidenceStore, {
+        Layer.succeed(RecoveryEvidenceStore, {
           bindClaim: ({ binding }: { readonly binding: RecoveryBindingV1 }) => {
             if (trace !== undefined) {
               trace.p39BindingCalls = (trace.p39BindingCalls ?? 0) + 1;

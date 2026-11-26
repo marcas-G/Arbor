@@ -6,7 +6,7 @@ import {
   EnvironmentRevisionStore,
   ExecutableApprovalStore,
   type NoEffectDenialCode,
-  P39RecoveryEvidenceStore,
+  RecoveryEvidenceStore,
   ProjectEnvironmentPort,
   ResourceAdmission,
   SandboxPort,
@@ -131,7 +131,7 @@ export const ToolRuntimeLive = (
       const environmentRevisions = yield* Effect.serviceOption(
         EnvironmentRevisionStore,
       );
-      const p39Recovery = yield* Effect.serviceOption(P39RecoveryEvidenceStore);
+      const p39Recovery = yield* Effect.serviceOption(RecoveryEvidenceStore);
       const authorityResolver = yield* Effect.serviceOption(
         ToolAuthorityResolver,
       );
@@ -143,7 +143,7 @@ export const ToolRuntimeLive = (
         ToolObservationReplayAttentionFactStore,
       );
       const p39RecoveryEvidence = yield* Effect.serviceOption(
-        P39RecoveryEvidenceStore,
+        RecoveryEvidenceStore,
       );
       const reconciliationProfiles = yield* Effect.serviceOption(
         ToolReconciliationProfileRegistry,

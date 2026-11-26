@@ -17,7 +17,7 @@ import {
   P39_MAINTENANCE_MIGRATION_MANIFEST,
   P39_REPORT_APPLICATION_ID,
   P39_REPORT_USER_VERSION,
-  type P39ReportSidecarValidationPhase,
+  type ReportSidecarValidationPhase,
   validateProtectedDirectory,
   validateProtectedFile,
 } from "@arbor/persistence-sqlite";
@@ -25,7 +25,7 @@ import {
 export type SchemaUpgradeMode = "fresh" | "copy" | "resume-copy";
 
 export type SchemaUpgradeMaintenancePhase =
-  | P39ReportSidecarValidationPhase
+  | ReportSidecarValidationPhase
   | "schema-prefix-preview"
   | "primary-path-validation"
   | "writer-lock-path-validation"

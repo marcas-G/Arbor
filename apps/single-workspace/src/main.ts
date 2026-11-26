@@ -10,7 +10,7 @@ import {
 } from "@arbor/execution-runtime";
 import {
   acquireRuntimeWriterPermit,
-  type P39MaintenanceFailure,
+  type MaintenanceFailure,
   type DatabaseWriterLockFailure,
   p39UnsupportedDeployment,
   databaseWriterLockLayer,
@@ -763,7 +763,7 @@ const withP39RuntimeWriterPermit = <A, E, R>(
   use: Effect.Effect<A, E, R>,
 ): Effect.Effect<
   A,
-  E | P39MaintenanceFailure | DatabaseWriterLockFailure | SqliteAdapterError,
+  E | MaintenanceFailure | DatabaseWriterLockFailure | SqliteAdapterError,
   Exclude<R, Scope.Scope>
 > => {
   reportStartupPhase(

@@ -165,7 +165,7 @@ const authenticatedRnoEvidence = (factId: string) => {
       profileProtocol: binding.profileProtocol,
       effectKey: binding.effectKey,
       admittedAt: now,
-      admissionSource: "P39Admission" as const,
+      admissionSource: "Admission" as const,
       admissionTimePrecision: "TransactionTimestamp" as const,
     },
     fact: {
@@ -1001,7 +1001,7 @@ describe("persistent observation admission gates", () => {
           profile_protocol, effect_key, binding_sha256, admitted_at,
           admission_source, admission_time_precision
         ) VALUES (?, 1, 'MayHaveStarted', ?, 'Idempotent', ?, '1', ?, ?, ?, ?, ?,
-          'P39Admission', 'TransactionTimestamp')`,
+          'Admission', 'TransactionTimestamp')`,
         [
           invocationId,
           selectedP39Evidence.binding.value.toolDefinitionHash,

@@ -2,7 +2,7 @@ import {
   type ExecutableApprovalConsumptionReceipt,
   type ExecutableApprovalStoreService,
   executableApprovalBindingMatches,
-  type P39RecoveryEvidenceStoreService,
+  type RecoveryEvidenceStoreService,
   type RecoveryBindingV1,
   type ToolDefinition,
   type ToolExecutionContext,
@@ -43,7 +43,7 @@ export const claimNewInvocation = (
   trustedEffectKey: string | null,
   tx: TransactionPortService,
   store: ToolInvocationStoreService,
-  p39Recovery: Option.Option<P39RecoveryEvidenceStoreService>,
+  p39Recovery: Option.Option<RecoveryEvidenceStoreService>,
   p39BindingEnabled: boolean,
   executableApprovals: Option.Option<ExecutableApprovalStoreService>,
   options: { readonly qualificationProbe?: ToolRuntimeQualificationProbe },
@@ -187,7 +187,7 @@ export const claimNewInvocation = (
                 operationalFailure(
                   "RecoveryBinding",
                   String(intent.invocationId),
-                )({ _tag: "P39RecoveryEvidenceStoreUnavailable" }),
+                )({ _tag: "RecoveryEvidenceStoreUnavailable" }),
               );
             }
             let approvalSnapshot: RecoveryApprovalSnapshot | null = null;

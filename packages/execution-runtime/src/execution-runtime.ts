@@ -28,7 +28,7 @@ import {
   ExecutionDriverPort,
   ExecutionRepository,
   LeaseService,
-  P39RecoveryEvidenceStore,
+  RecoveryEvidenceStore,
   ProviderTurnStore,
   ReconciliationSource,
   RecoveryAttentionFactStore,
@@ -130,7 +130,7 @@ export const runExecution = (
       AttentionProjectionStore,
     );
     const p39RecoveryEvidence = yield* Effect.serviceOption(
-      P39RecoveryEvidenceStore,
+      RecoveryEvidenceStore,
     );
     const providerTurns = yield* Effect.serviceOption(ProviderTurnStore);
     const sessions = yield* Effect.serviceOption(SessionRepository);

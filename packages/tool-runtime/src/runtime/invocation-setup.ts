@@ -1,7 +1,7 @@
 import type {
   EnvironmentRevisionStoreService,
   NoEffectDenialCode,
-  P39RecoveryEvidenceStoreService,
+  RecoveryEvidenceStoreService,
   ToolDefinitionStoreService,
   ToolExecutionContext,
   ToolIntent,
@@ -29,7 +29,7 @@ export const prepareInvocation = (
   executors: ReadonlyArray<ToolExecutor>,
   definitions: ToolDefinitionStoreService,
   reconciliationProfiles: Option.Option<ToolReconciliationProfileRegistryService>,
-  p39Recovery: Option.Option<P39RecoveryEvidenceStoreService>,
+  p39Recovery: Option.Option<RecoveryEvidenceStoreService>,
   environmentRevisions: Option.Option<EnvironmentRevisionStoreService>,
   workspaces: Option.Option<WorkspaceRepositoryService>,
   tx: TransactionPortService,

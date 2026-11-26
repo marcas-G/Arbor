@@ -164,7 +164,7 @@ describe("pending P38 public Executable approval qualification", () => {
     });
     expect(beforeCommitSnapshot.attempt0).toMatchObject({
       admission_state: "NotAdmitted",
-      admission_source: "P39Claim",
+      admission_source: "Claim",
     });
     expect(beforeCommitSnapshot.effectCount).toBe(0);
 
@@ -207,7 +207,7 @@ describe("pending P38 public Executable approval qualification", () => {
     });
     expect(denied.attempt0).toMatchObject({
       admission_state: "NotAdmitted",
-      admission_source: "P39Claim",
+      admission_source: "Claim",
     });
     expect(denied.effectCount).toBe(0);
     const evidenceDb = new DatabaseSync(run.fixture.databaseFile, {

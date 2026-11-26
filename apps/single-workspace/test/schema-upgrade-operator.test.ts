@@ -446,7 +446,7 @@ describe("offline –schema-upgrade CLI", () => {
 
   it("renders structured CLI failures without object dumps, paths, or secrets", () => {
     const message = formatSchemaUpgradeCliFailure({
-      _tag: "P39MaintenanceFailure",
+      _tag: "MaintenanceFailure",
       code: "P39_WRITER_LOCK_ACQUIRE_FAILED",
       cause: {
         _tag: "DatabaseWriterLockFailure",
@@ -456,7 +456,7 @@ describe("offline –schema-upgrade CLI", () => {
       },
     });
     expect(message).toBe(
-      "P39MaintenanceFailure/P39_WRITER_LOCK_ACQUIRE_FAILED: " +
+      "MaintenanceFailure/P39_WRITER_LOCK_ACQUIRE_FAILED: " +
         "DatabaseWriterLockFailure/P39_WRITER_LOCK_ACQUIRE_FAILED/SQLITE_BUSY",
     );
     expect(message).not.toContain("[object Object]");

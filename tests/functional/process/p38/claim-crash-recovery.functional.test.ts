@@ -108,7 +108,7 @@ describe("pending P38 public Executable approval qualification", () => {
     expect(claimed.attempt0).toMatchObject({
       attempt_no: 0,
       admission_state: "NotAdmitted",
-      admission_source: "P39Claim",
+      admission_source: "Claim",
       admission_time_precision: "NotAdmitted",
       binding_sha256: claimed.recoveryBinding?.recovery_binding_sha256,
     });
@@ -147,13 +147,13 @@ describe("pending P38 public Executable approval qualification", () => {
       expect(recovered.attempt0).toMatchObject({
         attempt_no: 0,
         admission_state: "MayHaveStarted",
-        admission_source: "P39Admission",
+        admission_source: "Admission",
         admission_time_precision: "TransactionTimestamp",
         binding_sha256: recovered.recoveryBinding?.recovery_binding_sha256,
       });
       expectP38ReceiptProjection(recovered, run, {
         admissionState: "MayHaveStarted",
-        admissionSource: "P39Admission",
+        admissionSource: "Admission",
       });
       expect(run.fixture.daemonErrors).toEqual([]);
       expect(peer.daemonErrors).toEqual([]);

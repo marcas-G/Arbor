@@ -107,7 +107,7 @@ import {
   P20_MIGRATIONS,
   P21_MIGRATIONS,
   P22_MIGRATIONS,
-  type P39RecoveryBindingQualificationProbe,
+  type RecoveryBindingQualificationProbe,
   PermissionGrantRepositoryLive,
   ProjectDirectoryLive,
   ProjectionStoreLive,
@@ -487,7 +487,7 @@ export interface SingleWorkspaceConfig {
   /** Test-only catalog visibility diagnostic; ordinary startup leaves absent. */
   readonly executableToolQualificationProbe?: ExecutableToolHandlerQualificationProbe;
   /** Test-only P39 claim branch trace; ordinary startup leaves absent. */
-  readonly p39RecoveryBindingQualificationProbe?: P39RecoveryBindingQualificationProbe;
+  readonly p39RecoveryBindingQualificationProbe?: RecoveryBindingQualificationProbe;
   /** Test-only process-local observation of P1 sandbox preparation stages. */
   readonly sandboxPolicyDecisionPreparationQualificationProbe?: SandboxPolicyDecisionPreparationQualificationProbe;
   readonly providerQualificationProbe?: ProviderRuntimeConfig["qualificationProbe"];
@@ -1508,7 +1508,7 @@ const buildSingleWorkspaceLayerInternal = (
             lock !== preparedDatabase.writerLockFilename
           ) {
             return yield* Effect.die({
-              _tag: "P39MaintenanceFailure",
+              _tag: "MaintenanceFailure",
               code: "P39_UNSUPPORTED_DEPLOYMENT",
             });
           }

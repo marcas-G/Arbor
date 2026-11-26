@@ -220,7 +220,7 @@ const findP39FailureCode = (
   }
   const fields = cause as Record<string, unknown>;
   if (
-    fields._tag === "P39MaintenanceFailure" &&
+    fields._tag === "MaintenanceFailure" &&
     typeof fields.code === "string" &&
     /^P39_[A-Z0-9_]{1,72}$/u.test(fields.code)
   ) {
@@ -233,7 +233,7 @@ const findP39FailureCode = (
     };
   }
   if (
-    fields._tag === "P39UnsupportedDeploymentDiagnostic" &&
+    fields._tag === "UnsupportedDeploymentDiagnostic" &&
     typeof fields.reasonCode === "string" &&
     /^P39_[A-Z0-9_]{1,72}$/u.test(fields.reasonCode)
   ) {

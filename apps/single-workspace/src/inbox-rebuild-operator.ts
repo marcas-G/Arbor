@@ -16,8 +16,8 @@ import {
   makeTransactionPortLive,
   P38_MIGRATIONS,
   P39_MAINTENANCE_MIGRATIONS,
-  type P39MaintenanceFailure,
-  type P39MaintenanceSqlClient,
+  type MaintenanceFailure,
+  type MaintenanceSqlClient,
   databaseWriterLockFilename,
   RetryVerificationOriginRepositoryLive,
   runMigrations,
@@ -364,7 +364,7 @@ const appendRecord = (
   return entry;
 };
 
-const sqlLayerFor = (primary: P39MaintenanceSqlClient) =>
+const sqlLayerFor = (primary: MaintenanceSqlClient) =>
   Layer.succeed(SqlClient, primary as never);
 
 interface SchemaObject {
@@ -384,7 +384,7 @@ interface SchemaColumn {
 }
 
 const schemaSignature = (
-  primary: P39MaintenanceSqlClient,
+  primary: MaintenanceSqlClient,
 ): Effect.Effect<string, unknown> =>
   Effect.gen(function* () {
     const app = yield* primary.unsafe<{ application_id: number }>(
@@ -440,7 +440,7 @@ const digestValue = (value: unknown): unknown => {
 };
 
 const logicalDigest = (
-  primary: P39MaintenanceSqlClient,
+  primary: MaintenanceSqlClient,
   onlyTables?: ReadonlyArray<string>,
 ): Effect.Effect<string, unknown> =>
   Effect.gen(function* () {
@@ -555,7 +555,7 @@ const decodeProjectionBefore = (
   return snapshot;
 };
 const inboxProjectionSnapshot = (
-  primary: P39MaintenanceSqlClient,
+  primary: MaintenanceSqlClient,
   requireComplete = false,
 ): Effect.Effect<ReadonlyMap<string, InboxProjectionRow>, unknown> =>
   Effect.gen(function* () {
@@ -602,7 +602,7 @@ interface InboxProjectionOutcome {
 }
 
 const verifyRebuiltProjection = (
-  primary: P39MaintenanceSqlClient,
+  primary: MaintenanceSqlClient,
   projectionBefore: ReadonlyMap<string, InboxProjectionRow>,
   canonicalInputDigest: string,
 ): Effect.Effect<InboxProjectionOutcome, unknown> =>
@@ -722,7 +722,7 @@ export const deriveTrustedSchema48Signature = (): Promise<string> => {
           const primary = {
             unsafe: client.unsafe,
             withTransaction: client.withTransaction,
-          } as P39MaintenanceSqlClient;
+          } as MaintenanceSqlClient;
           return yield* schemaSignature(primary);
         }),
         sqliteLayer({ filename: ":memory:" }),
@@ -911,13 +911,13 @@ export const runInboxRebuild = async (
             Effect.mapError(
               (cause) =>
                 ({
-                  _tag: "P39MaintenanceFailure",
+                  _tag: "MaintenanceFailure",
                   code: "P39_MIGRATION_PREFIX_INVALID",
                   cause: {
                     _tag: "InboxRebuildOperatorDiagnostic",
                     code: safeCauseCode(cause),
                   },
-                }) as P39MaintenanceFailure,
+                }) as MaintenanceFailure,
             ),
           ),
         {
@@ -938,32 +938,32 @@ export const runInboxRebuild = async (
               }>("PRAGMA user_version");
               if (Number(versionRows[0]?.user_version) !== 48)
                 return yield* Effect.fail({
-                  _tag: "P39MaintenanceFailure",
+                  _tag: "MaintenanceFailure",
                   code: "P39_MIGRATION_PREFIX_INVALID",
-                } as P39MaintenanceFailure);
+                } as MaintenanceFailure);
               const fk = yield* primary.unsafe("PRAGMA foreign_key_check");
               if (fk.length > 0)
                 return yield* Effect.fail({
-                  _tag: "P39MaintenanceFailure",
+                  _tag: "MaintenanceFailure",
                   code: "P39_MIGRATION_PREFIX_INVALID",
-                } as P39MaintenanceFailure);
+                } as MaintenanceFailure);
               const required = yield* primary.unsafe<{ name: string }>(
                 "SELECT name FROM sqlite_schema WHERE type='table' AND name IN ('retry_verification_legacy_dispositions','retry_verification_origins','inbox_entries','works','verifications','projects','workspaces') ORDER BY name",
               );
               if (required.length !== 7)
                 return yield* Effect.fail({
-                  _tag: "P39MaintenanceFailure",
+                  _tag: "MaintenanceFailure",
                   code: "P39_MIGRATION_PREFIX_INVALID",
-                } as P39MaintenanceFailure);
+                } as MaintenanceFailure);
               const actualSignature = yield* schemaSignature(primary);
               const expectedSignature = yield* Effect.promise(
                 deriveTrustedSchema48Signature,
               );
               if (actualSignature !== expectedSignature)
                 return yield* Effect.fail({
-                  _tag: "P39MaintenanceFailure",
+                  _tag: "MaintenanceFailure",
                   code: "P39_MIGRATION_PREFIX_INVALID",
-                } as P39MaintenanceFailure);
+                } as MaintenanceFailure);
               const currentDatabaseDigest = yield* logicalDigest(primary);
               canonicalInputDigest = yield* logicalDigest(
                 primary,
@@ -973,9 +973,9 @@ export const runInboxRebuild = async (
               if (activeRecords.length === 0 && latestRecords.length > 0) {
                 if (!args.resume)
                   return yield* Effect.fail({
-                    _tag: "P39MaintenanceFailure",
+                    _tag: "MaintenanceFailure",
                     code: "P39_MIGRATION_PREFIX_INVALID",
-                  } as P39MaintenanceFailure);
+                  } as MaintenanceFailure);
                 activeRecords = latestRecords;
               }
               if (activeRecords.length === 0) {
@@ -1021,9 +1021,9 @@ export const runInboxRebuild = async (
                     canonicalP6InboxJson(expectedBinding)
                 )
                   return yield* Effect.fail({
-                    _tag: "P39MaintenanceFailure",
+                    _tag: "MaintenanceFailure",
                     code: "P39_MIGRATION_PREFIX_INVALID",
-                  } as P39MaintenanceFailure);
+                  } as MaintenanceFailure);
               }
               if (
                 activeRecords.length === 1 &&
@@ -1031,9 +1031,9 @@ export const runInboxRebuild = async (
                   currentDatabaseDigest
               )
                 return yield* Effect.fail({
-                  _tag: "P39MaintenanceFailure",
+                  _tag: "MaintenanceFailure",
                   code: "P39_MIGRATION_PREFIX_INVALID",
-                } as P39MaintenanceFailure);
+                } as MaintenanceFailure);
               if (activeRecords.at(-1)?.record.kind === "Committed")
                 return true;
               if (activeRecords.at(-1)?.record.kind !== "Prepared") {
@@ -1067,9 +1067,9 @@ export const runInboxRebuild = async (
                   prepared?.schemaSignature !== actualSignature
                 )
                   return yield* Effect.fail({
-                    _tag: "P39MaintenanceFailure",
+                    _tag: "MaintenanceFailure",
                     code: "P39_MIGRATION_PREFIX_INVALID",
-                  } as P39MaintenanceFailure);
+                  } as MaintenanceFailure);
                 preparedDatabaseDigest = String(
                   prepared.preWriteDatabaseDigest,
                 );
@@ -1085,9 +1085,9 @@ export const runInboxRebuild = async (
                   )
                 )
                   return yield* Effect.fail({
-                    _tag: "P39MaintenanceFailure",
+                    _tag: "MaintenanceFailure",
                     code: "P39_MIGRATION_PREFIX_INVALID",
-                  } as P39MaintenanceFailure);
+                  } as MaintenanceFailure);
                 preparedProjectionBefore =
                   yield* inboxProjectionSnapshot(primary);
               }
@@ -1096,13 +1096,13 @@ export const runInboxRebuild = async (
               Effect.mapError(
                 (cause) =>
                   ({
-                    _tag: "P39MaintenanceFailure",
+                    _tag: "MaintenanceFailure",
                     code: "P39_MIGRATION_PREFIX_INVALID",
                     cause: {
                       _tag: "InboxRebuildOperatorDiagnostic",
                       code: safeCauseCode(cause),
                     },
-                  }) as P39MaintenanceFailure,
+                  }) as MaintenanceFailure,
               ),
             ),
         },

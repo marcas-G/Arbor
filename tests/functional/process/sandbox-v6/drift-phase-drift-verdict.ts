@@ -367,7 +367,7 @@ export const v6ePhaseFreshRootDriftVerdict = async (
     invocation_id: freshInvocationId,
     attempt_no: 0,
     admission_state: "MayHaveStarted",
-    admission_source: "P39Admission",
+    admission_source: "Admission",
     binding_sha256:
       acceptedFreshP4Outcome.source.invocation.recovery_binding_sha256,
   });

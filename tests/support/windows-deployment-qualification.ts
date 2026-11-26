@@ -56,7 +56,7 @@ const getCurrentWindowsSid = (): string => {
   return sid;
 };
 
-export interface P39PrivateTestTempRoot {
+export interface PrivateTestTempRoot {
   readonly path: string;
   readonly currentSid: string;
 }
@@ -72,7 +72,7 @@ export const p39TestTempRoot = (): string =>
  * Its protected DACL grants FullControl only to the current SID, SYSTEM, and
  * Administrators, and descendants inherit exactly those grants. */
 export const createP39PrivateTestTempRoot =
-  (): P39PrivateTestTempRoot | null => {
+  (): PrivateTestTempRoot | null => {
     if (process.platform !== "win32") return null;
     const parent = tmpdir();
     const path = mkdtempSync(join(parent, "arbor-vitest-p39-"));
@@ -100,7 +100,7 @@ export const createP39PrivateTestTempRoot =
 /** Restore current-user cleanup access to one private per-test temp root and
  * remove it after the owning test file has finished. */
 export const removeP39PrivateTestTempRoot = (
-  root: P39PrivateTestTempRoot,
+  root: PrivateTestTempRoot,
 ): void => {
   execFileSync(
     "icacls.exe",

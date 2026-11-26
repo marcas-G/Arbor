@@ -375,7 +375,7 @@ export const p39NotOccurredRetryCase = (
     profileProtocol: profile.profileProtocol,
     effectKey,
     admittedAt: "2026-01-01T00:00:02.000Z",
-    admissionSource: "P39Admission",
+    admissionSource: "Admission",
     admissionTimePrecision: "TransactionTimestamp",
   };
   const prior: ToolInvocationRecord = {

@@ -1,10 +1,10 @@
 import { parse, ToolInvocationId } from "@arbor/domain";
-import { P39RecoveryEvidenceStore, TransactionScope } from "@arbor/ports";
+import { RecoveryEvidenceStore, TransactionScope } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import { createCurrentSchemaTestDatabase } from "../../../tests/support/schema44-database.js";
-import { layer, P39RecoveryEvidenceStoreLive } from "../src/index.js";
+import { layer, RecoveryEvidenceStoreLive } from "../src/index.js";
 
 const invocationId = parse(ToolInvocationId)(
   "tin_018f2b3c-4d5e-7abc-8def-0123456789b1",
@@ -14,7 +14,7 @@ const makeApp = (filename: string) => {
   const sqlite = layer({ filename });
   return Layer.mergeAll(
     sqlite,
-    Layer.provide(P39RecoveryEvidenceStoreLive, sqlite),
+    Layer.provide(RecoveryEvidenceStoreLive, sqlite),
   );
 };
 
@@ -42,7 +42,7 @@ describe("RecoveryBinding store DeniedUnbound projection", () => {
                        NULL)`,
               [invocationId],
             );
-            const store = yield* P39RecoveryEvidenceStore;
+            const store = yield* RecoveryEvidenceStore;
             const withScope = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
               Effect.provideService(effect, TransactionScope, {
                 session: { id: "p39-denied-query" },

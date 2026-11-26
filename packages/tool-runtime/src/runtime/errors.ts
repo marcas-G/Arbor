@@ -55,7 +55,7 @@ export const executableApprovalTerminalDenial = (
 };
 
 export const P39_RESOURCE_RESOLUTION_STALE = {
-  _tag: "P39ResourceResolutionStale",
+  _tag: "ResourceResolutionStale",
 } as const;
 
 export const denied = (

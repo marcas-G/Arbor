@@ -282,7 +282,7 @@ export const matchesAuthenticatedP39Evidence = (input: {
     binding.controlBasisDigest === context.controlBasisDigest &&
     selected.attempt.invocationId === intent.invocationId &&
     selected.attempt.admissionState === "MayHaveStarted" &&
-    selected.attempt.admissionSource === "P39Admission" &&
+    selected.attempt.admissionSource === "Admission" &&
     selected.attempt.admissionTimePrecision === "TransactionTimestamp" &&
     selected.attempt.bindingSha256 === selected.binding.bindingSha256 &&
     selected.fact.factId === factId &&

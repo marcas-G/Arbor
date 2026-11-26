@@ -20,7 +20,7 @@ import {
   ExecutableApprovalStore,
   IdGenerator,
   InboxProjectionStore,
-  P39RecoveryEvidenceStore,
+  RecoveryEvidenceStore,
   type RecoveryBindingV1,
   sha256Hex,
   ToolInvocationStore,
@@ -44,7 +44,7 @@ import {
   layer,
   P36_MIGRATIONS,
   P38_MIGRATIONS,
-  P39RecoveryEvidenceStoreLive,
+  RecoveryEvidenceStoreLive,
   runMigrations,
   runP39SqliteMaintenance,
   ToolInvocationStoreLive,
@@ -243,7 +243,7 @@ const serviceLayer = (filename: string) => {
     approvals,
     Layer.provide(TransactionPortLive, db),
     Layer.provide(ToolInvocationStoreLive, db),
-    Layer.provide(P39RecoveryEvidenceStoreLive, db),
+    Layer.provide(RecoveryEvidenceStoreLive, db),
   );
 };
 
@@ -461,7 +461,7 @@ const transactionProgram = (
     const tx = yield* TransactionPort;
     const invocations = yield* ToolInvocationStore;
     const approvals = yield* ExecutableApprovalStore;
-    const recovery = yield* P39RecoveryEvidenceStore;
+    const recovery = yield* RecoveryEvidenceStore;
     const sql = yield* SqlClient;
     yield* seedProjectExecution;
     const seeded = yield* seedActionAndApproval(scenario, invocationId);
@@ -616,7 +616,7 @@ describe("-receipt plus RecoveryBinding claim atomicity", () => {
               Effect.gen(function* () {
                 const tx = yield* TransactionPort;
                 const approvals = yield* ExecutableApprovalStore;
-                const recovery = yield* P39RecoveryEvidenceStore;
+                const recovery = yield* RecoveryEvidenceStore;
                 return yield* tx.transact(
                   Effect.gen(function* () {
                     const sameReceipt = yield* approvals.consumeApproved({

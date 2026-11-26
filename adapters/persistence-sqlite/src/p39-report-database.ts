@@ -27,7 +27,7 @@ import {
   P39_REPORT_APPLICATION_ID,
   P39_REPORT_DATABASE_DDL,
   P39_REPORT_USER_VERSION,
-  type P39MaintenanceFailure,
+  type MaintenanceFailure,
 } from "./p39-maintenance.js";
 import { executeP39WindowsSecurityQuery } from "./p39-windows-security.js";
 import {
@@ -36,15 +36,15 @@ import {
 } from "./database-writer-lock.js";
 
 const failure = (
-  code: P39MaintenanceFailure["code"],
+  code: MaintenanceFailure["code"],
   cause?: unknown,
-): P39MaintenanceFailure => ({
-  _tag: "P39MaintenanceFailure",
+): MaintenanceFailure => ({
+  _tag: "MaintenanceFailure",
   code,
   ...(cause === undefined ? {} : { cause }),
 });
 
-export type P39ReportSidecarValidationPhase =
+export type ReportSidecarValidationPhase =
   | "report-path-absolute-network-check"
   | "report-path-canonical-and-temp-check"
   | "report-parent-filesystem-acl"
@@ -62,7 +62,7 @@ export type P39ReportSidecarValidationPhase =
   | "report-final-path-and-identity";
 
 type ReportValidationPhaseObserver = (
-  phase: P39ReportSidecarValidationPhase,
+  phase: ReportSidecarValidationPhase,
 ) => void;
 
 const canonicalExistingOrNewPath = (path: string): string => {
@@ -98,7 +98,7 @@ const isWithinPath = (parent: string, child: string): boolean => {
   );
 };
 
-const fileIdentity = (path: string): string | P39MaintenanceFailure => {
+const fileIdentity = (path: string): string | MaintenanceFailure => {
   try {
     const stat = statSync(path, { bigint: true });
     if (
@@ -118,7 +118,7 @@ const fileIdentity = (path: string): string | P39MaintenanceFailure => {
 
 const validateLocalFilesystem = (
   path: string,
-): P39MaintenanceFailure | undefined => {
+): MaintenanceFailure | undefined => {
   try {
     const volumePath = existsSync(path) ? path : dirname(path);
     if (process.platform === "win32") {
@@ -169,7 +169,7 @@ export const validateReportSidecarPath = (
   sidecarFilename: string,
   protectedStoreFilenames: ReadonlyArray<string> = [],
   onPhase?: ReportValidationPhaseObserver,
-): Effect.Effect<string, P39MaintenanceFailure> => {
+): Effect.Effect<string, MaintenanceFailure> => {
   onPhase?.("report-path-absolute-network-check");
   if (
     !isAbsolute(primaryFilename) ||
@@ -422,7 +422,7 @@ export const validateReportSidecarDatabase = (
   sidecarFilename: string,
   protectedStoreFilenames: ReadonlyArray<string> = [],
   onPhase?: ReportValidationPhaseObserver,
-): Effect.Effect<void, P39MaintenanceFailure | SqliteAdapterError> =>
+): Effect.Effect<void, MaintenanceFailure | SqliteAdapterError> =>
   validateReportSidecarDatabaseInternal(
     primaryFilename,
     sidecarFilename,
@@ -438,7 +438,7 @@ export const validateExistingReportSidecarDatabase = (
   sidecarFilename: string,
   protectedStoreFilenames: ReadonlyArray<string> = [],
   onPhase?: ReportValidationPhaseObserver,
-): Effect.Effect<void, P39MaintenanceFailure | SqliteAdapterError> =>
+): Effect.Effect<void, MaintenanceFailure | SqliteAdapterError> =>
   validateReportSidecarDatabaseInternal(
     primaryFilename,
     sidecarFilename,
@@ -453,7 +453,7 @@ const validateReportSidecarDatabaseInternal = (
   protectedStoreFilenames: ReadonlyArray<string>,
   allowInitialize: boolean,
   onPhase?: ReportValidationPhaseObserver,
-): Effect.Effect<void, P39MaintenanceFailure | SqliteAdapterError> =>
+): Effect.Effect<void, MaintenanceFailure | SqliteAdapterError> =>
   Effect.gen(function* () {
     onPhase?.("report-database-path-revalidation");
     const path = yield* validateReportSidecarPath(
@@ -493,12 +493,12 @@ const validateReportSidecarDatabaseInternal = (
     yield* Effect.scoped(
       Effect.provide(
         p39ReportSetup(allowInitialize, onPhase).pipe(
-          Effect.mapError((cause: SqlError | P39MaintenanceFailure) =>
+          Effect.mapError((cause: SqlError | MaintenanceFailure) =>
             typeof cause === "object" &&
             cause !== null &&
             "_tag" in cause &&
-            cause._tag === "P39MaintenanceFailure"
-              ? (cause as P39MaintenanceFailure)
+            cause._tag === "MaintenanceFailure"
+              ? (cause as MaintenanceFailure)
               : failure("P39_REPORT_DB_IO_FAILURE", cause),
           ),
         ),
@@ -520,12 +520,12 @@ const validateReportSidecarDatabaseInternal = (
       return yield* Effect.fail(failure("P39_UNSUPPORTED_DEPLOYMENT"));
     }
   }).pipe(
-    Effect.mapError((cause: P39MaintenanceFailure | SqliteAdapterError) =>
+    Effect.mapError((cause: MaintenanceFailure | SqliteAdapterError) =>
       typeof cause === "object" &&
       cause !== null &&
       "_tag" in cause &&
-      cause._tag === "P39MaintenanceFailure"
-        ? (cause as P39MaintenanceFailure)
+      cause._tag === "MaintenanceFailure"
+        ? (cause as MaintenanceFailure)
         : sqliteAdapterError("failed to prepare P39 report sidecar", cause),
     ),
   );

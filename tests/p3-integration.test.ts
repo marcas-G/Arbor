@@ -23,7 +23,7 @@ import {
   LocalPlanStoreLive,
   layer,
   P26_MIGRATIONS,
-  P39RecoveryEvidenceStoreLive,
+  RecoveryEvidenceStoreLive,
   ProjectRepositoryLive,
   ProviderTurnStoreLive,
   RecoveryAttentionFactStoreLive,
@@ -253,7 +253,7 @@ const makeApp = () => {
       Layer.provide(ConversationAttemptStoreLive, infra),
       Layer.provide(ExecutionRepositoryLive, infra),
       Layer.provide(ToolInvocationStoreLive, infra),
-      Layer.provide(P39RecoveryEvidenceStoreLive, infra),
+      Layer.provide(RecoveryEvidenceStoreLive, infra),
       Layer.provide(LocalPlanStoreLive, infra),
       Layer.provide(DecisionRequestStoreLive, infra),
       Layer.provide(

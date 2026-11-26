@@ -18,7 +18,7 @@ import {
   HumanMessageStoreLive,
   InboxProjectionStoreLive,
   LocalPlanStoreLive,
-  P39RecoveryEvidenceStoreLive,
+  RecoveryEvidenceStoreLive,
   ProjectRepositoryLive,
   RecoveryAttentionFactStoreLive,
   ToolInvocationStoreLive,
@@ -83,7 +83,7 @@ export const agentDriverTestDependencies = (input: {
       ),
     ),
     Layer.provide(ToolInvocationStoreLive, input.infra),
-    Layer.provide(P39RecoveryEvidenceStoreLive, input.infra),
+    Layer.provide(RecoveryEvidenceStoreLive, input.infra),
     Layer.provide(LocalPlanStoreLive, input.infra),
     Layer.provide(DecisionRequestStoreLive, input.infra),
     Layer.provide(

@@ -213,7 +213,7 @@ export const isP9SandboxUnavailableTerminal = (input: {
     effectAttempts[0]?.invocation_id !== probe.invocationId ||
     effectAttempts[0]?.attempt_no !== 0 ||
     effectAttempts[0]?.admission_state !== "MayHaveStarted" ||
-    effectAttempts[0]?.admission_source !== "P39Admission" ||
+    effectAttempts[0]?.admission_source !== "Admission" ||
     effectAttempts[0]?.binding_sha256 !== invocation.recovery_binding_sha256 ||
     artifacts.length !== 0
   )
@@ -299,7 +299,7 @@ export const p9NoEffectEvidenceForProbe = (probe: P4OutcomeProbe) => {
         invocation_id: probe.invocationId,
         attempt_no: 0,
         admission_state: "MayHaveStarted",
-        admission_source: "P39Admission",
+        admission_source: "Admission",
         binding_sha256: bindingSha256,
       },
     ] satisfies ReadonlyArray<P9EffectAttemptRow>,

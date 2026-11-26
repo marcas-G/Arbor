@@ -13,11 +13,11 @@ import {
   P39_MAINTENANCE_MIGRATIONS,
 } from "./migrations.js";
 import {
-  type P39MaintenanceFailure,
-  type P39MaintenancePort,
-  type P39MigrationBlockReport,
-  type P39PreflightSnapshot,
-  type P39WriterExclusionLease,
+  type MaintenanceFailure,
+  type MaintenancePort,
+  type MigrationBlockReport,
+  type PreflightSnapshot,
+  type WriterExclusionLease,
   p39UnsupportedDeployment,
   readP39BlockReports,
   runP39MaintenanceGateWithLease,
@@ -25,7 +25,7 @@ import {
   writeP39BlockReportAndReadBack,
 } from "./p39-maintenance.js";
 import {
-  type P39ReportSidecarValidationPhase,
+  type ReportSidecarValidationPhase,
   validateExistingReportSidecarDatabase,
   validateReportSidecarDatabase,
   validateReportSidecarPath,
@@ -44,7 +44,7 @@ import {
 /** The subset of Effect SQL used by the maintenance adapter. Concrete
  * SqlClient services from the primary and operator-selected sidecar databases
  * satisfy this interface. */
-export interface P39MaintenanceSqlClient {
+export interface MaintenanceSqlClient {
   readonly unsafe: <A = unknown>(
     statement: string,
     params?: ReadonlyArray<unknown>,
@@ -54,26 +54,26 @@ export interface P39MaintenanceSqlClient {
   ) => Effect.Effect<A, E | SqlError, R>;
 }
 
-interface P39SqliteMaintenanceAdapterOptions {
-  readonly primary: P39MaintenanceSqlClient;
+interface SqliteMaintenanceAdapterOptions {
+  readonly primary: MaintenanceSqlClient;
   readonly writerLock: DatabaseWriterLockClientService;
   readonly primaryFilename: string;
   readonly writerLockFilename: string;
   readonly maintenancePermit?: DatabaseWriterPermit;
   readonly writeAndReadBackSidecarReport: (
-    report: P39MigrationBlockReport,
+    report: MigrationBlockReport,
   ) => Effect.Effect<
     { readonly reportKey: string; readonly contentHash: string },
-    P39MaintenanceFailure | SqlError
+    MaintenanceFailure | SqlError
   >;
 }
 
-class P39PrimarySqlClient extends Context.Service<
-  P39PrimarySqlClient,
-  P39MaintenanceSqlClient
->()("arbor/P39PrimarySqlClient") {}
+class PrimarySqlClient extends Context.Service<
+  PrimarySqlClient,
+  MaintenanceSqlClient
+>()("arbor/PrimarySqlClient") {}
 
-export interface P39SqliteMaintenanceCommandOptions {
+export interface SqliteMaintenanceCommandOptions {
   readonly primaryFilename: string;
   readonly sidecarFilename: string;
   /** Other canonical databases owned by the application, used to reject an
@@ -88,8 +88,8 @@ export interface P39SqliteMaintenanceCommandOptions {
  * complete 0037→0038→0039 suffix. It exits in maintenance-only mode at version
  * 39 and never constructs Agent/P4 Runtime services. */
 export const runP39SqliteMaintenance = (
-  options: P39SqliteMaintenanceCommandOptions,
-): Effect.Effect<void, P39MaintenanceFailure | SqliteAdapterError | SqlError> =>
+  options: SqliteMaintenanceCommandOptions,
+): Effect.Effect<void, MaintenanceFailure | SqliteAdapterError | SqlError> =>
   runP39SqliteMaintenanceWithPermit(options, () => Effect.void);
 
 /** Executes P39 and then the supplied continuation while retaining the exact
@@ -99,18 +99,18 @@ export const runP39SqliteMaintenance = (
  * Release failure is returned as a typed failure and cannot be reported as
  * successful maintenance. */
 export const runP39SqliteMaintenanceWithPermit = (
-  options: P39SqliteMaintenanceCommandOptions,
+  options: SqliteMaintenanceCommandOptions,
   continuation: (
-    primary: P39MaintenanceSqlClient,
+    primary: MaintenanceSqlClient,
     permit: DatabaseWriterPermit,
   ) => Effect.Effect<
     void,
-    P39MaintenanceFailure | SqliteAdapterError | SqlError
+    MaintenanceFailure | SqliteAdapterError | SqlError
   >,
   settings: {
     readonly onPhase?: (
       phase:
-        | P39ReportSidecarValidationPhase
+        | ReportSidecarValidationPhase
         | "primary-path-validation"
         | "writer-lock-path-validation"
         | "report-path-validation"
@@ -135,49 +135,49 @@ export const runP39SqliteMaintenanceWithPermit = (
       permit: DatabaseWriterPermit,
     ) => Effect.Effect<
       void,
-      P39MaintenanceFailure | SqliteAdapterError | SqlError
+      MaintenanceFailure | SqliteAdapterError | SqlError
     >;
     /** Runs after acquiring MaintenanceExclusive and before deciding whether
      * the P39 gate is needed. Used by resume-copy to validate and reconcile
      * the provenance head under the same cross-process permit as migrations. */
     readonly beforeMaintenance?: (
-      primary: P39MaintenanceSqlClient,
+      primary: MaintenanceSqlClient,
       permit: DatabaseWriterPermit,
     ) => Effect.Effect<
       boolean,
-      P39MaintenanceFailure | SqliteAdapterError | SqlError
+      MaintenanceFailure | SqliteAdapterError | SqlError
     >;
     readonly beforeP39?: (
-      primary: P39MaintenanceSqlClient,
+      primary: MaintenanceSqlClient,
       permit: DatabaseWriterPermit,
     ) => Effect.Effect<
       void,
-      P39MaintenanceFailure | SqliteAdapterError | SqlError
+      MaintenanceFailure | SqliteAdapterError | SqlError
     >;
     /** Called after the immutable P39 blocker report is durable/read back and
      * while the exclusive permit remains held, so the terminal provenance
      * record is serialized with every resume attempt. */
     readonly onP39Blocked?: (
-      primary: P39MaintenanceSqlClient,
+      primary: MaintenanceSqlClient,
       permit: DatabaseWriterPermit,
     ) => Effect.Effect<
       void,
-      P39MaintenanceFailure | SqliteAdapterError | SqlError
+      MaintenanceFailure | SqliteAdapterError | SqlError
     >;
   } = {},
-): Effect.Effect<void, P39MaintenanceFailure | SqliteAdapterError | SqlError> =>
+): Effect.Effect<void, MaintenanceFailure | SqliteAdapterError | SqlError> =>
   Effect.gen(function* () {
     settings.onPhase?.("primary-path-validation");
     if (options.primaryFilename === ":memory:") {
       return yield* Effect.fail({
-        _tag: "P39MaintenanceFailure" as const,
+        _tag: "MaintenanceFailure" as const,
         code: "P39_UNSUPPORTED_DEPLOYMENT" as const,
       });
     }
     const resolvedPrimaryPath = resolve(options.primaryFilename);
     if (!existsSync(resolvedPrimaryPath)) {
       return yield* Effect.fail({
-        _tag: "P39MaintenanceFailure" as const,
+        _tag: "MaintenanceFailure" as const,
         code: "P39_MIGRATION_PREFIX_INVALID" as const,
       });
     }
@@ -214,10 +214,10 @@ export const runP39SqliteMaintenanceWithPermit = (
     );
     const primaryService = Layer.provide(
       Layer.effect(
-        P39PrimarySqlClient,
+        PrimarySqlClient,
         Effect.map(
           SqlClient,
-          (service) => service as unknown as P39MaintenanceSqlClient,
+          (service) => service as unknown as MaintenanceSqlClient,
         ),
       ),
       SqliteClient.layer({ filename: primaryPath, disableWAL: true }),
@@ -233,7 +233,7 @@ export const runP39SqliteMaintenanceWithPermit = (
       ),
       SqliteClient.layer({ filename: sidecarPath, disableWAL: true }),
     );
-    const writeReport = (report: P39MigrationBlockReport) =>
+    const writeReport = (report: MigrationBlockReport) =>
       Effect.scoped(
         Effect.provide(
           writeP39BlockReportAndReadBack(report),
@@ -244,8 +244,8 @@ export const runP39SqliteMaintenanceWithPermit = (
           typeof cause === "object" &&
           cause !== null &&
           "_tag" in cause &&
-          cause._tag === "P39MaintenanceFailure"
-            ? (cause as P39MaintenanceFailure)
+          cause._tag === "MaintenanceFailure"
+            ? (cause as MaintenanceFailure)
             : failure("P39_REPORT_COMMIT_UNRESOLVED", cause),
         ),
       );
@@ -269,7 +269,7 @@ export const runP39SqliteMaintenanceWithPermit = (
           const verifyLatestSchemaAfterClose = yield* Effect.scoped(
             Effect.provide(
               Effect.gen(function* () {
-                const primary = yield* P39PrimarySqlClient;
+                const primary = yield* PrimarySqlClient;
                 const port = makeP39SqliteMaintenancePort({
                   primary,
                   writerLock,
@@ -338,8 +338,8 @@ export const runP39SqliteMaintenanceWithPermit = (
                         typeof cause === "object" &&
                         cause !== null &&
                         "_tag" in cause &&
-                        cause._tag === "P39MaintenanceFailure"
-                          ? (cause as P39MaintenanceFailure)
+                        cause._tag === "MaintenanceFailure"
+                          ? (cause as MaintenanceFailure)
                           : failure("P39_REPORT_COMMIT_UNRESOLVED", cause),
                       ),
                     ),
@@ -379,8 +379,8 @@ export const runP39SqliteMaintenanceWithPermit = (
                       typeof cause === "object" &&
                       cause !== null &&
                       "_tag" in cause &&
-                      cause._tag === "P39MaintenanceFailure" &&
-                      (cause as P39MaintenanceFailure).code ===
+                      cause._tag === "MaintenanceFailure" &&
+                      (cause as MaintenanceFailure).code ===
                         "P39_LEGACY_DB_ISOLATED" &&
                       settings.onP39Blocked !== undefined
                     ) {
@@ -481,21 +481,21 @@ interface SnapshotState {
 }
 
 const failure = (
-  code: P39MaintenanceFailure["code"],
+  code: MaintenanceFailure["code"],
   cause?: unknown,
-): P39MaintenanceFailure => ({
-  _tag: "P39MaintenanceFailure",
+): MaintenanceFailure => ({
+  _tag: "MaintenanceFailure",
   code,
   ...(cause === undefined ? {} : { cause }),
 });
 
 const normalizeP39DeploymentFailure = (
   cause:
-    | P39MaintenanceFailure
+    | MaintenanceFailure
     | DatabaseWriterLockFailure
     | SqliteAdapterError
     | SqlError,
-): P39MaintenanceFailure | SqliteAdapterError | SqlError => {
+): MaintenanceFailure | SqliteAdapterError | SqlError => {
   if (
     typeof cause === "object" &&
     cause !== null &&
@@ -514,9 +514,9 @@ const normalizeP39DeploymentFailure = (
     typeof cause === "object" &&
     cause !== null &&
     "_tag" in cause &&
-    cause._tag === "P39MaintenanceFailure"
+    cause._tag === "MaintenanceFailure"
   ) {
-    const maintenanceFailure = cause as P39MaintenanceFailure;
+    const maintenanceFailure = cause as MaintenanceFailure;
     if (
       maintenanceFailure.code === "P39_UNSUPPORTED_DEPLOYMENT" ||
       maintenanceFailure.code === "P39_REPORT_DB_PATH_INVALID" ||
@@ -525,7 +525,7 @@ const normalizeP39DeploymentFailure = (
       return p39UnsupportedDeployment(maintenanceFailure.code);
     }
   }
-  return cause as P39MaintenanceFailure | SqliteAdapterError | SqlError;
+  return cause as MaintenanceFailure | SqliteAdapterError | SqlError;
 };
 
 const toBlocker = (row: LegacyBlockedInvocationRow) => ({
@@ -543,8 +543,8 @@ const toBlocker = (row: LegacyBlockedInvocationRow) => ({
  * suffix. A blocker report commits/readbacks on the already validated sidecar
  * before the primary transaction is rolled back. */
 const makeP39SqliteMaintenancePort = (
-  options: P39SqliteMaintenanceAdapterOptions,
-): P39MaintenancePort => {
+  options: SqliteMaintenanceAdapterOptions,
+): MaintenancePort => {
   let snapshotState: SnapshotState | undefined;
   let writerLockPermit: DatabaseWriterPermit | undefined =
     options.maintenancePermit;
@@ -560,7 +560,7 @@ const makeP39SqliteMaintenancePort = (
           return { token: permit.token };
         }),
       ),
-    releaseWriterExclusion: (lease: P39WriterExclusionLease) => {
+    releaseWriterExclusion: (lease: WriterExclusionLease) => {
       const permit = writerLockPermit;
       if (permit === undefined || permit.token !== lease.token) {
         return Effect.fail(failure("P39_WRITER_LOCK_RELEASE_FAILED"));
@@ -614,7 +614,7 @@ const makeP39SqliteMaintenancePort = (
         WHERE settled_at IS NULL AND effect_admission_state = 'NotAdmitted'
         ORDER BY invocation_id`,
           );
-          const snapshot: P39PreflightSnapshot = {
+          const snapshot: PreflightSnapshot = {
             userVersion,
             databaseFingerprint: sha256Hex(resolve(options.primaryFilename)),
             activeNotAdmittedInvocations: blockedRows.map(toBlocker),
@@ -634,12 +634,12 @@ const makeP39SqliteMaintenancePort = (
         }
         return acquired.value;
       }).pipe(
-        Effect.mapError((cause: SqlError | P39MaintenanceFailure) =>
+        Effect.mapError((cause: SqlError | MaintenanceFailure) =>
           typeof cause === "object" &&
           cause !== null &&
           "_tag" in cause &&
-          cause._tag === "P39MaintenanceFailure"
-            ? (cause as P39MaintenanceFailure)
+          cause._tag === "MaintenanceFailure"
+            ? (cause as MaintenanceFailure)
             : failure("P39_REPORT_DB_IO_FAILURE", cause),
         ),
       ),
@@ -674,8 +674,8 @@ const makeP39SqliteMaintenancePort = (
             typeof cause === "object" &&
             cause !== null &&
             "_tag" in cause &&
-            cause._tag === "P39MaintenanceFailure"
-              ? (cause as P39MaintenanceFailure)
+            cause._tag === "MaintenanceFailure"
+              ? (cause as MaintenanceFailure)
               : failure("P39_REPORT_COMMIT_UNRESOLVED", cause),
           ),
         );
@@ -722,12 +722,12 @@ const makeP39SqliteMaintenancePort = (
         state.committed = true;
       }).pipe(
         Effect.mapError(
-          (cause: SqlError | SqliteAdapterError | P39MaintenanceFailure) =>
+          (cause: SqlError | SqliteAdapterError | MaintenanceFailure) =>
             typeof cause === "object" &&
             cause !== null &&
             "_tag" in cause &&
-            cause._tag === "P39MaintenanceFailure"
-              ? (cause as P39MaintenanceFailure)
+            cause._tag === "MaintenanceFailure"
+              ? (cause as MaintenanceFailure)
               : failure("P39_MIGRATION_PREFIX_INVALID", cause),
         ),
       );

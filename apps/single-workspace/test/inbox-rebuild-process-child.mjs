@@ -38,7 +38,7 @@ const qualifiedWriterLockFilename = (primaryFilename) => {
 };
 
 const failure = (code, cause) => ({
-  _tag: "P39MaintenanceFailure",
+  _tag: "MaintenanceFailure",
   code,
   ...(cause === undefined ? {} : { cause }),
 });

@@ -1,7 +1,7 @@
 import type { ToolInvocationId } from "@arbor/domain";
 import {
   canonicalizeRecoveryBindingV1,
-  P39RecoveryEvidenceStore,
+  RecoveryEvidenceStore,
   type RecoveryBindingV1,
   recoveryBindingV1Digest,
   type SelectedP39EffectAttempt,
@@ -57,8 +57,8 @@ interface SelectedRecoveryRow {
 
 const isAdmissionSource = (
   value: string | null,
-): value is "P36Backfill" | "P39Claim" | "P39Admission" =>
-  value === "P36Backfill" || value === "P39Claim" || value === "P39Admission";
+): value is "P36Backfill" | "Claim" | "Admission" =>
+  value === "P36Backfill" || value === "Claim" || value === "Admission";
 
 const isAdmissionTimePrecision = (
   value: string | null,
@@ -103,7 +103,7 @@ interface DeniedUnboundRow {
   readonly binding_invocation_id: string | null;
 }
 
-export type P39RecoveryBindingClaimBranch =
+export type RecoveryBindingClaimBranch =
   | "CreatedAtEmpty"
   | "CanonicalizationFailed"
   | "ExistingBindingRowInvalid"
@@ -113,7 +113,7 @@ export type P39RecoveryBindingClaimBranch =
   | "Attempt0AlreadyExists"
   | "BoundTransitionMismatch";
 
-interface P39RecoveryBindingClaimProbeIdentity {
+interface RecoveryBindingClaimProbeIdentity {
   readonly executionId: string;
   readonly invocationId: string;
   readonly providerTurnId: string;
@@ -127,26 +127,26 @@ interface P39RecoveryBindingClaimProbeIdentity {
   readonly approvalId: string | null;
 }
 
-export type P39RecoveryBindingQualificationProbe = (
+export type RecoveryBindingQualificationProbe = (
   event:
-    | (P39RecoveryBindingClaimProbeIdentity & {
+    | (RecoveryBindingClaimProbeIdentity & {
         readonly boundary: "P4P39BindClaimBranch";
-        readonly branch: P39RecoveryBindingClaimBranch;
+        readonly branch: RecoveryBindingClaimBranch;
       })
-    | (P39RecoveryBindingClaimProbeIdentity & {
+    | (RecoveryBindingClaimProbeIdentity & {
         readonly boundary: "P4P39ClaimBeforeCommit";
       }),
 ) => Promise<void>;
 
 export const makeP39RecoveryEvidenceStoreLive = (
-  qualificationProbe?: P39RecoveryBindingQualificationProbe,
-): Layer.Layer<P39RecoveryEvidenceStore, never, SqlClient> =>
+  qualificationProbe?: RecoveryBindingQualificationProbe,
+): Layer.Layer<RecoveryEvidenceStore, never, SqlClient> =>
   Layer.effect(
-    P39RecoveryEvidenceStore,
+    RecoveryEvidenceStore,
     Effect.gen(function* () {
       const sql = yield* SqlClient;
       const failure = repositoryFailure(
-        "P39RecoveryEvidenceStore",
+        "RecoveryEvidenceStore",
         "find-selected",
       );
       const run = <A>(effect: Effect.Effect<A, SqlError>) =>
@@ -155,7 +155,7 @@ export const makeP39RecoveryEvidenceStoreLive = (
       const corrupt = (reason: string) =>
         Effect.fail(
           persistenceCorruption(
-            "P39RecoveryEvidenceStore",
+            "RecoveryEvidenceStore",
             "find-selected",
             reason,
           ),
@@ -163,7 +163,7 @@ export const makeP39RecoveryEvidenceStoreLive = (
 
       const corruptClaim = (
         binding: RecoveryBindingV1,
-        branch: P39RecoveryBindingClaimBranch,
+        branch: RecoveryBindingClaimBranch,
         reason: string,
       ) =>
         Effect.gen(function* () {
@@ -285,7 +285,7 @@ export const makeP39RecoveryEvidenceStoreLive = (
             .pipe(
               Effect.mapError(
                 repositoryFailure(
-                  "P39RecoveryEvidenceStore",
+                  "RecoveryEvidenceStore",
                   "find-terminal-unbound-denial",
                 ),
               ),
@@ -310,7 +310,7 @@ export const makeP39RecoveryEvidenceStoreLive = (
           ) {
             return yield* Effect.fail(
               persistenceCorruption(
-                "P39RecoveryEvidenceStore",
+                "RecoveryEvidenceStore",
                 "find-terminal-unbound-denial",
                 "DeniedUnbound row has binding, reconciliation, or settlement fields outside its closed shape",
               ),
@@ -322,7 +322,7 @@ export const makeP39RecoveryEvidenceStoreLive = (
           });
         });
 
-      return P39RecoveryEvidenceStore.of({
+      return RecoveryEvidenceStore.of({
         bindClaim: (input: { binding: RecoveryBindingV1; createdAt: string }) =>
           Effect.gen(function* () {
             yield* TransactionScope;
@@ -377,7 +377,7 @@ export const makeP39RecoveryEvidenceStoreLive = (
               const attempt0 = attempts[0];
               if (
                 attempt0?.admission_state !== "NotAdmitted" ||
-                attempt0.admission_source !== "P39Claim" ||
+                attempt0.admission_source !== "Claim" ||
                 attempt0.admission_time_precision !== "NotAdmitted" ||
                 attempt0.binding_sha256 !== bindingSha256
               ) {
@@ -496,7 +496,7 @@ export const makeP39RecoveryEvidenceStoreLive = (
                  profile_version, profile_hash, profile_protocol, effect_key,
                  binding_sha256, admitted_at, admission_source,
                  admission_time_precision
-               ) VALUES (?,0,'NotAdmitted',?,?,?,?,?,?,?, ?,NULL,'P39Claim','NotAdmitted')`,
+               ) VALUES (?,0,'NotAdmitted',?,?,?,?,?,?,?, ?,NULL,'Claim','NotAdmitted')`,
                 [
                   input.binding.invocationId,
                   input.binding.toolDefinitionHash,
@@ -652,7 +652,7 @@ export const makeP39RecoveryEvidenceStoreLive = (
               sql.unsafe<{ readonly attempt_no: number }>(
                 `UPDATE tool_invocation_effect_attempts
                     SET admission_state = 'MayHaveStarted',
-                        admitted_at = ?, admission_source = 'P39Admission',
+                        admitted_at = ?, admission_source = 'Admission',
                         admission_time_precision = 'TransactionTimestamp'
                   WHERE invocation_id = ? AND attempt_no = 0
                     AND admission_state = 'NotAdmitted'
@@ -705,7 +705,7 @@ export const makeP39RecoveryEvidenceStoreLive = (
                         a.tool_definition_hash, a.side_effect_semantics,
                         a.profile_id, a.profile_version, a.profile_hash,
                         a.profile_protocol, a.effect_key, a.binding_sha256,
-                        ?, 'P39Admission', 'TransactionTimestamp'
+                        ?, 'Admission', 'TransactionTimestamp'
                    FROM tool_invocation_effect_attempts a
                    JOIN tool_invocations i
                      ON i.invocation_id = a.invocation_id
@@ -826,7 +826,7 @@ export const makeP39RecoveryEvidenceStoreLive = (
               row.profile_protocol === null ||
               row.effect_key === null ||
               row.admitted_at === null ||
-              row.admission_source !== "P39Admission" ||
+              row.admission_source !== "Admission" ||
               row.admission_time_precision !== "TransactionTimestamp" ||
               row.fact_id !== row.selected_fact_id ||
               row.fact_invocation_id !== invocationId ||
@@ -882,7 +882,7 @@ export const makeP39RecoveryEvidenceStoreLive = (
                 profileProtocol: row.profile_protocol,
                 effectKey: row.effect_key,
                 admittedAt: row.admitted_at,
-                admissionSource: "P39Admission" as const,
+                admissionSource: "Admission" as const,
                 admissionTimePrecision: "TransactionTimestamp" as const,
               },
               fact: {
@@ -912,4 +912,4 @@ export const makeP39RecoveryEvidenceStoreLive = (
   );
 
 /** Default production/test layer without diagnostic behavior. */
-export const P39RecoveryEvidenceStoreLive = makeP39RecoveryEvidenceStoreLive();
+export const RecoveryEvidenceStoreLive = makeP39RecoveryEvidenceStoreLive();

@@ -17,7 +17,7 @@ import type { SqlError } from "effect/unstable/sql/SqlError";
 import type { SqliteAdapterError } from "./errors.js";
 import { sqliteAdapterError } from "./errors.js";
 import {
-  type P39WindowsProtectedPath,
+  type WindowsProtectedPath,
   validateWindowsProtectedPaths,
 } from "./p39-windows-security.js";
 
@@ -71,7 +71,7 @@ export class DatabaseWriterLockClient extends Context.Service<
  * closed; deployments needing separate service/operator identities need a
  * separately governed shared-ACL profile. */
 const validateProtectedPaths = (
-  paths: ReadonlyArray<P39WindowsProtectedPath>,
+  paths: ReadonlyArray<WindowsProtectedPath>,
 ): boolean => {
   if (paths.length === 0) return false;
   try {

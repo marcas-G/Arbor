@@ -4,7 +4,7 @@ import { Effect, Layer, Option } from "effect";
 import {
   AgentLoopStepStoreLive,
   ClockLive,
-  P39RecoveryEvidenceStoreLive,
+  RecoveryEvidenceStoreLive,
   SandboxPolicyRequirementReadPortLive,
   layer as sqliteLayer,
   ToolInvocationStoreLive,
@@ -20,7 +20,7 @@ import {
   type AgentLoopStepRecord,
   AgentLoopStepStore,
   canonicalArgumentsDigestV1,
-  P39RecoveryEvidenceStore,
+  RecoveryEvidenceStore,
   type RecoveryBindingV1,
   recoveryBindingV1Digest,
   SandboxPolicyRequirementReadPort,
@@ -197,7 +197,7 @@ export const seedSandboxPolicyPendingAction = async (input: {
     TransactionPortLive,
     AgentLoopStepStoreLive,
     ToolInvocationStoreLive,
-    P39RecoveryEvidenceStoreLive,
+    RecoveryEvidenceStoreLive,
     SandboxPolicyRequirementReadPortLive,
   );
   const app = Layer.provideMerge(stores, infra);
@@ -207,7 +207,7 @@ export const seedSandboxPolicyPendingAction = async (input: {
         const tx = yield* TransactionPort;
         const steps = yield* AgentLoopStepStore;
         const invocations = yield* ToolInvocationStore;
-        const recovery = yield* P39RecoveryEvidenceStore;
+        const recovery = yield* RecoveryEvidenceStore;
         const requirements = yield* SandboxPolicyRequirementReadPort;
         const fence = {
           executionId,

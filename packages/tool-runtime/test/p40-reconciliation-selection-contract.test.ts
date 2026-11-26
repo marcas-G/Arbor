@@ -17,7 +17,7 @@ const executorSelectedResult: ToolExecutionResult = {
   settlement: rnoSettlement,
   observation: { text: "no effect", truncated: false },
   resultRef: "artifact_p4_result",
-  // @ts-expect-error Selection is derived from P39RecoveryEvidenceStore, not executor output.
+  // @ts-expect-error Selection is derived from RecoveryEvidenceStore, not executor output.
   reconciliationSelection: {
     attemptNo: 1,
     factId: "fact_p39_selected",

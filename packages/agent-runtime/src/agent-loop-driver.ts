@@ -12,7 +12,7 @@ import {
   type ExecutionDriverError,
   ExecutionDriverPort,
   InboxProjectionStore,
-  P39RecoveryEvidenceStore,
+  RecoveryEvidenceStore,
   type PortableOperationKind,
   type ProviderCancellationSignal,
   ProviderTurnStore,
@@ -78,7 +78,7 @@ export const AgentLoopDriverLive = (
   | ConversationCheckpointStore
   | DecisionRequestStore
   | ToolInvocationStore
-  | P39RecoveryEvidenceStore
+  | RecoveryEvidenceStore
   | Clock
 > =>
   Layer.effect(
@@ -101,7 +101,7 @@ export const AgentLoopDriverLive = (
       const inputPromotion = yield* InputPromotionService;
       const tx = yield* TransactionPort;
       const invocationStore = yield* ToolInvocationStore;
-      const p39Recovery = yield* P39RecoveryEvidenceStore;
+      const p39Recovery = yield* RecoveryEvidenceStore;
       const loopStepStoreOption =
         yield* Effect.serviceOption(AgentLoopStepStore);
       const providerTurnStoreOption =

@@ -41,7 +41,7 @@ import {
   validateReportSidecarPath,
 } from "../src/p39-report-database.js";
 import {
-  type P39WindowsSecurityQueryExecutor,
+  type WindowsSecurityQueryExecutor,
   validateWindowsProtectedPaths,
 } from "../src/p39-windows-security.js";
 import {
@@ -70,7 +70,7 @@ const inheritedTempQualificationAvailable = (() => {
 })();
 
 const executorWithP39ScriptTransform =
-  (transform: (script: string) => string): P39WindowsSecurityQueryExecutor =>
+  (transform: (script: string) => string): WindowsSecurityQueryExecutor =>
   (command, args, options) => {
     const script = args.at(-1);
     if (script === undefined) throw new Error("P39 probe script is missing");
@@ -854,7 +854,7 @@ describe("migration module boundary", () => {
                  profile_protocol,effect_key,binding_sha256,admitted_at,
                  admission_source,admission_time_precision
                ) VALUES ('tin_denied_unbound_valid',0,'NotAdmitted',NULL,'ReadOnly',
-                         NULL,NULL,NULL,NULL,NULL,NULL,NULL,'P39Claim','NotAdmitted')`,
+                         NULL,NULL,NULL,NULL,NULL,NULL,NULL,'Claim','NotAdmitted')`,
             ),
           ),
         );
@@ -968,7 +968,7 @@ describe("migration module boundary", () => {
             profile_protocol,effect_key,binding_sha256,admitted_at,
             admission_source,admission_time_precision
           ) VALUES (?,0,'MayHaveStarted',?,'Reconcilable','profile','1',?,'v1',?,?,'t1',
-                    'P39Admission','TransactionTimestamp')`,
+                    'Admission','TransactionTimestamp')`,
           [
             invocationId,
             "d".repeat(64),
@@ -1188,8 +1188,8 @@ describe("migration module boundary", () => {
       ),
     );
 
-    expect(result._tag).toBe("P39MaintenanceFailure");
-    if (result._tag === "P39MaintenanceFailure") {
+    expect(result._tag).toBe("MaintenanceFailure");
+    if (result._tag === "MaintenanceFailure") {
       expect(result.code).toBe("P39_MIGRATION_PREFIX_INVALID");
     }
     expect(order).toEqual([

@@ -20,7 +20,7 @@ import {
   InboxProjectionStoreLive,
   LocalPlanStoreLive,
   layer,
-  P39RecoveryEvidenceStoreLive,
+  RecoveryEvidenceStoreLive,
   ProjectRepositoryLive,
   ProviderTurnStoreLive,
   RecoveryAttentionFactStoreLive,
@@ -388,7 +388,7 @@ export const makeApp = (
       Layer.mergeAll(infra, Layer.provide(DomainEventJournalLive, infra)),
     ),
     Layer.provide(ToolInvocationStoreLive, infra),
-    Layer.provide(P39RecoveryEvidenceStoreLive, infra),
+    Layer.provide(RecoveryEvidenceStoreLive, infra),
     Layer.provide(LocalPlanStoreLive, infra),
     Layer.provide(DecisionRequestStoreLive, infra),
     Layer.provide(

@@ -239,7 +239,7 @@ describe("pending P38 public Executable approval qualification", () => {
           expect(recovered.attempt0).toMatchObject({
             attempt_no: 0,
             admission_state: "NotAdmitted",
-            admission_source: "P39Claim",
+            admission_source: "Claim",
           });
         }
         expect(run.fixture.daemonErrors).toEqual([]);

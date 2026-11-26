@@ -48,8 +48,8 @@ test("symbol rule matches planning-coded declarations only", () => {
   const fnDecl = "function ";
   for (const [line, symbol] of [
     [
-      `${head}P39WriterLockClient extends Context.Service<`,
-      "P39WriterLockClient",
+      `${head}WriterLockClient extends Context.Service<`,
+      "WriterLockClient",
     ],
     [`${iface}AH7RecoveryProbe {`, "AH7RecoveryProbe"],
     [
@@ -68,8 +68,8 @@ test("symbol rule matches planning-coded declarations only", () => {
     "export const schemaV57 = Schema.Struct({});",
     "function digest(input: string) { return sha256(input); }",
     "export class WriterLockClient {",
-    "import type { P39WriterLockFailure } from './p39-writer-lock.js';",
-    "  type P39MaintenanceFailure,",
+    "import type { WriterLockFailure } from './p39-writer-lock.js';",
+    "  type MaintenanceFailure,",
   ])
     assert.equal(symbolViolation(line), null, line);
 });
@@ -88,7 +88,7 @@ test("number exemption accepts protocol, algorithm and version numerals", () => 
     NUMBER_EXEMPT_PATTERN.test("ConversationCheckpointSourceManifestV1"),
     true,
   );
-  assert.equal(NUMBER_EXEMPT_PATTERN.test("P39WriterLockClient"), false);
+  assert.equal(NUMBER_EXEMPT_PATTERN.test("WriterLockClient"), false);
   assert.equal(NUMBER_EXEMPT_PATTERN.test("AH7RecoveryProbe"), false);
   // The planning code wins over a trailing version suffix.
   const versioned = [

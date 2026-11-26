@@ -33,19 +33,19 @@ describe("P39/P40 production tool-runtime composition", () => {
     );
 
     expect(composition).toMatch(
-      /readonly p39RecoveryBindingQualificationProbe\?: P39RecoveryBindingQualificationProbe/u,
+      /readonly p39RecoveryBindingQualificationProbe\?: RecoveryBindingQualificationProbe/u,
     );
     expect(composition).toMatch(
       /Layer\.provide\(\s*makeP39RecoveryEvidenceStoreLive\(\s*config\.p39RecoveryBindingQualificationProbe,\s*\),\s*infra,\s*\)/u,
     );
     expect(recoveryBindingStore).toMatch(
-      /export const makeP39RecoveryEvidenceStoreLive = \(\s*qualificationProbe\?: P39RecoveryBindingQualificationProbe,/u,
+      /export const makeP39RecoveryEvidenceStoreLive = \(\s*qualificationProbe\?: RecoveryBindingQualificationProbe,/u,
     );
     expect(recoveryBindingStore).toContain(
       "if (qualificationProbe !== undefined)",
     );
     expect(recoveryBindingStore).toContain(
-      "export const P39RecoveryEvidenceStoreLive = makeP39RecoveryEvidenceStoreLive();",
+      "export const RecoveryEvidenceStoreLive = makeP39RecoveryEvidenceStoreLive();",
     );
     expect(recoveryBindingStore).toContain('} from "@arbor/ports"');
     expect(recoveryBindingStore).not.toMatch(
@@ -67,7 +67,7 @@ describe("P39/P40 production tool-runtime composition", () => {
       "packages/tool-runtime/src/runtime/settlement.ts",
     );
 
-    expect(runtime).toContain("Effect.serviceOption(P39RecoveryEvidenceStore)");
+    expect(runtime).toContain("Effect.serviceOption(RecoveryEvidenceStore)");
     expect(invocationSetup).toContain(
       "const p39BindingEnabled = Option.isSome(p39Recovery)",
     );

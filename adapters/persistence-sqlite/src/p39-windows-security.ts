@@ -11,29 +11,29 @@ const atomicMoveScript = [
   "$s=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:ARBOR_P39_ATOMIC_SOURCE_B64))",
   "$d=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:ARBOR_P39_ATOMIC_DESTINATION_B64))",
   "$f=[uint32]$env:ARBOR_P39_ATOMIC_FLAGS",
-  "Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class P39AtomicMove { [DllImport(\"kernel32.dll\", CharSet=CharSet.Unicode, SetLastError=true)] public static extern bool MoveFileEx(string source, string destination, uint flags); }'",
-  "if(![P39AtomicMove]::MoveFileEx($s,$d,$f)){throw 'P39 atomic write-through move failed'}",
+  "Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class AtomicMove { [DllImport(\"kernel32.dll\", CharSet=CharSet.Unicode, SetLastError=true)] public static extern bool MoveFileEx(string source, string destination, uint flags); }'",
+  "if(![AtomicMove]::MoveFileEx($s,$d,$f)){throw 'P39 atomic write-through move failed'}",
   `Write-Output '${atomicMoveCompleteMarker}'`,
 ].join(";");
 
-export interface P39WindowsSecurityQueryOptions {
+export interface WindowsSecurityQueryOptions {
   readonly encoding: "utf8";
   readonly timeout: number;
   readonly windowsHide: true;
 }
 
-export type P39WindowsSecurityQueryExecutor = (
+export type WindowsSecurityQueryExecutor = (
   command: string,
   args: ReadonlyArray<string>,
-  options: P39WindowsSecurityQueryOptions,
+  options: WindowsSecurityQueryOptions,
 ) => string;
 
-export interface P39WindowsProtectedPath {
+export interface WindowsProtectedPath {
   readonly path: string;
   readonly kind: "directory" | "file";
 }
 
-const executeProcess: P39WindowsSecurityQueryExecutor = (
+const executeProcess: WindowsSecurityQueryExecutor = (
   command,
   args,
   options,
@@ -60,7 +60,7 @@ const executeProcess: P39WindowsSecurityQueryExecutor = (
   return execFileSync(command, [...args], { ...options, env: environment });
 };
 
-export interface P39WindowsExecutablePathOperations {
+export interface WindowsExecutablePathOperations {
   readonly lstat: (path: string) => {
     readonly isDirectory: () => boolean;
     readonly isFile: () => boolean;
@@ -73,7 +73,7 @@ export interface P39WindowsExecutablePathOperations {
  * environment variables and PATH are deliberately not consulted. The
  * injectable filesystem seam makes missing/reparse cases testable. */
 export const isP39WindowsPowerShellPathSafe = (
-  operations: P39WindowsExecutablePathOperations = {
+  operations: WindowsExecutablePathOperations = {
     lstat: lstatSync,
     realpath: realpathSync.native,
   },
@@ -117,7 +117,7 @@ export const isP39WindowsPowerShellExecutableAvailable = (): boolean =>
  * executor keeps the timeout boundary testable without sleeping for 30s. */
 export const executeP39WindowsSecurityQuery = (
   script: string,
-  executor: P39WindowsSecurityQueryExecutor = executeProcess,
+  executor: WindowsSecurityQueryExecutor = executeProcess,
 ): string =>
   executor(
     WINDOWS_POWERSHELL_EXECUTABLE,
@@ -179,7 +179,7 @@ export const moveP39ProtectedFileAtomically = (
 const protectedPathsSuccess = "P39_PROTECTED_PATHS_OK";
 
 export const p39WindowsProtectedPathsScript = (
-  paths: ReadonlyArray<P39WindowsProtectedPath>,
+  paths: ReadonlyArray<WindowsProtectedPath>,
 ): string => {
   const encodedPaths = paths
     .map(
@@ -214,8 +214,8 @@ export const p39WindowsProtectedPathsScript = (
 
 /** Validate every supplied Windows path in one bounded PowerShell process. */
 export const validateWindowsProtectedPaths = (
-  paths: ReadonlyArray<P39WindowsProtectedPath>,
-  executor: P39WindowsSecurityQueryExecutor = executeProcess,
+  paths: ReadonlyArray<WindowsProtectedPath>,
+  executor: WindowsSecurityQueryExecutor = executeProcess,
 ): boolean => {
   if (paths.length === 0) return false;
   try {

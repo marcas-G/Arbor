@@ -1,7 +1,7 @@
 import {
   type ClockService,
   canonicalizeRecoveryBindingV1,
-  type P39RecoveryEvidenceStoreService,
+  type RecoveryEvidenceStoreService,
   type RecoveryBindingV1,
   recoveryBindingV1Digest,
   type ToolDefinition,
@@ -37,7 +37,7 @@ export const verifyPriorReplayAdmission = (
   authority: AuthorityCapture,
   verifiedReplayBinding: VerifiedRecoveryBindingV1 | undefined,
   p39BindingEnabled: boolean,
-  p39Recovery: Option.Option<P39RecoveryEvidenceStoreService>,
+  p39Recovery: Option.Option<RecoveryEvidenceStoreService>,
   observationEvidence: Option.Option<ToolObservationEvidenceStoreService>,
   trustedProfile: ToolReconciliationProfile | undefined,
   trustedEffectKey: string | null,

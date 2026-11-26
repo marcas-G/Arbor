@@ -1,7 +1,7 @@
 import {
   type ClockService,
   canonicalArgumentsDigestV1,
-  type P39RecoveryEvidenceStoreService,
+  type RecoveryEvidenceStoreService,
   type ToolDefinition,
   type ToolExecutionContext,
   type ToolIntent,
@@ -30,8 +30,8 @@ export const inspectPriorInvocation = (
   trustedEffectKey: string | null,
   tx: TransactionPortService,
   clock: ClockService,
-  p39Recovery: Option.Option<P39RecoveryEvidenceStoreService>,
-  p39RecoveryEvidence: Option.Option<P39RecoveryEvidenceStoreService>,
+  p39Recovery: Option.Option<RecoveryEvidenceStoreService>,
+  p39RecoveryEvidence: Option.Option<RecoveryEvidenceStoreService>,
   observationEvidence: Option.Option<ToolObservationEvidenceStoreService>,
   reconciliationPort: Option.Option<ToolReconciliationPortService>,
   reconciliationFacts: Option.Option<ToolReconciliationFactStoreService>,
@@ -121,7 +121,7 @@ export const inspectPriorInvocation = (
           operationalFailure(
             "RecoveryBinding",
             String(intent.invocationId),
-          )({ _tag: "P39RecoveryEvidenceStoreUnavailable" }),
+          )({ _tag: "RecoveryEvidenceStoreUnavailable" }),
         );
       }
       const stored = yield* tx
