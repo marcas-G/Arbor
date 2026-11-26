@@ -127,9 +127,10 @@ describe("p10-boundaries", () => {
         normalized.includes("/tests/functional/") ||
         // This adapter test creates one real Unix-domain socket solely to
         // validate the broker binding contract. It does not own production
-        // transport; the exception is intentionally exact and file-scoped.
+        // transport; the exception is intentionally exact and file-scoped
+        // (B5 split: the suite moved into native-posix-policy/).
         normalized.endsWith(
-          "/adapters/sandbox-native-posix/test/native-posix-policy.test.ts",
+          "/adapters/sandbox-native-posix/test/native-posix-policy/verification-broker.test.ts",
         )
       );
     };
