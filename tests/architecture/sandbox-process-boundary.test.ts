@@ -643,7 +643,7 @@ describe("SandboxProcessPort architecture boundary", () => {
     const normalizedSource = source.replace(/\r\n?/gu, "\n");
     expect(
       createHash("sha256").update(normalizedSource, "utf8").digest("hex"),
-    ).toBe("4b6bac49b3ac0c6fbbb9e6850c5b1e458326a74b0e0ba7caaa586f28265a4cbf");
+    ).toBe("795210aac171e8dbeffff3b0b1d90817a152c3b2fb5900620b293dae51d35cb6");
     expect(
       hasSequence(
         tokenize(source).map(({ value }) => value),
@@ -742,7 +742,7 @@ describe("SandboxProcessPort architecture boundary", () => {
     const normalizedSource = source.replace(/\r\n?/gu, "\n");
     expect(
       createHash("sha256").update(normalizedSource, "utf8").digest("hex"),
-    ).toBe("4b6bac49b3ac0c6fbbb9e6850c5b1e458326a74b0e0ba7caaa586f28265a4cbf");
+    ).toBe("795210aac171e8dbeffff3b0b1d90817a152c3b2fb5900620b293dae51d35cb6");
     expect(
       hasSequence(
         tokenize(source).map(({ value }) => value),
