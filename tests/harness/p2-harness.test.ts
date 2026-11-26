@@ -58,7 +58,9 @@ describe("p2 harness wiring", () => {
       "application",
       "model-context",
       "agent-runtime",
+      "provider-runtime",
       "persistence-sqlite",
+      "provider-fake",
       "blob-local",
     ]);
   });

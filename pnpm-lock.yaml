@@ -688,12 +688,21 @@ importers:
       '@arbor/domain':
         specifier: workspace:*
         version: link:../domain
+      '@arbor/model-context':
+        specifier: workspace:*
+        version: link:../model-context
       '@arbor/persistence-sqlite':
         specifier: workspace:*
         version: link:../../adapters/persistence-sqlite
       '@arbor/ports':
         specifier: workspace:*
         version: link:../ports
+      '@arbor/provider-fake':
+        specifier: workspace:*
+        version: link:../../adapters/provider-fake
+      '@arbor/provider-runtime':
+        specifier: workspace:*
+        version: link:../provider-runtime
       effect:
         specifier: 4.0.0-rc.115
         version: 4.0.0-rc.115
