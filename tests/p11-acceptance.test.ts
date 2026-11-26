@@ -618,9 +618,9 @@ describe("p11-acceptance (P11 00 CI-1..CI-5 + end-to-end story)", () => {
     // per-phase representative suites exist (P5..P10 stay wired in)
     const representatives: ReadonlyArray<[string, string]> = [
       ["P5", "apps/single-workspace/test/p5-slice-acceptance.test.ts"],
-      ["P6", "tests/p6-acceptance.test.ts"],
+      ["P6", "tests/p6/story-a.test.ts"],
       ["P7", "tests/p7-acceptance.test.ts"],
-      ["P8", "tests/p8-acceptance.test.ts"],
+      ["P8", "tests/p8/story-a.test.ts"],
       ["P9", "tests/p9/p9-story-a.test.ts"],
       ["P10", "tests/p10/actions.test.ts"],
     ];

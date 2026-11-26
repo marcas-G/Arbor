@@ -13,9 +13,7 @@ const outputFile = resolve(
 const mixedFiles = new Set([
   "apps/single-workspace/test/p14-real-provider-conversation.test.ts",
   "apps/web/test/session.test.tsx",
-  "tests/p6-acceptance.test.ts",
   "tests/p7-acceptance.test.ts",
-  "tests/p8-acceptance.test.ts",
   "tests/p10-acceptance.test.ts",
   "tests/p11-acceptance.test.ts",
   "tests/p12-region-encoding.test.ts",
@@ -32,16 +30,14 @@ const mixedReasons = new Map([
     "The suite mixes direct session-storage component behavior with user-facing navigation/session transitions.",
   ],
   [
-    "tests/p6-acceptance.test.ts",
-    "SQLite formation/governance stories share the file with direct model-contract/program probes.",
+      "SQLite formation/governance stories share the file with direct model-contract/program probes.",
   ],
   [
     "tests/p7-acceptance.test.ts",
     "Database-backed deliverable/dependency stories share the file with direct matcher and replay probes.",
   ],
   [
-    "tests/p8-acceptance.test.ts",
-    "SQLite verification/acceptance lifecycle stories share the file with direct domain and program-contract probes.",
+      "SQLite verification/acceptance lifecycle stories share the file with direct domain and program-contract probes.",
   ],
   [
     "tests/p10-acceptance.test.ts",
