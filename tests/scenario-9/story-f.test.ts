@@ -174,14 +174,42 @@ describe("-acceptance", () => {
       Effect.gen(function* () {
         const businessProjectionSurface =
           /InboxProjection[S]tore|Attention[P]rojection|Attention[V]iew|Waitgraph[V]iew|rebuild[I]nbox|rebuild[A]ttention|rebuild[W]aitGraph/;
-        const dir = import.meta.dirname; // tests/p9 (file moved from tests/)
-        const p9Suites = [
-          ...readdirSync(join(dir, "..")).map(
-            (name) => [join(dir, ".."), name] as const,
-          ),
-          ...readdirSync(dir).map((name) => [dir, name] as const),
-        ].filter(
-          ([, name]) => name.startsWith("p9-") && name.endsWith(".test.ts"),
+        const dir = import.meta.dirname;
+        const testsDir = join(dir, "..");
+        const suiteDirs = [
+          testsDir,
+          dir,
+          join(testsDir, "worker-crash"),
+          join(testsDir, "provider-disconnect"),
+          join(testsDir, "workflow-interruption"),
+        ];
+        const suiteNames = new Set([
+          "consumer-crash.test.ts",
+          "harness.test.ts",
+          "harness-fault-modes.test.ts",
+          "lease-expiry.test.ts",
+          "lease-renewal.test.ts",
+          "rebuild-durability.test.ts",
+          "recovery-driver.test.ts",
+          "recovery-visibility.test.ts",
+          "timer-refire.test.ts",
+          "tool-outcome-unknown.test.ts",
+          "resurrection.test.ts",
+          "worker-crash-w.test.ts",
+          "dispatch-recovery.test.ts",
+          "workflow-replay.test.ts",
+          "provider-disconnect-turns.test.ts",
+          "provider-disconnect-recovery.test.ts",
+        ]);
+        const p9Suites = suiteDirs.flatMap((suiteDir) =>
+          readdirSync(suiteDir)
+            .filter(
+              (name) =>
+                name.endsWith(".test.ts") &&
+                (suiteDir === dir || suiteNames.has(name)) &&
+                name !== "story-f.test.ts",
+            )
+            .map((name) => [suiteDir, name] as const),
         );
         expect(p9Suites.length).toBeGreaterThanOrEqual(13);
         for (const [suiteDir, name] of p9Suites) {
