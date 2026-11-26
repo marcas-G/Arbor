@@ -89,7 +89,8 @@
       "l1Suites": ["packages/domain/test/work.test.ts"],
       "l2Suites": [
         "tests/p6-steer.test.ts",
-        "tests/p6-critical-steer.test.ts",
+        "tests/p6-critical-steer/gateway-receipts.test.ts",
+        "tests/p6-critical-steer/submit-transaction.test.ts",
         "tests/p10-humanintervention.test.ts"
       ],
       "l3": {
@@ -231,8 +232,10 @@
       "l1Suites": ["packages/domain/test/execution.test.ts"],
       "l2Suites": [
         "apps/single-workspace/test/p5-restart-continuity.test.ts",
-        "tests/p9-provider-disconnect.test.ts",
-        "tests/p9-worker-crash.test.ts",
+        "tests/p9-provider-disconnect/p9-provider-disconnect-turns.test.ts",
+        "tests/p9-provider-disconnect/p9-provider-disconnect-recovery.test.ts",
+        "tests/p9-worker-crash/p9-worker-crash-w.test.ts",
+        "tests/p9-worker-crash/p9-resurrection.test.ts",
         "tests/p9-tool-outcome-unknown.test.ts"
       ],
       "l3": {
@@ -258,9 +261,11 @@
         "tests/p9/p9-story-e.test.ts",
         "tests/p9/p9-story-f.test.ts",
         "tests/p9/p9-story-g.test.ts",
-        "tests/p9-provider-disconnect.test.ts",
+        "tests/p9-provider-disconnect/p9-provider-disconnect-turns.test.ts",
+        "tests/p9-provider-disconnect/p9-provider-disconnect-recovery.test.ts",
         "tests/p9-tool-outcome-unknown.test.ts",
-        "tests/p9-worker-crash.test.ts"
+        "tests/p9-worker-crash/p9-worker-crash-w.test.ts",
+        "tests/p9-worker-crash/p9-resurrection.test.ts"
       ],
       "l3": {
         "caseId": "B13-L3-REAL",
