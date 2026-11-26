@@ -33,7 +33,7 @@ import {
   FormationFulfillmentStore,
   FormationProposalStore,
   MessageStore,
-  P4SandboxOutcomeReadPort,
+  SandboxOutcomeReadPort,
   ProjectionQueryPort,
   ProjectRepository,
   ProviderTurnStore,
@@ -342,7 +342,7 @@ const projectionQueryService = (
       CurrentSandboxAuthoritySnapshotPort,
     );
     const p4SandboxOutcomeReadPort = yield* Effect.serviceOption(
-      P4SandboxOutcomeReadPort,
+      SandboxOutcomeReadPort,
     );
     const sandboxUnavailableStore = yield* Effect.serviceOption(
       SandboxProviderUnavailableStore,

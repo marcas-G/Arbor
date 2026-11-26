@@ -53,8 +53,8 @@ test("symbol rule matches planning-coded declarations only", () => {
     ],
     [`${iface}AH7RecoveryProbe {`, "AH7RecoveryProbe"],
     [
-      `${typeDecl}P4SandboxUnavailableObservationV1 =`,
-      "P4SandboxUnavailableObservationV1",
+      `${typeDecl}SandboxUnavailableObservationV1 =`,
+      "SandboxUnavailableObservationV1",
     ],
     [
       `${constDecl}P10AfterDeliverAttentionConsumerCommit = 1;`,
@@ -93,11 +93,11 @@ test("number exemption accepts protocol, algorithm and version numerals", () => 
   // The planning code wins over a trailing version suffix.
   const versioned = [
     "export type ",
-    "P4SandboxUnavailableObservationV1 =",
+    "SandboxUnavailableObservationV1 =",
   ].join("");
   assert.equal(
     symbolViolation(versioned)?.symbol,
-    "P4SandboxUnavailableObservationV1",
+    "SandboxUnavailableObservationV1",
   );
 });
 

@@ -1,9 +1,9 @@
 import { type ExecutionId, parse, ToolInvocationId } from "@arbor/domain";
 import {
   canonicalArgumentsDigestV1,
-  P4SandboxOutcomeReadPort,
-  type P4SandboxOutcomeReadPortService,
-  type P4SandboxUnavailableObservationV1,
+  SandboxOutcomeReadPort,
+  type SandboxOutcomeReadPortService,
+  type SandboxUnavailableObservationV1,
   sha256Hex,
   type ToolObservationEvidenceStoreError,
   verifyRecoveryBindingV1,
@@ -54,7 +54,7 @@ interface SandboxOutcomeRow {
 
 const makeLayer = () =>
   Layer.effect(
-    P4SandboxOutcomeReadPort,
+    SandboxOutcomeReadPort,
     Effect.gen(function* () {
       const sql = yield* SqlClient;
       const run = <A>(effect: Effect.Effect<A, SqlError>) =>
@@ -67,7 +67,7 @@ const makeLayer = () =>
           ),
         );
 
-      const findUnavailableByExecutionAndRevision: P4SandboxOutcomeReadPortService["findUnavailableByExecutionAndRevision"] =
+      const findUnavailableByExecutionAndRevision: SandboxOutcomeReadPortService["findUnavailableByExecutionAndRevision"] =
         (executionId, policyRevision) =>
           Effect.gen(function* () {
             if (!Number.isSafeInteger(policyRevision) || policyRevision < 1) {
@@ -125,7 +125,7 @@ const makeLayer = () =>
                 [executionId, policyRevision],
               ),
             );
-            const result: P4SandboxUnavailableObservationV1[] = [];
+            const result: SandboxUnavailableObservationV1[] = [];
             for (const row of rows) {
               const bytes =
                 typeof row.observation_json === "string"
@@ -228,10 +228,10 @@ const makeLayer = () =>
             return result;
           });
 
-      return P4SandboxOutcomeReadPort.of({
+      return SandboxOutcomeReadPort.of({
         findUnavailableByExecutionAndRevision,
       });
     }),
   );
 
-export const P4SandboxOutcomeReadPortLive = makeLayer();
+export const SandboxOutcomeReadPortLive = makeLayer();

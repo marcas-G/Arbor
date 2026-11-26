@@ -25,7 +25,7 @@ export * from "./lease.js";
 export * from "./migrate.js";
 export * from "./migrations.js";
 export * from "./ownership.js";
-export * from "./p4-sandbox-outcome-read-port.js";
+export * from "./sandbox-outcome-read-port.js";
 export * from "./p39-maintenance.js";
 export * from "./p39-maintenance-adapter.js";
 export * from "./p39-report-database.js";

@@ -3,7 +3,7 @@ import {
   canonicalArgumentsDigestV1,
   canonicalizeRecoveryBindingV1,
   P4_TOOL_OBSERVATION_FORMAT_V1,
-  P4SandboxOutcomeReadPort,
+  SandboxOutcomeReadPort,
   type RecoveryBindingV1,
   recoveryBindingV1Digest,
   sha256Hex,
@@ -17,7 +17,7 @@ import {
 } from "effect/unstable/sql/SqlClient";
 import { describe, expect } from "vitest";
 import { layer, TransactionPortLive } from "../src/index.js";
-import { P4SandboxOutcomeReadPortLive } from "../src/p4-sandbox-outcome-read-port.js";
+import { SandboxOutcomeReadPortLive } from "../src/sandbox-outcome-read-port.js";
 import { encodeToolObservationEvidence } from "../src/tool-observation-evidence-codec.js";
 
 const executionId = parse(ExecutionId)(
@@ -193,14 +193,14 @@ describe("sandbox outcome read port", () => {
         const app = Layer.mergeAll(
           infra,
           Layer.provide(TransactionPortLive, infra),
-          Layer.provide(P4SandboxOutcomeReadPortLive, infra),
+          Layer.provide(SandboxOutcomeReadPortLive, infra),
         );
         const result = yield* Effect.provide(
           Effect.gen(function* () {
             const sql = yield* SqlClient;
             yield* seedP4Rows(sql, encoded.evidence, "MayHaveStarted");
             const tx = yield* TransactionPort;
-            const port = yield* P4SandboxOutcomeReadPort;
+            const port = yield* SandboxOutcomeReadPort;
             return yield* tx.transact(
               port.findUnavailableByExecutionAndRevision(executionId, 2),
             );
@@ -249,13 +249,13 @@ describe("sandbox outcome read port", () => {
         const app = Layer.mergeAll(
           infra,
           Layer.provide(TransactionPortLive, infra),
-          Layer.provide(P4SandboxOutcomeReadPortLive, infra),
+          Layer.provide(SandboxOutcomeReadPortLive, infra),
         );
         const result = yield* Effect.gen(function* () {
           const sql = yield* SqlClient;
           yield* seedP4Rows(sql, encoded.evidence, "NotAdmitted");
           const tx = yield* TransactionPort;
-          const port = yield* P4SandboxOutcomeReadPort;
+          const port = yield* SandboxOutcomeReadPort;
           return yield* tx.transact(
             Effect.result(
               port.findUnavailableByExecutionAndRevision(executionId, 2),
