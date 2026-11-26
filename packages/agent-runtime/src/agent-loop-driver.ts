@@ -34,6 +34,7 @@ import {
   makeControlToolRegistry,
 } from "./control.js";
 import type { ControlActionAuthorizerService } from "./control-authorization.js";
+import { foldAgentLoopStepCompletionError } from "./decision/errors.js";
 import { toExecutionDriverError } from "./execution-driver-failure.js";
 import { ModelDecisionService } from "./model-decision-service.js";
 import { providerTurnSafetyFingerprint } from "./p12-safety-identity.js";
@@ -399,12 +400,11 @@ export const AgentLoopDriverLive = (
               ...(loopStepFence === undefined ? {} : { loopStepFence }),
               tx,
               sessions,
-              failure,
               now,
               ...(options.qualificationProbe === undefined
                 ? {}
                 : { qualificationProbe: options.qualificationProbe }),
-            });
+            }).pipe(Effect.mapError(foldAgentLoopStepCompletionError));
             if (finalization._tag === "Settle") {
               return commitSettlementProposal(finalization.settlement);
             }

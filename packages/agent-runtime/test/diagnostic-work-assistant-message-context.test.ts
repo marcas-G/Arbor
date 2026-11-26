@@ -267,7 +267,6 @@ const runPlainStopWorkStep = async (turn: number) => {
       } as never,
       tx,
       sessions: {} as never,
-      failure: (cause) => cause as never,
       now: () => Effect.succeed("2026-10-24T00:00:02.000Z"),
     }),
   );

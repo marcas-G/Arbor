@@ -617,7 +617,6 @@ describe("P9 SandboxUnavailableV1 successor recovery", () => {
         } as never,
         tx: tx as never,
         sessions: {} as never,
-        failure: (cause) => cause as never,
         now: () => Effect.succeed("2026-10-18T10:01:01.000Z"),
       }),
     );
