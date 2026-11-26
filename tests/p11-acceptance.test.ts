@@ -149,7 +149,10 @@ import {
   type WorktreeStoreService,
 } from "../packages/ports/src/index.js";
 import { ProviderRuntimeLive } from "../packages/provider-runtime/src/index.js";
-import { FixedSecretStoreLive } from "../packages/testkit/src/index.js";
+import {
+  agentDriverTestDependencies,
+  FixedSecretStoreLive,
+} from "../packages/testkit/src/index.js";
 import { makeControlTurnProfileLayer } from "./support/control-turn-profile-layer.js";
 import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-project-resource-source.js";
 
@@ -557,90 +560,39 @@ const cbMakeApp = () => {
   const advancement = Layer.provide(EnvironmentRevisionAdvancementLive, infra);
   const tx = Layer.provide(TransactionPortLive, infra);
   const turnProfiles = makeControlTurnProfileLayer(cbControlRegistry);
-  const driverDependencies = Layer.mergeAll(
+  const driverDependencies = agentDriverTestDependencies({
     infra,
-    cbRecordingModelContext(recorded),
-    providerRuntime,
-    cbCapability,
-    Layer.provide(SessionRepositoryLive, infra),
-    Layer.provide(HumanMessageStoreLive, infra),
-    Layer.provide(ProjectRepositoryLive, infra),
-    Layer.provide(WorkspaceRepositoryLive, infra),
-    Layer.provide(WorkRepositoryLive, infra),
-    Layer.provide(InboxProjectionStoreLive, infra),
-    Layer.provide(
-      InputPromotionServiceLive,
-      Layer.mergeAll(
-        infra,
-        tx,
-        sessions,
-        Layer.provide(InboxProjectionStoreLive, infra),
-        Layer.provide(ExecutionRepositoryLive, infra),
-      ),
-    ),
-    Layer.provide(ConversationResponseJobStoreLive, infra),
-    Layer.provide(ConversationAttemptStoreLive, infra),
-    Layer.provide(ConversationCheckpointStoreLive, infra),
-    Layer.provide(
-      ControlBasisResolverLive,
-      Layer.mergeAll(
-        infra,
-        Layer.provide(TransactionPortLive, infra),
-        Layer.provide(ProjectRepositoryLive, infra),
-        Layer.provide(WorkspaceRepositoryLive, infra),
-        Layer.provide(WorkRepositoryLive, infra),
-        revisions,
-      ),
-    ),
-    Layer.provide(ExecutionRepositoryLive, infra),
-    Layer.provide(
-      RecoveryAttentionFactStoreLive,
-      Layer.mergeAll(infra, Layer.provide(DomainEventJournalLive, infra)),
-    ),
-    Layer.provide(ToolInvocationStoreLive, infra),
-    Layer.provide(P39RecoveryEvidenceStoreLive, infra),
-    Layer.provide(LocalPlanStoreLive, infra),
-    Layer.provide(DecisionRequestStoreLive, infra),
-    Layer.provide(
-      WorkspaceKnowledgePortLive,
-      Layer.mergeAll(
-        infra,
-        tx,
-        Layer.provide(WorkRepositoryLive, infra),
-        Layer.provide(VerificationRepositoryLive, infra),
-        Layer.provide(AcceptanceRepositoryLive, infra),
-        Layer.provide(FormationProposalStoreLive, infra),
-        Layer.provide(FormationFulfillmentStoreLive, infra),
-        Layer.provide(WorkspaceRepositoryLive, infra),
-      ),
-    ),
-    Layer.provide(
-      WorkspacePlacementPortLive,
-      Layer.mergeAll(
-        infra,
-        tx,
-        Layer.provide(WorkRepositoryLive, infra),
-        Layer.provide(VerificationRepositoryLive, infra),
-        Layer.provide(AcceptanceRepositoryLive, infra),
-        Layer.provide(FormationProposalStoreLive, infra),
-        Layer.provide(FormationFulfillmentStoreLive, infra),
-        Layer.provide(WorkspaceRepositoryLive, infra),
-      ),
-    ),
-    makeBlobStorePortLive(cbBlobRoot),
-    tx,
-    revisions,
-  );
+    sessions,
+    environmentRevisions: revisions,
+    workspaceKnowledge: WorkspaceKnowledgePortLive,
+    workspacePlacement: WorkspacePlacementPortLive,
+  });
   const modelDecision = Layer.provide(
     ModelDecisionServiceLive(),
-    Layer.merge(driverDependencies, turnProfiles),
+    Layer.mergeAll(
+      driverDependencies,
+      turnProfiles,
+      cbRecordingModelContext(recorded),
+      providerRuntime,
+      cbCapability,
+      infra,
+    ),
   );
   const driver = Layer.provide(
     AgentLoopDriverLive({ controlRegistry: cbControlRegistry }),
     Layer.merge(driverDependencies, modelDecision),
   );
   return {
-    app: Layer.mergeAll(driverDependencies, driver, advancement),
+    app: Layer.mergeAll(
+      driverDependencies,
+      driver,
+      providerRuntime,
+      cbCapability,
+      revisions,
+      advancement,
+      tx,
+      infra,
+    ),
     recorded,
   };
 };
