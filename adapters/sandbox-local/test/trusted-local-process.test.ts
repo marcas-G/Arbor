@@ -5,8 +5,9 @@ import {
   TrustedLocalProcessPort,
   type TrustedLocalProcessRequest,
 } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect } from "effect";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect } from "vitest";
 import { TrustedLocalProcessPortLive } from "../src/trusted-local-process.js";
 
 const roots: string[] = [];
@@ -76,69 +77,65 @@ const requestFor = (rootPath: string): TrustedLocalProcessRequest => {
 };
 
 describe("TrustedLocalProcessPort", () => {
-  it("executes the explicit unconfined local branch through the adapter", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "arbor-trusted-local-"));
-    roots.push(directory);
-    const mountRoot = join(directory, "workspace");
-    mkdirSync(mountRoot);
-    const result = await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          const port = yield* TrustedLocalProcessPort;
-          return yield* port.run(requestFor(mountRoot));
-        }),
-        TrustedLocalProcessPortLive,
-      ),
-    );
-    expect(result).toMatchObject({
-      _tag: "Completed",
-      exitCode: 0,
-      stdout: "trusted-local-ok",
-      timedOut: false,
-    });
-  });
+  it.effect(
+    "executes the explicit unconfined local branch through the adapter",
+    () =>
+      Effect.gen(function* () {
+        const directory = mkdtempSync(join(tmpdir(), "arbor-trusted-local-"));
+        roots.push(directory);
+        const mountRoot = join(directory, "workspace");
+        mkdirSync(mountRoot);
+        const port = yield* TrustedLocalProcessPort;
+        const result = yield* port.run(requestFor(mountRoot));
+        expect(result).toMatchObject({
+          _tag: "Completed",
+          exitCode: 0,
+          stdout: "trusted-local-ok",
+          timedOut: false,
+        });
+      }).pipe(Effect.provide(TrustedLocalProcessPortLive)),
+  );
 
-  it("rejects a read-only cwd mount and a cwd that escapes its logical mount", async () => {
-    const directory = mkdtempSync(
-      join(tmpdir(), "arbor-trusted-local-reject-"),
-    );
-    roots.push(directory);
-    const mountRoot = join(directory, "workspace");
-    mkdirSync(mountRoot);
-    const base = requestFor(mountRoot);
-    const mounts = base.handle.mounts;
-    if (mounts === undefined) throw new Error("test handle has no mounts");
-    const testRequest = (request: TrustedLocalProcessRequest) =>
-      Effect.runPromise(
-        Effect.provide(
+  it.effect(
+    "rejects a read-only cwd mount and a cwd that escapes its logical mount",
+    () =>
+      Effect.gen(function* () {
+        const directory = mkdtempSync(
+          join(tmpdir(), "arbor-trusted-local-reject-"),
+        );
+        roots.push(directory);
+        const mountRoot = join(directory, "workspace");
+        mkdirSync(mountRoot);
+        const base = requestFor(mountRoot);
+        const mounts = base.handle.mounts;
+        if (mounts === undefined) throw new Error("test handle has no mounts");
+        const testRequest = (request: TrustedLocalProcessRequest) =>
           Effect.gen(function* () {
             const port = yield* TrustedLocalProcessPort;
             return yield* port.run(request);
-          }),
-          TrustedLocalProcessPortLive,
-        ),
-      );
-    const readonly = await testRequest({
-      ...base,
-      handle: {
-        ...base.handle,
-        mounts: mounts.map((mount) => ({
-          ...mount,
-          access: "ReadOnly" as const,
-        })),
-      },
-    });
-    const escaped = await testRequest({
-      ...base,
-      cwd: { mount: "workspace", path: "../outside" },
-    });
-    expect(readonly).toMatchObject({
-      _tag: "Rejected",
-      failureCode: "ProcessCapabilityNotBound",
-    });
-    expect(escaped).toMatchObject({
-      _tag: "Rejected",
-      failureCode: "ProcessCapabilityNotBound",
-    });
-  });
+          }).pipe(Effect.provide(TrustedLocalProcessPortLive));
+        const readonly = yield* testRequest({
+          ...base,
+          handle: {
+            ...base.handle,
+            mounts: mounts.map((mount) => ({
+              ...mount,
+              access: "ReadOnly" as const,
+            })),
+          },
+        });
+        const escaped = yield* testRequest({
+          ...base,
+          cwd: { mount: "workspace", path: "../outside" },
+        });
+        expect(readonly).toMatchObject({
+          _tag: "Rejected",
+          failureCode: "ProcessCapabilityNotBound",
+        });
+        expect(escaped).toMatchObject({
+          _tag: "Rejected",
+          failureCode: "ProcessCapabilityNotBound",
+        });
+      }),
+  );
 });

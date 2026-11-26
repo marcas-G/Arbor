@@ -7,8 +7,9 @@ import {
   WorkId,
   WorkspaceId,
 } from "@arbor/domain";
+import { it } from "@effect/vitest";
 import { Effect, Option } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import { makeTurnProfileResolver } from "../src/turn-profile.js";
 
 const workspaceId = parse(WorkspaceId)(
@@ -161,160 +162,176 @@ const resolver = makeTurnProfileResolver({
 });
 
 describe("P17 TurnProfileResolver", () => {
-  it("gives Root Conversation zero executable tools and only placement, authorization and work-initiation controls", async () => {
-    const profile = await Effect.runPromise(
-      resolver.resolve({
-        conversation: true,
-        execution: {
-          ...base,
-          binding: {
-            _tag: "WorkspaceExecution",
-            workspaceId,
-            focus: { _tag: "Coordination" },
+  it.effect(
+    "gives Root Conversation zero executable tools and only placement, authorization and work-initiation controls",
+    () =>
+      Effect.gen(function* () {
+        const profile = yield* resolver.resolve({
+          conversation: true,
+          execution: {
+            ...base,
+            binding: {
+              _tag: "WorkspaceExecution",
+              workspaceId,
+              focus: { _tag: "Coordination" },
+            },
           },
-        },
+        });
+        expect(profile).toMatchObject({
+          purpose: "RootConversation",
+          outputContractRef: "tool-invocation-v1",
+          executableTools: [],
+          fingerprint: expect.stringMatching(/^tpf_/),
+        });
+        expect(profile.controlTools.map((tool) => tool.name)).toEqual([
+          "assign_work",
+          "list_workspaces",
+          "read_workspace",
+          "allocate_workspace_sandbox",
+          "accept_result",
+          "propose_workspace",
+        ]);
       }),
-    );
-    expect(profile).toMatchObject({
-      purpose: "RootConversation",
-      outputContractRef: "tool-invocation-v1",
-      executableTools: [],
-      fingerprint: expect.stringMatching(/^tpf_/),
-    });
-    expect(profile.controlTools.map((tool) => tool.name)).toEqual([
-      "assign_work",
-      "list_workspaces",
-      "read_workspace",
-      "allocate_workspace_sandbox",
-      "accept_result",
-      "propose_workspace",
-    ]);
-  });
+  );
 
-  it("materializes Work tools and applicable controls deterministically", async () => {
-    const execution: Execution = {
-      ...base,
-      binding: {
-        _tag: "WorkspaceExecution",
-        workspaceId,
-        episode: {
-          _tag: "WorkEpisode",
-          workId: parse(WorkId)("wrk_018f2b3c-4d5e-7abc-8def-0123456789a1"),
-          targetWorkRevision: 0 as never,
-        },
-      },
-    };
-    const first = await Effect.runPromise(
-      resolver.resolve({ execution, conversation: false }),
-    );
-    const second = await Effect.runPromise(
-      resolver.resolve({ execution, conversation: false }),
-    );
-    expect(first).toEqual(second);
-    expect(first.executableTools.map((tool) => tool.name)).toEqual(["read"]);
-    expect(first.controlTools.map((tool) => tool.name)).toEqual([
-      "claim_completion",
-      "send_message",
-      "assign_work",
-      "list_workspaces",
-      "read_workspace",
-      "allocate_workspace_sandbox",
-      "accept_result",
-      "update_plan",
-      "propose_workspace",
-    ]);
-  });
-
-  it("gives Decision and Inbox episodes disjoint minimal control surfaces", async () => {
-    const decision = await Effect.runPromise(
-      resolver.resolve({
-        conversation: false,
-        execution: {
+  it.effect(
+    "materializes Work tools and applicable controls deterministically",
+    () =>
+      Effect.gen(function* () {
+        const execution: Execution = {
           ...base,
           binding: {
             _tag: "WorkspaceExecution",
             workspaceId,
             episode: {
-              _tag: "DecisionEpisode",
-              decisionId: "dec_018f2b3c-4d5e-7abc-8def-0123456789a1" as never,
-              decisionKind: "SelectCurrentWork",
-              requestRevision: 0,
+              _tag: "WorkEpisode",
+              workId: parse(WorkId)("wrk_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+              targetWorkRevision: 0 as never,
             },
           },
-        },
+        };
+        const first = yield* resolver.resolve({
+          execution,
+          conversation: false,
+        });
+        const second = yield* resolver.resolve({
+          execution,
+          conversation: false,
+        });
+        expect(first).toEqual(second);
+        expect(first.executableTools.map((tool) => tool.name)).toEqual([
+          "read",
+        ]);
+        expect(first.controlTools.map((tool) => tool.name)).toEqual([
+          "claim_completion",
+          "send_message",
+          "assign_work",
+          "list_workspaces",
+          "read_workspace",
+          "allocate_workspace_sandbox",
+          "accept_result",
+          "update_plan",
+          "propose_workspace",
+        ]);
       }),
-    );
-    expect(decision.executableTools).toEqual([]);
-    expect(decision.controlTools.map((tool) => tool.name)).toEqual([
-      "select_current_work",
-    ]);
+  );
 
-    const inbox = await Effect.runPromise(
-      resolver.resolve({
-        conversation: false,
-        execution: {
-          ...base,
-          binding: {
-            _tag: "WorkspaceExecution",
-            workspaceId,
-            episode: {
-              _tag: "InboxEpisode",
-              entryKey: "msg:test",
-              inputKind: "Message",
+  it.effect(
+    "gives Decision and Inbox episodes disjoint minimal control surfaces",
+    () =>
+      Effect.gen(function* () {
+        const decision = yield* resolver.resolve({
+          conversation: false,
+          execution: {
+            ...base,
+            binding: {
+              _tag: "WorkspaceExecution",
+              workspaceId,
+              episode: {
+                _tag: "DecisionEpisode",
+                decisionId: "dec_018f2b3c-4d5e-7abc-8def-0123456789a1" as never,
+                decisionKind: "SelectCurrentWork",
+                requestRevision: 0,
+              },
             },
           },
-        },
-      }),
-    );
-    expect(inbox.controlTools.map((tool) => tool.name)).toEqual([
-      "send_message",
-      "list_workspaces",
-      "read_workspace",
-      "allocate_workspace_sandbox",
-      "accept_result",
-    ]);
-  });
+        });
+        expect(decision.executableTools).toEqual([]);
+        expect(decision.controlTools.map((tool) => tool.name)).toEqual([
+          "select_current_work",
+        ]);
 
-  it("does not expose Work-only completion to an ExecutionBound specialist", async () => {
-    const profile = await Effect.runPromise(
-      resolver.resolve({
-        conversation: false,
-        execution: {
-          ...base,
-          binding: {
-            _tag: "ExecutionBoundAgentBinding",
-            parentExecutionId: base.executionId,
-            mission: "bounded review",
+        const inbox = yield* resolver.resolve({
+          conversation: false,
+          execution: {
+            ...base,
+            binding: {
+              _tag: "WorkspaceExecution",
+              workspaceId,
+              episode: {
+                _tag: "InboxEpisode",
+                entryKey: "msg:test",
+                inputKind: "Message",
+              },
+            },
           },
-        },
+        });
+        expect(inbox.controlTools.map((tool) => tool.name)).toEqual([
+          "send_message",
+          "list_workspaces",
+          "read_workspace",
+          "allocate_workspace_sandbox",
+          "accept_result",
+        ]);
       }),
-    );
-    expect(profile.executableTools).toEqual([]);
-    expect(profile.controlTools).toEqual([]);
-  });
+  );
 
-  it("recognizes a durably bound verifier and exposes only verification tools", async () => {
-    const profile = await Effect.runPromise(
-      resolver.resolve({
-        conversation: false,
-        execution: {
-          ...base,
-          executionId: parse(ExecutionId)(
-            "exe_018f2b3c-4d5e-7abc-8def-0123456789a2",
-          ),
-          binding: {
-            _tag: "ExecutionBoundAgentBinding",
-            parentExecutionId: base.executionId,
-            mission: "verify the bound work",
+  it.effect(
+    "does not expose Work-only completion to an ExecutionBound specialist",
+    () =>
+      Effect.gen(function* () {
+        const profile = yield* resolver.resolve({
+          conversation: false,
+          execution: {
+            ...base,
+            binding: {
+              _tag: "ExecutionBoundAgentBinding",
+              parentExecutionId: base.executionId,
+              mission: "bounded review",
+            },
           },
-        },
+        });
+        expect(profile.executableTools).toEqual([]);
+        expect(profile.controlTools).toEqual([]);
       }),
-    );
-    expect(profile.purpose).toBe("Verifier");
-    expect(profile.executableTools.map((tool) => tool.name)).toEqual(["read"]);
-    expect(profile.controlTools.map((tool) => tool.name)).toEqual([
-      "record_verification_evidence",
-      "conclude_verification",
-    ]);
-  });
+  );
+
+  it.effect(
+    "recognizes a durably bound verifier and exposes only verification tools",
+    () =>
+      Effect.gen(function* () {
+        const profile = yield* resolver.resolve({
+          conversation: false,
+          execution: {
+            ...base,
+            executionId: parse(ExecutionId)(
+              "exe_018f2b3c-4d5e-7abc-8def-0123456789a2",
+            ),
+            binding: {
+              _tag: "ExecutionBoundAgentBinding",
+              parentExecutionId: base.executionId,
+              mission: "verify the bound work",
+            },
+          },
+        });
+        expect(profile.purpose).toBe("Verifier");
+        expect(profile.executableTools.map((tool) => tool.name)).toEqual([
+          "read",
+        ]);
+        expect(profile.controlTools.map((tool) => tool.name)).toEqual([
+          "record_verification_evidence",
+          "conclude_verification",
+        ]);
+      }),
+  );
 });

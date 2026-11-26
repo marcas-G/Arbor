@@ -11,8 +11,9 @@ import {
   SkillRegistry,
   ToolCatalogPort,
 } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import {
   type ContextFragment,
   canonicalInstructionTrust,
@@ -138,47 +139,55 @@ const input = (overrides: Record<string, unknown> = {}) => ({
 });
 
 const prepare = (i: ReturnType<typeof input>) =>
-  Effect.runPromise(
-    Effect.provide(
-      Effect.gen(function* () {
-        const modelContext = yield* ModelContext;
-        return yield* modelContext.prepareTurn(i as never);
-      }),
-      app,
-    ) as Effect.Effect<unknown, unknown, never>,
-  );
+  Effect.provide(
+    Effect.gen(function* () {
+      const modelContext = yield* ModelContext;
+      return yield* modelContext.prepareTurn(i as never);
+    }),
+    app,
+  ) as Effect.Effect<unknown, unknown, never>;
 
 describe("P3 prepareTurn", () => {
-  it("returns Ready for a resolvable, fitting turn", async () => {
-    const result = (await prepare(input())) as { _tag: string };
-    expect(result._tag).toBe("Ready");
-  });
+  it.effect("returns Ready for a resolvable, fitting turn", () =>
+    Effect.gen(function* () {
+      const result = (yield* prepare(input())) as { _tag: string };
+      expect(result._tag).toBe("Ready");
+    }),
+  );
 
-  it("returns NeedsCompaction when optional context must be evicted", async () => {
-    const result = (await prepare(
-      input({
-        contextFragments: [makeContextFragment("big", "Evictable", 900)],
+  it.effect(
+    "returns NeedsCompaction when optional context must be evicted",
+    () =>
+      Effect.gen(function* () {
+        const result = (yield* prepare(
+          input({
+            contextFragments: [makeContextFragment("big", "Evictable", 900)],
+          }),
+        )) as { _tag: string; reason?: string };
+        expect(result._tag).toBe("NeedsCompaction");
+        expect(result.reason).toBe("BudgetPressure");
       }),
-    )) as { _tag: string; reason?: string };
-    expect(result._tag).toBe("NeedsCompaction");
-    expect(result.reason).toBe("BudgetPressure");
-  });
+  );
 
-  it("returns GovernanceBlocked for an unresolvable canonical conflict", async () => {
-    const result = (await prepare(
-      input({
-        fragments: [
-          fragment("a", "A3", "x"),
-          { ...fragment("b", "A3", "y"), scope: "a" },
-        ],
+  it.effect(
+    "returns GovernanceBlocked for an unresolvable canonical conflict",
+    () =>
+      Effect.gen(function* () {
+        const result = (yield* prepare(
+          input({
+            fragments: [
+              fragment("a", "A3", "x"),
+              { ...fragment("b", "A3", "y"), scope: "a" },
+            ],
+          }),
+        )) as { _tag: string };
+        expect(result._tag).toBe("GovernanceBlocked");
       }),
-    )) as { _tag: string };
-    expect(result._tag).toBe("GovernanceBlocked");
-  });
+  );
 
-  it("fails ContextUnsatisfiable when hard control cannot fit", async () => {
-    const exit = await Effect.runPromise(
-      Effect.exit(
+  it.effect("fails ContextUnsatisfiable when hard control cannot fit", () =>
+    Effect.gen(function* () {
+      const exit = yield* Effect.exit(
         Effect.provide(
           Effect.gen(function* () {
             const modelContext = yield* ModelContext;
@@ -190,15 +199,15 @@ describe("P3 prepareTurn", () => {
           }),
           app,
         ) as Effect.Effect<unknown, unknown, never>,
-      ),
-    );
-    expect(exit._tag).toBe("Failure");
-    void Option;
-  });
+      );
+      expect(exit._tag).toBe("Failure");
+      void Option;
+    }),
+  );
 
-  it("counts provider messages in the context window", async () => {
-    const exit = await Effect.runPromise(
-      Effect.exit(
+  it.effect("counts provider messages in the context window", () =>
+    Effect.gen(function* () {
+      const exit = yield* Effect.exit(
         Effect.provide(
           Effect.gen(function* () {
             const modelContext = yield* ModelContext;
@@ -210,104 +219,119 @@ describe("P3 prepareTurn", () => {
           }),
           app,
         ) as Effect.Effect<unknown, unknown, never>,
-      ),
-    );
-    expect(exit._tag).toBe("Failure");
-  });
+      );
+      expect(exit._tag).toBe("Failure");
+    }),
+  );
 
-  it("routes a compressible input item through context planning exactly once", async () => {
-    const item = {
-      _tag: "Message" as const,
-      role: "user" as const,
-      text: "history ".repeat(500),
-    };
-    const projectedHistory = projectCompressibleHistory({
-      inputItems: [item],
-      sourceRefs: ["session:InboxEntry:old"],
-      compressibleIndexes: [0],
-    });
-    const result = (await prepare(
-      input({
-        inputItems: [item],
-        ...projectedHistory,
+  it.effect(
+    "routes a compressible input item through context planning exactly once",
+    () =>
+      Effect.gen(function* () {
+        const item = {
+          _tag: "Message" as const,
+          role: "user" as const,
+          text: "history ".repeat(500),
+        };
+        const projectedHistory = projectCompressibleHistory({
+          inputItems: [item],
+          sourceRefs: ["session:InboxEntry:old"],
+          compressibleIndexes: [0],
+        });
+        const result = (yield* prepare(
+          input({
+            inputItems: [item],
+            ...projectedHistory,
+          }),
+        )) as { _tag: string; reason?: string };
+
+        expect(result).toEqual({
+          _tag: "NeedsCompaction",
+          reason: "BudgetPressure",
+        });
+        expect(projectedHistory.contextFragments).toMatchObject([
+          {
+            ref: "history:session:InboxEntry:old",
+            layer: "C3",
+            retention: "Compressible",
+            provenance: {
+              provenanceKind: "AuthenticatedHuman",
+              instructionCapability: "DataOnly",
+            },
+          },
+        ]);
       }),
-    )) as { _tag: string; reason?: string };
+  );
 
-    expect(result).toEqual({
-      _tag: "NeedsCompaction",
-      reason: "BudgetPressure",
-    });
-    expect(projectedHistory.contextFragments).toMatchObject([
-      {
-        ref: "history:session:InboxEntry:old",
-        layer: "C3",
-        retention: "Compressible",
-        provenance: {
-          provenanceKind: "AuthenticatedHuman",
-          instructionCapability: "DataOnly",
-        },
-      },
-    ]);
-  });
+  it.effect(
+    "keeps a post-checkpoint tail over 64 rows for explicit budget compaction",
+    () =>
+      Effect.gen(function* () {
+        const inputItems = [
+          {
+            _tag: "CompactionCheckpoint" as const,
+            implementation: "Summary" as const,
+            summaryText: "continuation checkpoint",
+            fromEpoch: parse(ContextEpochNumber)(0),
+            toEpoch: parse(ContextEpochNumber)(1),
+            retainedFrontierRef: "frontier:test:epoch-0",
+          },
+          ...Array.from({ length: 71 }, (_, index) => ({
+            _tag: "Message" as const,
+            role: "user" as const,
+            text: `post-checkpoint item ${index} ${"durable detail ".repeat(20)}`,
+          })),
+        ];
+        const projectedHistory = projectCompressibleHistory({
+          inputItems,
+          sourceRefs: inputItems.map((_, index) => `session:typed:${index}`),
+          compressibleIndexes: Array.from(
+            { length: 71 },
+            (_, index) => index + 1,
+          ),
+        });
 
-  it("keeps a post-checkpoint tail over 64 rows for explicit budget compaction", async () => {
-    const inputItems = [
-      {
-        _tag: "CompactionCheckpoint" as const,
-        implementation: "Summary" as const,
-        summaryText: "continuation checkpoint",
-        fromEpoch: parse(ContextEpochNumber)(0),
-        toEpoch: parse(ContextEpochNumber)(1),
-        retainedFrontierRef: "frontier:test:epoch-0",
-      },
-      ...Array.from({ length: 71 }, (_, index) => ({
-        _tag: "Message" as const,
-        role: "user" as const,
-        text: `post-checkpoint item ${index} ${"durable detail ".repeat(20)}`,
-      })),
-    ];
-    const projectedHistory = projectCompressibleHistory({
-      inputItems,
-      sourceRefs: inputItems.map((_, index) => `session:typed:${index}`),
-      compressibleIndexes: Array.from({ length: 71 }, (_, index) => index + 1),
-    });
+        expect(projectedHistory.compressibleInputItemIndexes).toEqual(
+          Array.from({ length: 71 }, (_, index) => index + 1),
+        );
+        const result = (yield* prepare(
+          input({
+            inputItems,
+            ...projectedHistory,
+          }),
+        )) as { _tag: string; reason?: string };
 
-    expect(projectedHistory.compressibleInputItemIndexes).toEqual(
-      Array.from({ length: 71 }, (_, index) => index + 1),
-    );
-    const result = (await prepare(
-      input({
-        inputItems,
-        ...projectedHistory,
+        expect(result).toEqual({
+          _tag: "NeedsCompaction",
+          reason: "BudgetPressure",
+        });
       }),
-    )) as { _tag: string; reason?: string };
+  );
 
-    expect(result).toEqual({
-      _tag: "NeedsCompaction",
-      reason: "BudgetPressure",
-    });
-  });
+  it.effect(
+    "charges fitting history to either fixed input or its fragment, not both",
+    () =>
+      Effect.gen(function* () {
+        const item = {
+          _tag: "Message" as const,
+          role: "user" as const,
+          text: "history ".repeat(260),
+        };
+        const projectedHistory = projectCompressibleHistory({
+          inputItems: [item],
+          sourceRefs: ["session:InboxEntry:older"],
+          compressibleIndexes: [0],
+        });
+        const result = (yield* prepare(
+          input({
+            inputItems: [item],
+            ...projectedHistory,
+          }),
+        )) as { _tag: string };
 
-  it("charges fitting history to either fixed input or its fragment, not both", async () => {
-    const item = {
-      _tag: "Message" as const,
-      role: "user" as const,
-      text: "history ".repeat(260),
-    };
-    const projectedHistory = projectCompressibleHistory({
-      inputItems: [item],
-      sourceRefs: ["session:InboxEntry:older"],
-      compressibleIndexes: [0],
-    });
-    const result = (await prepare(
-      input({
-        inputItems: [item],
-        ...projectedHistory,
+        expect(result._tag).toBe("Ready");
       }),
-    )) as { _tag: string };
-
-    expect(result._tag).toBe("Ready");
-  });
+  );
 
   it("keeps observation evidence data-only in C4 history fragments", () => {
     const projected = projectCompressibleHistory({
@@ -355,67 +379,74 @@ describe("P3 prepareTurn", () => {
     ).toBe(1);
   });
 
-  it("keeps current input in the fixed budget when older history is compressible", async () => {
-    const current = {
-      _tag: "Message" as const,
-      role: "user" as const,
-      text: "current",
-    };
-    const history = {
-      _tag: "Message" as const,
-      role: "user" as const,
-      text: "history ".repeat(500),
-    };
-    const estimatedTokens = 4 + Math.ceil(JSON.stringify(history).length / 4);
-    const result = (await prepare(
-      input({
-        inputItems: [history, current],
-        compressibleInputItemIndexes: [0],
-        contextFragments: [
-          contextFragment({
-            ref: "conversation-history:older-turns",
-            layer: "C3",
-            retention: "Compressible",
-            cacheClass: "TurnDynamic",
-            tokens: estimatedTokens,
-            provenance: {
-              provenanceKind: "AuthenticatedHuman",
-              instructionCapability: "DataOnly",
-              epistemicStatus: "Established",
-            },
+  it.effect(
+    "keeps current input in the fixed budget when older history is compressible",
+    () =>
+      Effect.gen(function* () {
+        const current = {
+          _tag: "Message" as const,
+          role: "user" as const,
+          text: "current",
+        };
+        const history = {
+          _tag: "Message" as const,
+          role: "user" as const,
+          text: "history ".repeat(500),
+        };
+        const estimatedTokens =
+          4 + Math.ceil(JSON.stringify(history).length / 4);
+        const result = (yield* prepare(
+          input({
+            inputItems: [history, current],
+            compressibleInputItemIndexes: [0],
+            contextFragments: [
+              contextFragment({
+                ref: "conversation-history:older-turns",
+                layer: "C3",
+                retention: "Compressible",
+                cacheClass: "TurnDynamic",
+                tokens: estimatedTokens,
+                provenance: {
+                  provenanceKind: "AuthenticatedHuman",
+                  instructionCapability: "DataOnly",
+                  epistemicStatus: "Established",
+                },
+              }),
+            ],
           }),
-        ],
+        )) as { _tag: string; reason?: string };
+
+        expect(result).toEqual({
+          _tag: "NeedsCompaction",
+          reason: "BudgetPressure",
+        });
       }),
-    )) as { _tag: string; reason?: string };
+  );
 
-    expect(result).toEqual({
-      _tag: "NeedsCompaction",
-      reason: "BudgetPressure",
-    });
-  });
+  it.effect(
+    "keeps Conversation history fixed until its cross-response checkpoint owner is governed",
+    () =>
+      Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          Effect.provide(
+            Effect.gen(function* () {
+              const modelContext = yield* ModelContext;
+              return yield* modelContext.prepareTurn(
+                input({
+                  conversationMessages: [
+                    { role: "user", text: "older conversation ".repeat(500) },
+                    { role: "assistant", text: "prior response" },
+                    { role: "user", text: "current input" },
+                  ],
+                  contextFragments: [],
+                }) as never,
+              );
+            }),
+            app,
+          ) as Effect.Effect<unknown, unknown, never>,
+        );
 
-  it("keeps Conversation history fixed until its cross-response checkpoint owner is governed", async () => {
-    const exit = await Effect.runPromise(
-      Effect.exit(
-        Effect.provide(
-          Effect.gen(function* () {
-            const modelContext = yield* ModelContext;
-            return yield* modelContext.prepareTurn(
-              input({
-                conversationMessages: [
-                  { role: "user", text: "older conversation ".repeat(500) },
-                  { role: "assistant", text: "prior response" },
-                  { role: "user", text: "current input" },
-                ],
-                contextFragments: [],
-              }) as never,
-            );
-          }),
-          app,
-        ) as Effect.Effect<unknown, unknown, never>,
-      ),
-    );
-
-    expect(exit._tag).toBe("Failure");
-  });
+        expect(exit._tag).toBe("Failure");
+      }),
+  );
 });

@@ -1,6 +1,7 @@
 import { makeProjectPolicy } from "@arbor/domain";
+import { it } from "@effect/vitest";
 import { Effect } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import {
   type AuthorityDecisionInput,
   AuthorityResolverPort,
@@ -68,74 +69,82 @@ const input = (
 });
 
 const resolve = (decision: AuthorityDecisionInput) =>
-  Effect.runPromise(
-    Effect.provide(
-      Effect.gen(function* () {
-        const resolver = yield* AuthorityResolverPort;
-        return yield* Effect.match(resolver.resolve(decision), {
-          onFailure: (left) => ({ _tag: "Left" as const, left }),
-          onSuccess: (right) => ({ _tag: "Right" as const, right }),
-        });
-      }),
-      AuthorityResolverPortLive,
-    ),
-  );
+  Effect.gen(function* () {
+    const resolver = yield* AuthorityResolverPort;
+    return yield* Effect.match(resolver.resolve(decision), {
+      onFailure: (left) => ({ _tag: "Left" as const, left }),
+      onSuccess: (right) => ({ _tag: "Right" as const, right }),
+    });
+  }).pipe(Effect.provide(AuthorityResolverPortLive));
 
 describe("ResolveExecutableApproval direct-parent authority", () => {
-  it("allows the implicit local single-user human to resolve the approval", async () => {
-    const base = input({ authenticatedHumans: [], directParentOf: [] });
-    const result = await resolve({
-      ...base,
-      principal: "user:local" as never,
-      submissionContext: { _tag: "External", principal: "user:local" as never },
-      envelope: { ...base.envelope, actor: "user:local" as never },
-    });
-    expect(result._tag).toBe("Right");
-    if (result._tag === "Right") {
-      expect(result.right).toMatchObject({
-        _tag: "ExecutableApprovalDecisionAuthority",
-        principal: "user:local",
-        approvalId,
-        workspaceId,
-        executionId,
-      });
-    }
-  });
+  it.effect(
+    "allows the implicit local single-user human to resolve the approval",
+    () =>
+      Effect.gen(function* () {
+        const base = input({ authenticatedHumans: [], directParentOf: [] });
+        const result = yield* resolve({
+          ...base,
+          principal: "user:local" as never,
+          submissionContext: {
+            _tag: "External",
+            principal: "user:local" as never,
+          },
+          envelope: { ...base.envelope, actor: "user:local" as never },
+        });
+        expect(result._tag).toBe("Right");
+        if (result._tag === "Right") {
+          expect(result.right).toMatchObject({
+            _tag: "ExecutableApprovalDecisionAuthority",
+            principal: "user:local",
+            approvalId,
+            workspaceId,
+            executionId,
+          });
+        }
+      }),
+  );
 
-  it("allows only the exact direct parent of the canonical approval workspace", async () => {
-    const result = await resolve(input(governance(principal)));
-    expect(result._tag).toBe("Right");
-    if (result._tag === "Right") {
-      expect(result.right).toMatchObject({
-        _tag: "ExecutableApprovalDecisionAuthority",
-        principal,
-        commandId,
-        projectId,
-        approvalId,
-        workspaceId,
-        executionId,
-        expectedRevision: 4,
-      });
-    }
-  });
+  it.effect(
+    "allows only the exact direct parent of the canonical approval workspace",
+    () =>
+      Effect.gen(function* () {
+        const result = yield* resolve(input(governance(principal)));
+        expect(result._tag).toBe("Right");
+        if (result._tag === "Right") {
+          expect(result.right).toMatchObject({
+            _tag: "ExecutableApprovalDecisionAuthority",
+            principal,
+            commandId,
+            projectId,
+            approvalId,
+            workspaceId,
+            executionId,
+            expectedRevision: 4,
+          });
+        }
+      }),
+  );
 
-  it.each([
+  it.effect.each<[string, ParentUserGovernanceFacts]>([
     ["wrong parent", governance(foreignParent)],
     ["foreign workspace edge", governance(principal, foreignWorkspaceId)],
-  ])("denies %s", async (_case, parentFacts) => {
-    const result = await resolve(input(parentFacts));
-    expect(result._tag).toBe("Left");
-    if (result._tag === "Left") {
-      expect(result.left).toMatchObject({
-        _tag: "NoApplicableGrant",
-        principal,
-        commandType: "ResolveExecutableApproval",
-        commandId,
-      });
-    }
-  });
+  ])("denies %s", ([_case, parentFacts]) =>
+    Effect.gen(function* () {
+      const result = yield* resolve(input(parentFacts));
+      expect(result._tag).toBe("Left");
+      if (result._tag === "Left") {
+        expect(result.left).toMatchObject({
+          _tag: "NoApplicableGrant",
+          principal,
+          commandType: "ResolveExecutableApproval",
+          commandId,
+        });
+      }
+    }),
+  );
 
-  it.each([
+  it.effect.each([
     {
       name: "revoked grant",
       grant: {
@@ -162,10 +171,9 @@ describe("ResolveExecutableApproval direct-parent authority", () => {
         state: "Active",
       },
     },
-  ])(
-    "does not let a $name substitute for a direct-parent edge",
-    async ({ grant }) => {
-      const result = await resolve(
+  ])("does not let a $name substitute for a direct-parent edge", ({ grant }) =>
+    Effect.gen(function* () {
+      const result = yield* resolve(
         input({ authenticatedHumans: [], directParentOf: [] }, [
           grant as never,
         ]),
@@ -178,6 +186,6 @@ describe("ResolveExecutableApproval direct-parent authority", () => {
           commandId,
         });
       }
-    },
+    }),
   );
 });

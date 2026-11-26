@@ -1,6 +1,7 @@
 import { TransactionScope } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect, Option } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import { makeRetryVerificationHandler } from "../src/commands/retry-verification.js";
 
 const VER = (tail: string) => `ver_00000000-0000-7000-8000-00000000000${tail}`;
@@ -197,64 +198,68 @@ const setup = () => {
 };
 
 describe("RetryVerification P8 handoff", () => {
-  it("concludes the exact orphan and creates the preallocated successor under one handler outcome", async () => {
-    const test = setup();
-    const response = await Effect.runPromise(
-      Effect.provideService(
-        test.handler.execute(test.envelope as never, test.context as never),
-        TransactionScope,
-        { session: { id: "retry-verification-test" } },
-      ),
-    );
-    expect(response.ok).toBe(true);
-    if (!response.ok) return;
-    expect(response.value.result).toMatchObject({
-      orphanedVerificationId: VER("1"),
-      successorVerificationId: VER("2"),
-      verifierExecutionId: EXE("2"),
-      state: "OrphanedAndRetried",
-    });
-    expect(response.value.events.map((event) => event.eventType)).toEqual([
-      "VerificationConcluded",
-      "VerificationStarted",
-    ]);
-    expect(test.getStored()).toMatchObject({
-      verificationId: VER("2"),
-      ownerWorkspaceId: OWNER,
-      verificationExecutionIds: [EXE("2")],
-      state: { status: "Open" },
-    });
-    expect(test.getOrigin()).toEqual({
-      commandId: "cmd_00000000-0000-7000-8000-000000000001",
-      projectId: PROJECT,
-      actor: "user:local",
-      sourceVerificationId: VER("1"),
-      sourceWorkId: WORK,
-      successorVerificationId: VER("2"),
-      successorVerifierExecutionId: EXE("2"),
-      createdAt: "2026-10-12T00:00:01.000Z",
-    });
-  });
+  it.effect(
+    "concludes the exact orphan and creates the preallocated successor under one handler outcome",
+    () =>
+      Effect.gen(function* () {
+        const test = setup();
+        const response = yield* Effect.provideService(
+          test.handler.execute(test.envelope as never, test.context as never),
+          TransactionScope,
+          { session: { id: "retry-verification-test" } },
+        );
+        expect(response.ok).toBe(true);
+        if (!response.ok) return;
+        expect(response.value.result).toMatchObject({
+          orphanedVerificationId: VER("1"),
+          successorVerificationId: VER("2"),
+          verifierExecutionId: EXE("2"),
+          state: "OrphanedAndRetried",
+        });
+        expect(response.value.events.map((event) => event.eventType)).toEqual([
+          "VerificationConcluded",
+          "VerificationStarted",
+        ]);
+        expect(test.getStored()).toMatchObject({
+          verificationId: VER("2"),
+          ownerWorkspaceId: OWNER,
+          verificationExecutionIds: [EXE("2")],
+          state: { status: "Open" },
+        });
+        expect(test.getOrigin()).toEqual({
+          commandId: "cmd_00000000-0000-7000-8000-000000000001",
+          projectId: PROJECT,
+          actor: "user:local",
+          sourceVerificationId: VER("1"),
+          sourceWorkId: WORK,
+          successorVerificationId: VER("2"),
+          successorVerifierExecutionId: EXE("2"),
+          createdAt: "2026-10-12T00:00:01.000Z",
+        });
+      }),
+  );
 
-  it("does not let an Agent or an agent PermissionGrant invoke the human retry face", async () => {
-    const test = setup();
-    const response = await Effect.runPromise(
-      Effect.provideService(
-        test.handler.execute(
-          test.envelope as never,
-          { _tag: "External", principal: "agent:worker" } as never,
-        ),
-        TransactionScope,
-        { session: { id: "retry-verification-test" } },
-      ),
-    );
-    expect(response).toMatchObject({
-      ok: false,
-      error: { _tag: "AuthorityDenied" },
-    });
-    expect(test.getStored()).toMatchObject({
-      verificationId: VER("1"),
-      state: { status: "Open" },
-    });
-  });
+  it.effect(
+    "does not let an Agent or an agent PermissionGrant invoke the human retry face",
+    () =>
+      Effect.gen(function* () {
+        const test = setup();
+        const response = yield* Effect.provideService(
+          test.handler.execute(
+            test.envelope as never,
+            { _tag: "External", principal: "agent:worker" } as never,
+          ),
+          TransactionScope,
+          { session: { id: "retry-verification-test" } },
+        );
+        expect(response).toMatchObject({
+          ok: false,
+          error: { _tag: "AuthorityDenied" },
+        });
+        expect(test.getStored()).toMatchObject({
+          verificationId: VER("1"),
+          state: { status: "Open" },
+        });
+      }),
+  );
 });

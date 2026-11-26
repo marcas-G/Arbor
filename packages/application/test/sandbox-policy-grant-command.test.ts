@@ -9,8 +9,9 @@ import {
   WorkspaceId,
 } from "@arbor/domain";
 import { TransactionScope } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect, Option } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import type { CommandAuthorityFact } from "../src/authority.js";
 import { makeGrantPermissionHandler } from "../src/commands/grant-permission.js";
 
@@ -102,93 +103,99 @@ const setup = () => {
   return {
     writes,
     execute: (overrides: Record<string, unknown> = {}) =>
-      Effect.runPromise(
-        Effect.provideService(
-          handler.execute(
-            {
-              commandType: "GrantPermission",
-              commandId,
-              projectId,
-              actor: parse(Actor)(String(operator)),
-              issuedAt: "1999-01-01T00:00:00.000Z",
-              resolvedAuthority: authority,
-              payload: {
-                permissionGrantId: grantId,
-                issuer: operator,
-                subject: {
-                  _tag: "HumanPrincipal" as const,
-                  principal: subject,
-                },
-                capability: "DecideSandboxPolicy",
-                target: executionId,
-                expiresAt: "2026-10-20T00:00:00.000Z",
-                ...overrides,
+      Effect.provideService(
+        handler.execute(
+          {
+            commandType: "GrantPermission",
+            commandId,
+            projectId,
+            actor: parse(Actor)(String(operator)),
+            issuedAt: "1999-01-01T00:00:00.000Z",
+            resolvedAuthority: authority,
+            payload: {
+              permissionGrantId: grantId,
+              issuer: operator,
+              subject: {
+                _tag: "HumanPrincipal" as const,
+                principal: subject,
               },
+              capability: "DecideSandboxPolicy",
+              target: executionId,
+              expiresAt: "2026-10-20T00:00:00.000Z",
+              ...overrides,
             },
-            { _tag: "External", principal: operator },
-          ),
-          TransactionScope,
-          { session: { id: "sandbox-grant-test" } },
+          },
+          { _tag: "External", principal: operator },
         ),
+        TransactionScope,
+        { session: { id: "sandbox-grant-test" } },
       ),
   };
 };
 
 describe("GrantPermission sandbox issuer provenance", () => {
-  it("commits the exact CAPA Grant and provenance and emits the additive event", async () => {
-    const state = setup();
-    const result = await state.execute();
-    expect(result.ok).toBe(true);
-    expect(state.writes).toHaveLength(2);
-    expect(state.writes[0]).toMatchObject({
-      kind: "grant",
-      value: {
-        permissionGrantId: grantId,
-        issuer: operator,
-        subject: { _tag: "HumanPrincipal", principal: subject },
-        capability: "DecideSandboxPolicy",
-        target: executionId,
-        validFrom: now,
-        revision: 0,
-      },
-    });
-    expect(state.writes[1]).toEqual({
-      kind: "provenance",
-      value: {
-        permissionGrantId: grantId,
-        grantPermissionCommandId: commandId,
-        issuerPrincipal: operator,
-        operatorConfigRevision: configSnapshot.operatorConfigRevision,
-        operatorConfigDigest: configSnapshot.operatorConfigDigest,
-      },
-    });
-    if (!result.ok) throw new Error("grant command unexpectedly rejected");
-    expect(result.value.events.map(({ eventType }) => eventType)).toEqual([
-      "PermissionChanged",
-      "SandboxPolicyGrantIssued",
-    ]);
-    expect(result.value.events[1]?.payload).toEqual({
-      permissionGrantId: grantId,
-      grantPermissionCommandId: commandId,
-      executionId,
-      operatorConfigRevision: configSnapshot.operatorConfigRevision,
-      operatorConfigDigest: configSnapshot.operatorConfigDigest,
-    });
-  });
+  it.effect(
+    "commits the exact CAPA Grant and provenance and emits the additive event",
+    () =>
+      Effect.gen(function* () {
+        const state = setup();
+        const result = yield* state.execute();
+        expect(result.ok).toBe(true);
+        expect(state.writes).toHaveLength(2);
+        expect(state.writes[0]).toMatchObject({
+          kind: "grant",
+          value: {
+            permissionGrantId: grantId,
+            issuer: operator,
+            subject: { _tag: "HumanPrincipal", principal: subject },
+            capability: "DecideSandboxPolicy",
+            target: executionId,
+            validFrom: now,
+            revision: 0,
+          },
+        });
+        expect(state.writes[1]).toEqual({
+          kind: "provenance",
+          value: {
+            permissionGrantId: grantId,
+            grantPermissionCommandId: commandId,
+            issuerPrincipal: operator,
+            operatorConfigRevision: configSnapshot.operatorConfigRevision,
+            operatorConfigDigest: configSnapshot.operatorConfigDigest,
+          },
+        });
+        if (!result.ok) throw new Error("grant command unexpectedly rejected");
+        expect(result.value.events.map(({ eventType }) => eventType)).toEqual([
+          "PermissionChanged",
+          "SandboxPolicyGrantIssued",
+        ]);
+        expect(result.value.events[1]?.payload).toEqual({
+          permissionGrantId: grantId,
+          grantPermissionCommandId: commandId,
+          executionId,
+          operatorConfigRevision: configSnapshot.operatorConfigRevision,
+          operatorConfigDigest: configSnapshot.operatorConfigDigest,
+        });
+      }),
+  );
 
-  it("rejects expired or wrong-target grants before any durable write", async () => {
-    const expired = setup();
-    const expiredResult = await expired.execute({
-      expiresAt: "2026-10-18T00:00:00.000Z",
-    });
-    expect(expiredResult.ok).toBe(false);
-    expect(expired.writes).toHaveLength(0);
+  it.effect(
+    "rejects expired or wrong-target grants before any durable write",
+    () =>
+      Effect.gen(function* () {
+        const expired = setup();
+        const expiredResult = yield* expired.execute({
+          expiresAt: "2026-10-18T00:00:00.000Z",
+        });
+        expect(expiredResult.ok).toBe(false);
+        expect(expired.writes).toHaveLength(0);
 
-    const wrongTarget = setup();
-    const wrongTargetResult = await wrongTarget.execute({
-      target: "exe_018f2b3c-4d5e-7abc-8def-0123456789a2",
-    });
-    expect(wrongTargetResult.ok).toBe(false);
-    expect(wrongTarget.writes).toHaveLength(0);
-  });
+        const wrongTarget = setup();
+        const wrongTargetResult = yield* wrongTarget.execute({
+          target: "exe_018f2b3c-4d5e-7abc-8def-0123456789a2",
+        });
+        expect(wrongTargetResult.ok).toBe(false);
+        expect(wrongTarget.writes).toHaveLength(0);
+      }),
+  );
 });

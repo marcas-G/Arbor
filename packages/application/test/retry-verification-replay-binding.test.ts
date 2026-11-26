@@ -13,8 +13,9 @@ import {
   WorkRevision,
 } from "@arbor/domain";
 import { TransactionScope } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect, Option } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import {
   makeRetryVerificationHandler,
   type RetryVerificationPayload,
@@ -198,61 +199,69 @@ const makeHandler = (
 
 describe("RetryVerification strict historical receipt replay", () => {
   const runReplay = (effect: Effect.Effect<void, unknown, TransactionScope>) =>
-    Effect.runPromise(
-      Effect.provideService(effect, TransactionScope, {
-        session: { id: "retry-replay" },
-      }),
-    );
-
-  it("accepts an exact v1 receipt only when origin, legacy row and v1 events converge", async () => {
-    const handler = makeHandler();
-    await expect(
-      runReplay(
-        handler.validateReceiptReplay?.(
-          receipt as never,
-          payload,
-          {
-            commandType: "RetryVerification",
-            commandId,
-            projectId,
-            actor,
-            issuedAt: "t",
-            payload,
-          },
-          { _tag: "External", principal },
-        ) ?? Effect.void,
-      ),
-    ).resolves.toBeUndefined();
-  });
-
-  it("fails closed if the persisted v1 conclusion event conflicts with the legacy row", async () => {
-    const conflicting = {
-      ...conclusionEvent,
-      payload: {
-        ...(conclusionEvent.payload as Record<string, unknown>),
-        summaryRef: "blob:other",
-      },
-    } as DomainEvent<unknown>;
-    const handler = makeHandler([startEvent, conflicting]);
-    await expect(
-      runReplay(
-        handler.validateReceiptReplay?.(
-          receipt as never,
-          payload,
-          {
-            commandType: "RetryVerification",
-            commandId,
-            projectId,
-            actor,
-            issuedAt: "t",
-            payload,
-          },
-          { _tag: "External", principal },
-        ) ?? Effect.void,
-      ),
-    ).rejects.toMatchObject({
-      _tag: "PersistenceCorruption",
-      operation: "retry-verification-replay-binding",
+    Effect.provideService(effect, TransactionScope, {
+      session: { id: "retry-replay" },
     });
-  });
+
+  it.effect(
+    "accepts an exact v1 receipt only when origin, legacy row and v1 events converge",
+    () =>
+      Effect.gen(function* () {
+        const handler = makeHandler();
+        expect(
+          yield* runReplay(
+            handler.validateReceiptReplay?.(
+              receipt as never,
+              payload,
+              {
+                commandType: "RetryVerification",
+                commandId,
+                projectId,
+                actor,
+                issuedAt: "t",
+                payload,
+              },
+              { _tag: "External", principal },
+            ) ?? Effect.void,
+          ),
+        ).toBeUndefined();
+      }),
+  );
+
+  it.effect(
+    "fails closed if the persisted v1 conclusion event conflicts with the legacy row",
+    () =>
+      Effect.gen(function* () {
+        const conflicting = {
+          ...conclusionEvent,
+          payload: {
+            ...(conclusionEvent.payload as Record<string, unknown>),
+            summaryRef: "blob:other",
+          },
+        } as DomainEvent<unknown>;
+        const handler = makeHandler([startEvent, conflicting]);
+        expect(
+          yield* Effect.flip(
+            runReplay(
+              handler.validateReceiptReplay?.(
+                receipt as never,
+                payload,
+                {
+                  commandType: "RetryVerification",
+                  commandId,
+                  projectId,
+                  actor,
+                  issuedAt: "t",
+                  payload,
+                },
+                { _tag: "External", principal },
+              ) ?? Effect.void,
+            ),
+          ),
+        ).toMatchObject({
+          _tag: "PersistenceCorruption",
+          operation: "retry-verification-replay-binding",
+        });
+      }),
+  );
 });
