@@ -1001,7 +1001,7 @@ describe("persistent observation admission gates", () => {
           profile_protocol, effect_key, binding_sha256, admitted_at,
           admission_source, admission_time_precision
         ) VALUES (?, 1, 'MayHaveStarted', ?, 'Idempotent', ?, '1', ?, ?, ?, ?, ?,
-          'Admission', 'TransactionTimestamp')`,
+          'P39Admission', 'TransactionTimestamp')`,
         [
           invocationId,
           selectedP39Evidence.binding.value.toolDefinitionHash,
