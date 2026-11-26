@@ -268,7 +268,7 @@ describe("p12-closure", () => {
     expect(sourceOf("tests/p12-secret-store.test.ts")).toContain(
       "never appears in any SQLite table row",
     );
-    expect(sourceOf("tests/p12-acceptance.test.ts")).toContain(
+    expect(sourceOf("tests/p12/secret-store.test.ts")).toContain(
       "never reaches any durable/observable surface",
     );
   });

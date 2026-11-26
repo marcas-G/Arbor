@@ -1525,8 +1525,8 @@ describe("p11-acceptance (P11 00 CI-1..CI-5 + end-to-end story)", () => {
       ["P6", "tests/p6-acceptance.test.ts"],
       ["P7", "tests/p7-acceptance.test.ts"],
       ["P8", "tests/p8-acceptance.test.ts"],
-      ["P9", "tests/p9-acceptance.test.ts"],
-      ["P10", "tests/p10-acceptance.test.ts"],
+      ["P9", "tests/p9/p9-story-a.test.ts"],
+      ["P10", "tests/p10/actions.test.ts"],
     ];
     for (const [phase, relative] of representatives) {
       expect(existsSync(join(import.meta.dirname, "..", relative)), phase).toBe(

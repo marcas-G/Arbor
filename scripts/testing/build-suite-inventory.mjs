@@ -16,7 +16,6 @@ const mixedFiles = new Set([
   "tests/p6-acceptance.test.ts",
   "tests/p7-acceptance.test.ts",
   "tests/p8-acceptance.test.ts",
-  "tests/p9-acceptance.test.ts",
   "tests/p10-acceptance.test.ts",
   "tests/p11-acceptance.test.ts",
   "tests/p12-region-encoding.test.ts",
@@ -43,10 +42,6 @@ const mixedReasons = new Map([
   [
     "tests/p8-acceptance.test.ts",
     "SQLite verification/acceptance lifecycle stories share the file with direct domain and program-contract probes.",
-  ],
-  [
-    "tests/p9-acceptance.test.ts",
-    "Fault-injected SQLite recovery stories share the file with source-level mechanical coverage checks.",
   ],
   [
     "tests/p10-acceptance.test.ts",
