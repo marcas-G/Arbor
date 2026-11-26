@@ -133,12 +133,12 @@ describe("-acceptance mechanical assertion list (07 Mechanical)", () => {
     expect(queryProgram.includes("P14")).toBe(true);
   });
 
-  it("–P9 regression guards referenced: the architecture guard suites stand in tests/architecture", () => {
+  it("regression guards referenced: the architecture guard suites stand in tests/architecture", () => {
     const repoRoot = join(import.meta.dirname, "../..");
     for (const phase of [5, 6, 7, 8, 9]) {
       const guardPath = join(
         repoRoot,
-        `tests/architecture/p${phase}-architecture.test.ts`,
+        `tests/architecture/architecture-${phase}.test.ts`,
       );
       expect(existsSync(guardPath), guardPath).toBe(true);
       expect(readFileSync(guardPath, "utf8").includes("describe(")).toBe(true);
