@@ -248,7 +248,13 @@
       "title": "Failure Recovery",
       "l1Suites": ["packages/model-context/test/p3-decode.test.ts"],
       "l2Suites": [
-        "tests/p9-acceptance.test.ts",
+        "tests/p9/p9-story-a.test.ts",
+        "tests/p9/p9-story-b.test.ts",
+        "tests/p9/p9-story-c.test.ts",
+        "tests/p9/p9-story-d.test.ts",
+        "tests/p9/p9-story-e.test.ts",
+        "tests/p9/p9-story-f.test.ts",
+        "tests/p9/p9-story-g.test.ts",
         "tests/p9-provider-disconnect.test.ts",
         "tests/p9-tool-outcome-unknown.test.ts",
         "tests/p9-worker-crash.test.ts"
