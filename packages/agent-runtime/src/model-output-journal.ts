@@ -6,7 +6,6 @@ import type {
   AgentLoopStepRecord,
   AgentLoopStepStoreService,
   BlobStorePortService,
-  ExecutionDriverError,
   ReasoningAttachment,
   SessionEpochConflict,
   SessionRepositoryService,
@@ -20,6 +19,12 @@ import {
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { sessionFence } from "./agent-loop-policy.js";
+import type {
+  ModelOutputJournalError,
+  ReasoningRoundTripBindingUnavailable,
+  ReasoningRoundTripTimelineUnavailable,
+  SessionTimelineContextMissing,
+} from "./decision/errors.js";
 import type { AgentLoopQualificationProbe } from "./qualification-probe.js";
 
 export interface ModelOutputJournalDependencies {
@@ -35,7 +40,6 @@ export interface ModelOutputJournalDependencies {
   readonly tx: TransactionPortService;
   readonly sessions: SessionRepositoryService;
   readonly blobs?: Pick<BlobStorePortService, "put">;
-  readonly failure: (cause: unknown) => ExecutionDriverError;
   readonly now: () => Effect.Effect<string>;
   readonly qualificationProbe?: AgentLoopQualificationProbe;
 }
@@ -68,10 +72,12 @@ export const sessionTimelineEpochForAcceptedOutput = (input: {
  * Durably accepts one decoded provider result before any action can execute.
  * The model output and loop-step transition share one transaction on the
  * fenced path; legacy in-process callers retain their existing append path.
+ * E09: blob, session-timeline and transaction failures propagate as their
+ * narrow union; the consumer folds once at its ExecutionDriverError boundary.
  */
 export const recordAcceptedModelOutput = (
   dependencies: ModelOutputJournalDependencies,
-): Effect.Effect<AgentLoopStepRecord | undefined, ExecutionDriverError> => {
+): Effect.Effect<AgentLoopStepRecord | undefined, ModelOutputJournalError> => {
   const {
     input,
     preparedTurn,
@@ -80,7 +86,6 @@ export const recordAcceptedModelOutput = (
     loopStepFence,
     tx,
     sessions,
-    failure,
     now,
   } = dependencies;
 
@@ -124,9 +129,9 @@ export const recordAcceptedModelOutput = (
         protocolFamily === undefined ||
         !/^p16fp_[0-9a-f]{64}$/.test(bindingFingerprint ?? "")
       ) {
-        return yield* Effect.fail(
-          failure({ _tag: "ReasoningRoundTripBindingUnavailable" }),
-        );
+        return yield* Effect.fail<ReasoningRoundTripBindingUnavailable>({
+          _tag: "ReasoningRoundTripBindingUnavailable",
+        });
       }
       const attachment: ReasoningAttachment = {
         attachmentType: "provider-reasoning-v1",
@@ -136,9 +141,9 @@ export const recordAcceptedModelOutput = (
         opaquePayload: decodedOutput.reasoningOpaquePayload,
         receivedAt: currentLoopStep?.updatedAt ?? (yield* now()),
       };
-      const ref = yield* dependencies.blobs
-        .put(encodeReasoningAttachment(attachment))
-        .pipe(Effect.mapError(failure));
+      const ref = yield* dependencies.blobs.put(
+        encodeReasoningAttachment(attachment),
+      );
       reasoningAttachmentItem = {
         _tag: "AttachmentRef",
         ref,
@@ -155,133 +160,131 @@ export const recordAcceptedModelOutput = (
     ) {
       if (currentLoopStep.state === "ProviderResultAvailable") {
         const acceptedFrom = currentLoopStep;
-        currentLoopStep = yield* tx
-          .transact(
-            Effect.gen(function* () {
-              const typed = yield* sessions.supportsTypedTimeline();
-              const sessionOption = yield* sessions.findById(
-                input.execution.sessionId,
-              );
-              if (Option.isNone(sessionOption)) {
-                return yield* Effect.fail(
-                  failure({ _tag: "SessionContextMissing" }),
-                );
-              }
-              const outputEpoch = sessionTimelineEpochForAcceptedOutput({
-                execution: input.execution,
-                sessionEpoch: Number(sessionOption.value.contextEpoch),
-                providerEpoch: Number(preparedTurn.manifest.contextEpoch),
+        currentLoopStep = yield* tx.transact(
+          Effect.gen(function* () {
+            const typed = yield* sessions.supportsTypedTimeline();
+            const sessionOption = yield* sessions.findById(
+              input.execution.sessionId,
+            );
+            if (Option.isNone(sessionOption)) {
+              return yield* Effect.fail<SessionTimelineContextMissing>({
+                _tag: "SessionTimelineContextMissing",
               });
-              if (typeof outputEpoch !== "number") {
-                return yield* Effect.fail(failure(outputEpoch));
-              }
-              const appended = typed
-                ? yield* sessions.appendItemIdempotent(
-                    input.execution.sessionId,
-                    {
-                      item: {
-                        _tag: "AssistantMessage",
-                        providerTurnId: preparedTurn.manifest.providerTurnId,
-                        contentRef: `provider:${preparedTurn.manifest.providerTurnId}:assistant`,
+            }
+            const outputEpoch = sessionTimelineEpochForAcceptedOutput({
+              execution: input.execution,
+              sessionEpoch: Number(sessionOption.value.contextEpoch),
+              providerEpoch: Number(preparedTurn.manifest.contextEpoch),
+            });
+            if (typeof outputEpoch !== "number") {
+              return yield* Effect.fail(outputEpoch);
+            }
+            const appended = typed
+              ? yield* sessions.appendItemIdempotent(
+                  input.execution.sessionId,
+                  {
+                    item: {
+                      _tag: "AssistantMessage",
+                      providerTurnId: preparedTurn.manifest.providerTurnId,
+                      contentRef: `provider:${preparedTurn.manifest.providerTurnId}:assistant`,
+                      text: decodedOutput.text,
+                      finishReason: decodedOutput.finishReason,
+                    },
+                    contextEpoch: outputEpoch as never,
+                    source: {
+                      kind: "ProviderTurn",
+                      ref: `${preparedTurn.manifest.providerTurnId}:assistant`,
+                    },
+                    contentHash: sha256Hex(
+                      JSON.stringify({
                         text: decodedOutput.text,
                         finishReason: decodedOutput.finishReason,
-                      },
-                      contextEpoch: outputEpoch as never,
-                      source: {
-                        kind: "ProviderTurn",
-                        ref: `${preparedTurn.manifest.providerTurnId}:assistant`,
-                      },
-                      contentHash: sha256Hex(
-                        JSON.stringify({
-                          text: decodedOutput.text,
-                          finishReason: decodedOutput.finishReason,
-                        }),
-                      ),
-                      ...(causalBinding === undefined ? {} : { causalBinding }),
-                    },
-                    loopStepFence,
-                  )
-                : yield* sessions.appendEntryIdempotent(
-                    input.execution.sessionId,
-                    {
-                      kind: "ProviderTurn",
-                      ref: preparedTurn.manifest.providerTurnId,
-                    },
-                    { entryKind: "ModelOutput", payload: modelOutputPayload },
-                    sha256Hex(JSON.stringify(modelOutputPayload)),
-                    loopStepFence,
-                    causalBinding,
-                  );
-              if (reasoningAttachmentItem !== undefined) {
-                if (!typed) {
-                  return yield* Effect.fail(
-                    failure({ _tag: "ReasoningRoundTripTimelineUnavailable" }),
-                  );
-                }
+                      }),
+                    ),
+                    ...(causalBinding === undefined ? {} : { causalBinding }),
+                  },
+                  loopStepFence,
+                )
+              : yield* sessions.appendEntryIdempotent(
+                  input.execution.sessionId,
+                  {
+                    kind: "ProviderTurn",
+                    ref: preparedTurn.manifest.providerTurnId,
+                  },
+                  { entryKind: "ModelOutput", payload: modelOutputPayload },
+                  sha256Hex(JSON.stringify(modelOutputPayload)),
+                  loopStepFence,
+                  causalBinding,
+                );
+            if (reasoningAttachmentItem !== undefined) {
+              if (!typed) {
+                return yield* Effect.fail<ReasoningRoundTripTimelineUnavailable>(
+                  { _tag: "ReasoningRoundTripTimelineUnavailable" },
+                );
+              }
+              yield* sessions.appendItemIdempotent(
+                input.execution.sessionId,
+                {
+                  item: reasoningAttachmentItem,
+                  contextEpoch: outputEpoch as never,
+                  source: {
+                    kind: "ProviderTurnReasoning",
+                    ref: `${preparedTurn.manifest.providerTurnId}:reasoning`,
+                  },
+                  contentHash: sha256Hex(
+                    JSON.stringify(reasoningAttachmentItem),
+                  ),
+                  ...(causalBinding === undefined ? {} : { causalBinding }),
+                },
+                loopStepFence,
+              );
+            }
+            if (typed) {
+              for (const invocation of decodedOutput.toolInvocations) {
+                const item = {
+                  _tag: "ToolCall" as const,
+                  providerTurnId: preparedTurn.manifest.providerTurnId,
+                  callRef: invocation.callRef,
+                  toolRef: invocation.toolName,
+                  argumentsRef: `inline:${sha256Hex(invocation.argumentsJson)}`,
+                  argumentsJson: invocation.argumentsJson,
+                };
                 yield* sessions.appendItemIdempotent(
                   input.execution.sessionId,
                   {
-                    item: reasoningAttachmentItem,
+                    item,
                     contextEpoch: outputEpoch as never,
                     source: {
-                      kind: "ProviderTurnReasoning",
-                      ref: `${preparedTurn.manifest.providerTurnId}:reasoning`,
+                      kind: "ProviderTurnCall",
+                      ref: `${preparedTurn.manifest.providerTurnId}:${invocation.callRef}`,
                     },
-                    contentHash: sha256Hex(
-                      JSON.stringify(reasoningAttachmentItem),
-                    ),
+                    contentHash: sha256Hex(JSON.stringify(item)),
                     ...(causalBinding === undefined ? {} : { causalBinding }),
                   },
                   loopStepFence,
                 );
               }
-              if (typed) {
-                for (const invocation of decodedOutput.toolInvocations) {
-                  const item = {
-                    _tag: "ToolCall" as const,
-                    providerTurnId: preparedTurn.manifest.providerTurnId,
-                    callRef: invocation.callRef,
-                    toolRef: invocation.toolName,
-                    argumentsRef: `inline:${sha256Hex(invocation.argumentsJson)}`,
-                    argumentsJson: invocation.argumentsJson,
-                  };
-                  yield* sessions.appendItemIdempotent(
-                    input.execution.sessionId,
-                    {
-                      item,
-                      contextEpoch: outputEpoch as never,
-                      source: {
-                        kind: "ProviderTurnCall",
-                        ref: `${preparedTurn.manifest.providerTurnId}:${invocation.callRef}`,
-                      },
-                      contentHash: sha256Hex(JSON.stringify(item)),
-                      ...(causalBinding === undefined ? {} : { causalBinding }),
-                    },
-                    loopStepFence,
-                  );
-                }
-              }
-              return yield* loopSteps.transition(
-                {
-                  identity: acceptedFrom.identity,
-                  expectedRevision: acceptedFrom.revision,
-                  expectedState: "ProviderResultAvailable",
-                  next: {
-                    ...acceptedFrom,
-                    state: "OutputAccepted",
-                    decodedOutputHash: sha256Hex(
-                      JSON.stringify(modelOutputPayload),
-                    ),
-                    modelOutputSessionSequence: appended.sequence,
-                    revision: acceptedFrom.revision + 1,
-                    updatedAt: yield* now(),
-                  },
+            }
+            return yield* loopSteps.transition(
+              {
+                identity: acceptedFrom.identity,
+                expectedRevision: acceptedFrom.revision,
+                expectedState: "ProviderResultAvailable",
+                next: {
+                  ...acceptedFrom,
+                  state: "OutputAccepted",
+                  decodedOutputHash: sha256Hex(
+                    JSON.stringify(modelOutputPayload),
+                  ),
+                  modelOutputSessionSequence: appended.sequence,
+                  revision: acceptedFrom.revision + 1,
+                  updatedAt: yield* now(),
                 },
-                loopStepFence,
-              );
-            }),
-          )
-          .pipe(Effect.mapError(failure));
+              },
+              loopStepFence,
+            );
+          }),
+        );
         if (dependencies.qualificationProbe !== undefined) {
           yield* Effect.promise(
             () =>
@@ -294,22 +297,20 @@ export const recordAcceptedModelOutput = (
       }
     } else {
       if (reasoningAttachmentItem !== undefined) {
-        return yield* Effect.fail(
-          failure({ _tag: "ReasoningRoundTripTimelineUnavailable" }),
-        );
+        return yield* Effect.fail<ReasoningRoundTripTimelineUnavailable>({
+          _tag: "ReasoningRoundTripTimelineUnavailable",
+        });
       }
-      yield* tx
-        .transact(
-          sessions.appendEntry(
-            input.execution.sessionId,
-            { entryKind: "ModelOutput", payload: modelOutputPayload },
-            input.context._tag === "ExecutionOrigin"
-              ? sessionFence(input.execution.executionId, input.context)
-              : undefined,
-            causalBinding,
-          ),
-        )
-        .pipe(Effect.mapError(failure));
+      yield* tx.transact(
+        sessions.appendEntry(
+          input.execution.sessionId,
+          { entryKind: "ModelOutput", payload: modelOutputPayload },
+          input.context._tag === "ExecutionOrigin"
+            ? sessionFence(input.execution.executionId, input.context)
+            : undefined,
+          causalBinding,
+        ),
+      );
     }
 
     if (
@@ -319,24 +320,22 @@ export const recordAcceptedModelOutput = (
       currentLoopStep.state === "OutputAccepted"
     ) {
       const acceptedStep = currentLoopStep;
-      currentLoopStep = yield* tx
-        .transact(
-          loopSteps.transition(
-            {
-              identity: acceptedStep.identity,
-              expectedRevision: acceptedStep.revision,
-              expectedState: "OutputAccepted",
-              next: {
-                ...acceptedStep,
-                state: "ActionsInProgress",
-                revision: acceptedStep.revision + 1,
-                updatedAt: yield* now(),
-              },
+      currentLoopStep = yield* tx.transact(
+        loopSteps.transition(
+          {
+            identity: acceptedStep.identity,
+            expectedRevision: acceptedStep.revision,
+            expectedState: "OutputAccepted",
+            next: {
+              ...acceptedStep,
+              state: "ActionsInProgress",
+              revision: acceptedStep.revision + 1,
+              updatedAt: yield* now(),
             },
-            loopStepFence,
-          ),
-        )
-        .pipe(Effect.mapError(failure));
+          },
+          loopStepFence,
+        ),
+      );
     }
 
     return currentLoopStep;

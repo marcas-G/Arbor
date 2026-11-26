@@ -13,6 +13,7 @@ import type {
   SummaryCompactionInput,
 } from "../compaction-coordinator.js";
 import type { ModelDecisionDependencies } from "./contract.js";
+import type { StepRecoveryError } from "./errors.js";
 import { recoverConversationOverflow } from "./recovery/conversation-overflow.js";
 import type { OverflowRecoveryState } from "./recovery/overflow-state.js";
 import { recoverWorkOverflow } from "./recovery/work-overflow.js";
@@ -64,7 +65,7 @@ export const recoverDecisionStep = (
       ExecutionDriverError
     >;
   },
-): Effect.Effect<StepRecoveryResult, ExecutionDriverError> => {
+): Effect.Effect<StepRecoveryResult, StepRecoveryError> => {
   const {
     input,
     capability,
@@ -93,25 +94,23 @@ export const recoverDecisionStep = (
     let overflow = phase.overflow;
     let loopStep: AgentLoopStepRecord | undefined;
     if (loopSteps !== undefined && loopStepFence !== undefined) {
-      loopStep = yield* tx
-        .transact(
-          Effect.gen(function* () {
-            const existing = yield* loopSteps.find(loopStepIdentity);
-            if (Option.isSome(existing)) return existing.value;
-            return yield* loopSteps.createPrepared(
-              {
-                identity: loopStepIdentity,
-                providerTurnId,
-                state: "Prepared",
-                nextActionIndex: 0,
-                revision: 0,
-                updatedAt: yield* now(),
-              },
-              loopStepFence,
-            );
-          }),
-        )
-        .pipe(Effect.mapError(failure));
+      loopStep = yield* tx.transact(
+        Effect.gen(function* () {
+          const existing = yield* loopSteps.find(loopStepIdentity);
+          if (Option.isSome(existing)) return existing.value;
+          return yield* loopSteps.createPrepared(
+            {
+              identity: loopStepIdentity,
+              providerTurnId,
+              state: "Prepared",
+              nextActionIndex: 0,
+              revision: 0,
+              updatedAt: yield* now(),
+            },
+            loopStepFence,
+          );
+        }),
+      );
       if (loopStep.state === "OutputRejected") {
         const settlement = decodeExhaustedRepairDisposition(
           loopStep.repairDisposition,
@@ -123,30 +122,28 @@ export const recoverDecisionStep = (
           loopStep.identity.logicalStepNo !== turn ||
           loopStep.identity.repairAttempt !== repairAttempt
         ) {
-          return yield* Effect.fail(
-            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-          );
+          return yield* Effect.fail<StepRecoveryError>({
+            _tag: "AgentLoopStepReplayBindingMismatch",
+          });
         }
         const exhaustedStep = loopStep;
-        loopStep = yield* tx
-          .transact(
-            loopSteps.transition(
-              {
-                identity: exhaustedStep.identity,
-                expectedRevision: exhaustedStep.revision,
-                expectedState: "OutputRejected",
-                next: {
-                  ...exhaustedStep,
-                  state: "SettlementProposed",
-                  settlement,
-                  revision: exhaustedStep.revision + 1,
-                  updatedAt: yield* now(),
-                },
+        loopStep = yield* tx.transact(
+          loopSteps.transition(
+            {
+              identity: exhaustedStep.identity,
+              expectedRevision: exhaustedStep.revision,
+              expectedState: "OutputRejected",
+              next: {
+                ...exhaustedStep,
+                state: "SettlementProposed",
+                settlement,
+                revision: exhaustedStep.revision + 1,
+                updatedAt: yield* now(),
               },
-              loopStepFence,
-            ),
-          )
-          .pipe(Effect.mapError(failure));
+            },
+            loopStepFence,
+          ),
+        );
         return {
           _tag: "Complete" as const,
           outcome: { _tag: "Settle" as const, settlement },
@@ -163,16 +160,16 @@ export const recoverDecisionStep = (
         // keeps ordinary Prepared steps from requiring the v1.23 chain
         // table, while a real overflow with missing chain storage still
         // fails closed when the chain read below is attempted.
-        const originalInference = yield* tx
-          .transact(providerTurns.findSettledResult(loopStep.providerTurnId))
-          .pipe(Effect.mapError(failure));
+        const originalInference = yield* tx.transact(
+          providerTurns.findSettledResult(loopStep.providerTurnId),
+        );
         if (
           originalInference._tag === "SettledFailure" &&
           originalInference.failureKind === "ContextLimitExceeded"
         ) {
-          const providerTurnLinks = yield* tx
-            .transact(loopSteps.listProviderTurnLinks(loopStepIdentity))
-            .pipe(Effect.mapError(failure));
+          const providerTurnLinks = yield* tx.transact(
+            loopSteps.listProviderTurnLinks(loopStepIdentity),
+          );
           const inferenceLinks = providerTurnLinks.filter(
             (link) => link.role === "Inference",
           );

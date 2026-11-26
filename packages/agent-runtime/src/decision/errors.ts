@@ -11,7 +11,9 @@ import type {
   HumanMessageStoreError,
   LeaseFencingRejected,
   ProviderFailure,
+  SessionEpochConflict,
   SessionRepositoryError,
+  SessionSourceConflict,
   TransactionOperationalFailure,
 } from "@arbor/ports";
 import type { Effect } from "effect";
@@ -87,6 +89,18 @@ export interface ConversationCheckpointRebaseMismatch {
   readonly _tag: "ConversationCheckpointRebaseMismatch";
 }
 
+export interface SessionTimelineContextMissing {
+  readonly _tag: "SessionTimelineContextMissing";
+}
+
+export interface ReasoningRoundTripBindingUnavailable {
+  readonly _tag: "ReasoningRoundTripBindingUnavailable";
+}
+
+export interface ReasoningRoundTripTimelineUnavailable {
+  readonly _tag: "ReasoningRoundTripTimelineUnavailable";
+}
+
 /** `proposePreparedStepSettlement`: the fenced Prepared-to-SettlementProposed
  * transition plus a dangling failed-turn close, both inside one transaction. */
 export type SettlementProposalError =
@@ -150,4 +164,60 @@ export const foldStartupRecoveryError = (
 
 export const foldConversationDecisionContextError = (
   cause: ConversationDecisionContextError,
+): ExecutionDriverError => toExecutionDriverError(cause);
+
+/** `completeAgentLoopStep`: the post-action observation append and the
+ * loop-step transitions `ActionsInProgress -> StepEffectsCommitted ->
+ * NextStepReady|SettlementProposed`. The session timeline is touched only
+ * through `appendEntry` and the loop-step store through `transition` /
+ * `ensureSuccessor`, so the phase never sees a wider surface. */
+export type AgentLoopStepCompletionError =
+  | AgentLoopStepInvariantConflict
+  | AgentLoopStepStoreError
+  | LeaseFencingRejected
+  | SessionRepositoryError
+  | TransactionOperationalFailure;
+
+/** `recordAcceptedModelOutput`: the reasoning-attachment blob write, the
+ * idempotent assistant/timeline appends inside the output-acceptance
+ * transaction, the legacy append path, and the `OutputAccepted ->
+ * ActionsInProgress` transition. The tagged invariants are the exact
+ * fail-closed reasons the phase already produced through the eager fold. */
+export type ModelOutputJournalError =
+  | BlobStoreError
+  | LeaseFencingRejected
+  | ReasoningRoundTripBindingUnavailable
+  | ReasoningRoundTripTimelineUnavailable
+  | SessionEpochConflict
+  | SessionRepositoryError
+  | SessionSourceConflict
+  | SessionTimelineContextMissing
+  | TransactionOperationalFailure
+  | AgentLoopStepInvariantConflict
+  | AgentLoopStepStoreError;
+
+/** `recoverDecisionStep`: the Prepared-step find-or-create, the exhausted
+ * repair `OutputRejected -> SettlementProposed` transition, the settled-result
+ * chain read and the provider-turn link listing. `ExecutionDriverError` flows
+ * in from the still-driver-typed overflow sub-phases
+ * (`recoverConversationOverflow` / `recoverWorkOverflow`). */
+export type StepRecoveryError =
+  | AgentLoopStepInvariantConflict
+  | AgentLoopStepStoreError
+  | AgentLoopStepReplayBindingMismatch
+  | ExecutionDriverError
+  | LeaseFencingRejected
+  | ProviderFailure
+  | TransactionOperationalFailure;
+
+export const foldAgentLoopStepCompletionError = (
+  cause: AgentLoopStepCompletionError,
+): ExecutionDriverError => toExecutionDriverError(cause);
+
+export const foldModelOutputJournalError = (
+  cause: ModelOutputJournalError,
+): ExecutionDriverError => toExecutionDriverError(cause);
+
+export const foldStepRecoveryError = (
+  cause: StepRecoveryError,
 ): ExecutionDriverError => toExecutionDriverError(cause);

@@ -35,6 +35,7 @@ import {
   foldConversationDecisionContextError,
   foldSettlementProposalError,
   foldStartupRecoveryError,
+  foldStepRecoveryError,
 } from "./decision/errors.js";
 import { prepareTurnForDecision } from "./decision/preparation/turn.js";
 import { invokePreparedProviderTurn } from "./decision/provider/invocation.js";
@@ -279,7 +280,7 @@ export const runModelDecision = (
         compactionDependencies,
         readExecutionTimeline,
         loadWorkCompactionPinning,
-      });
+      }).pipe(Effect.mapError(foldStepRecoveryError));
       if (stepRecovery._tag === "Complete") return stepRecovery.outcome;
       overflow = stepRecovery.overflow;
       if (stepRecovery._tag === "Restart") continue;
