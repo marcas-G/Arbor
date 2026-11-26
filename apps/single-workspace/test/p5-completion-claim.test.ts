@@ -19,9 +19,10 @@ import {
   type AdmitExecutionPayload,
   runExecution,
 } from "@arbor/execution-runtime";
+import { it } from "@effect/vitest";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect } from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
 import {
   createCurrentSchemaTestDatabaseFactory,
@@ -193,66 +194,68 @@ const admit = (commandId: CommandId) =>
   });
 
 describe("STILL_VALID_INVARIANT — superseded CompletionClaim representation", () => {
-  it("keeps Work Open and fails closed when the old universal envelope is submitted", async () => {
-    const fixture = createSchema44Case();
-    schema44Cleanups.push(fixture.cleanup);
-    const app = buildSingleWorkspaceLayer({
-      databaseFile: fixture.databaseFilename,
-      providerTurns: [legacyAgentDirectiveTurn],
-    });
-    const result = await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          yield* seed;
-          yield* ensureLegacyProjectResourceSourceFixture();
-          yield* admit(
-            parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789a1"),
-          );
-          const settlement = yield* runExecution(
-            executionId,
-            { _tag: "WorkSelected" },
-            principal,
-          );
-          const sql = yield* SqlClient;
-          const works = yield* sql.unsafe<{ lifecycle: string }>(
-            "SELECT lifecycle FROM works WHERE work_id = ?",
-            [workId],
-          );
-          const executions = yield* sql.unsafe<{ settlement_kind: string }>(
-            "SELECT settlement_kind FROM executions WHERE execution_id = ?",
-            [executionId],
-          );
-          const waits = yield* sql.unsafe<{ count: number }>(
-            "SELECT COUNT(*) AS count FROM work_waits",
-          );
-          return {
-            settlement,
-            workLifecycle: works[0]?.lifecycle,
-            settlementKind: executions[0]?.settlement_kind,
-            waits: Number(waits[0]?.count ?? 0),
-          };
-        }),
-        app,
-      ) as unknown as Effect.Effect<
-        {
-          settlement: { _tag: string; result?: { _tag: string } };
-          workLifecycle: string | undefined;
-          settlementKind: string | undefined;
-          waits: number;
-        },
-        unknown,
-        never
-      >,
-    );
-    expect(result.settlement).toMatchObject({
-      _tag: "Interrupted",
-      result: {
-        _tag: "ControlledInterruption",
-        reason: "UnknownTool",
-      },
-    });
-    expect(result.settlementKind).toBe("Interrupted");
-    expect(result.workLifecycle).toBe("Open");
-    expect(result.waits).toBe(0);
-  });
+  it.effect(
+    "keeps Work Open and fails closed when the old universal envelope is submitted",
+    () =>
+      Effect.gen(function* () {
+        const fixture = createSchema44Case();
+        schema44Cleanups.push(fixture.cleanup);
+        const app = buildSingleWorkspaceLayer({
+          databaseFile: fixture.databaseFilename,
+          providerTurns: [legacyAgentDirectiveTurn],
+        });
+        const result = yield* Effect.provide(
+          Effect.gen(function* () {
+            yield* seed;
+            yield* ensureLegacyProjectResourceSourceFixture();
+            yield* admit(
+              parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+            );
+            const settlement = yield* runExecution(
+              executionId,
+              { _tag: "WorkSelected" },
+              principal,
+            );
+            const sql = yield* SqlClient;
+            const works = yield* sql.unsafe<{ lifecycle: string }>(
+              "SELECT lifecycle FROM works WHERE work_id = ?",
+              [workId],
+            );
+            const executions = yield* sql.unsafe<{ settlement_kind: string }>(
+              "SELECT settlement_kind FROM executions WHERE execution_id = ?",
+              [executionId],
+            );
+            const waits = yield* sql.unsafe<{ count: number }>(
+              "SELECT COUNT(*) AS count FROM work_waits",
+            );
+            return {
+              settlement,
+              workLifecycle: works[0]?.lifecycle,
+              settlementKind: executions[0]?.settlement_kind,
+              waits: Number(waits[0]?.count ?? 0),
+            };
+          }),
+          app,
+        ) as unknown as Effect.Effect<
+          {
+            settlement: { _tag: string; result?: { _tag: string } };
+            workLifecycle: string | undefined;
+            settlementKind: string | undefined;
+            waits: number;
+          },
+          unknown,
+          never
+        >;
+        expect(result.settlement).toMatchObject({
+          _tag: "Interrupted",
+          result: {
+            _tag: "ControlledInterruption",
+            reason: "UnknownTool",
+          },
+        });
+        expect(result.settlementKind).toBe("Interrupted");
+        expect(result.workLifecycle).toBe("Open");
+        expect(result.waits).toBe(0);
+      }),
+  );
 });

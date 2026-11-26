@@ -1,6 +1,7 @@
 import type { TranscriptReq, TranscriptRes } from "@arbor/api-contracts";
 import { ProjectId, parse, SessionId, WorkspaceId } from "@arbor/domain";
 import { ProjectionQueryPort } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import {
@@ -10,7 +11,6 @@ import {
   beforeEach,
   describe,
   expect,
-  it,
 } from "vitest";
 import { createCurrentSchemaTestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import { buildSingleWorkspaceLayer } from "../src/index.js";
@@ -50,146 +50,152 @@ afterAll(() => {
 }, 120_000);
 
 describe("P14 conversation history paging", () => {
-  it("returns the latest chronological page, then older pages by stable cursor", async () => {
-    if (fixture === undefined) throw new Error("Schema 42 fixture is missing");
-    const testFixture = fixture;
-    const databaseFile = testFixture.databaseFilename;
-    const app = buildSingleWorkspaceLayer({ databaseFile, projectId });
-    try {
-      const pages = await Effect.runPromise(
-        Effect.provide(
-          Effect.gen(function* () {
-            const sql = yield* SqlClient;
-            yield* sql.withTransaction(
-              Effect.gen(function* () {
-                yield* sql.unsafe(
-                  "INSERT INTO projects (project_id, name, root_workspace_id, project_policy, project_policy_revision, default_configuration, environment_ref, lifecycle, revision, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                  [
-                    projectId,
-                    "Conversation history test",
-                    workspaceId,
-                    "{}",
-                    0,
-                    "{}",
-                    "local",
-                    "Open",
-                    0,
-                    "t",
-                    "t",
-                  ],
-                );
-                yield* sql.unsafe(
-                  "INSERT INTO sessions (session_id, binding_kind, workspace_id, execution_id, context_epoch, created_at) VALUES (?,?,?,NULL,?,?)",
-                  [sessionId, "WorkspacePrimary", workspaceId, 0, "t"],
-                );
-                yield* sql.unsafe(
-                  "INSERT INTO workspaces (workspace_id, project_id, parent_workspace_id, name, responsibility_definition, responsibility_revision, resource_boundary, resource_boundary_revision, agent_binding, primary_session_id, current_work_id, workspace_policy, workspace_policy_revision, revision, lifecycle, created_at, updated_at) VALUES (?,?,NULL,?,?,?,?,?,?,?,NULL,?,?,?,?,?,?)",
-                  [
-                    workspaceId,
-                    projectId,
-                    "Root",
-                    "{}",
-                    0,
-                    "{}",
-                    0,
-                    "{}",
-                    sessionId,
-                    "{}",
-                    0,
-                    0,
-                    "Active",
-                    "t",
-                    "t",
-                  ],
-                );
-                for (let index = 0; index < 5; index += 1) {
-                  const minute = String(index).padStart(2, "0");
+  it.effect(
+    "returns the latest chronological page, then older pages by stable cursor",
+    () =>
+      Effect.gen(function* () {
+        if (fixture === undefined)
+          throw new Error("Schema 42 fixture is missing");
+        const testFixture = fixture;
+        const databaseFile = testFixture.databaseFilename;
+        const app = buildSingleWorkspaceLayer({ databaseFile, projectId });
+        try {
+          const pages = yield* Effect.provide(
+            Effect.gen(function* () {
+              const sql = yield* SqlClient;
+              yield* sql.withTransaction(
+                Effect.gen(function* () {
                   yield* sql.unsafe(
-                    "INSERT INTO human_messages (message_id, project_id, root_workspace_id, human_principal, body_ref, command_id, fingerprint, state, claimed_by_execution_id, created_at, settled_at, response_body, attempt_no) VALUES (?,?,?,?,?,?,?,'Answered',?,?,?, ?,0)",
+                    "INSERT INTO projects (project_id, name, root_workspace_id, project_policy, project_policy_revision, default_configuration, environment_ref, lifecycle, revision, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                     [
-                      `msg_${minute}`,
                       projectId,
+                      "Conversation history test",
                       workspaceId,
-                      "user:test",
-                      `human-${index}`,
-                      `cmd_${minute}`,
-                      `fingerprint-${index}`,
-                      `exe_${minute}`,
-                      `2026-09-25T00:${minute}:00.000Z`,
-                      `2026-09-25T00:${minute}:30.000Z`,
-                      `assistant-${index}`,
+                      "{}",
+                      0,
+                      "{}",
+                      "local",
+                      "Open",
+                      0,
+                      "t",
+                      "t",
                     ],
                   );
                   yield* sql.unsafe(
-                    "INSERT INTO conversation_response_jobs (message_id, project_id, root_workspace_id, state, active_execution_id, next_attempt_no, next_eligible_at, attention_reason, last_failure_class, last_failure_fingerprint, policy_version, response_body, response_execution_id, provider_reasoning_json, revision, created_at, updated_at) VALUES (?,?,?,'Answered',NULL,1,NULL,NULL,NULL,NULL,'conversation-retry-v1',?,?,NULL,0,?,?)",
+                    "INSERT INTO sessions (session_id, binding_kind, workspace_id, execution_id, context_epoch, created_at) VALUES (?,?,?,NULL,?,?)",
+                    [sessionId, "WorkspacePrimary", workspaceId, 0, "t"],
+                  );
+                  yield* sql.unsafe(
+                    "INSERT INTO workspaces (workspace_id, project_id, parent_workspace_id, name, responsibility_definition, responsibility_revision, resource_boundary, resource_boundary_revision, agent_binding, primary_session_id, current_work_id, workspace_policy, workspace_policy_revision, revision, lifecycle, created_at, updated_at) VALUES (?,?,NULL,?,?,?,?,?,?,?,NULL,?,?,?,?,?,?)",
                     [
-                      `msg_${minute}`,
-                      projectId,
                       workspaceId,
-                      `assistant-${index}`,
-                      `exe_${minute}`,
-                      `2026-09-25T00:${minute}:00.000Z`,
-                      `2026-09-25T00:${minute}:30.000Z`,
+                      projectId,
+                      "Root",
+                      "{}",
+                      0,
+                      "{}",
+                      0,
+                      "{}",
+                      sessionId,
+                      "{}",
+                      0,
+                      0,
+                      "Active",
+                      "t",
+                      "t",
                     ],
                   );
-                }
-              }),
-            );
+                  for (let index = 0; index < 5; index += 1) {
+                    const minute = String(index).padStart(2, "0");
+                    yield* sql.unsafe(
+                      "INSERT INTO human_messages (message_id, project_id, root_workspace_id, human_principal, body_ref, command_id, fingerprint, state, claimed_by_execution_id, created_at, settled_at, response_body, attempt_no) VALUES (?,?,?,?,?,?,?,'Answered',?,?,?, ?,0)",
+                      [
+                        `msg_${minute}`,
+                        projectId,
+                        workspaceId,
+                        "user:test",
+                        `human-${index}`,
+                        `cmd_${minute}`,
+                        `fingerprint-${index}`,
+                        `exe_${minute}`,
+                        `2026-09-25T00:${minute}:00.000Z`,
+                        `2026-09-25T00:${minute}:30.000Z`,
+                        `assistant-${index}`,
+                      ],
+                    );
+                    yield* sql.unsafe(
+                      "INSERT INTO conversation_response_jobs (message_id, project_id, root_workspace_id, state, active_execution_id, next_attempt_no, next_eligible_at, attention_reason, last_failure_class, last_failure_fingerprint, policy_version, response_body, response_execution_id, provider_reasoning_json, revision, created_at, updated_at) VALUES (?,?,?,'Answered',NULL,1,NULL,NULL,NULL,NULL,'conversation-retry-v1',?,?,NULL,0,?,?)",
+                      [
+                        `msg_${minute}`,
+                        projectId,
+                        workspaceId,
+                        `assistant-${index}`,
+                        `exe_${minute}`,
+                        `2026-09-25T00:${minute}:00.000Z`,
+                        `2026-09-25T00:${minute}:30.000Z`,
+                      ],
+                    );
+                  }
+                }),
+              );
 
-            const query = yield* ProjectionQueryPort;
-            const first = yield* query.query<TranscriptReq, TranscriptRes>(
-              "transcript",
-              { workspaceId, limit: 4, conversationOnly: true },
-            );
-            if (first.value.nextCursor === undefined) {
-              throw new Error("expected a cursor for the older page");
-            }
-            const second = yield* query.query<TranscriptReq, TranscriptRes>(
-              "transcript",
-              {
-                workspaceId,
-                limit: 4,
-                conversationOnly: true,
-                cursor: first.value.nextCursor,
-              },
-            );
-            const third = yield* query.query<TranscriptReq, TranscriptRes>(
-              "transcript",
-              {
-                workspaceId,
-                limit: 4,
-                conversationOnly: true,
-                cursor: second.value.nextCursor,
-              },
-            );
-            return [first.value, second.value, third.value] as const;
-          }),
-          app,
-        ),
-      );
+              const query = yield* ProjectionQueryPort;
+              const first = yield* query.query<TranscriptReq, TranscriptRes>(
+                "transcript",
+                { workspaceId, limit: 4, conversationOnly: true },
+              );
+              if (first.value.nextCursor === undefined) {
+                throw new Error("expected a cursor for the older page");
+              }
+              const second = yield* query.query<TranscriptReq, TranscriptRes>(
+                "transcript",
+                {
+                  workspaceId,
+                  limit: 4,
+                  conversationOnly: true,
+                  cursor: first.value.nextCursor,
+                },
+              );
+              const third = yield* query.query<TranscriptReq, TranscriptRes>(
+                "transcript",
+                {
+                  workspaceId,
+                  limit: 4,
+                  conversationOnly: true,
+                  cursor: second.value.nextCursor,
+                },
+              );
+              return [first.value, second.value, third.value] as const;
+            }),
+            app,
+          );
 
-      const bodies = pages.flatMap((page) =>
-        page.entries.map((entry) =>
-          "body" in entry ? entry.body : entry.summaryRef,
-        ),
-      );
-      expect(bodies).toEqual([
-        "human-3",
-        "assistant-3",
-        "human-4",
-        "assistant-4",
-        "human-1",
-        "assistant-1",
-        "human-2",
-        "assistant-2",
-        "human-0",
-        "assistant-0",
-      ]);
-      expect(pages[0]?.entries[0]?.kind).toBe("HumanConversationTurn");
-      expect(pages[0]?.entries.at(-1)?.kind).toBe("AssistantConversationTurn");
-      expect(pages[2]?.nextCursor).toBeUndefined();
-    } finally {
-      testFixture.cleanup();
-    }
-  }, 120_000);
+          const bodies = pages.flatMap((page) =>
+            page.entries.map((entry) =>
+              "body" in entry ? entry.body : entry.summaryRef,
+            ),
+          );
+          expect(bodies).toEqual([
+            "human-3",
+            "assistant-3",
+            "human-4",
+            "assistant-4",
+            "human-1",
+            "assistant-1",
+            "human-2",
+            "assistant-2",
+            "human-0",
+            "assistant-0",
+          ]);
+          expect(pages[0]?.entries[0]?.kind).toBe("HumanConversationTurn");
+          expect(pages[0]?.entries.at(-1)?.kind).toBe(
+            "AssistantConversationTurn",
+          );
+          expect(pages[2]?.nextCursor).toBeUndefined();
+        } finally {
+          testFixture.cleanup();
+        }
+      }),
+    120_000,
+  );
 });

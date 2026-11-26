@@ -1,5 +1,6 @@
 import { ProjectId, parse, WorkspaceId } from "@arbor/domain";
 import { WorkspaceKnowledgePort } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import {
@@ -9,7 +10,6 @@ import {
   beforeEach,
   describe,
   expect,
-  it,
 } from "vitest";
 import { createCurrentSchemaTestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import { buildSingleWorkspaceLayer } from "../src/index.js";
@@ -105,75 +105,78 @@ const seedWork = (
   });
 
 describe("MAC-P1 WorkspaceKnowledgeView", () => {
-  it("includes only accepted PASS outcomes and rebuilds deterministically", async () => {
-    if (fixture === undefined)
-      throw new Error("Current schema fixture is missing");
-    const app = buildSingleWorkspaceLayer({
-      databaseFile: fixture.databaseFilename,
-      projectId,
-      providerTurns: [],
-    });
-    const result = await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          const sql = yield* SqlClient;
-          yield* sql.withTransaction(
-            Effect.gen(function* () {
-              yield* sql.unsafe(
-                "INSERT INTO projects (project_id, name, root_workspace_id, project_policy, project_policy_revision, default_configuration, environment_ref, lifecycle, revision, created_at, updated_at) VALUES (?,?,?,'{}',0,'{}','local','Open',0,'t','t')",
-                [projectId, "knowledge", workspaceId],
-              );
-              yield* sql.unsafe(
-                "INSERT INTO sessions (session_id, binding_kind, workspace_id, execution_id, context_epoch, created_at) VALUES ('ses_018f2b3c-4d5e-7abc-8def-0123456789f1','WorkspacePrimary',?,NULL,0,'t')",
-                [workspaceId],
-              );
-              yield* sql.unsafe(
-                "INSERT INTO workspaces (workspace_id, project_id, parent_workspace_id, name, responsibility_definition, responsibility_revision, resource_boundary, resource_boundary_revision, agent_binding, primary_session_id, current_work_id, workspace_policy, workspace_policy_revision, revision, lifecycle, created_at, updated_at) VALUES (?,?,NULL,'root','{}',0,'{}',0,'{}','ses_018f2b3c-4d5e-7abc-8def-0123456789f1',NULL,'{}',0,0,'Active','t','t')",
-                [workspaceId, projectId],
-              );
-              yield* seedWork(
-                "wrk_018f2b3c-4d5e-7abc-8def-0123456789f2",
-                "accepted pass",
-                "ver_018f2b3c-4d5e-7abc-8def-0123456789f2",
-                "Pass",
-                true,
-              );
-              yield* seedWork(
-                "wrk_018f2b3c-4d5e-7abc-8def-0123456789f3",
-                "unaccepted pass",
-                "ver_018f2b3c-4d5e-7abc-8def-0123456789f3",
-                "Pass",
-                false,
-              );
-              yield* seedWork(
-                "wrk_018f2b3c-4d5e-7abc-8def-0123456789f4",
-                "accepted fail must not promote",
-                "ver_018f2b3c-4d5e-7abc-8def-0123456789f4",
-                "Fail",
-                true,
-              );
-            }),
-          );
-          const knowledge = yield* WorkspaceKnowledgePort;
-          const first = yield* knowledge.load(workspaceId);
-          const second = yield* knowledge.load(workspaceId);
-          return { first, second };
-        }),
-        app,
-      ),
-    );
-    expect(result.first).toEqual(result.second);
-    expect(result.first.fingerprint).toMatch(/^wkv_/);
-    expect(result.first.entries).toEqual([
-      expect.objectContaining({
-        _tag: "AcceptedWorkOutcome",
-        objective: "accepted pass",
-        provenance: "CanonicalAcceptance",
-        verificationSummaryRef:
-          "blob-summary-ver_018f2b3c-4d5e-7abc-8def-0123456789f2",
+  it.effect(
+    "includes only accepted PASS outcomes and rebuilds deterministically",
+    () =>
+      Effect.gen(function* () {
+        if (fixture === undefined)
+          throw new Error("Current schema fixture is missing");
+        const app = buildSingleWorkspaceLayer({
+          databaseFile: fixture.databaseFilename,
+          projectId,
+          providerTurns: [],
+        });
+        const result = yield* Effect.provide(
+          Effect.gen(function* () {
+            const sql = yield* SqlClient;
+            yield* sql.withTransaction(
+              Effect.gen(function* () {
+                yield* sql.unsafe(
+                  "INSERT INTO projects (project_id, name, root_workspace_id, project_policy, project_policy_revision, default_configuration, environment_ref, lifecycle, revision, created_at, updated_at) VALUES (?,?,?,'{}',0,'{}','local','Open',0,'t','t')",
+                  [projectId, "knowledge", workspaceId],
+                );
+                yield* sql.unsafe(
+                  "INSERT INTO sessions (session_id, binding_kind, workspace_id, execution_id, context_epoch, created_at) VALUES ('ses_018f2b3c-4d5e-7abc-8def-0123456789f1','WorkspacePrimary',?,NULL,0,'t')",
+                  [workspaceId],
+                );
+                yield* sql.unsafe(
+                  "INSERT INTO workspaces (workspace_id, project_id, parent_workspace_id, name, responsibility_definition, responsibility_revision, resource_boundary, resource_boundary_revision, agent_binding, primary_session_id, current_work_id, workspace_policy, workspace_policy_revision, revision, lifecycle, created_at, updated_at) VALUES (?,?,NULL,'root','{}',0,'{}',0,'{}','ses_018f2b3c-4d5e-7abc-8def-0123456789f1',NULL,'{}',0,0,'Active','t','t')",
+                  [workspaceId, projectId],
+                );
+                yield* seedWork(
+                  "wrk_018f2b3c-4d5e-7abc-8def-0123456789f2",
+                  "accepted pass",
+                  "ver_018f2b3c-4d5e-7abc-8def-0123456789f2",
+                  "Pass",
+                  true,
+                );
+                yield* seedWork(
+                  "wrk_018f2b3c-4d5e-7abc-8def-0123456789f3",
+                  "unaccepted pass",
+                  "ver_018f2b3c-4d5e-7abc-8def-0123456789f3",
+                  "Pass",
+                  false,
+                );
+                yield* seedWork(
+                  "wrk_018f2b3c-4d5e-7abc-8def-0123456789f4",
+                  "accepted fail must not promote",
+                  "ver_018f2b3c-4d5e-7abc-8def-0123456789f4",
+                  "Fail",
+                  true,
+                );
+              }),
+            );
+            const knowledge = yield* WorkspaceKnowledgePort;
+            const first = yield* knowledge.load(workspaceId);
+            const second = yield* knowledge.load(workspaceId);
+            return { first, second };
+          }),
+          app,
+        );
+        expect(result.first).toEqual(result.second);
+        expect(result.first.fingerprint).toMatch(/^wkv_/);
+        expect(result.first.entries).toEqual([
+          expect.objectContaining({
+            _tag: "AcceptedWorkOutcome",
+            objective: "accepted pass",
+            provenance: "CanonicalAcceptance",
+            verificationSummaryRef:
+              "blob-summary-ver_018f2b3c-4d5e-7abc-8def-0123456789f2",
+          }),
+        ]);
       }),
-    ]);
-  }, 120_000);
+    120_000,
+  );
 });
 
 afterEach(() => {

@@ -35,8 +35,9 @@ import {
   ToolDefinitionStoreLive,
   ToolRuntimeLive,
 } from "@arbor/tool-runtime";
+import { it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import { makeExecutableToolHandler } from "../src/executable-tool-handler.js";
 import { ToolAuthorityResolverLive } from "../src/tool-authority-resolver.js";
 
@@ -260,28 +261,30 @@ const invokeExecutable = (layer: ExecutablePipelineLayer) =>
   );
 
 describe("production authority denial executable path", () => {
-  it("turns policy denial into a Denied observation and keeps resolver faults operational", async () => {
-    const deniedPipeline = makeProductionPipeline(false);
-    const observation = await Effect.runPromise(
-      invokeExecutable(deniedPipeline.layer),
-    );
+  it.effect(
+    "turns policy denial into a Denied observation and keeps resolver faults operational",
+    () =>
+      Effect.gen(function* () {
+        const deniedPipeline = makeProductionPipeline(false);
+        const observation = yield* invokeExecutable(deniedPipeline.layer);
 
-    expect(observation).toMatchObject({
-      _tag: "Observation",
-      source: "Runtime",
-      status: "Denied",
-    });
-    expect(deniedPipeline.executorCalls()).toBe(0);
+        expect(observation).toMatchObject({
+          _tag: "Observation",
+          source: "Runtime",
+          status: "Denied",
+        });
+        expect(deniedPipeline.executorCalls()).toBe(0);
 
-    const failedPipeline = makeProductionPipeline(true);
-    const operationalFailure = await Effect.runPromise(
-      Effect.flip(invokeExecutable(failedPipeline.layer)),
-    );
+        const failedPipeline = makeProductionPipeline(true);
+        const operationalFailure = yield* Effect.flip(
+          invokeExecutable(failedPipeline.layer),
+        );
 
-    expect(operationalFailure).toMatchObject({
-      _tag: "AgentActionOperationalFailure",
-      operation: "ToolRuntime.AuthorityResolution",
-    });
-    expect(failedPipeline.executorCalls()).toBe(0);
-  });
+        expect(operationalFailure).toMatchObject({
+          _tag: "AgentActionOperationalFailure",
+          operation: "ToolRuntime.AuthorityResolution",
+        });
+        expect(failedPipeline.executorCalls()).toBe(0);
+      }),
+  );
 });

@@ -11,9 +11,10 @@ import {
   SessionRepository,
   TransactionPort,
 } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import {
   ClockLive,
   ExecutionRepositoryLive,
@@ -108,210 +109,226 @@ const seed = Effect.gen(function* () {
 });
 
 describe("SCRC typed Session store", () => {
-  it("idempotently appends typed items and returns the active frontier", async () => {
-    const program = Effect.gen(function* () {
-      yield* runMigrations(P19_MIGRATIONS);
-      yield* seed;
-      const tx = yield* TransactionPort;
-      const executions = yield* ExecutionRepository;
-      const sessions = yield* SessionRepository;
-      yield* tx.transact(executions.tryAdmitMainExecution(execution));
-      yield* tx.transact(
-        executions.tryAcquireLease(
-          executionId,
-          "worker:scrc",
-          "inc:scrc",
-          "2999-01-01T00:00:00.000Z",
-        ),
-      );
-      const fence = {
-        executionId,
-        workerId: "worker:scrc",
-        workerIncarnationId: "inc:scrc",
-        fencingGeneration: 0 as never,
-      };
-      const write = {
-        item: {
-          _tag: "UserMessage" as const,
-          source: {
-            _tag: "InboxEntry" as const,
-            workspaceId,
-            entryKey: "msg:one",
-            kind: "Message" as const,
-          },
-          contentRef: "inbox:msg:one",
-          text: "hello",
-          trust: "DataOnly" as const,
-          delivery: "Queue" as const,
-        },
-        contextEpoch: 0 as never,
-        source: { kind: "InboxEntry", ref: "msg:one" },
-        contentHash: "hash-one",
-      };
-      const first = yield* tx.transact(
-        sessions.appendItemIdempotent(sessionId, write, fence),
-      );
-      const replay = yield* tx.transact(
-        sessions.appendItemIdempotent(sessionId, write, fence),
-      );
-      const conflict = yield* tx
-        .transact(
-          sessions.appendItemIdempotent(
-            sessionId,
-            { ...write, contentHash: "hash-changed" },
-            fence,
-          ),
-        )
-        .pipe(Effect.flip);
-      const frontier = yield* tx.transact(
-        sessions.listActiveFrontier(sessionId, 0 as never, 20),
-      );
-      return { first, replay, conflict, frontier };
-    });
-
-    const result = await Effect.runPromise(Effect.provide(program, app()));
-    expect(result.first).toEqual({ sequence: 0, inserted: true });
-    expect(result.replay).toEqual({ sequence: 0, inserted: false });
-    expect((result.conflict as { _tag: string })._tag).toBe(
-      "SessionSourceConflict",
-    );
-    expect(result.frontier).toHaveLength(1);
-    expect(result.frontier[0]).toMatchObject({
-      itemType: "UserMessage",
-      schemaVersion: 2,
-      contextEpoch: 0,
-      item: { _tag: "UserMessage", text: "hello" },
-    });
-  });
-
-  it("retains the P39 reconciliation fact separately from P3 and P4 result references on ToolResult", async () => {
-    const reconciliationFactRef = "f".repeat(64);
-    const p4ArtifactRef = "art_018f2b3c-4d5e-7abc-8def-0123456789b2";
-    const program = Effect.gen(function* () {
-      yield* runMigrations(P19_MIGRATIONS);
-      yield* seed;
-      const tx = yield* TransactionPort;
-      const executions = yield* ExecutionRepository;
-      const sessions = yield* SessionRepository;
-      yield* tx.transact(executions.tryAdmitMainExecution(execution));
-      yield* tx.transact(
-        executions.tryAcquireLease(
-          executionId,
-          "worker:scrc-rno",
-          "inc:scrc-rno",
-          "2999-01-01T00:00:00.000Z",
-        ),
-      );
-      const fence = {
-        executionId,
-        workerId: "worker:scrc-rno",
-        workerIncarnationId: "inc:scrc-rno",
-        fencingGeneration: 0 as never,
-      };
-      yield* tx.transact(
-        sessions.appendItemIdempotent(
-          sessionId,
-          {
+  it.effect(
+    "idempotently appends typed items and returns the active frontier",
+    () =>
+      Effect.gen(function* () {
+        const program = Effect.gen(function* () {
+          yield* runMigrations(P19_MIGRATIONS);
+          yield* seed;
+          const tx = yield* TransactionPort;
+          const executions = yield* ExecutionRepository;
+          const sessions = yield* SessionRepository;
+          yield* tx.transact(executions.tryAdmitMainExecution(execution));
+          yield* tx.transact(
+            executions.tryAcquireLease(
+              executionId,
+              "worker:scrc",
+              "inc:scrc",
+              "2999-01-01T00:00:00.000Z",
+            ),
+          );
+          const fence = {
+            executionId,
+            workerId: "worker:scrc",
+            workerIncarnationId: "inc:scrc",
+            fencingGeneration: 0 as never,
+          };
+          const write = {
             item: {
-              _tag: "ToolResult",
-              callRef: "call-rno",
-              toolName: "write_once",
-              status: "Denied",
-              disposition: "ReconciledNoEffect:AuthoritySnapshotChanged",
-              reconciliationFactRef,
-              observationRef: "observation-p3-hash",
-              modelOutputRef: p4ArtifactRef,
-              outputText: "the effect did not occur",
-              truncated: false,
-              artifactRefs: [p4ArtifactRef],
+              _tag: "UserMessage" as const,
+              source: {
+                _tag: "InboxEntry" as const,
+                workspaceId,
+                entryKey: "msg:one",
+                kind: "Message" as const,
+              },
+              contentRef: "inbox:msg:one",
+              text: "hello",
+              trust: "DataOnly" as const,
+              delivery: "Queue" as const,
             },
             contextEpoch: 0 as never,
-            source: {
-              kind: "AgentLoopAction",
-              ref: "observation-p3-hash",
+            source: { kind: "InboxEntry", ref: "msg:one" },
+            contentHash: "hash-one",
+          };
+          const first = yield* tx.transact(
+            sessions.appendItemIdempotent(sessionId, write, fence),
+          );
+          const replay = yield* tx.transact(
+            sessions.appendItemIdempotent(sessionId, write, fence),
+          );
+          const conflict = yield* tx
+            .transact(
+              sessions.appendItemIdempotent(
+                sessionId,
+                { ...write, contentHash: "hash-changed" },
+                fence,
+              ),
+            )
+            .pipe(Effect.flip);
+          const frontier = yield* tx.transact(
+            sessions.listActiveFrontier(sessionId, 0 as never, 20),
+          );
+          return { first, replay, conflict, frontier };
+        });
+
+        const result = yield* Effect.provide(program, app());
+        expect(result.first).toEqual({ sequence: 0, inserted: true });
+        expect(result.replay).toEqual({ sequence: 0, inserted: false });
+        expect((result.conflict as { _tag: string })._tag).toBe(
+          "SessionSourceConflict",
+        );
+        expect(result.frontier).toHaveLength(1);
+        expect(result.frontier[0]).toMatchObject({
+          itemType: "UserMessage",
+          schemaVersion: 2,
+          contextEpoch: 0,
+          item: { _tag: "UserMessage", text: "hello" },
+        });
+      }),
+  );
+
+  it.effect(
+    "retains the P39 reconciliation fact separately from P3 and P4 result references on ToolResult",
+    () =>
+      Effect.gen(function* () {
+        const reconciliationFactRef = "f".repeat(64);
+        const p4ArtifactRef = "art_018f2b3c-4d5e-7abc-8def-0123456789b2";
+        const program = Effect.gen(function* () {
+          yield* runMigrations(P19_MIGRATIONS);
+          yield* seed;
+          const tx = yield* TransactionPort;
+          const executions = yield* ExecutionRepository;
+          const sessions = yield* SessionRepository;
+          yield* tx.transact(executions.tryAdmitMainExecution(execution));
+          yield* tx.transact(
+            executions.tryAcquireLease(
+              executionId,
+              "worker:scrc-rno",
+              "inc:scrc-rno",
+              "2999-01-01T00:00:00.000Z",
+            ),
+          );
+          const fence = {
+            executionId,
+            workerId: "worker:scrc-rno",
+            workerIncarnationId: "inc:scrc-rno",
+            fencingGeneration: 0 as never,
+          };
+          yield* tx.transact(
+            sessions.appendItemIdempotent(
+              sessionId,
+              {
+                item: {
+                  _tag: "ToolResult",
+                  callRef: "call-rno",
+                  toolName: "write_once",
+                  status: "Denied",
+                  disposition: "ReconciledNoEffect:AuthoritySnapshotChanged",
+                  reconciliationFactRef,
+                  observationRef: "observation-p3-hash",
+                  modelOutputRef: p4ArtifactRef,
+                  outputText: "the effect did not occur",
+                  truncated: false,
+                  artifactRefs: [p4ArtifactRef],
+                },
+                contextEpoch: 0 as never,
+                source: {
+                  kind: "AgentLoopAction",
+                  ref: "observation-p3-hash",
+                },
+                contentHash: "rno-item-content-hash",
+              },
+              fence,
+            ),
+          );
+          return yield* tx.transact(
+            sessions.listActiveFrontier(sessionId, 0 as never, 20),
+          );
+        });
+        const frontier = yield* Effect.provide(program, app());
+        expect(frontier).toHaveLength(1);
+        expect(frontier[0]?.item).toMatchObject({
+          _tag: "ToolResult",
+          reconciliationFactRef,
+          disposition: "ReconciledNoEffect:AuthoritySnapshotChanged",
+          observationRef: "observation-p3-hash",
+          modelOutputRef: p4ArtifactRef,
+          artifactRefs: [p4ArtifactRef],
+        });
+        expect(frontier[0]?.item).not.toHaveProperty(
+          "reconciliationFactRef",
+          p4ArtifactRef,
+        );
+      }),
+  );
+
+  it.effect(
+    "atomically commits a checkpoint and epoch with idempotent replay",
+    () =>
+      Effect.gen(function* () {
+        const program = Effect.gen(function* () {
+          yield* runMigrations(P19_MIGRATIONS);
+          yield* seed;
+          const tx = yield* TransactionPort;
+          const executions = yield* ExecutionRepository;
+          const sessions = yield* SessionRepository;
+          yield* tx.transact(executions.tryAdmitMainExecution(execution));
+          yield* tx.transact(
+            executions.tryAcquireLease(
+              executionId,
+              "worker:scrc",
+              "inc:scrc",
+              "2999-01-01T00:00:00.000Z",
+            ),
+          );
+          const fence = {
+            executionId,
+            workerId: "worker:scrc",
+            workerIncarnationId: "inc:scrc",
+            fencingGeneration: 0 as never,
+          };
+          const input = {
+            expectedEpoch: 0 as never,
+            nextEpoch: 1 as never,
+            checkpoint: {
+              _tag: "CompactionCheckpoint" as const,
+              implementation: "Summary" as const,
+              fromEpoch: 0 as never,
+              toEpoch: 1 as never,
+              retainedFrontierRef: "frontier:0:10",
+              summaryRef: "blob:summary-1",
+              bindingFingerprint: null,
             },
-            contentHash: "rno-item-content-hash",
-          },
-          fence,
-        ),
-      );
-      return yield* tx.transact(
-        sessions.listActiveFrontier(sessionId, 0 as never, 20),
-      );
-    });
-    const frontier = await Effect.runPromise(Effect.provide(program, app()));
-    expect(frontier).toHaveLength(1);
-    expect(frontier[0]?.item).toMatchObject({
-      _tag: "ToolResult",
-      reconciliationFactRef,
-      disposition: "ReconciledNoEffect:AuthoritySnapshotChanged",
-      observationRef: "observation-p3-hash",
-      modelOutputRef: p4ArtifactRef,
-      artifactRefs: [p4ArtifactRef],
-    });
-    expect(frontier[0]?.item).not.toHaveProperty(
-      "reconciliationFactRef",
-      p4ArtifactRef,
-    );
-  });
+            source: { kind: "CompactionTurn", ref: "ptn:compact-1" },
+            contentHash: "hash-checkpoint",
+          };
+          const first = yield* tx.transact(
+            sessions.commitCompaction(sessionId, input, fence),
+          );
+          const replay = yield* tx.transact(
+            sessions.commitCompaction(sessionId, input, fence),
+          );
+          const loaded = yield* tx.transact(sessions.findById(sessionId));
+          return { first, replay, loaded };
+        });
 
-  it("atomically commits a checkpoint and epoch with idempotent replay", async () => {
-    const program = Effect.gen(function* () {
-      yield* runMigrations(P19_MIGRATIONS);
-      yield* seed;
-      const tx = yield* TransactionPort;
-      const executions = yield* ExecutionRepository;
-      const sessions = yield* SessionRepository;
-      yield* tx.transact(executions.tryAdmitMainExecution(execution));
-      yield* tx.transact(
-        executions.tryAcquireLease(
-          executionId,
-          "worker:scrc",
-          "inc:scrc",
-          "2999-01-01T00:00:00.000Z",
-        ),
-      );
-      const fence = {
-        executionId,
-        workerId: "worker:scrc",
-        workerIncarnationId: "inc:scrc",
-        fencingGeneration: 0 as never,
-      };
-      const input = {
-        expectedEpoch: 0 as never,
-        nextEpoch: 1 as never,
-        checkpoint: {
-          _tag: "CompactionCheckpoint" as const,
-          implementation: "Summary" as const,
-          fromEpoch: 0 as never,
-          toEpoch: 1 as never,
-          retainedFrontierRef: "frontier:0:10",
-          summaryRef: "blob:summary-1",
-          bindingFingerprint: null,
-        },
-        source: { kind: "CompactionTurn", ref: "ptn:compact-1" },
-        contentHash: "hash-checkpoint",
-      };
-      const first = yield* tx.transact(
-        sessions.commitCompaction(sessionId, input, fence),
-      );
-      const replay = yield* tx.transact(
-        sessions.commitCompaction(sessionId, input, fence),
-      );
-      const loaded = yield* tx.transact(sessions.findById(sessionId));
-      return { first, replay, loaded };
-    });
-
-    const result = await Effect.runPromise(Effect.provide(program, app()));
-    expect(result.first).toEqual({ sequence: 0, inserted: true, newEpoch: 1 });
-    expect(result.replay).toEqual({
-      sequence: 0,
-      inserted: false,
-      newEpoch: 1,
-    });
-    expect(Option.isSome(result.loaded)).toBe(true);
-    if (Option.isSome(result.loaded)) {
-      expect(result.loaded.value.contextEpoch).toBe(1);
-    }
-  });
+        const result = yield* Effect.provide(program, app());
+        expect(result.first).toEqual({
+          sequence: 0,
+          inserted: true,
+          newEpoch: 1,
+        });
+        expect(result.replay).toEqual({
+          sequence: 0,
+          inserted: false,
+          newEpoch: 1,
+        });
+        expect(Option.isSome(result.loaded)).toBe(true);
+        if (Option.isSome(result.loaded)) {
+          expect(result.loaded.value.contextEpoch).toBe(1);
+        }
+      }),
+  );
 });

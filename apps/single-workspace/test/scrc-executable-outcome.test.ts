@@ -1,6 +1,7 @@
 import { ExecutionId, parse, providerTurnInferenceId } from "@arbor/domain";
+import { it } from "@effect/vitest";
 import { Effect } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import {
   makeExecutableToolHandler,
   toExecutableOutcome,
@@ -266,165 +267,103 @@ describe("SCRC executable outcome taxonomy", () => {
     });
   });
 
-  it("propagates P4 replay-evidence loss as a P3 recovery block with the exact action source", async () => {
-    let source: {
-      readonly providerTurnId?: string;
-      readonly logicalActionId?: string;
-    } = {};
-    const handler = makeExecutableToolHandler(
-      {
-        invoke: (_intent, context) => {
-          source = context;
-          return Effect.fail({
-            _tag: "ToolObservationRecoveryBlocked" as const,
-            executionId: "exe_p40_replay" as never,
-            logicalActionId: "lac_p40_replay",
-          });
-        },
-      },
-      { now: () => Effect.succeed("t") },
-      {
-        visibleRefs: () =>
-          Effect.succeed([{ name: "read", version: "2", hash: "read-v2" }]),
-        resolveForModel: () => Effect.die("unused"),
-      },
-    );
-    const blocked = await Effect.runPromise(
-      Effect.flip(
-        handler.handle({
-          invocation: {
-            providerTurnId: p40ReplayTurnId,
-            outputPosition: 0,
-            callRef: "call-p40-replay",
-            toolName: "read",
-            argumentsJson: "{}",
-          },
-          execution: {
-            executionId: "exe_p40_replay" as never,
-            projectId: "prj_test" as never,
-            workspaceId: "ws_test" as never,
-            sessionId: "ses_test" as never,
-            binding: {
-              _tag: "WorkspaceExecution",
-              workspaceId: "ws_test" as never,
-              focus: { _tag: "Coordination" },
+  it.effect(
+    "propagates P4 replay-evidence loss as a P3 recovery block with the exact action source",
+    () =>
+      Effect.gen(function* () {
+        let source: {
+          readonly providerTurnId?: string;
+          readonly logicalActionId?: string;
+        } = {};
+        const handler = makeExecutableToolHandler(
+          {
+            invoke: (_intent, context) => {
+              source = context;
+              return Effect.fail({
+                _tag: "ToolObservationRecoveryBlocked" as const,
+                executionId: "exe_p40_replay" as never,
+                logicalActionId: "lac_p40_replay",
+              });
             },
-            admittedAt: "t",
-            stopRequestedAt: null,
-            state: { status: "Active", settlement: null },
-          } as never,
-          context: {
-            _tag: "ExecutionOrigin",
-            principal: "worker:test" as never,
-            executionId: "exe_p40_replay" as never,
-            workerId: "worker:test",
-            workerIncarnationId: "incarnation:test",
-            fencingGeneration: 0 as never,
           },
-          controlBasis: {} as never,
+          { now: () => Effect.succeed("t") },
+          {
+            visibleRefs: () =>
+              Effect.succeed([{ name: "read", version: "2", hash: "read-v2" }]),
+            resolveForModel: () => Effect.die("unused"),
+          },
+        );
+        const blocked = yield* Effect.flip(
+          handler.handle({
+            invocation: {
+              providerTurnId: p40ReplayTurnId,
+              outputPosition: 0,
+              callRef: "call-p40-replay",
+              toolName: "read",
+              argumentsJson: "{}",
+            },
+            execution: {
+              executionId: "exe_p40_replay" as never,
+              projectId: "prj_test" as never,
+              workspaceId: "ws_test" as never,
+              sessionId: "ses_test" as never,
+              binding: {
+                _tag: "WorkspaceExecution",
+                workspaceId: "ws_test" as never,
+                focus: { _tag: "Coordination" },
+              },
+              admittedAt: "t",
+              stopRequestedAt: null,
+              state: { status: "Active", settlement: null },
+            } as never,
+            context: {
+              _tag: "ExecutionOrigin",
+              principal: "worker:test" as never,
+              executionId: "exe_p40_replay" as never,
+              workerId: "worker:test",
+              workerIncarnationId: "incarnation:test",
+              fencingGeneration: 0 as never,
+            },
+            controlBasis: {} as never,
+            providerTurnId: p40ReplayTurnId,
+            logicalActionId: "lac_p40_replay",
+          }),
+        );
+        expect(blocked).toMatchObject({
+          _tag: "AgentActionRecoveryBlocked",
+          executionId: "exe_p40_replay",
+          logicalActionId: "lac_p40_replay",
+        });
+        expect(source).toMatchObject({
           providerTurnId: p40ReplayTurnId,
           logicalActionId: "lac_p40_replay",
-        }),
-      ),
-    );
-    expect(blocked).toMatchObject({
-      _tag: "AgentActionRecoveryBlocked",
-      executionId: "exe_p40_replay",
-      logicalActionId: "lac_p40_replay",
-    });
-    expect(source).toMatchObject({
-      providerTurnId: p40ReplayTurnId,
-      logicalActionId: "lac_p40_replay",
-    });
-  });
-
-  it("settles OutcomeUnknown when ToolRuntime cannot establish the external effect", async () => {
-    const handler = makeExecutableToolHandler(
-      {
-        invoke: () =>
-          Effect.fail({
-            _tag: "ToolRuntimeOperationalFailure",
-            stage: "SettlementJournal",
-            effectDisposition: "OutcomeUncertain",
-            invocationRef: "tin_uncertain",
-            cause: "journal unavailable",
-          }),
-      },
-      { now: () => Effect.succeed("t") },
-      {
-        visibleRefs: () =>
-          Effect.succeed([{ name: "read", version: "2", hash: "read-v2" }]),
-        resolveForModel: () => Effect.die("unused"),
-      },
-    );
-    const outcome = await Effect.runPromise(
-      handler.handle({
-        invocation: {
-          providerTurnId: testTurnId,
-          outputPosition: 0,
-          callRef: "call-1",
-          toolName: "read",
-          argumentsJson: "{}",
-        },
-        execution: {
-          executionId: "exe_test" as never,
-          projectId: "prj_test" as never,
-          workspaceId: "ws_test" as never,
-          sessionId: "ses_test" as never,
-          binding: {
-            _tag: "WorkspaceExecution",
-            workspaceId: "ws_test" as never,
-            focus: { _tag: "Coordination" },
-          },
-          admittedAt: "t",
-          stopRequestedAt: null,
-          state: { status: "Active", settlement: null },
-        },
-        context: {
-          _tag: "ExecutionOrigin",
-          principal: "worker:test" as never,
-          executionId: "exe_test" as never,
-          workerId: "worker:test",
-          workerIncarnationId: "incarnation:test",
-          fencingGeneration: 0 as never,
-        },
-        controlBasis: {} as never,
+        });
       }),
-    );
-    expect(outcome).toEqual({
-      _tag: "Settle",
-      settlement: {
-        _tag: "OutcomeUnknown",
-        reconciliation: {
-          _tag: "ReconciliationRequired",
-          invocationRefs: ["tin_uncertain"],
-        },
-      },
-    });
-  });
+  );
 
-  it("keeps pre-effect ToolRuntime failure out of the model-result channel", async () => {
-    const handler = makeExecutableToolHandler(
-      {
-        invoke: () =>
-          Effect.fail({
-            _tag: "ToolRuntimeOperationalFailure",
-            stage: "SandboxOpen",
-            effectDisposition: "NotStarted",
-            invocationRef: "tin_not_started",
-            cause: "sandbox unavailable",
-          }),
-      },
-      { now: () => Effect.succeed("t") },
-      {
-        visibleRefs: () =>
-          Effect.succeed([{ name: "read", version: "2", hash: "read-v2" }]),
-        resolveForModel: () => Effect.die("unused"),
-      },
-    );
-    const failure = await Effect.runPromise(
-      Effect.flip(
-        handler.handle({
+  it.effect(
+    "settles OutcomeUnknown when ToolRuntime cannot establish the external effect",
+    () =>
+      Effect.gen(function* () {
+        const handler = makeExecutableToolHandler(
+          {
+            invoke: () =>
+              Effect.fail({
+                _tag: "ToolRuntimeOperationalFailure",
+                stage: "SettlementJournal",
+                effectDisposition: "OutcomeUncertain",
+                invocationRef: "tin_uncertain",
+                cause: "journal unavailable",
+              }),
+          },
+          { now: () => Effect.succeed("t") },
+          {
+            visibleRefs: () =>
+              Effect.succeed([{ name: "read", version: "2", hash: "read-v2" }]),
+            resolveForModel: () => Effect.die("unused"),
+          },
+        );
+        const outcome = yield* handler.handle({
           invocation: {
             providerTurnId: testTurnId,
             outputPosition: 0,
@@ -455,12 +394,80 @@ describe("SCRC executable outcome taxonomy", () => {
             fencingGeneration: 0 as never,
           },
           controlBasis: {} as never,
-        }),
-      ),
-    );
-    expect(failure).toMatchObject({
-      _tag: "AgentActionOperationalFailure",
-      operation: "ToolRuntime.SandboxOpen",
-    });
-  });
+        });
+        expect(outcome).toEqual({
+          _tag: "Settle",
+          settlement: {
+            _tag: "OutcomeUnknown",
+            reconciliation: {
+              _tag: "ReconciliationRequired",
+              invocationRefs: ["tin_uncertain"],
+            },
+          },
+        });
+      }),
+  );
+
+  it.effect(
+    "keeps pre-effect ToolRuntime failure out of the model-result channel",
+    () =>
+      Effect.gen(function* () {
+        const handler = makeExecutableToolHandler(
+          {
+            invoke: () =>
+              Effect.fail({
+                _tag: "ToolRuntimeOperationalFailure",
+                stage: "SandboxOpen",
+                effectDisposition: "NotStarted",
+                invocationRef: "tin_not_started",
+                cause: "sandbox unavailable",
+              }),
+          },
+          { now: () => Effect.succeed("t") },
+          {
+            visibleRefs: () =>
+              Effect.succeed([{ name: "read", version: "2", hash: "read-v2" }]),
+            resolveForModel: () => Effect.die("unused"),
+          },
+        );
+        const failure = yield* Effect.flip(
+          handler.handle({
+            invocation: {
+              providerTurnId: testTurnId,
+              outputPosition: 0,
+              callRef: "call-1",
+              toolName: "read",
+              argumentsJson: "{}",
+            },
+            execution: {
+              executionId: "exe_test" as never,
+              projectId: "prj_test" as never,
+              workspaceId: "ws_test" as never,
+              sessionId: "ses_test" as never,
+              binding: {
+                _tag: "WorkspaceExecution",
+                workspaceId: "ws_test" as never,
+                focus: { _tag: "Coordination" },
+              },
+              admittedAt: "t",
+              stopRequestedAt: null,
+              state: { status: "Active", settlement: null },
+            },
+            context: {
+              _tag: "ExecutionOrigin",
+              principal: "worker:test" as never,
+              executionId: "exe_test" as never,
+              workerId: "worker:test",
+              workerIncarnationId: "incarnation:test",
+              fencingGeneration: 0 as never,
+            },
+            controlBasis: {} as never,
+          }),
+        );
+        expect(failure).toMatchObject({
+          _tag: "AgentActionOperationalFailure",
+          operation: "ToolRuntime.SandboxOpen",
+        });
+      }),
+  );
 });

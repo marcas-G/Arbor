@@ -21,6 +21,7 @@ import {
   type OpenAISdkChunk,
   type OpenAISdkClient,
 } from "@arbor/provider-openai";
+import { it } from "@effect/vitest";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import {
@@ -30,7 +31,6 @@ import {
   beforeEach,
   describe,
   expect,
-  it,
 } from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
 import { createCurrentSchemaTestDatabaseFactory } from "../../../tests/support/schema44-database.js";
@@ -90,182 +90,182 @@ afterAll(() => {
 }, 120_000);
 
 describe("P14 production conversation model context", () => {
-  it(
+  it.effect(
     "places the current claimed Human Input in the production ProviderTurn request",
-    async () => {
-      const liveHumanInput = liveHumanInputSentinelEnabled;
-      const liveBaseUrl = process.env.ARBOR_OPENAI_BASE_URL?.trim();
-      const liveModelRef = process.env.ARBOR_LLM_MODEL?.trim();
-      if (
-        liveHumanInput &&
-        (liveBaseUrl === undefined ||
-          liveBaseUrl.length === 0 ||
-          liveModelRef === undefined ||
-          liveModelRef.length === 0)
-      ) {
-        throw new Error(
-          "ARBOR_OPENAI_BASE_URL and ARBOR_LLM_MODEL are required for the live Human Input sentinel",
-        );
-      }
-      if (fixture === undefined)
-        throw new Error("Schema 42 fixture is missing");
-      const databaseFile = fixture.databaseFilename;
-      const currentHumanQuestion = liveHumanInput
-        ? "Reply with exactly WAVE1_CURRENT_HUMAN_INPUT_RECEIVED as plain text. Do not emit a tool or function call."
-        : humanQuestion;
-      let portableRequest: PortableModelRequest | undefined;
-      let observedRequest: Record<string, unknown> | undefined;
-      let actualWireRequest: Record<string, unknown> | undefined;
-      let manifestAtProviderCall: Record<string, unknown> | undefined;
-      const providerEvents: OpenAISdkChunk[] = [];
-      const responseText = [
-        `data: ${JSON.stringify({ choices: [{ delta: { content: assistantAnswer }, finish_reason: null }] })}`,
-        "",
-        `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] })}`,
-        "",
-        "data: [DONE]",
-        "",
-        "",
-      ].join("\n");
-      const responseBytes = new TextEncoder().encode(responseText);
-      const modelRef = liveHumanInput
-        ? (liveModelRef as string)
-        : "wave1-human-model";
-      const humanEvidenceFile = process.env.ARBOR_WAVE1_HUMAN_EVIDENCE_FILE;
-      const writeLiveEvidence = (
-        status: string,
-        humanMessageState: string | null = null,
-        responseBody: string | null = null,
-      ): void => {
-        if (!liveHumanInput || humanEvidenceFile === undefined) {
-          return;
+    () =>
+      Effect.gen(function* () {
+        const liveHumanInput = liveHumanInputSentinelEnabled;
+        const liveBaseUrl = process.env.ARBOR_OPENAI_BASE_URL?.trim();
+        const liveModelRef = process.env.ARBOR_LLM_MODEL?.trim();
+        if (
+          liveHumanInput &&
+          (liveBaseUrl === undefined ||
+            liveBaseUrl.length === 0 ||
+            liveModelRef === undefined ||
+            liveModelRef.length === 0)
+        ) {
+          throw new Error(
+            "ARBOR_OPENAI_BASE_URL and ARBOR_LLM_MODEL are required for the live Human Input sentinel",
+          );
         }
-        writeFileSync(
-          humanEvidenceFile,
-          JSON.stringify(
+        if (fixture === undefined)
+          throw new Error("Schema 42 fixture is missing");
+        const databaseFile = fixture.databaseFilename;
+        const currentHumanQuestion = liveHumanInput
+          ? "Reply with exactly WAVE1_CURRENT_HUMAN_INPUT_RECEIVED as plain text. Do not emit a tool or function call."
+          : humanQuestion;
+        let portableRequest: PortableModelRequest | undefined;
+        let observedRequest: Record<string, unknown> | undefined;
+        let actualWireRequest: Record<string, unknown> | undefined;
+        let manifestAtProviderCall: Record<string, unknown> | undefined;
+        const providerEvents: OpenAISdkChunk[] = [];
+        const responseText = [
+          `data: ${JSON.stringify({ choices: [{ delta: { content: assistantAnswer }, finish_reason: null }] })}`,
+          "",
+          `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] })}`,
+          "",
+          "data: [DONE]",
+          "",
+          "",
+        ].join("\n");
+        const responseBytes = new TextEncoder().encode(responseText);
+        const modelRef = liveHumanInput
+          ? (liveModelRef as string)
+          : "wave1-human-model";
+        const humanEvidenceFile = process.env.ARBOR_WAVE1_HUMAN_EVIDENCE_FILE;
+        const writeLiveEvidence = (
+          status: string,
+          humanMessageState: string | null = null,
+          responseBody: string | null = null,
+        ): void => {
+          if (!liveHumanInput || humanEvidenceFile === undefined) {
+            return;
+          }
+          writeFileSync(
+            humanEvidenceFile,
+            JSON.stringify(
+              {
+                schemaVersion: "wave1-live-human-input-evidence-v1",
+                recordedAt: new Date().toISOString(),
+                status,
+                productionCallPath: [
+                  "apps/single-workspace ProductionDaemonService.conversationTick",
+                  "execution-runtime.runExecution worker/lease lifecycle",
+                  "ExecutionDriverPort -> agent-runtime AgentLoopDriverLive",
+                  "ModelContext.prepareTurn with current claimed Human Input",
+                  "ProviderRuntime.runTurn",
+                  "OpenAIProviderLive -> OpenAICompatibleFetchClient -> live endpoint",
+                ],
+                provider: {
+                  adapterId: "provider-openai",
+                  endpoint: liveBaseUrl,
+                  modelRef,
+                  authMode:
+                    process.env.ARBOR_OPENAI_AUTH ?? "configured externally",
+                },
+                actualPortableModelRequest: portableRequest ?? null,
+                actualWireRequest: actualWireRequest ?? null,
+                providerTurnId: manifestAtProviderCall?.providerTurnId ?? null,
+                manifestDurableAtProviderCall: manifestAtProviderCall ?? null,
+                providerEvents,
+                humanMessageState,
+                responseBody,
+              },
+              null,
+              2,
+            ),
+          );
+        };
+        const modelCatalog: ModelCatalog = {
+          defaultModelRef: modelRef,
+          entries: [
             {
-              schemaVersion: "wave1-live-human-input-evidence-v1",
-              recordedAt: new Date().toISOString(),
-              status,
-              productionCallPath: [
-                "apps/single-workspace ProductionDaemonService.conversationTick",
-                "execution-runtime.runExecution worker/lease lifecycle",
-                "ExecutionDriverPort -> agent-runtime AgentLoopDriverLive",
-                "ModelContext.prepareTurn with current claimed Human Input",
-                "ProviderRuntime.runTurn",
-                "OpenAIProviderLive -> OpenAICompatibleFetchClient -> live endpoint",
-              ],
-              provider: {
-                adapterId: "provider-openai",
-                endpoint: liveBaseUrl,
-                modelRef,
-                authMode:
-                  process.env.ARBOR_OPENAI_AUTH ?? "configured externally",
-              },
-              actualPortableModelRequest: portableRequest ?? null,
-              actualWireRequest: actualWireRequest ?? null,
-              providerTurnId: manifestAtProviderCall?.providerTurnId ?? null,
-              manifestDurableAtProviderCall: manifestAtProviderCall ?? null,
-              providerEvents,
-              humanMessageState,
-              responseBody,
-            },
-            null,
-            2,
-          ),
-        );
-      };
-      const modelCatalog: ModelCatalog = {
-        defaultModelRef: modelRef,
-        entries: [
-          {
-            modelRef,
-            adapterId: "provider-openai",
-            capability: {
               modelRef,
-              family: "openai-compatible",
-              contextWindow: 8_192,
-              outputCeiling: 512,
-              toolProtocol: "json",
-              capabilities: ["text", "tools"],
-            },
-          },
-        ],
-      };
-      const transport = OpenAICompatibleFetchClient({
-        baseUrl: liveHumanInput
-          ? (liveBaseUrl as string)
-          : "http://wave1-human-provider.test/v1",
-        allowUnauthenticated:
-          process.env.ARBOR_OPENAI_AUTH === "none" || !liveHumanInput,
-        fetch: async (url, init) => {
-          observedRequest = JSON.parse(init.body) as Record<string, unknown>;
-          if (liveHumanInput) {
-            actualWireRequest = observedRequest;
-            writeLiveEvidence("ProviderCallIssued");
-            return globalThis.fetch(url, init as RequestInit);
-          }
-          return {
-            ok: true,
-            status: 200,
-            body: new ReadableStream<Uint8Array>({
-              start(controller) {
-                controller.enqueue(responseBytes);
-                controller.close();
+              adapterId: "provider-openai",
+              capability: {
+                modelRef,
+                family: "openai-compatible",
+                contextWindow: 8_192,
+                outputCeiling: 512,
+                toolProtocol: "json",
+                capabilities: ["text", "tools"],
               },
-            }),
-          };
-        },
-      });
-      const client: OpenAISdkClient = {
-        externalEffectPossible: false,
-        streamChat: async function* (input) {
-          portableRequest = input.request;
-          const providerTurnId = input.context.providerTurnId;
-          const database = new DatabaseSync(databaseFile);
-          try {
-            const row = database
-              .prepare(
-                "SELECT manifest_json, compiled_request_hash FROM model_context_manifests WHERE provider_turn_id = ?",
-              )
-              .get(providerTurnId) as
-              | {
-                  readonly manifest_json: string;
-                  readonly compiled_request_hash: string;
-                }
-              | undefined;
-            manifestAtProviderCall =
-              row === undefined
-                ? undefined
-                : {
-                    providerTurnId,
-                    ...(JSON.parse(row.manifest_json) as Record<
-                      string,
-                      unknown
-                    >),
-                    durableCompiledRequestHash: row.compiled_request_hash,
-                  };
-          } finally {
-            database.close();
-          }
-          for await (const event of transport.streamChat(input)) {
-            if (event.type !== "reasoning") {
-              providerEvents.push(event);
+            },
+          ],
+        };
+        const transport = OpenAICompatibleFetchClient({
+          baseUrl: liveHumanInput
+            ? (liveBaseUrl as string)
+            : "http://wave1-human-provider.test/v1",
+          allowUnauthenticated:
+            process.env.ARBOR_OPENAI_AUTH === "none" || !liveHumanInput,
+          fetch: async (url, init) => {
+            observedRequest = JSON.parse(init.body) as Record<string, unknown>;
+            if (liveHumanInput) {
+              actualWireRequest = observedRequest;
+              writeLiveEvidence("ProviderCallIssued");
+              return globalThis.fetch(url, init as RequestInit);
             }
-            yield event;
-          }
-        },
-      };
-      const app = buildSingleWorkspaceLayer({
-        databaseFile,
-        projectId,
-        modelCatalog,
-        modelRef,
-        provider: { adapterId: "provider-openai", client },
-      });
+            return {
+              ok: true,
+              status: 200,
+              body: new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(responseBytes);
+                  controller.close();
+                },
+              }),
+            };
+          },
+        });
+        const client: OpenAISdkClient = {
+          externalEffectPossible: false,
+          streamChat: async function* (input) {
+            portableRequest = input.request;
+            const providerTurnId = input.context.providerTurnId;
+            const database = new DatabaseSync(databaseFile);
+            try {
+              const row = database
+                .prepare(
+                  "SELECT manifest_json, compiled_request_hash FROM model_context_manifests WHERE provider_turn_id = ?",
+                )
+                .get(providerTurnId) as
+                | {
+                    readonly manifest_json: string;
+                    readonly compiled_request_hash: string;
+                  }
+                | undefined;
+              manifestAtProviderCall =
+                row === undefined
+                  ? undefined
+                  : {
+                      providerTurnId,
+                      ...(JSON.parse(row.manifest_json) as Record<
+                        string,
+                        unknown
+                      >),
+                      durableCompiledRequestHash: row.compiled_request_hash,
+                    };
+            } finally {
+              database.close();
+            }
+            for await (const event of transport.streamChat(input)) {
+              if (event.type !== "reasoning") {
+                providerEvents.push(event);
+              }
+              yield event;
+            }
+          },
+        };
+        const app = buildSingleWorkspaceLayer({
+          databaseFile,
+          projectId,
+          modelCatalog,
+          modelRef,
+          provider: { adapterId: "provider-openai", client },
+        });
 
-      const result = await Effect.runPromise(
-        Effect.provide(
+        const result = yield* Effect.provide(
           Effect.gen(function* () {
             const sql = yield* SqlClient;
             yield* sql.withTransaction(
@@ -364,407 +364,420 @@ describe("P14 production conversation model context", () => {
             return { manifests, message: messages[0] };
           }),
           app,
-        ),
-      );
-
-      writeLiveEvidence(
-        "ExecutionReturned",
-        result.message?.state ?? null,
-        result.message?.response_body ?? null,
-      );
-
-      expect(
-        portableRequest === undefined
-          ? undefined
-          : portableInputItems(portableRequest).filter(
-              (item) => item._tag === "Message" && item.role !== "system",
-            ),
-      ).toEqual([
-        { _tag: "Message", role: "user", text: currentHumanQuestion },
-      ]);
-      expect(observedRequest?.messages).toContainEqual({
-        role: "user",
-        content: currentHumanQuestion,
-      });
-      expect(observedRequest?.model).toBe(modelRef);
-      if (liveHumanInput) {
-        expect(result.message?.state).toBe("Answered");
-        expect(result.message?.response_body).toContain(
-          "WAVE1_CURRENT_HUMAN_INPUT_RECEIVED",
         );
-      } else {
+
+        writeLiveEvidence(
+          "ExecutionReturned",
+          result.message?.state ?? null,
+          result.message?.response_body ?? null,
+        );
+
+        expect(
+          portableRequest === undefined
+            ? undefined
+            : portableInputItems(portableRequest).filter(
+                (item) => item._tag === "Message" && item.role !== "system",
+              ),
+        ).toEqual([
+          { _tag: "Message", role: "user", text: currentHumanQuestion },
+        ]);
+        expect(observedRequest?.messages).toContainEqual({
+          role: "user",
+          content: currentHumanQuestion,
+        });
+        expect(observedRequest?.model).toBe(modelRef);
+        if (liveHumanInput) {
+          expect(result.message?.state).toBe("Answered");
+          expect(result.message?.response_body).toContain(
+            "WAVE1_CURRENT_HUMAN_INPUT_RECEIVED",
+          );
+        } else {
+          expect(result.message).toEqual({
+            state: "Answered",
+            response_body: assistantAnswer,
+          });
+        }
+        const manifest = JSON.parse(
+          result.manifests[0]?.manifest_json ?? "{}",
+        ) as Record<string, unknown>;
+        expect(manifestAtProviderCall).toMatchObject({
+          providerTurnId: manifest.providerTurnId,
+          compiledRequestHash: result.manifests[0]?.compiled_request_hash,
+          durableCompiledRequestHash:
+            result.manifests[0]?.compiled_request_hash,
+        });
+        expect(manifest).toMatchObject({
+          providerRef: "provider-openai",
+          modelRef,
+        });
+        expect(manifest.contextRefs).toContain(
+          "human-input:msg_018f2b3c-4d5e-7abc-8def-0123456789ad",
+        );
+        expect(manifest.compiledRequestHash).toBe(
+          result.manifests[0]?.compiled_request_hash,
+        );
+      }),
+  );
+
+  it.effect(
+    "sends only conversation history, excluding Work tool history, and persists its answer",
+    () =>
+      Effect.gen(function* () {
+        if (fixture === undefined)
+          throw new Error("Schema 42 fixture is missing");
+        const dir = mkdtempSync(join(tmpdir(), "p14-provider-conversation-"));
+        scratchDirectories.push(dir);
+        const secretRoot = join(dir, "secrets");
+        mkdirSync(secretRoot);
+        writeFileSync(
+          join(secretRoot, "test-api-key"),
+          "integration-test-key\n",
+          {
+            mode: 0o600,
+          },
+        );
+
+        let observedRequest: Record<string, unknown> | undefined;
+        const responseText = [
+          `data: ${JSON.stringify({ choices: [{ delta: { content: assistantAnswer }, finish_reason: null }] })}`,
+          "",
+          `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] })}`,
+          "",
+          "data: [DONE]",
+          "",
+          "",
+        ].join("\n");
+        const responseBytes = new TextEncoder().encode(responseText);
+
+        const modelCatalog: ModelCatalog = {
+          defaultModelRef: "integration-model",
+          entries: [
+            {
+              modelRef: "integration-model",
+              adapterId: "provider-openai",
+              capability: {
+                modelRef: "integration-model",
+                family: "openai-compatible",
+                contextWindow: 8_192,
+                outputCeiling: 512,
+                toolProtocol: "json",
+                capabilities: ["text", "tools"],
+              },
+            },
+          ],
+        };
+        const app = buildSingleWorkspaceLayer({
+          databaseFile: fixture.databaseFilename,
+          projectId,
+          modelCatalog,
+          modelRef: "integration-model",
+          provider: {
+            adapterId: "provider-openai",
+            client: OpenAICompatibleFetchClient({
+              baseUrl: "http://model.test/v1",
+              fetch: async (_url, init) => {
+                observedRequest = JSON.parse(init.body) as Record<
+                  string,
+                  unknown
+                >;
+                return {
+                  ok: true,
+                  status: 200,
+                  body: new ReadableStream<Uint8Array>({
+                    start(controller) {
+                      controller.enqueue(responseBytes);
+                      controller.close();
+                    },
+                  }),
+                };
+              },
+            }),
+          },
+          secretRef: secretRef("test-api-key"),
+          secretStore: { _tag: "File", root: secretRoot },
+        });
+
+        const result = yield* Effect.provide(
+          Effect.gen(function* () {
+            const sql = yield* SqlClient;
+            yield* sql.withTransaction(
+              Effect.gen(function* () {
+                yield* sql.unsafe(
+                  "INSERT INTO projects (project_id, name, root_workspace_id, project_policy, project_policy_revision, default_configuration, environment_ref, lifecycle, revision, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                  [
+                    projectId,
+                    "Integration project",
+                    workspaceId,
+                    "{}",
+                    0,
+                    "{}",
+                    "local",
+                    "Open",
+                    0,
+                    "t",
+                    "t",
+                  ],
+                );
+                yield* sql.unsafe(
+                  "INSERT INTO sessions (session_id, binding_kind, workspace_id, execution_id, context_epoch, created_at) VALUES (?,?,?,NULL,?,?)",
+                  [sessionId, "WorkspacePrimary", workspaceId, 0, "t"],
+                );
+                yield* sql.unsafe(
+                  "INSERT INTO session_entries (session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at, source_kind, source_ref, content_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                  [
+                    sessionId,
+                    0,
+                    "ModelOutput",
+                    "ToolCall",
+                    2,
+                    0,
+                    JSON.stringify({
+                      _tag: "ToolCall",
+                      providerTurnId:
+                        "ptn_018f2b3c-4d5e-7abc-8def-0123456789ae",
+                      callRef: "call_prior_work",
+                      toolRef: "shell",
+                      argumentsRef: "inline:prior-work",
+                      argumentsJson: JSON.stringify({ command: "pnpm check" }),
+                    }),
+                    "2026-09-23T00:00:00.000Z",
+                    "ProviderTurnCall",
+                    "ptn_018f2b3c-4d5e-7abc-8def-0123456789ae:call_prior_work",
+                    "technical-work-session-call-hash",
+                  ],
+                );
+                yield* sql.unsafe(
+                  "INSERT INTO session_entries (session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at, source_kind, source_ref, content_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                  [
+                    sessionId,
+                    1,
+                    "Observation",
+                    "ToolResult",
+                    2,
+                    0,
+                    JSON.stringify({
+                      _tag: "ToolResult",
+                      callRef: "call_prior_work",
+                      toolName: "shell",
+                      status: "Succeeded",
+                      observationRef: "observation_prior_work",
+                      modelOutputRef: "result_prior_work",
+                      outputText:
+                        "TECHNICAL_WORK_SESSION_OUTPUT_MUST_NOT_ENTER_CHAT",
+                      truncated: false,
+                      artifactRefs: [],
+                    }),
+                    "2026-09-23T00:00:01.000Z",
+                    "AgentLoopAction",
+                    "observation_prior_work",
+                    "technical-work-session-result-hash",
+                  ],
+                );
+                yield* sql.unsafe(
+                  "INSERT INTO session_entries (session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at, source_kind, source_ref, content_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                  [
+                    sessionId,
+                    2,
+                    "ModelOutput",
+                    "ToolCall",
+                    2,
+                    0,
+                    JSON.stringify({
+                      _tag: "ToolCall",
+                      providerTurnId:
+                        "ptn_018f2b3c-4d5e-7abc-8def-0123456789af",
+                      callRef: "call_dangling_prior_work",
+                      toolRef: "read",
+                      argumentsRef: "inline:dangling-prior-work",
+                      argumentsJson: JSON.stringify({ target: "README.md" }),
+                    }),
+                    "2026-09-23T00:00:02.000Z",
+                    "ProviderTurnCall",
+                    "ptn_018f2b3c-4d5e-7abc-8def-0123456789af:call_dangling_prior_work",
+                    "dangling-work-session-call-hash",
+                  ],
+                );
+                yield* sql.unsafe(
+                  "INSERT INTO workspaces (workspace_id, project_id, parent_workspace_id, name, responsibility_definition, responsibility_revision, resource_boundary, resource_boundary_revision, agent_binding, primary_session_id, current_work_id, workspace_policy, workspace_policy_revision, revision, lifecycle, created_at, updated_at) VALUES (?,?,NULL,?,?,?,?,?,?,?,NULL,?,?,?,?,?,?)",
+                  [
+                    workspaceId,
+                    projectId,
+                    "root",
+                    "{}",
+                    0,
+                    "{}",
+                    0,
+                    "{}",
+                    sessionId,
+                    "{}",
+                    0,
+                    0,
+                    "Active",
+                    "t",
+                    "t",
+                  ],
+                );
+                yield* sql.unsafe(
+                  "INSERT INTO human_messages (message_id, project_id, root_workspace_id, human_principal, body_ref, command_id, fingerprint, state, claimed_by_execution_id, created_at, settled_at, response_body, attempt_no) VALUES (?,?,?,?,?,?,?,'Declined','exe_legacy_claim',?,NULL,'stale legacy answer',0)",
+                  [
+                    "msg_018f2b3c-4d5e-7abc-8def-0123456789ad",
+                    projectId,
+                    workspaceId,
+                    parse(Principal)("user:integration-test"),
+                    priorHumanQuestion,
+                    "cmd_018f2b3c-4d5e-7abc-8def-0123456789ad",
+                    "integration-prior-fingerprint",
+                    "2026-09-24T00:00:00.000Z",
+                  ],
+                );
+                yield* sql.unsafe(
+                  "INSERT INTO human_messages (message_id, project_id, root_workspace_id, human_principal, body_ref, command_id, fingerprint, state, claimed_by_execution_id, created_at, settled_at, response_body, attempt_no) VALUES (?,?,?,?,?,?,?,'Pending',NULL,?,NULL,NULL,0)",
+                  [
+                    "msg_018f2b3c-4d5e-7abc-8def-0123456789ac",
+                    projectId,
+                    workspaceId,
+                    parse(Principal)("user:integration-test"),
+                    humanQuestion,
+                    "cmd_018f2b3c-4d5e-7abc-8def-0123456789ac",
+                    "integration-fingerprint",
+                    "2026-09-25T00:00:00.000Z",
+                  ],
+                );
+                yield* sql.unsafe(
+                  "INSERT INTO conversation_response_jobs (message_id, project_id, root_workspace_id, state, active_execution_id, next_attempt_no, next_eligible_at, attention_reason, last_failure_class, last_failure_fingerprint, policy_version, response_body, response_execution_id, provider_reasoning_json, revision, created_at, updated_at) VALUES (?,?,?,'Answered',NULL,1,NULL,NULL,NULL,NULL,'conversation-retry-v1',?,?,NULL,2,?,?), (?,?,?,'Queued',NULL,0,NULL,NULL,NULL,NULL,'conversation-retry-v1',NULL,NULL,NULL,0,?,?)",
+                  [
+                    "msg_018f2b3c-4d5e-7abc-8def-0123456789ad",
+                    projectId,
+                    workspaceId,
+                    priorAssistantAnswer,
+                    "exe_018f2b3c-4d5e-7abc-8def-0123456789ad",
+                    "2026-09-24T00:00:00.000Z",
+                    "2026-09-24T00:01:00.000Z",
+                    "msg_018f2b3c-4d5e-7abc-8def-0123456789ac",
+                    projectId,
+                    workspaceId,
+                    "2026-09-25T00:00:00.000Z",
+                    "2026-09-25T00:00:00.000Z",
+                  ],
+                );
+                const priorMessageId =
+                  "msg_018f2b3c-4d5e-7abc-8def-0123456789ad";
+                const priorExecutionId =
+                  "exe_018f2b3c-4d5e-7abc-8def-0123456789ad";
+                yield* sql.unsafe(
+                  "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, episode_kind, episode_ref, episode_revision, parent_execution_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?, ?, 'workspace', ?, 'ConversationResponseEpisode', ?, 0, NULL, NULL, ?, '2026-09-24T00:00:00.000Z', NULL, 'Completed', ?, '2026-09-24T00:01:00.000Z')",
+                  [
+                    priorExecutionId,
+                    projectId,
+                    workspaceId,
+                    priorMessageId,
+                    sessionId,
+                    JSON.stringify({
+                      _tag: "Completed",
+                      result: {
+                        _tag: "ConversationResponseProduced",
+                        messageId: priorMessageId,
+                      },
+                    }),
+                  ],
+                );
+                yield* sql.unsafe(
+                  "INSERT INTO conversation_attempts (message_id, attempt_no, execution_id, admitted_at, settled_at, settlement_kind, failure_class, failure_fingerprint, retry_decision_json, policy_version) VALUES (?, 0, ?, '2026-09-24T00:00:00.000Z', '2026-09-24T00:01:00.000Z', 'Completed', NULL, NULL, '{\"_tag\":\"Answer\"}', 'conversation-retry-v1')",
+                  [priorMessageId, priorExecutionId],
+                );
+              }),
+            );
+
+            yield* ensureLegacyProjectResourceSourceFixture();
+            const daemon = yield* ProductionDaemonService;
+            yield* HumanMessageStore;
+            yield* daemon.daemon.conversationTick;
+            // Settlement is a separate deterministic sweep; the second tick
+            // writes the persisted response body for the transcript projection.
+            yield* daemon.daemon.conversationTick;
+
+            const messageRows = yield* sql.unsafe<{
+              state: string;
+              response_body: string | null;
+            }>(
+              "SELECT state, response_body FROM conversation_response_jobs WHERE message_id = ?",
+              ["msg_018f2b3c-4d5e-7abc-8def-0123456789ac"],
+            );
+            const executionRows = yield* sql.unsafe<{
+              settlement_json: string | null;
+              episode_kind: string | null;
+              episode_ref: string | null;
+              episode_revision: number | null;
+            }>(
+              "SELECT settlement_json, episode_kind, episode_ref, episode_revision FROM executions WHERE workspace_id = ? ORDER BY admitted_at DESC LIMIT 1",
+              [workspaceId],
+            );
+            return {
+              message: messageRows[0],
+              settlement: executionRows[0]?.settlement_json ?? null,
+              execution:
+                executionRows[0] === undefined
+                  ? undefined
+                  : {
+                      episode_kind: executionRows[0].episode_kind,
+                      episode_ref: executionRows[0].episode_ref,
+                      episode_revision: executionRows[0].episode_revision,
+                    },
+            };
+          }),
+          app,
+        );
+
+        const outboundMessages = observedRequest?.messages;
+        expect(observedRequest?.model).toBe("integration-model");
+        expect(Array.isArray(outboundMessages)).toBe(true);
+        expect(outboundMessages).toContainEqual({
+          role: "user",
+          content: humanQuestion,
+        });
+        const conversationMessages = Array.isArray(outboundMessages)
+          ? outboundMessages.filter(
+              (message) =>
+                typeof message === "object" &&
+                message !== null &&
+                (message as Record<string, unknown>).role !== "system",
+            )
+          : [];
+        expect(conversationMessages).toEqual([
+          { role: "user", content: priorHumanQuestion },
+          { role: "assistant", content: priorAssistantAnswer },
+          { role: "user", content: humanQuestion },
+        ]);
+        // Root Human Conversation is a response episode, not a Work execution.
+        // MAC controls and bounded Workspace allocation are available here;
+        // Actual executable tools and completion remain unavailable until the
+        // Scheduler admits the resulting WorkEpisode.
+        const toolNames = (
+          (observedRequest?.tools ?? []) as Array<{
+            function?: { name?: string };
+          }>
+        )
+          .map((tool) => tool.function?.name)
+          .sort();
+        expect(toolNames).toEqual([
+          "accept_result",
+          "allocate_workspace_sandbox",
+          "assign_work",
+          "list_workspaces",
+          "propose_workspace",
+          "read_workspace",
+        ]);
         expect(result.message).toEqual({
           state: "Answered",
           response_body: assistantAnswer,
         });
-      }
-      const manifest = JSON.parse(
-        result.manifests[0]?.manifest_json ?? "{}",
-      ) as Record<string, unknown>;
-      expect(manifestAtProviderCall).toMatchObject({
-        providerTurnId: manifest.providerTurnId,
-        compiledRequestHash: result.manifests[0]?.compiled_request_hash,
-        durableCompiledRequestHash: result.manifests[0]?.compiled_request_hash,
-      });
-      expect(manifest).toMatchObject({
-        providerRef: "provider-openai",
-        modelRef,
-      });
-      expect(manifest.contextRefs).toContain(
-        "human-input:msg_018f2b3c-4d5e-7abc-8def-0123456789ad",
-      );
-      expect(manifest.compiledRequestHash).toBe(
-        result.manifests[0]?.compiled_request_hash,
-      );
-    },
-    liveHumanInputSentinelEnabled ? 110_000 : 120_000,
+        expect(result.settlement).toContain("ConversationResponseProduced");
+        expect(result.execution).toEqual({
+          episode_kind: "ConversationResponseEpisode",
+          episode_ref: "msg_018f2b3c-4d5e-7abc-8def-0123456789ac",
+          episode_revision: 0,
+        });
+      }),
+    120_000,
   );
-
-  it("sends only conversation history, excluding Work tool history, and persists its answer", async () => {
-    if (fixture === undefined) throw new Error("Schema 42 fixture is missing");
-    const dir = mkdtempSync(join(tmpdir(), "p14-provider-conversation-"));
-    scratchDirectories.push(dir);
-    const secretRoot = join(dir, "secrets");
-    mkdirSync(secretRoot);
-    writeFileSync(join(secretRoot, "test-api-key"), "integration-test-key\n", {
-      mode: 0o600,
-    });
-
-    let observedRequest: Record<string, unknown> | undefined;
-    const responseText = [
-      `data: ${JSON.stringify({ choices: [{ delta: { content: assistantAnswer }, finish_reason: null }] })}`,
-      "",
-      `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] })}`,
-      "",
-      "data: [DONE]",
-      "",
-      "",
-    ].join("\n");
-    const responseBytes = new TextEncoder().encode(responseText);
-
-    const modelCatalog: ModelCatalog = {
-      defaultModelRef: "integration-model",
-      entries: [
-        {
-          modelRef: "integration-model",
-          adapterId: "provider-openai",
-          capability: {
-            modelRef: "integration-model",
-            family: "openai-compatible",
-            contextWindow: 8_192,
-            outputCeiling: 512,
-            toolProtocol: "json",
-            capabilities: ["text", "tools"],
-          },
-        },
-      ],
-    };
-    const app = buildSingleWorkspaceLayer({
-      databaseFile: fixture.databaseFilename,
-      projectId,
-      modelCatalog,
-      modelRef: "integration-model",
-      provider: {
-        adapterId: "provider-openai",
-        client: OpenAICompatibleFetchClient({
-          baseUrl: "http://model.test/v1",
-          fetch: async (_url, init) => {
-            observedRequest = JSON.parse(init.body) as Record<string, unknown>;
-            return {
-              ok: true,
-              status: 200,
-              body: new ReadableStream<Uint8Array>({
-                start(controller) {
-                  controller.enqueue(responseBytes);
-                  controller.close();
-                },
-              }),
-            };
-          },
-        }),
-      },
-      secretRef: secretRef("test-api-key"),
-      secretStore: { _tag: "File", root: secretRoot },
-    });
-
-    const result = await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          const sql = yield* SqlClient;
-          yield* sql.withTransaction(
-            Effect.gen(function* () {
-              yield* sql.unsafe(
-                "INSERT INTO projects (project_id, name, root_workspace_id, project_policy, project_policy_revision, default_configuration, environment_ref, lifecycle, revision, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                [
-                  projectId,
-                  "Integration project",
-                  workspaceId,
-                  "{}",
-                  0,
-                  "{}",
-                  "local",
-                  "Open",
-                  0,
-                  "t",
-                  "t",
-                ],
-              );
-              yield* sql.unsafe(
-                "INSERT INTO sessions (session_id, binding_kind, workspace_id, execution_id, context_epoch, created_at) VALUES (?,?,?,NULL,?,?)",
-                [sessionId, "WorkspacePrimary", workspaceId, 0, "t"],
-              );
-              yield* sql.unsafe(
-                "INSERT INTO session_entries (session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at, source_kind, source_ref, content_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                [
-                  sessionId,
-                  0,
-                  "ModelOutput",
-                  "ToolCall",
-                  2,
-                  0,
-                  JSON.stringify({
-                    _tag: "ToolCall",
-                    providerTurnId: "ptn_018f2b3c-4d5e-7abc-8def-0123456789ae",
-                    callRef: "call_prior_work",
-                    toolRef: "shell",
-                    argumentsRef: "inline:prior-work",
-                    argumentsJson: JSON.stringify({ command: "pnpm check" }),
-                  }),
-                  "2026-09-23T00:00:00.000Z",
-                  "ProviderTurnCall",
-                  "ptn_018f2b3c-4d5e-7abc-8def-0123456789ae:call_prior_work",
-                  "technical-work-session-call-hash",
-                ],
-              );
-              yield* sql.unsafe(
-                "INSERT INTO session_entries (session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at, source_kind, source_ref, content_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                [
-                  sessionId,
-                  1,
-                  "Observation",
-                  "ToolResult",
-                  2,
-                  0,
-                  JSON.stringify({
-                    _tag: "ToolResult",
-                    callRef: "call_prior_work",
-                    toolName: "shell",
-                    status: "Succeeded",
-                    observationRef: "observation_prior_work",
-                    modelOutputRef: "result_prior_work",
-                    outputText:
-                      "TECHNICAL_WORK_SESSION_OUTPUT_MUST_NOT_ENTER_CHAT",
-                    truncated: false,
-                    artifactRefs: [],
-                  }),
-                  "2026-09-23T00:00:01.000Z",
-                  "AgentLoopAction",
-                  "observation_prior_work",
-                  "technical-work-session-result-hash",
-                ],
-              );
-              yield* sql.unsafe(
-                "INSERT INTO session_entries (session_id, sequence, entry_kind, item_type, schema_version, context_epoch, payload_json, created_at, source_kind, source_ref, content_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                [
-                  sessionId,
-                  2,
-                  "ModelOutput",
-                  "ToolCall",
-                  2,
-                  0,
-                  JSON.stringify({
-                    _tag: "ToolCall",
-                    providerTurnId: "ptn_018f2b3c-4d5e-7abc-8def-0123456789af",
-                    callRef: "call_dangling_prior_work",
-                    toolRef: "read",
-                    argumentsRef: "inline:dangling-prior-work",
-                    argumentsJson: JSON.stringify({ target: "README.md" }),
-                  }),
-                  "2026-09-23T00:00:02.000Z",
-                  "ProviderTurnCall",
-                  "ptn_018f2b3c-4d5e-7abc-8def-0123456789af:call_dangling_prior_work",
-                  "dangling-work-session-call-hash",
-                ],
-              );
-              yield* sql.unsafe(
-                "INSERT INTO workspaces (workspace_id, project_id, parent_workspace_id, name, responsibility_definition, responsibility_revision, resource_boundary, resource_boundary_revision, agent_binding, primary_session_id, current_work_id, workspace_policy, workspace_policy_revision, revision, lifecycle, created_at, updated_at) VALUES (?,?,NULL,?,?,?,?,?,?,?,NULL,?,?,?,?,?,?)",
-                [
-                  workspaceId,
-                  projectId,
-                  "root",
-                  "{}",
-                  0,
-                  "{}",
-                  0,
-                  "{}",
-                  sessionId,
-                  "{}",
-                  0,
-                  0,
-                  "Active",
-                  "t",
-                  "t",
-                ],
-              );
-              yield* sql.unsafe(
-                "INSERT INTO human_messages (message_id, project_id, root_workspace_id, human_principal, body_ref, command_id, fingerprint, state, claimed_by_execution_id, created_at, settled_at, response_body, attempt_no) VALUES (?,?,?,?,?,?,?,'Declined','exe_legacy_claim',?,NULL,'stale legacy answer',0)",
-                [
-                  "msg_018f2b3c-4d5e-7abc-8def-0123456789ad",
-                  projectId,
-                  workspaceId,
-                  parse(Principal)("user:integration-test"),
-                  priorHumanQuestion,
-                  "cmd_018f2b3c-4d5e-7abc-8def-0123456789ad",
-                  "integration-prior-fingerprint",
-                  "2026-09-24T00:00:00.000Z",
-                ],
-              );
-              yield* sql.unsafe(
-                "INSERT INTO human_messages (message_id, project_id, root_workspace_id, human_principal, body_ref, command_id, fingerprint, state, claimed_by_execution_id, created_at, settled_at, response_body, attempt_no) VALUES (?,?,?,?,?,?,?,'Pending',NULL,?,NULL,NULL,0)",
-                [
-                  "msg_018f2b3c-4d5e-7abc-8def-0123456789ac",
-                  projectId,
-                  workspaceId,
-                  parse(Principal)("user:integration-test"),
-                  humanQuestion,
-                  "cmd_018f2b3c-4d5e-7abc-8def-0123456789ac",
-                  "integration-fingerprint",
-                  "2026-09-25T00:00:00.000Z",
-                ],
-              );
-              yield* sql.unsafe(
-                "INSERT INTO conversation_response_jobs (message_id, project_id, root_workspace_id, state, active_execution_id, next_attempt_no, next_eligible_at, attention_reason, last_failure_class, last_failure_fingerprint, policy_version, response_body, response_execution_id, provider_reasoning_json, revision, created_at, updated_at) VALUES (?,?,?,'Answered',NULL,1,NULL,NULL,NULL,NULL,'conversation-retry-v1',?,?,NULL,2,?,?), (?,?,?,'Queued',NULL,0,NULL,NULL,NULL,NULL,'conversation-retry-v1',NULL,NULL,NULL,0,?,?)",
-                [
-                  "msg_018f2b3c-4d5e-7abc-8def-0123456789ad",
-                  projectId,
-                  workspaceId,
-                  priorAssistantAnswer,
-                  "exe_018f2b3c-4d5e-7abc-8def-0123456789ad",
-                  "2026-09-24T00:00:00.000Z",
-                  "2026-09-24T00:01:00.000Z",
-                  "msg_018f2b3c-4d5e-7abc-8def-0123456789ac",
-                  projectId,
-                  workspaceId,
-                  "2026-09-25T00:00:00.000Z",
-                  "2026-09-25T00:00:00.000Z",
-                ],
-              );
-              const priorMessageId = "msg_018f2b3c-4d5e-7abc-8def-0123456789ad";
-              const priorExecutionId =
-                "exe_018f2b3c-4d5e-7abc-8def-0123456789ad";
-              yield* sql.unsafe(
-                "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, episode_kind, episode_ref, episode_revision, parent_execution_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?, ?, 'workspace', ?, 'ConversationResponseEpisode', ?, 0, NULL, NULL, ?, '2026-09-24T00:00:00.000Z', NULL, 'Completed', ?, '2026-09-24T00:01:00.000Z')",
-                [
-                  priorExecutionId,
-                  projectId,
-                  workspaceId,
-                  priorMessageId,
-                  sessionId,
-                  JSON.stringify({
-                    _tag: "Completed",
-                    result: {
-                      _tag: "ConversationResponseProduced",
-                      messageId: priorMessageId,
-                    },
-                  }),
-                ],
-              );
-              yield* sql.unsafe(
-                "INSERT INTO conversation_attempts (message_id, attempt_no, execution_id, admitted_at, settled_at, settlement_kind, failure_class, failure_fingerprint, retry_decision_json, policy_version) VALUES (?, 0, ?, '2026-09-24T00:00:00.000Z', '2026-09-24T00:01:00.000Z', 'Completed', NULL, NULL, '{\"_tag\":\"Answer\"}', 'conversation-retry-v1')",
-                [priorMessageId, priorExecutionId],
-              );
-            }),
-          );
-
-          yield* ensureLegacyProjectResourceSourceFixture();
-          const daemon = yield* ProductionDaemonService;
-          yield* HumanMessageStore;
-          yield* daemon.daemon.conversationTick;
-          // Settlement is a separate deterministic sweep; the second tick
-          // writes the persisted response body for the transcript projection.
-          yield* daemon.daemon.conversationTick;
-
-          const messageRows = yield* sql.unsafe<{
-            state: string;
-            response_body: string | null;
-          }>(
-            "SELECT state, response_body FROM conversation_response_jobs WHERE message_id = ?",
-            ["msg_018f2b3c-4d5e-7abc-8def-0123456789ac"],
-          );
-          const executionRows = yield* sql.unsafe<{
-            settlement_json: string | null;
-            episode_kind: string | null;
-            episode_ref: string | null;
-            episode_revision: number | null;
-          }>(
-            "SELECT settlement_json, episode_kind, episode_ref, episode_revision FROM executions WHERE workspace_id = ? ORDER BY admitted_at DESC LIMIT 1",
-            [workspaceId],
-          );
-          return {
-            message: messageRows[0],
-            settlement: executionRows[0]?.settlement_json ?? null,
-            execution:
-              executionRows[0] === undefined
-                ? undefined
-                : {
-                    episode_kind: executionRows[0].episode_kind,
-                    episode_ref: executionRows[0].episode_ref,
-                    episode_revision: executionRows[0].episode_revision,
-                  },
-          };
-        }),
-        app,
-      ),
-    );
-
-    const outboundMessages = observedRequest?.messages;
-    expect(observedRequest?.model).toBe("integration-model");
-    expect(Array.isArray(outboundMessages)).toBe(true);
-    expect(outboundMessages).toContainEqual({
-      role: "user",
-      content: humanQuestion,
-    });
-    const conversationMessages = Array.isArray(outboundMessages)
-      ? outboundMessages.filter(
-          (message) =>
-            typeof message === "object" &&
-            message !== null &&
-            (message as Record<string, unknown>).role !== "system",
-        )
-      : [];
-    expect(conversationMessages).toEqual([
-      { role: "user", content: priorHumanQuestion },
-      { role: "assistant", content: priorAssistantAnswer },
-      { role: "user", content: humanQuestion },
-    ]);
-    // Root Human Conversation is a response episode, not a Work execution.
-    // MAC controls and bounded Workspace allocation are available here;
-    // Actual executable tools and completion remain unavailable until the
-    // Scheduler admits the resulting WorkEpisode.
-    const toolNames = (
-      (observedRequest?.tools ?? []) as Array<{
-        function?: { name?: string };
-      }>
-    )
-      .map((tool) => tool.function?.name)
-      .sort();
-    expect(toolNames).toEqual([
-      "accept_result",
-      "allocate_workspace_sandbox",
-      "assign_work",
-      "list_workspaces",
-      "propose_workspace",
-      "read_workspace",
-    ]);
-    expect(result.message).toEqual({
-      state: "Answered",
-      response_body: assistantAnswer,
-    });
-    expect(result.settlement).toContain("ConversationResponseProduced");
-    expect(result.execution).toEqual({
-      episode_kind: "ConversationResponseEpisode",
-      episode_ref: "msg_018f2b3c-4d5e-7abc-8def-0123456789ac",
-      episode_revision: 0,
-    });
-  }, 120_000);
 });

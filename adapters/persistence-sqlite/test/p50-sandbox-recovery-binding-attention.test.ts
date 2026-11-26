@@ -7,9 +7,10 @@ import {
   sha256Hex,
   TransactionPort,
 } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import {
   AttentionProjectionStoreLive,
   layer,
@@ -152,260 +153,266 @@ const listProcessExecutionUnavailable = () =>
   });
 
 describe("V21 derived SandboxRecoveryBindingFailure Attention", () => {
-  it("is read-only, stable, path-free and hashes the exact nullable binding identity", async () => {
-    await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          yield* seedTables;
-          const first = yield* listFailures();
-          const second = yield* listFailures();
-          const expectedId = sha256Hex(
-            JSON.stringify({
-              version: 1,
-              executionId,
-              invocationId,
-              bindingShaOr: null,
-            }),
-          );
-          expect(first).toEqual([
-            {
-              projectId,
-              executionId,
-              invocationId,
-              workspaceId,
-              attentionFactId: expectedId,
-              intentAt,
-            },
-          ]);
-          expect(second).toEqual(first);
-          const sql = yield* SqlClient;
-          expect(
-            yield* sql.unsafe<{ readonly count: number }>(
-              `SELECT COUNT(*) AS count FROM tool_invocation_recovery_bindings`,
-            ),
-          ).toEqual([{ count: 0 }]);
-        }),
-        appLayer(),
-      ),
-    );
-  });
-
-  it("uses a well-formed persisted digest verbatim even when proof bytes do not verify", async () => {
-    const storedDigest = "f".repeat(64);
-    await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          yield* seedTables;
-          const sql = yield* SqlClient;
-          yield* sql.unsafe(
-            `UPDATE tool_invocations SET recovery_binding_state = 'Bound',
-               recovery_binding_sha256 = ? WHERE invocation_id = ?`,
-            [storedDigest, invocationId],
-          );
-          const value = binding();
-          yield* sql.unsafe(
-            `INSERT INTO tool_invocation_recovery_bindings VALUES (?, 1, ?, ?)`,
-            [
-              invocationId,
-              canonicalizeRecoveryBindingV1(value),
-              recoveryBindingV1Digest(value),
-            ],
-          );
-          const rows = yield* listFailures();
-          expect(rows[0]?.attentionFactId).toBe(
-            sha256Hex(
+  it.effect(
+    "is read-only, stable, path-free and hashes the exact nullable binding identity",
+    () =>
+      Effect.gen(function* () {
+        yield* Effect.provide(
+          Effect.gen(function* () {
+            yield* seedTables;
+            const first = yield* listFailures();
+            const second = yield* listFailures();
+            const expectedId = sha256Hex(
               JSON.stringify({
                 version: 1,
                 executionId,
                 invocationId,
-                bindingShaOr: storedDigest,
+                bindingShaOr: null,
               }),
-            ),
-          );
-        }),
-        appLayer(),
-      ),
-    );
-  });
+            );
+            expect(first).toEqual([
+              {
+                projectId,
+                executionId,
+                invocationId,
+                workspaceId,
+                attentionFactId: expectedId,
+                intentAt,
+              },
+            ]);
+            expect(second).toEqual(first);
+            const sql = yield* SqlClient;
+            expect(
+              yield* sql.unsafe<{ readonly count: number }>(
+                `SELECT COUNT(*) AS count FROM tool_invocation_recovery_bindings`,
+              ),
+            ).toEqual([{ count: 0 }]);
+          }),
+          appLayer(),
+        );
+      }),
+  );
 
-  it("does not raise Attention for an exact valid immutable binding", async () => {
-    await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          yield* seedTables;
-          const sql = yield* SqlClient;
-          const value = {
-            ...binding(),
-            canonicalArgumentsDigest: canonicalArgumentsDigestV1({
-              command: "pwd",
-            }),
-          };
-          const digest = recoveryBindingV1Digest(value);
-          yield* sql.unsafe(
-            `UPDATE tool_invocations SET recovery_binding_state = 'Bound',
+  it.effect(
+    "uses a well-formed persisted digest verbatim even when proof bytes do not verify",
+    () =>
+      Effect.gen(function* () {
+        const storedDigest = "f".repeat(64);
+        yield* Effect.provide(
+          Effect.gen(function* () {
+            yield* seedTables;
+            const sql = yield* SqlClient;
+            yield* sql.unsafe(
+              `UPDATE tool_invocations SET recovery_binding_state = 'Bound',
                recovery_binding_sha256 = ? WHERE invocation_id = ?`,
-            [digest, invocationId],
-          );
-          yield* sql.unsafe(
-            `INSERT INTO tool_invocation_recovery_bindings VALUES (?, 1, ?, ?)`,
-            [invocationId, canonicalizeRecoveryBindingV1(value), digest],
-          );
-          yield* sql.unsafe(
-            `INSERT INTO tool_invocation_effect_attempts VALUES (?, 0, ?)`,
-            [invocationId, value.profileId],
-          );
-          yield* sql.unsafe(
-            `INSERT INTO agent_loop_steps VALUES (?, 0, 0, ?, 'ActionsInProgress')`,
-            [executionId, value.providerTurnId],
-          );
-          yield* sql.unsafe(
-            `INSERT INTO agent_loop_step_actions VALUES (?, 0, 0, 0, ?, ?,
-               'Executable', 'shell', ?, 'Pending')`,
-            [
-              executionId,
-              value.logicalActionId,
-              value.callRef,
-              sha256Hex(argumentsJson),
-            ],
-          );
-          expect(yield* listFailures()).toEqual([]);
-        }),
-        appLayer(),
-      ),
-    );
-  });
+              [storedDigest, invocationId],
+            );
+            const value = binding();
+            yield* sql.unsafe(
+              `INSERT INTO tool_invocation_recovery_bindings VALUES (?, 1, ?, ?)`,
+              [
+                invocationId,
+                canonicalizeRecoveryBindingV1(value),
+                recoveryBindingV1Digest(value),
+              ],
+            );
+            const rows = yield* listFailures();
+            expect(rows[0]?.attentionFactId).toBe(
+              sha256Hex(
+                JSON.stringify({
+                  version: 1,
+                  executionId,
+                  invocationId,
+                  bindingShaOr: storedDigest,
+                }),
+              ),
+            );
+          }),
+          appLayer(),
+        );
+      }),
+  );
 
-  it.each([
+  it.effect(
+    "does not raise Attention for an exact valid immutable binding",
+    () =>
+      Effect.gen(function* () {
+        yield* Effect.provide(
+          Effect.gen(function* () {
+            yield* seedTables;
+            const sql = yield* SqlClient;
+            const value = {
+              ...binding(),
+              canonicalArgumentsDigest: canonicalArgumentsDigestV1({
+                command: "pwd",
+              }),
+            };
+            const digest = recoveryBindingV1Digest(value);
+            yield* sql.unsafe(
+              `UPDATE tool_invocations SET recovery_binding_state = 'Bound',
+               recovery_binding_sha256 = ? WHERE invocation_id = ?`,
+              [digest, invocationId],
+            );
+            yield* sql.unsafe(
+              `INSERT INTO tool_invocation_recovery_bindings VALUES (?, 1, ?, ?)`,
+              [invocationId, canonicalizeRecoveryBindingV1(value), digest],
+            );
+            yield* sql.unsafe(
+              `INSERT INTO tool_invocation_effect_attempts VALUES (?, 0, ?)`,
+              [invocationId, value.profileId],
+            );
+            yield* sql.unsafe(
+              `INSERT INTO agent_loop_steps VALUES (?, 0, 0, ?, 'ActionsInProgress')`,
+              [executionId, value.providerTurnId],
+            );
+            yield* sql.unsafe(
+              `INSERT INTO agent_loop_step_actions VALUES (?, 0, 0, 0, ?, ?,
+               'Executable', 'shell', ?, 'Pending')`,
+              [
+                executionId,
+                value.logicalActionId,
+                value.callRef,
+                sha256Hex(argumentsJson),
+              ],
+            );
+            expect(yield* listFailures()).toEqual([]);
+          }),
+          appLayer(),
+        );
+      }),
+  );
+
+  it.effect.each<[string, string | null, string]>([
     ["malformed digest", "not-a-digest", intentAt],
     ["invalid intent time", null, "not-an-instant"],
   ])(
     "fails closed for %s without fabricating Attention",
-    async (_label, digest, time) => {
-      await Effect.runPromise(
-        Effect.provide(
-          Effect.gen(function* () {
-            yield* seedTables;
-            const sql = yield* SqlClient;
-            if (digest !== null) {
-              yield* sql.unsafe(
-                `UPDATE tool_invocations SET recovery_binding_sha256 = ? WHERE invocation_id = ?`,
-                [digest, invocationId],
-              );
-            }
-            if (time !== intentAt) {
-              yield* sql.unsafe(
-                `UPDATE tool_invocations SET intent_at = ? WHERE invocation_id = ?`,
-                [time, invocationId],
-              );
-            }
-            const result = yield* Effect.result(listFailures());
-            expect(result._tag).toBe("Failure");
-            if (result._tag === "Failure") {
-              expect(result.failure).toMatchObject({
-                _tag: "PersistenceCorruption",
-                repository: "AttentionProjectionStore",
-                operation: "sandbox-recovery-binding-read",
-              });
-            }
-          }),
-          appLayer(),
-        ),
-      );
-    },
+    ([_label, digest, time]) =>
+      Effect.gen(function* () {
+        yield* seedTables;
+        const sql = yield* SqlClient;
+        if (digest !== null) {
+          yield* sql.unsafe(
+            `UPDATE tool_invocations SET recovery_binding_sha256 = ? WHERE invocation_id = ?`,
+            [digest, invocationId],
+          );
+        }
+        if (time !== intentAt) {
+          yield* sql.unsafe(
+            `UPDATE tool_invocations SET intent_at = ? WHERE invocation_id = ?`,
+            [time, invocationId],
+          );
+        }
+        const result = yield* Effect.result(listFailures());
+        expect(result._tag).toBe("Failure");
+        if (result._tag === "Failure") {
+          expect(result.failure).toMatchObject({
+            _tag: "PersistenceCorruption",
+            repository: "AttentionProjectionStore",
+            operation: "sandbox-recovery-binding-read",
+          });
+        }
+      }).pipe(Effect.provide(appLayer())),
   );
 });
 
 describe("Native durable process denial P10 projection", () => {
-  it("requires the exact P3 action to be TerminalRejected and fails closed on a conflicting state", async () => {
-    await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          yield* seedTables;
-          const sql = yield* SqlClient;
-          yield* sql.unsafe(
-            `ALTER TABLE tool_invocation_effect_attempts ADD COLUMN admission_state TEXT`,
-          );
-          for (const column of [
-            "approval_id TEXT",
-            "settlement_kind TEXT",
-            "settlement_json TEXT",
-            "settlement_provenance TEXT",
-            "result_ref TEXT",
-            "observation_format_version TEXT",
-            "observation_json BLOB",
-            "observation_sha256 TEXT",
-            "selected_attempt_no INTEGER",
-            "selected_fact_id TEXT",
-          ]) {
+  it.effect(
+    "requires the exact P3 action to be TerminalRejected and fails closed on a conflicting state",
+    () =>
+      Effect.gen(function* () {
+        yield* Effect.provide(
+          Effect.gen(function* () {
+            yield* seedTables;
+            const sql = yield* SqlClient;
             yield* sql.unsafe(
-              `ALTER TABLE tool_invocations ADD COLUMN ${column}`,
+              `ALTER TABLE tool_invocation_effect_attempts ADD COLUMN admission_state TEXT`,
             );
-          }
-          const exactBinding = {
-            ...binding(),
-            canonicalArgumentsDigest: canonicalArgumentsDigestV1(
-              JSON.parse(argumentsJson) as unknown,
-            ),
-          };
-          const digest = recoveryBindingV1Digest(exactBinding);
-          yield* sql.unsafe(
-            `UPDATE tool_invocations
+            for (const column of [
+              "approval_id TEXT",
+              "settlement_kind TEXT",
+              "settlement_json TEXT",
+              "settlement_provenance TEXT",
+              "result_ref TEXT",
+              "observation_format_version TEXT",
+              "observation_json BLOB",
+              "observation_sha256 TEXT",
+              "selected_attempt_no INTEGER",
+              "selected_fact_id TEXT",
+            ]) {
+              yield* sql.unsafe(
+                `ALTER TABLE tool_invocations ADD COLUMN ${column}`,
+              );
+            }
+            const exactBinding = {
+              ...binding(),
+              canonicalArgumentsDigest: canonicalArgumentsDigestV1(
+                JSON.parse(argumentsJson) as unknown,
+              ),
+            };
+            const digest = recoveryBindingV1Digest(exactBinding);
+            yield* sql.unsafe(
+              `UPDATE tool_invocations
                 SET recovery_binding_state = 'Bound',
                     recovery_binding_sha256 = ?, settled_at = ?,
                     settlement_kind = 'Denied',
                     settlement_json = ?, settlement_provenance = 'Ordinary'
               WHERE invocation_id = ?`,
-            [
-              digest,
-              intentAt,
-              JSON.stringify({
-                _tag: "Denied",
-                reasonCode: "ProcessExecutionDisabled",
-                projectionVersion: 1,
-              }),
-              invocationId,
-            ],
-          );
-          yield* sql.unsafe(
-            `INSERT INTO tool_invocation_recovery_bindings VALUES (?, 1, ?, ?)`,
-            [invocationId, canonicalizeRecoveryBindingV1(exactBinding), digest],
-          );
-          yield* sql.unsafe(
-            `INSERT INTO agent_loop_steps VALUES (?, 0, 0, ?, 'StepEffectsCommitted')`,
-            [executionId, exactBinding.providerTurnId],
-          );
-          yield* sql.unsafe(
-            `INSERT INTO agent_loop_step_actions VALUES (?, 0, 0, 0, ?, ?,
+              [
+                digest,
+                intentAt,
+                JSON.stringify({
+                  _tag: "Denied",
+                  reasonCode: "ProcessExecutionDisabled",
+                  projectionVersion: 1,
+                }),
+                invocationId,
+              ],
+            );
+            yield* sql.unsafe(
+              `INSERT INTO tool_invocation_recovery_bindings VALUES (?, 1, ?, ?)`,
+              [
+                invocationId,
+                canonicalizeRecoveryBindingV1(exactBinding),
+                digest,
+              ],
+            );
+            yield* sql.unsafe(
+              `INSERT INTO agent_loop_steps VALUES (?, 0, 0, ?, 'StepEffectsCommitted')`,
+              [executionId, exactBinding.providerTurnId],
+            );
+            yield* sql.unsafe(
+              `INSERT INTO agent_loop_step_actions VALUES (?, 0, 0, 0, ?, ?,
                'Executable', 'shell', ?, 'TerminalRejected')`,
-            [
-              executionId,
-              exactBinding.logicalActionId,
-              exactBinding.callRef,
-              sha256Hex(argumentsJson),
-            ],
-          );
-          const valid = yield* listProcessExecutionUnavailable();
-          expect(valid).toHaveLength(1);
+              [
+                executionId,
+                exactBinding.logicalActionId,
+                exactBinding.callRef,
+                sha256Hex(argumentsJson),
+              ],
+            );
+            const valid = yield* listProcessExecutionUnavailable();
+            expect(valid).toHaveLength(1);
 
-          yield* sql.unsafe(
-            `UPDATE agent_loop_step_actions SET state = 'Pending'
+            yield* sql.unsafe(
+              `UPDATE agent_loop_step_actions SET state = 'Pending'
               WHERE execution_id = ? AND logical_action_id = ?`,
-            [executionId, exactBinding.logicalActionId],
-          );
-          const conflict = yield* Effect.result(
-            listProcessExecutionUnavailable(),
-          );
-          expect(conflict._tag).toBe("Failure");
-          if (conflict._tag === "Failure") {
-            expect(conflict.failure).toMatchObject({
-              _tag: "PersistenceCorruption",
-              repository: "AttentionProjectionStore",
-              operation: "process-execution-unavailable-read",
-            });
-          }
-        }),
-        appLayer(),
-      ),
-    );
-  });
+              [executionId, exactBinding.logicalActionId],
+            );
+            const conflict = yield* Effect.result(
+              listProcessExecutionUnavailable(),
+            );
+            expect(conflict._tag).toBe("Failure");
+            if (conflict._tag === "Failure") {
+              expect(conflict.failure).toMatchObject({
+                _tag: "PersistenceCorruption",
+                repository: "AttentionProjectionStore",
+                operation: "process-execution-unavailable-read",
+              });
+            }
+          }),
+          appLayer(),
+        );
+      }),
+  );
 });

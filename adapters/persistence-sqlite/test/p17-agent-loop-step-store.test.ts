@@ -12,9 +12,10 @@ import {
   ExecutionRepository,
   TransactionPort,
 } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import {
   AgentLoopStepStoreLive,
   ClockLive,
@@ -129,176 +130,193 @@ const prepared = {
 };
 
 describe("P17/P20 AgentLoopStepStore", () => {
-  it("creates idempotently and advances by fenced state/revision CAS", async () => {
-    const program = Effect.gen(function* () {
-      yield* runMigrations(P17_MIGRATIONS);
-      yield* seed;
-      const tx = yield* TransactionPort;
-      const executions = yield* ExecutionRepository;
-      const steps = yield* AgentLoopStepStore;
-      yield* tx.transact(executions.tryAdmitMainExecution(execution));
-      yield* tx.transact(
-        executions.tryAcquireLease(
-          executionId,
-          fence.workerId,
-          fence.workerIncarnationId,
-          "2999-01-01T00:00:00.000Z",
-        ),
-      );
+  it.effect(
+    "creates idempotently and advances by fenced state/revision CAS",
+    () =>
+      Effect.gen(function* () {
+        const program = Effect.gen(function* () {
+          yield* runMigrations(P17_MIGRATIONS);
+          yield* seed;
+          const tx = yield* TransactionPort;
+          const executions = yield* ExecutionRepository;
+          const steps = yield* AgentLoopStepStore;
+          yield* tx.transact(executions.tryAdmitMainExecution(execution));
+          yield* tx.transact(
+            executions.tryAcquireLease(
+              executionId,
+              fence.workerId,
+              fence.workerIncarnationId,
+              "2999-01-01T00:00:00.000Z",
+            ),
+          );
 
-      const first = yield* tx.transact(steps.createPrepared(prepared, fence));
-      const replay = yield* tx.transact(steps.createPrepared(prepared, fence));
-      const advanced = yield* tx.transact(
-        steps.transition(
-          {
-            identity: prepared.identity,
-            expectedRevision: 0,
-            expectedState: "Prepared",
-            next: {
-              ...prepared,
-              state: "ProviderResultAvailable",
-              decoderVersion: "decoder-v1",
-              revision: 1,
-              updatedAt: "t2",
-            },
-          },
-          fence,
-        ),
-      );
-      const stale = yield* tx
-        .transact(
-          steps.transition(
+          const first = yield* tx.transact(
+            steps.createPrepared(prepared, fence),
+          );
+          const replay = yield* tx.transact(
+            steps.createPrepared(prepared, fence),
+          );
+          const advanced = yield* tx.transact(
+            steps.transition(
+              {
+                identity: prepared.identity,
+                expectedRevision: 0,
+                expectedState: "Prepared",
+                next: {
+                  ...prepared,
+                  state: "ProviderResultAvailable",
+                  decoderVersion: "decoder-v1",
+                  revision: 1,
+                  updatedAt: "t2",
+                },
+              },
+              fence,
+            ),
+          );
+          const stale = yield* tx
+            .transact(
+              steps.transition(
+                {
+                  identity: prepared.identity,
+                  expectedRevision: 0,
+                  expectedState: "Prepared",
+                  next: { ...prepared, revision: 1, updatedAt: "t3" },
+                },
+                fence,
+              ),
+            )
+            .pipe(Effect.flip);
+          const loaded = yield* tx.transact(steps.find(prepared.identity));
+          return { first, replay, advanced, stale, loaded };
+        });
+
+        const result = yield* Effect.provide(program, makeApp());
+        expect(result.first).toEqual(prepared);
+        expect(result.replay).toEqual(prepared);
+        expect(result.advanced.state).toBe("ProviderResultAvailable");
+        expect((result.stale as { _tag: string })._tag).toBe(
+          "AgentLoopStepInvariantConflict",
+        );
+        expect(Option.isSome(result.loaded)).toBe(true);
+        if (Option.isSome(result.loaded)) {
+          expect(result.loaded.value.revision).toBe(1);
+        }
+      }),
+  );
+
+  it.effect("persists and advances an ordered action ledger", () =>
+    Effect.gen(function* () {
+      const program = Effect.gen(function* () {
+        yield* runMigrations(P17_MIGRATIONS);
+        yield* seed;
+        const tx = yield* TransactionPort;
+        const executions = yield* ExecutionRepository;
+        const steps = yield* AgentLoopStepStore;
+        yield* tx.transact(executions.tryAdmitMainExecution(execution));
+        yield* tx.transact(
+          executions.tryAcquireLease(
+            executionId,
+            fence.workerId,
+            fence.workerIncarnationId,
+            "2999-01-01T00:00:00.000Z",
+          ),
+        );
+        yield* tx.transact(steps.createPrepared(prepared, fence));
+        const pending = {
+          identity: prepared.identity,
+          actionIndex: 0,
+          logicalActionId: `lac_${"a".repeat(64)}`,
+          callRef: "call-1",
+          routeKind: "Executable" as const,
+          actionKind: "read",
+          inputHash: "input-hash",
+          state: "Pending" as const,
+          revision: 0,
+          updatedAt: "t2",
+        };
+        yield* tx.transact(steps.createAction(pending, fence));
+        const applied = yield* tx.transact(
+          steps.transitionAction(
             {
               identity: prepared.identity,
+              actionIndex: 0,
               expectedRevision: 0,
-              expectedState: "Prepared",
-              next: { ...prepared, revision: 1, updatedAt: "t3" },
+              expectedState: "Pending",
+              next: {
+                ...pending,
+                state: "Applied",
+                resultRef: "result-1",
+                observationSourceRef: "obs-1",
+                revision: 1,
+                updatedAt: "t3",
+              },
             },
             fence,
           ),
-        )
-        .pipe(Effect.flip);
-      const loaded = yield* tx.transact(steps.find(prepared.identity));
-      return { first, replay, advanced, stale, loaded };
-    });
+        );
+        const actions = yield* tx.transact(
+          steps.listActions(prepared.identity),
+        );
+        return { applied, actions };
+      });
 
-    const result = await Effect.runPromise(Effect.provide(program, makeApp()));
-    expect(result.first).toEqual(prepared);
-    expect(result.replay).toEqual(prepared);
-    expect(result.advanced.state).toBe("ProviderResultAvailable");
-    expect((result.stale as { _tag: string })._tag).toBe(
-      "AgentLoopStepInvariantConflict",
-    );
-    expect(Option.isSome(result.loaded)).toBe(true);
-    if (Option.isSome(result.loaded)) {
-      expect(result.loaded.value.revision).toBe(1);
-    }
-  });
+      const result = yield* Effect.provide(program, makeApp());
+      expect(result.applied.state).toBe("Applied");
+      expect(result.actions).toHaveLength(1);
+      expect(result.actions[0]?.observationSourceRef).toBe("obs-1");
+    }),
+  );
 
-  it("persists and advances an ordered action ledger", async () => {
-    const program = Effect.gen(function* () {
-      yield* runMigrations(P17_MIGRATIONS);
-      yield* seed;
-      const tx = yield* TransactionPort;
-      const executions = yield* ExecutionRepository;
-      const steps = yield* AgentLoopStepStore;
-      yield* tx.transact(executions.tryAdmitMainExecution(execution));
-      yield* tx.transact(
-        executions.tryAcquireLease(
-          executionId,
-          fence.workerId,
-          fence.workerIncarnationId,
-          "2999-01-01T00:00:00.000Z",
-        ),
-      );
-      yield* tx.transact(steps.createPrepared(prepared, fence));
-      const pending = {
-        identity: prepared.identity,
-        actionIndex: 0,
-        logicalActionId: `lac_${"a".repeat(64)}`,
-        callRef: "call-1",
-        routeKind: "Executable" as const,
-        actionKind: "read",
-        inputHash: "input-hash",
-        state: "Pending" as const,
-        revision: 0,
-        updatedAt: "t2",
-      };
-      yield* tx.transact(steps.createAction(pending, fence));
-      const applied = yield* tx.transact(
-        steps.transitionAction(
-          {
-            identity: prepared.identity,
-            actionIndex: 0,
-            expectedRevision: 0,
-            expectedState: "Pending",
-            next: {
-              ...pending,
-              state: "Applied",
-              resultRef: "result-1",
-              observationSourceRef: "obs-1",
-              revision: 1,
-              updatedAt: "t3",
-            },
-          },
-          fence,
-        ),
-      );
-      const actions = yield* tx.transact(steps.listActions(prepared.identity));
-      return { applied, actions };
-    });
+  it.effect(
+    "finds the unique P20 ProviderTurn link by its durable identity",
+    () =>
+      Effect.gen(function* () {
+        const nativeTurnId = parse(ProviderTurnId)(
+          "ptn_018f2b3c-4d5e-7abc-8def-0123456789a2",
+        );
+        const link = {
+          identity: prepared.identity,
+          overflowOrdinal: 0 as const,
+          role: "OverflowCompaction" as const,
+          providerTurnId: nativeTurnId,
+          predecessorProviderTurnId: providerTurnId,
+          contextEpoch: 0 as never,
+          state: "SettledSuccess" as const,
+          createdAt: "t2",
+        };
+        const program = Effect.gen(function* () {
+          yield* runMigrations(P20_MIGRATIONS);
+          yield* seed;
+          const tx = yield* TransactionPort;
+          const executions = yield* ExecutionRepository;
+          const steps = yield* AgentLoopStepStore;
+          yield* tx.transact(executions.tryAdmitMainExecution(execution));
+          yield* tx.transact(
+            executions.tryAcquireLease(
+              executionId,
+              fence.workerId,
+              fence.workerIncarnationId,
+              "2999-01-01T00:00:00.000Z",
+            ),
+          );
+          yield* tx.transact(steps.createPrepared(prepared, fence));
+          yield* tx.transact(steps.ensureProviderTurnLink(link, fence));
+          const found = yield* tx.transact(
+            steps.findProviderTurnLinkByProviderTurnId(nativeTurnId),
+          );
+          const missing = yield* tx.transact(
+            steps.findProviderTurnLinkByProviderTurnId(
+              parse(ProviderTurnId)("ptn_018f2b3c-4d5e-7abc-8def-0123456789a3"),
+            ),
+          );
+          return { found, missing };
+        });
 
-    const result = await Effect.runPromise(Effect.provide(program, makeApp()));
-    expect(result.applied.state).toBe("Applied");
-    expect(result.actions).toHaveLength(1);
-    expect(result.actions[0]?.observationSourceRef).toBe("obs-1");
-  });
-
-  it("finds the unique P20 ProviderTurn link by its durable identity", async () => {
-    const nativeTurnId = parse(ProviderTurnId)(
-      "ptn_018f2b3c-4d5e-7abc-8def-0123456789a2",
-    );
-    const link = {
-      identity: prepared.identity,
-      overflowOrdinal: 0 as const,
-      role: "OverflowCompaction" as const,
-      providerTurnId: nativeTurnId,
-      predecessorProviderTurnId: providerTurnId,
-      contextEpoch: 0 as never,
-      state: "SettledSuccess" as const,
-      createdAt: "t2",
-    };
-    const program = Effect.gen(function* () {
-      yield* runMigrations(P20_MIGRATIONS);
-      yield* seed;
-      const tx = yield* TransactionPort;
-      const executions = yield* ExecutionRepository;
-      const steps = yield* AgentLoopStepStore;
-      yield* tx.transact(executions.tryAdmitMainExecution(execution));
-      yield* tx.transact(
-        executions.tryAcquireLease(
-          executionId,
-          fence.workerId,
-          fence.workerIncarnationId,
-          "2999-01-01T00:00:00.000Z",
-        ),
-      );
-      yield* tx.transact(steps.createPrepared(prepared, fence));
-      yield* tx.transact(steps.ensureProviderTurnLink(link, fence));
-      const found = yield* tx.transact(
-        steps.findProviderTurnLinkByProviderTurnId(nativeTurnId),
-      );
-      const missing = yield* tx.transact(
-        steps.findProviderTurnLinkByProviderTurnId(
-          parse(ProviderTurnId)("ptn_018f2b3c-4d5e-7abc-8def-0123456789a3"),
-        ),
-      );
-      return { found, missing };
-    });
-
-    const result = await Effect.runPromise(Effect.provide(program, makeApp()));
-    expect(Option.isSome(result.found)).toBe(true);
-    if (Option.isSome(result.found)) expect(result.found.value).toEqual(link);
-    expect(Option.isNone(result.missing)).toBe(true);
-  });
+        const result = yield* Effect.provide(program, makeApp());
+        expect(Option.isSome(result.found)).toBe(true);
+        if (Option.isSome(result.found))
+          expect(result.found.value).toEqual(link);
+        expect(Option.isNone(result.missing)).toBe(true);
+      }),
+  );
 });

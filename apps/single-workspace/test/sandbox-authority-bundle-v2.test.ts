@@ -7,8 +7,9 @@ import {
   parse,
 } from "@arbor/domain";
 import { SANDBOX_ENV_ALLOWLIST } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import { loadSandboxAuthorityBundleSnapshotV2 } from "../src/sandbox-authority-bundle.js";
 
 const hash = (value: string) =>
@@ -110,95 +111,103 @@ const sourceFor = (
 const now = "2026-10-19T00:00:00.000Z";
 
 describe("P5 SandboxAuthorityBundleV2 exact source/high-water admission", () => {
-  it("publishes only the exact V2 source/high-water pair and emits V2 audit", async () => {
-    const current = fixture();
-    const writes = { highWater: [] as string[], audit: [] as string[] };
-    const result = await Effect.runPromise(
-      loadSandboxAuthorityBundleSnapshotV2(
-        sourceFor(current.bundleJson, current.highWaterJson, writes),
-        now,
-        SANDBOX_ENV_ALLOWLIST,
-      ),
-    );
-    expect(result._tag).toBe("Available");
-    if (result._tag !== "Available") return;
-    expect(result.snapshot.bundle).toEqual(current.bundle);
-    expect(Object.isFrozen(result.snapshot)).toBe(true);
-    expect(Object.isFrozen(result.snapshot.bundle.operatorConfig)).toBe(true);
-    expect(
-      Object.isFrozen(result.snapshot.bundle.operatorConfig.limitsByProfile),
-    ).toBe(true);
-    expect(writes.highWater).toEqual([]);
-    expect(JSON.parse(writes.audit[0] ?? "{}")).toMatchObject({
-      version: 2,
-      outcome: "Loaded",
-      detail: null,
-      operatorConfigRevision: 1,
-      occurredAt: now,
-    });
-  });
+  it.effect(
+    "publishes only the exact V2 source/high-water pair and emits V2 audit",
+    () =>
+      Effect.gen(function* () {
+        const current = fixture();
+        const writes = { highWater: [] as string[], audit: [] as string[] };
+        const result = yield* loadSandboxAuthorityBundleSnapshotV2(
+          sourceFor(current.bundleJson, current.highWaterJson, writes),
+          now,
+          SANDBOX_ENV_ALLOWLIST,
+        );
+        expect(result._tag).toBe("Available");
+        if (result._tag !== "Available") return;
+        expect(result.snapshot.bundle).toEqual(current.bundle);
+        expect(Object.isFrozen(result.snapshot)).toBe(true);
+        expect(Object.isFrozen(result.snapshot.bundle.operatorConfig)).toBe(
+          true,
+        );
+        expect(
+          Object.isFrozen(
+            result.snapshot.bundle.operatorConfig.limitsByProfile,
+          ),
+        ).toBe(true);
+        expect(writes.highWater).toEqual([]);
+        expect(JSON.parse(writes.audit[0] ?? "{}")).toMatchObject({
+          version: 2,
+          outcome: "Loaded",
+          detail: null,
+          operatorConfigRevision: 1,
+          occurredAt: now,
+        });
+      }),
+  );
 
-  it("fails closed for V1 high-water and never falls back or upgrades at startup", async () => {
-    const current = fixture();
-    const v1HighWater =
-      '{"version":1,"sourceIdentity":"host-config-test","bundleRevision":1,"bundleDigest":"' +
-      "a".repeat(64) +
-      '","issuerConfigRevision":1,"issuerConfigDigest":"' +
-      "b".repeat(64) +
-      '","providerRegistryRevision":1,"providerRegistryDigest":"' +
-      "c".repeat(64) +
-      '"}';
-    const writes = { highWater: [] as string[], audit: [] as string[] };
-    const result = await Effect.runPromise(
-      loadSandboxAuthorityBundleSnapshotV2(
-        sourceFor(current.bundleJson, v1HighWater, writes),
-        now,
-        SANDBOX_ENV_ALLOWLIST,
-      ),
-    );
-    expect(result).toEqual({
-      _tag: "Unavailable",
-      failure: "HighWaterCorrupt",
-    });
-    expect(writes.highWater).toEqual([]);
-    expect(JSON.parse(writes.audit[0] ?? "{}")).toMatchObject({
-      version: 2,
-      outcome: "Rejected",
-      detail: "HighWaterCorrupt",
-    });
-  });
+  it.effect(
+    "fails closed for V1 high-water and never falls back or upgrades at startup",
+    () =>
+      Effect.gen(function* () {
+        const current = fixture();
+        const v1HighWater =
+          '{"version":1,"sourceIdentity":"host-config-test","bundleRevision":1,"bundleDigest":"' +
+          "a".repeat(64) +
+          '","issuerConfigRevision":1,"issuerConfigDigest":"' +
+          "b".repeat(64) +
+          '","providerRegistryRevision":1,"providerRegistryDigest":"' +
+          "c".repeat(64) +
+          '"}';
+        const writes = { highWater: [] as string[], audit: [] as string[] };
+        const result = yield* loadSandboxAuthorityBundleSnapshotV2(
+          sourceFor(current.bundleJson, v1HighWater, writes),
+          now,
+          SANDBOX_ENV_ALLOWLIST,
+        );
+        expect(result).toEqual({
+          _tag: "Unavailable",
+          failure: "HighWaterCorrupt",
+        });
+        expect(writes.highWater).toEqual([]);
+        expect(JSON.parse(writes.audit[0] ?? "{}")).toMatchObject({
+          version: 2,
+          outcome: "Rejected",
+          detail: "HighWaterCorrupt",
+        });
+      }),
+  );
 
-  it("keeps a source-ahead interruption state unavailable, then accepts the committed pair", async () => {
-    const previous = fixture(2);
-    const sourceAhead = fixture(3);
-    const beforeCommitWrites = {
-      highWater: [] as string[],
-      audit: [] as string[],
-    };
-    const beforeCommit = await Effect.runPromise(
-      loadSandboxAuthorityBundleSnapshotV2(
-        sourceFor(
-          sourceAhead.bundleJson,
-          previous.highWaterJson,
-          beforeCommitWrites,
-        ),
-        now,
-        SANDBOX_ENV_ALLOWLIST,
-      ),
-    );
-    expect(beforeCommit).toEqual({
-      _tag: "Unavailable",
-      failure: "HighWaterCommitFailed",
-    });
-    expect(beforeCommitWrites.highWater).toEqual([]);
+  it.effect(
+    "keeps a source-ahead interruption state unavailable, then accepts the committed pair",
+    () =>
+      Effect.gen(function* () {
+        const previous = fixture(2);
+        const sourceAhead = fixture(3);
+        const beforeCommitWrites = {
+          highWater: [] as string[],
+          audit: [] as string[],
+        };
+        const beforeCommit = yield* loadSandboxAuthorityBundleSnapshotV2(
+          sourceFor(
+            sourceAhead.bundleJson,
+            previous.highWaterJson,
+            beforeCommitWrites,
+          ),
+          now,
+          SANDBOX_ENV_ALLOWLIST,
+        );
+        expect(beforeCommit).toEqual({
+          _tag: "Unavailable",
+          failure: "HighWaterCommitFailed",
+        });
+        expect(beforeCommitWrites.highWater).toEqual([]);
 
-    const afterCommit = await Effect.runPromise(
-      loadSandboxAuthorityBundleSnapshotV2(
-        sourceFor(sourceAhead.bundleJson, sourceAhead.highWaterJson),
-        now,
-        SANDBOX_ENV_ALLOWLIST,
-      ),
-    );
-    expect(afterCommit._tag).toBe("Available");
-  });
+        const afterCommit = yield* loadSandboxAuthorityBundleSnapshotV2(
+          sourceFor(sourceAhead.bundleJson, sourceAhead.highWaterJson),
+          now,
+          SANDBOX_ENV_ALLOWLIST,
+        );
+        expect(afterCommit._tag).toBe("Available");
+      }),
+  );
 });

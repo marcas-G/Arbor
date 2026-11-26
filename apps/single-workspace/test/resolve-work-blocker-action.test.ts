@@ -13,8 +13,9 @@ import type {
   AgentLoopStepRecord,
 } from "@arbor/ports";
 import { TransactionScope } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect, Option } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import { resolveWorkBlockerHandler } from "../src/resolve-work-blocker-action.js";
 
 const executionId = parse(ExecutionId)(
@@ -289,69 +290,73 @@ const input: AgentActionHandlerInput = {
 };
 
 describe("resolve_work_blocker action", () => {
-  it("commits exact blocker resolution, WorkBlockerResolved and sourced P9/Session result together", async () => {
-    const state = makeState();
-    const handler = resolveWorkBlockerHandler(state.dependencies as never);
-    const result = await Effect.runPromise(
-      handler.handle(input).pipe(
-        Effect.provideService(TransactionScope, {
-          session: { id: "resolve-blocker-test" },
-        }),
-      ),
-    );
-    expect(result).toMatchObject({
-      _tag: "Observation",
-      durableActionCommit: {
-        loopStep: { state: "ActionsInProgress", nextActionIndex: 2 },
-      },
-    });
-    expect(state.resolved).toMatchObject([
-      {
-        blockerId,
-        workId,
-        targetWorkRevision: 0,
-        successfulActionRefs: ["lac_success"],
-      },
-    ]);
-    expect(state.events).toMatchObject([
-      {
-        eventType: "WorkBlockerResolved",
-        payload: { blockerId, workId, workRevision: 0 },
-      },
-    ]);
-    expect(state.sessionWrites).toHaveLength(1);
-    expect(state.actionTransitions).toHaveLength(1);
-    expect(state.stepTransitions).toHaveLength(1);
-  });
-
-  it("rejects a success with a mismatched input and makes no changes", async () => {
-    const state = makeState();
-    const actionMap = state.dependencies.loopSteps as {
-      listActions: (
-        identity: AgentLoopStepRecord["identity"],
-      ) => Effect.Effect<ReadonlyArray<AgentLoopStepActionRecord>>;
-    };
-    const original = actionMap.listActions;
-    actionMap.listActions = (identity) =>
-      identity.logicalStepNo === 1
-        ? Effect.succeed([
-            { ...successAction, inputHash: "different-input" },
-            currentAction,
-          ])
-        : original(identity);
-    const handler = resolveWorkBlockerHandler(state.dependencies as never);
-    const failure = await Effect.runPromise(
-      Effect.flip(
-        handler.handle(input).pipe(
+  it.effect(
+    "commits exact blocker resolution, WorkBlockerResolved and sourced P9/Session result together",
+    () =>
+      Effect.gen(function* () {
+        const state = makeState();
+        const handler = resolveWorkBlockerHandler(state.dependencies as never);
+        const result = yield* handler.handle(input).pipe(
           Effect.provideService(TransactionScope, {
-            session: { id: "resolve-blocker-invalid-test" },
+            session: { id: "resolve-blocker-test" },
           }),
-        ),
-      ),
-    );
-    expect(failure).toMatchObject({ _tag: "AgentActionRejected" });
-    expect(state.resolved).toHaveLength(0);
-    expect(state.events).toHaveLength(0);
-    expect(state.sessionWrites).toHaveLength(0);
-  });
+        );
+        expect(result).toMatchObject({
+          _tag: "Observation",
+          durableActionCommit: {
+            loopStep: { state: "ActionsInProgress", nextActionIndex: 2 },
+          },
+        });
+        expect(state.resolved).toMatchObject([
+          {
+            blockerId,
+            workId,
+            targetWorkRevision: 0,
+            successfulActionRefs: ["lac_success"],
+          },
+        ]);
+        expect(state.events).toMatchObject([
+          {
+            eventType: "WorkBlockerResolved",
+            payload: { blockerId, workId, workRevision: 0 },
+          },
+        ]);
+        expect(state.sessionWrites).toHaveLength(1);
+        expect(state.actionTransitions).toHaveLength(1);
+        expect(state.stepTransitions).toHaveLength(1);
+      }),
+  );
+
+  it.effect(
+    "rejects a success with a mismatched input and makes no changes",
+    () =>
+      Effect.gen(function* () {
+        const state = makeState();
+        const actionMap = state.dependencies.loopSteps as {
+          listActions: (
+            identity: AgentLoopStepRecord["identity"],
+          ) => Effect.Effect<ReadonlyArray<AgentLoopStepActionRecord>>;
+        };
+        const original = actionMap.listActions;
+        actionMap.listActions = (identity) =>
+          identity.logicalStepNo === 1
+            ? Effect.succeed([
+                { ...successAction, inputHash: "different-input" },
+                currentAction,
+              ])
+            : original(identity);
+        const handler = resolveWorkBlockerHandler(state.dependencies as never);
+        const failure = yield* Effect.flip(
+          handler.handle(input).pipe(
+            Effect.provideService(TransactionScope, {
+              session: { id: "resolve-blocker-invalid-test" },
+            }),
+          ),
+        );
+        expect(failure).toMatchObject({ _tag: "AgentActionRejected" });
+        expect(state.resolved).toHaveLength(0);
+        expect(state.events).toHaveLength(0);
+        expect(state.sessionWrites).toHaveLength(0);
+      }),
+  );
 });

@@ -1,7 +1,8 @@
 import { ProjectId, parse, SessionId, WorkspaceId } from "@arbor/domain";
+import { it } from "@effect/vitest";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import {
   layer,
   P18_MIGRATIONS,
@@ -77,79 +78,91 @@ const seedLegacySession = Effect.gen(function* () {
 });
 
 describe("SCRC migration 0019", () => {
-  it("preserves v18 rows as explicit legacy evidence and is re-entrant", async () => {
-    const program = Effect.gen(function* () {
-      yield* runMigrations(P18_MIGRATIONS);
-      yield* seedLegacySession;
-      const firstRun = yield* runMigrations(P19_MIGRATIONS);
-      const sql = yield* SqlClient;
-      const version = yield* sql.unsafe<{ user_version: number }>(
-        "PRAGMA user_version",
-      );
-      const columns = yield* sql.unsafe<{ name: string }>(
-        "PRAGMA table_info(session_entries)",
-      );
-      const rows = yield* sql.unsafe<{
-        item_type: string;
-        schema_version: number;
-        context_epoch: number | null;
-        payload_json: string;
-        source_ref: string | null;
-      }>(
-        "SELECT item_type, schema_version, context_epoch, payload_json, source_ref FROM session_entries WHERE session_id = ? ORDER BY sequence",
-        [sessionId],
-      );
-      const secondRun = yield* runMigrations(P19_MIGRATIONS);
-      return {
-        firstRun,
-        secondRun,
-        version: Number(version[0]?.user_version),
-        columns: columns.map((column) => column.name),
-        rows,
-      };
-    });
+  it.effect(
+    "preserves v18 rows as explicit legacy evidence and is re-entrant",
+    () =>
+      Effect.gen(function* () {
+        const program = Effect.gen(function* () {
+          yield* runMigrations(P18_MIGRATIONS);
+          yield* seedLegacySession;
+          const firstRun = yield* runMigrations(P19_MIGRATIONS);
+          const sql = yield* SqlClient;
+          const version = yield* sql.unsafe<{ user_version: number }>(
+            "PRAGMA user_version",
+          );
+          const columns = yield* sql.unsafe<{ name: string }>(
+            "PRAGMA table_info(session_entries)",
+          );
+          const rows = yield* sql.unsafe<{
+            item_type: string;
+            schema_version: number;
+            context_epoch: number | null;
+            payload_json: string;
+            source_ref: string | null;
+          }>(
+            "SELECT item_type, schema_version, context_epoch, payload_json, source_ref FROM session_entries WHERE session_id = ? ORDER BY sequence",
+            [sessionId],
+          );
+          const secondRun = yield* runMigrations(P19_MIGRATIONS);
+          return {
+            firstRun,
+            secondRun,
+            version: Number(version[0]?.user_version),
+            columns: columns.map((column) => column.name),
+            rows,
+          };
+        });
 
-    const result = await Effect.runPromise(
-      Effect.provide(program, layer({ filename: ":memory:" })),
-    );
-    expect(result.firstRun).toBe(1);
-    expect(result.secondRun).toBe(0);
-    expect(result.version).toBe(19);
-    expect(result.columns).toEqual(
-      expect.arrayContaining(["item_type", "schema_version", "context_epoch"]),
-    );
-    expect(result.rows).toEqual([
-      {
-        item_type: "LegacyObservation",
-        schema_version: 1,
-        context_epoch: null,
-        payload_json: JSON.stringify({
-          observation: { text: "callRef:invented-from-text" },
-        }),
-        source_ref: null,
-      },
-    ]);
-  });
+        const result = yield* Effect.provide(
+          program,
+          layer({ filename: ":memory:" }),
+        );
+        expect(result.firstRun).toBe(1);
+        expect(result.secondRun).toBe(0);
+        expect(result.version).toBe(19);
+        expect(result.columns).toEqual(
+          expect.arrayContaining([
+            "item_type",
+            "schema_version",
+            "context_epoch",
+          ]),
+        );
+        expect(result.rows).toEqual([
+          {
+            item_type: "LegacyObservation",
+            schema_version: 1,
+            context_epoch: null,
+            payload_json: JSON.stringify({
+              observation: { text: "callRef:invented-from-text" },
+            }),
+            source_ref: null,
+          },
+        ]);
+      }),
+  );
 
-  it("adds the bounded overflow chain table once", async () => {
-    const program = Effect.gen(function* () {
-      const first = yield* runMigrations(P20_MIGRATIONS);
-      const second = yield* runMigrations(P20_MIGRATIONS);
-      const sql = yield* SqlClient;
-      const version = yield* sql.unsafe<{ user_version: number }>(
-        "PRAGMA user_version",
+  it.effect("adds the bounded overflow chain table once", () =>
+    Effect.gen(function* () {
+      const program = Effect.gen(function* () {
+        const first = yield* runMigrations(P20_MIGRATIONS);
+        const second = yield* runMigrations(P20_MIGRATIONS);
+        const sql = yield* SqlClient;
+        const version = yield* sql.unsafe<{ user_version: number }>(
+          "PRAGMA user_version",
+        );
+        const tables = yield* sql.unsafe<{ name: string }>(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='agent_loop_step_provider_turns'",
+        );
+        return { first, second, version: version[0]?.user_version, tables };
+      });
+      const result = yield* Effect.provide(
+        program,
+        layer({ filename: ":memory:" }),
       );
-      const tables = yield* sql.unsafe<{ name: string }>(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='agent_loop_step_provider_turns'",
-      );
-      return { first, second, version: version[0]?.user_version, tables };
-    });
-    const result = await Effect.runPromise(
-      Effect.provide(program, layer({ filename: ":memory:" })),
-    );
-    expect(result.first).toBe(20);
-    expect(result.second).toBe(0);
-    expect(result.version).toBe(20);
-    expect(result.tables).toHaveLength(1);
-  });
+      expect(result.first).toBe(20);
+      expect(result.second).toBe(0);
+      expect(result.version).toBe(20);
+      expect(result.tables).toHaveLength(1);
+    }),
+  );
 });

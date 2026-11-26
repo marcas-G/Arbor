@@ -24,9 +24,10 @@ import {
   TransactionPort,
   WorkWaitStore,
 } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect } from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
 import {
   createCurrentSchemaTestDatabaseFactory,
@@ -198,69 +199,72 @@ const admit = (commandId: CommandId) =>
   });
 
 describe("I0 Wait control route -> P2 WorkWait -> wake", () => {
-  it("routes a typed Wait action into durable WorkWait settlement", async () => {
-    const fixture = createSchema44Case();
-    schema44Cleanups.push(fixture.cleanup);
-    const app = buildSingleWorkspaceLayer({
-      databaseFile: fixture.databaseFilename,
-      providerTurns: [waitTurn],
-    });
-    const result = await Effect.runPromise(
-      Effect.scoped(
-        Effect.provide(
-          Effect.gen(function* () {
-            yield* seed;
-            yield* ensureLegacyProjectResourceSourceFixture();
-            yield* admit(
-              parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789a1"),
-            );
-            const settlement = yield* runExecution(
-              executionId,
-              { _tag: "WorkSelected" },
-              principal,
-            );
-            const sql = yield* SqlClient;
-            const waits = yield* sql.unsafe<{ work_id: string }>(
-              "SELECT work_id FROM work_waits",
-            );
-            const scheduler = yield* ExecutionScheduler;
-            const blocked = yield* scheduler.reevaluate(workspaceId, {
-              _tag: "Recovery",
-            });
-            const tx = yield* TransactionPort;
-            const waitStore = yield* WorkWaitStore;
-            yield* tx.transact(waitStore.clear(workId));
-            const woken = yield* scheduler.reevaluate(workspaceId, {
-              _tag: "Recovery",
-            });
-            return {
-              settlement,
-              waits: waits.map((w) => w.work_id),
-              blocked: blocked._tag,
-              woken: woken._tag,
-            };
-          }),
-          app,
-        ) as unknown as Effect.Effect<
-          {
-            settlement: { _tag: string; result?: { _tag: string } };
-            waits: ReadonlyArray<string>;
-            blocked: string;
-            woken: string;
-          },
-          unknown,
-          never
-        >,
-      ),
-    );
-    expect(result.settlement._tag, JSON.stringify(result.settlement)).toBe(
-      "Completed",
-    );
-    if (result.settlement._tag === "Completed") {
-      expect(result.settlement.result?._tag).toBe("Yielded");
-    }
-    expect(result.waits).toEqual([workId]);
-    expect(result.blocked).toBe("Idle");
-    expect(result.woken).toBe("AdmitWork");
-  }, 30_000);
+  it.effect(
+    "routes a typed Wait action into durable WorkWait settlement",
+    () =>
+      Effect.gen(function* () {
+        const fixture = createSchema44Case();
+        schema44Cleanups.push(fixture.cleanup);
+        const app = buildSingleWorkspaceLayer({
+          databaseFile: fixture.databaseFilename,
+          providerTurns: [waitTurn],
+        });
+        const result = yield* Effect.scoped(
+          Effect.provide(
+            Effect.gen(function* () {
+              yield* seed;
+              yield* ensureLegacyProjectResourceSourceFixture();
+              yield* admit(
+                parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+              );
+              const settlement = yield* runExecution(
+                executionId,
+                { _tag: "WorkSelected" },
+                principal,
+              );
+              const sql = yield* SqlClient;
+              const waits = yield* sql.unsafe<{ work_id: string }>(
+                "SELECT work_id FROM work_waits",
+              );
+              const scheduler = yield* ExecutionScheduler;
+              const blocked = yield* scheduler.reevaluate(workspaceId, {
+                _tag: "Recovery",
+              });
+              const tx = yield* TransactionPort;
+              const waitStore = yield* WorkWaitStore;
+              yield* tx.transact(waitStore.clear(workId));
+              const woken = yield* scheduler.reevaluate(workspaceId, {
+                _tag: "Recovery",
+              });
+              return {
+                settlement,
+                waits: waits.map((w) => w.work_id),
+                blocked: blocked._tag,
+                woken: woken._tag,
+              };
+            }),
+            app,
+          ) as unknown as Effect.Effect<
+            {
+              settlement: { _tag: string; result?: { _tag: string } };
+              waits: ReadonlyArray<string>;
+              blocked: string;
+              woken: string;
+            },
+            unknown,
+            never
+          >,
+        );
+        expect(result.settlement._tag, JSON.stringify(result.settlement)).toBe(
+          "Completed",
+        );
+        if (result.settlement._tag === "Completed") {
+          expect(result.settlement.result?._tag).toBe("Yielded");
+        }
+        expect(result.waits).toEqual([workId]);
+        expect(result.blocked).toBe("Idle");
+        expect(result.woken).toBe("AdmitWork");
+      }),
+    30_000,
+  );
 });

@@ -8,9 +8,10 @@ import {
   RecoveryAttentionFactStore,
   TransactionPort,
 } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect, Exit, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect } from "vitest";
 import {
   CURRENT_SCHEMA45_SUFFIX_IDS,
   expectedCurrentSchemaSuffixIds,
@@ -276,142 +277,152 @@ describe("P41 / 0041 submitted DecisionEpisode storage", () => {
     ).toBe(P41_SUBMITTED_DECISION_BINDING_ATTENTION_FINGERPRINT);
   });
 
-  it("rejects a NULL fact key when every parent and other fact constraint is valid", async () => {
-    const program = Effect.gen(function* () {
-      const sql = yield* applyEquivalentP41Schema;
-      const versionBefore = yield* sql.unsafe<{ user_version: number }>(
-        "PRAGMA user_version",
-      );
-      const nullKey = yield* Effect.exit(
-        insertFact(sql, {
-          attentionFactId: null,
-          eventId: "evt_null_id",
-          logicalActionId: "lac_p41_null",
-        }),
-      );
-      const count = yield* sql.unsafe<{ count: number }>(
-        "SELECT COUNT(*) AS count FROM submitted_decision_binding_attention_facts",
-      );
-      return {
-        versionBefore: Number(versionBefore[0]?.user_version),
-        nullKey,
-        nullKeyCause: Exit.isFailure(nullKey)
-          ? JSON.stringify(nullKey.cause)
-          : "",
-        factCount: Number(count[0]?.count),
-      };
-    });
+  it.effect(
+    "rejects a NULL fact key when every parent and other fact constraint is valid",
+    () =>
+      Effect.gen(function* () {
+        const program = Effect.gen(function* () {
+          const sql = yield* applyEquivalentP41Schema;
+          const versionBefore = yield* sql.unsafe<{ user_version: number }>(
+            "PRAGMA user_version",
+          );
+          const nullKey = yield* Effect.exit(
+            insertFact(sql, {
+              attentionFactId: null,
+              eventId: "evt_null_id",
+              logicalActionId: "lac_p41_null",
+            }),
+          );
+          const count = yield* sql.unsafe<{ count: number }>(
+            "SELECT COUNT(*) AS count FROM submitted_decision_binding_attention_facts",
+          );
+          return {
+            versionBefore: Number(versionBefore[0]?.user_version),
+            nullKey,
+            nullKeyCause: Exit.isFailure(nullKey)
+              ? JSON.stringify(nullKey.cause)
+              : "",
+            factCount: Number(count[0]?.count),
+          };
+        });
 
-    const result = await Effect.runPromise(
-      Effect.provide(program, layer({ filename: ":memory:" })),
-    );
-    expect(result.versionBefore).toBe(0);
-    expect(Exit.isFailure(result.nullKey)).toBe(true);
-    expect(result.nullKeyCause).toContain('"errcode":1299');
-    expect(result.factCount).toBe(0);
-  });
+        const result = yield* Effect.provide(
+          program,
+          layer({ filename: ":memory:" }),
+        );
+        expect(result.versionBefore).toBe(0);
+        expect(Exit.isFailure(result.nullKey)).toBe(true);
+        expect(result.nullKeyCause).toContain('"errcode":1299');
+        expect(result.factCount).toBe(0);
+      }),
+  );
 
-  it("keeps positive insertion, exact tuple/event uniqueness, composite marker FK, and fact immutability", async () => {
-    const program = Effect.gen(function* () {
-      const sql = yield* applyEquivalentP41Schema;
-      yield* insertFact(sql, {
-        attentionFactId,
-        eventId,
-        logicalActionId: "lac_p41_storage",
-      });
-      const duplicateTuple = yield* Effect.exit(
-        insertFact(sql, {
-          attentionFactId: `att_${"b".repeat(64)}`,
-          eventId: "evt_duplicate_tuple",
-          logicalActionId: "lac_p41_storage",
-        }),
-      );
-      const duplicateEvent = yield* Effect.exit(
-        insertFact(sql, {
-          attentionFactId: `att_${"c".repeat(64)}`,
-          eventId,
-          logicalActionId: "lac_duplicate_event",
-        }),
-      );
-      const marker = yield* Effect.exit(
-        sql.unsafe(
-          `INSERT INTO submitted_decision_binding_attention_rows
+  it.effect(
+    "keeps positive insertion, exact tuple/event uniqueness, composite marker FK, and fact immutability",
+    () =>
+      Effect.gen(function* () {
+        const program = Effect.gen(function* () {
+          const sql = yield* applyEquivalentP41Schema;
+          yield* insertFact(sql, {
+            attentionFactId,
+            eventId,
+            logicalActionId: "lac_p41_storage",
+          });
+          const duplicateTuple = yield* Effect.exit(
+            insertFact(sql, {
+              attentionFactId: `att_${"b".repeat(64)}`,
+              eventId: "evt_duplicate_tuple",
+              logicalActionId: "lac_p41_storage",
+            }),
+          );
+          const duplicateEvent = yield* Effect.exit(
+            insertFact(sql, {
+              attentionFactId: `att_${"c".repeat(64)}`,
+              eventId,
+              logicalActionId: "lac_duplicate_event",
+            }),
+          );
+          const marker = yield* Effect.exit(
+            sql.unsafe(
+              `INSERT INTO submitted_decision_binding_attention_rows
              (project_id, attention_fact_id, workspace_id) VALUES (?, ?, ?)`,
-          [projectId, attentionFactId, workspaceId],
-        ),
-      );
-      const mismatchedMarker = yield* Effect.exit(
-        sql.unsafe(
-          `INSERT INTO submitted_decision_binding_attention_rows
+              [projectId, attentionFactId, workspaceId],
+            ),
+          );
+          const mismatchedMarker = yield* Effect.exit(
+            sql.unsafe(
+              `INSERT INTO submitted_decision_binding_attention_rows
              (project_id, attention_fact_id, workspace_id) VALUES (?, ?, ?)`,
-          [projectId, attentionFactId, "ws_wrong_target"],
-        ),
-      );
-      const missingParent = yield* Effect.exit(
-        insertFact(sql, {
-          attentionFactId: `att_${"d".repeat(64)}`,
-          eventId: "evt_missing_parent",
-          logicalActionId: "lac_missing_parent",
-          workspaceId: "ws_missing_parent",
-        }),
-      );
-      const update = yield* Effect.exit(
-        sql.unsafe(
-          `UPDATE submitted_decision_binding_attention_facts
+              [projectId, attentionFactId, "ws_wrong_target"],
+            ),
+          );
+          const missingParent = yield* Effect.exit(
+            insertFact(sql, {
+              attentionFactId: `att_${"d".repeat(64)}`,
+              eventId: "evt_missing_parent",
+              logicalActionId: "lac_missing_parent",
+              workspaceId: "ws_missing_parent",
+            }),
+          );
+          const update = yield* Effect.exit(
+            sql.unsafe(
+              `UPDATE submitted_decision_binding_attention_facts
               SET failure_code = 'StepManifestMismatch'
             WHERE attention_fact_id = ?`,
-          [attentionFactId],
-        ),
-      );
-      const remove = yield* Effect.exit(
-        sql.unsafe(
-          `DELETE FROM submitted_decision_binding_attention_facts
+              [attentionFactId],
+            ),
+          );
+          const remove = yield* Effect.exit(
+            sql.unsafe(
+              `DELETE FROM submitted_decision_binding_attention_facts
             WHERE attention_fact_id = ?`,
-          [attentionFactId],
-        ),
-      );
-      const count = yield* sql.unsafe<{ count: number }>(
-        `SELECT COUNT(*) AS count
+              [attentionFactId],
+            ),
+          );
+          const count = yield* sql.unsafe<{ count: number }>(
+            `SELECT COUNT(*) AS count
            FROM submitted_decision_binding_attention_facts
           WHERE attention_fact_id = ?`,
-        [attentionFactId],
-      );
-      const markerCount = yield* sql.unsafe<{ count: number }>(
-        `SELECT COUNT(*) AS count FROM submitted_decision_binding_attention_rows
+            [attentionFactId],
+          );
+          const markerCount = yield* sql.unsafe<{ count: number }>(
+            `SELECT COUNT(*) AS count FROM submitted_decision_binding_attention_rows
           WHERE project_id = ? AND attention_fact_id = ?`,
-        [projectId, attentionFactId],
-      );
-      const foreignKeyViolations = yield* sql.unsafe(
-        "PRAGMA foreign_key_check",
-      );
-      return {
-        duplicateTuple,
-        duplicateEvent,
-        marker,
-        mismatchedMarker,
-        missingParent,
-        update,
-        remove,
-        count: Number(count[0]?.count),
-        markerCount: Number(markerCount[0]?.count),
-        foreignKeyViolations,
-      };
-    });
+            [projectId, attentionFactId],
+          );
+          const foreignKeyViolations = yield* sql.unsafe(
+            "PRAGMA foreign_key_check",
+          );
+          return {
+            duplicateTuple,
+            duplicateEvent,
+            marker,
+            mismatchedMarker,
+            missingParent,
+            update,
+            remove,
+            count: Number(count[0]?.count),
+            markerCount: Number(markerCount[0]?.count),
+            foreignKeyViolations,
+          };
+        });
 
-    const result = await Effect.runPromise(
-      Effect.provide(program, layer({ filename: ":memory:" })),
-    );
-    expect(Exit.isFailure(result.duplicateTuple)).toBe(true);
-    expect(Exit.isFailure(result.duplicateEvent)).toBe(true);
-    expect(Exit.isSuccess(result.marker)).toBe(true);
-    expect(Exit.isFailure(result.mismatchedMarker)).toBe(true);
-    expect(Exit.isFailure(result.missingParent)).toBe(true);
-    expect(Exit.isFailure(result.update)).toBe(true);
-    expect(Exit.isFailure(result.remove)).toBe(true);
-    expect(result.count).toBe(1);
-    expect(result.markerCount).toBe(1);
-    expect(result.foreignKeyViolations).toEqual([]);
-  });
+        const result = yield* Effect.provide(
+          program,
+          layer({ filename: ":memory:" }),
+        );
+        expect(Exit.isFailure(result.duplicateTuple)).toBe(true);
+        expect(Exit.isFailure(result.duplicateEvent)).toBe(true);
+        expect(Exit.isSuccess(result.marker)).toBe(true);
+        expect(Exit.isFailure(result.mismatchedMarker)).toBe(true);
+        expect(Exit.isFailure(result.missingParent)).toBe(true);
+        expect(Exit.isFailure(result.update)).toBe(true);
+        expect(Exit.isFailure(result.remove)).toBe(true);
+        expect(result.count).toBe(1);
+        expect(result.markerCount).toBe(1);
+        expect(result.foreignKeyViolations).toEqual([]);
+      }),
+  );
 
   it("persists caller-bound facts idempotently and reads them after SQLite reopen", async () => {
     const database = createSchema42Case();

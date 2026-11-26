@@ -23,9 +23,10 @@ import {
   SandboxPolicyDecisionStore as SandboxPolicyDecisionStorePort,
   TransactionPort as TransactionPortTag,
 } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import { layer } from "../src/client.js";
 import { SandboxPolicyDecisionStoreLive } from "../src/sandbox-policy-decision-store.js";
 import { TransactionPortLive } from "../src/transaction.js";
@@ -175,285 +176,299 @@ const createCommands = `CREATE TABLE commands (
 )`;
 
 describe("SandboxPolicyDecisionStore", () => {
-  it("reads the exact committed Linux V2 network policy instead of reporting corruption", async () => {
-    const networkPolicy = {
-      version: 1 as const,
-      mode: "Enabled" as const,
-      destinations: [],
-    };
-    const snapshot = {
-      ...summary,
-      version: 2 as const,
-      providerId: "linux-bwrap",
-      networkPolicy,
-      networkPolicyDigest: createHash("sha256")
-        .update(encodeNetworkPolicyV1(networkPolicy))
-        .digest("hex"),
-      networkBrokerControls: networkBrokerControlsV2ForMode("Enabled"),
-    };
-    const v2Digest = createHash("sha256")
-      .update(encodeEffectivePolicySummaryV2(snapshot))
-      .digest("hex");
-    const result: SandboxPolicyDecisionCommittedInternalV2 = {
-      ...committedResult,
-      version: 2,
-      policyDigest: v2Digest,
-      effectivePolicySnapshot: snapshot,
-    };
-    const v2Decision = {
-      ...decision,
-      providerId: "linux-bwrap",
-      policyDigest: v2Digest,
-      networkPolicy: { kind: "OsEnforced" as const, policy: networkPolicy },
-    };
-    const base = layer({ filename: ":memory:" });
-    const app = Layer.mergeAll(
-      base,
-      Layer.provide(TransactionPortLive, base),
-      Layer.provide(SandboxPolicyDecisionStoreLive, base),
-    );
-    await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          const sql = yield* SqlClient;
-          yield* sql.unsafe(createCommands);
-          yield* sql.unsafe(createTable);
-          const tx = yield* TransactionPortTag;
-          const store = yield* SandboxPolicyDecisionStorePort;
-          yield* tx.transact(store.insertCommitted(v2Decision));
-          yield* sql.unsafe(
-            "INSERT INTO commands (command_id, project_id, schema_version, resolution, result_json) VALUES (?, ?, '2', 'Committed', ?)",
-            [
-              decisionCommandId,
-              projectId,
-              encodeSandboxPolicyDecisionCommittedInternalV2(result),
-            ],
-          );
-          expect(
-            Option.getOrNull(yield* tx.transact(store.findExact(v2Decision))),
-          ).toEqual({ decision: v2Decision, result });
-          expect(
-            Option.getOrNull(
-              yield* tx.transact(
-                store.findCurrentForExecution(
-                  projectId,
-                  workspaceId,
-                  executionId,
+  it.effect(
+    "reads the exact committed Linux V2 network policy instead of reporting corruption",
+    () =>
+      Effect.gen(function* () {
+        const networkPolicy = {
+          version: 1 as const,
+          mode: "Enabled" as const,
+          destinations: [],
+        };
+        const snapshot = {
+          ...summary,
+          version: 2 as const,
+          providerId: "linux-bwrap",
+          networkPolicy,
+          networkPolicyDigest: createHash("sha256")
+            .update(encodeNetworkPolicyV1(networkPolicy))
+            .digest("hex"),
+          networkBrokerControls: networkBrokerControlsV2ForMode("Enabled"),
+        };
+        const v2Digest = createHash("sha256")
+          .update(encodeEffectivePolicySummaryV2(snapshot))
+          .digest("hex");
+        const result: SandboxPolicyDecisionCommittedInternalV2 = {
+          ...committedResult,
+          version: 2,
+          policyDigest: v2Digest,
+          effectivePolicySnapshot: snapshot,
+        };
+        const v2Decision = {
+          ...decision,
+          providerId: "linux-bwrap",
+          policyDigest: v2Digest,
+          networkPolicy: { kind: "OsEnforced" as const, policy: networkPolicy },
+        };
+        const base = layer({ filename: ":memory:" });
+        const app = Layer.mergeAll(
+          base,
+          Layer.provide(TransactionPortLive, base),
+          Layer.provide(SandboxPolicyDecisionStoreLive, base),
+        );
+        yield* Effect.provide(
+          Effect.gen(function* () {
+            const sql = yield* SqlClient;
+            yield* sql.unsafe(createCommands);
+            yield* sql.unsafe(createTable);
+            const tx = yield* TransactionPortTag;
+            const store = yield* SandboxPolicyDecisionStorePort;
+            yield* tx.transact(store.insertCommitted(v2Decision));
+            yield* sql.unsafe(
+              "INSERT INTO commands (command_id, project_id, schema_version, resolution, result_json) VALUES (?, ?, '2', 'Committed', ?)",
+              [
+                decisionCommandId,
+                projectId,
+                encodeSandboxPolicyDecisionCommittedInternalV2(result),
+              ],
+            );
+            expect(
+              Option.getOrNull(yield* tx.transact(store.findExact(v2Decision))),
+            ).toEqual({ decision: v2Decision, result });
+            expect(
+              Option.getOrNull(
+                yield* tx.transact(
+                  store.findCurrentForExecution(
+                    projectId,
+                    workspaceId,
+                    executionId,
+                  ),
                 ),
               ),
-            ),
-          ).toEqual({ decision: v2Decision, result });
-          // A V2 result cannot be carried under a V1 receipt schema.
-          yield* sql.unsafe("UPDATE commands SET schema_version = '1'");
-          const rejected = yield* Effect.result(
-            tx.transact(store.findExact(v2Decision)),
-          );
-          expect(rejected._tag).toBe("Failure");
-        }),
-        app,
-      ),
-    );
-  });
+            ).toEqual({ decision: v2Decision, result });
+            // A V2 result cannot be carried under a V1 receipt schema.
+            yield* sql.unsafe("UPDATE commands SET schema_version = '1'");
+            const rejected = yield* Effect.result(
+              tx.transact(store.findExact(v2Decision)),
+            );
+            expect(rejected._tag).toBe("Failure");
+          }),
+          app,
+        );
+      }),
+  );
 
-  it("round-trips Workspace provenance only with an exact V3 revision and schema1 receipt", async () => {
-    const snapshot = {
-      ...summary,
-      version: 2 as const,
-      providerId: "linux-bwrap",
-      networkBrokerControls: networkBrokerControlsV2ForMode("Disabled"),
-    };
-    const digest = createHash("sha256")
-      .update(encodeEffectivePolicySummaryV2(snapshot))
-      .digest("hex");
-    const result = {
-      ...committedResult,
-      version: 3 as const,
-      workspaceAuthorizationRevision: 1,
-      policyDigest: digest,
-      effectivePolicySnapshot: snapshot,
-    };
-    const {
-      permissionGrantId: _grant,
-      grantPermissionCommandId: _grantCommand,
-      grantIssuerPrincipal: _issuer,
-      ...fields
-    } = decision;
-    const modern = {
-      ...fields,
-      providerId: "linux-bwrap",
-      authorityKind: "WorkspaceAuthorization" as const,
-      workspaceAuthorizationRevision: 1,
-      actorPrincipal: "system:workspace-policy" as never,
-      policyDigest: digest,
-    };
-    const base = layer({ filename: ":memory:" });
-    const app = Layer.mergeAll(
-      base,
-      Layer.provide(TransactionPortLive, base),
-      Layer.provide(SandboxPolicyDecisionStoreLive, base),
-    );
-    await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          const sql = yield* SqlClient;
-          yield* sql.unsafe(createCommands);
-          yield* sql.unsafe(
-            createTable
-              .replace(
-                "permission_grant_id TEXT NOT NULL",
-                "permission_grant_id TEXT",
-              )
-              .replace(
-                "grant_permission_command_id TEXT NOT NULL",
-                "grant_permission_command_id TEXT",
-              )
-              .replace(
-                "grant_issuer_principal TEXT NOT NULL",
-                "grant_issuer_principal TEXT",
-              ),
-          );
-          yield* sql.unsafe(
-            "ALTER TABLE sandbox_policy_decisions ADD COLUMN authority_kind TEXT NOT NULL DEFAULT 'LegacyHumanGrant'",
-          );
-          yield* sql.unsafe(
-            "ALTER TABLE sandbox_policy_decisions ADD COLUMN workspace_authorization_revision INTEGER",
-          );
-          const tx = yield* TransactionPortTag;
-          const store = yield* SandboxPolicyDecisionStorePort;
-          yield* tx.transact(store.insertCommitted(modern));
-          yield* sql.unsafe(
-            "INSERT INTO commands VALUES (?, ?, '1', 'Committed', ?)",
-            [
-              decisionCommandId,
-              projectId,
-              encodeSandboxPolicyDecisionCommittedInternalV3(result),
-            ],
-          );
-          expect(
-            Option.getOrThrow(yield* tx.transact(store.findExact(modern))),
-          ).toEqual({ decision: modern, result });
-          const fails = () =>
-            Effect.gen(function* () {
-              expect(
-                (yield* Effect.result(tx.transact(store.findExact(modern))))
-                  ._tag,
-              ).toBe("Failure");
+  it.effect(
+    "round-trips Workspace provenance only with an exact V3 revision and schema1 receipt",
+    () =>
+      Effect.gen(function* () {
+        const snapshot = {
+          ...summary,
+          version: 2 as const,
+          providerId: "linux-bwrap",
+          networkBrokerControls: networkBrokerControlsV2ForMode("Disabled"),
+        };
+        const digest = createHash("sha256")
+          .update(encodeEffectivePolicySummaryV2(snapshot))
+          .digest("hex");
+        const result = {
+          ...committedResult,
+          version: 3 as const,
+          workspaceAuthorizationRevision: 1,
+          policyDigest: digest,
+          effectivePolicySnapshot: snapshot,
+        };
+        const {
+          permissionGrantId: _grant,
+          grantPermissionCommandId: _grantCommand,
+          grantIssuerPrincipal: _issuer,
+          ...fields
+        } = decision;
+        const modern = {
+          ...fields,
+          providerId: "linux-bwrap",
+          authorityKind: "WorkspaceAuthorization" as const,
+          workspaceAuthorizationRevision: 1,
+          actorPrincipal: "system:workspace-policy" as never,
+          policyDigest: digest,
+        };
+        const base = layer({ filename: ":memory:" });
+        const app = Layer.mergeAll(
+          base,
+          Layer.provide(TransactionPortLive, base),
+          Layer.provide(SandboxPolicyDecisionStoreLive, base),
+        );
+        yield* Effect.provide(
+          Effect.gen(function* () {
+            const sql = yield* SqlClient;
+            yield* sql.unsafe(createCommands);
+            yield* sql.unsafe(
+              createTable
+                .replace(
+                  "permission_grant_id TEXT NOT NULL",
+                  "permission_grant_id TEXT",
+                )
+                .replace(
+                  "grant_permission_command_id TEXT NOT NULL",
+                  "grant_permission_command_id TEXT",
+                )
+                .replace(
+                  "grant_issuer_principal TEXT NOT NULL",
+                  "grant_issuer_principal TEXT",
+                ),
+            );
+            yield* sql.unsafe(
+              "ALTER TABLE sandbox_policy_decisions ADD COLUMN authority_kind TEXT NOT NULL DEFAULT 'LegacyHumanGrant'",
+            );
+            yield* sql.unsafe(
+              "ALTER TABLE sandbox_policy_decisions ADD COLUMN workspace_authorization_revision INTEGER",
+            );
+            const tx = yield* TransactionPortTag;
+            const store = yield* SandboxPolicyDecisionStorePort;
+            yield* tx.transact(store.insertCommitted(modern));
+            yield* sql.unsafe(
+              "INSERT INTO commands VALUES (?, ?, '1', 'Committed', ?)",
+              [
+                decisionCommandId,
+                projectId,
+                encodeSandboxPolicyDecisionCommittedInternalV3(result),
+              ],
+            );
+            expect(
+              Option.getOrThrow(yield* tx.transact(store.findExact(modern))),
+            ).toEqual({ decision: modern, result });
+            const fails = () =>
+              Effect.gen(function* () {
+                expect(
+                  (yield* Effect.result(tx.transact(store.findExact(modern))))
+                    ._tag,
+                ).toBe("Failure");
+              });
+            yield* sql.unsafe("UPDATE commands SET schema_version = '2'");
+            yield* fails();
+            yield* sql.unsafe("UPDATE commands SET schema_version = '1'");
+            yield* sql.unsafe(
+              "UPDATE sandbox_policy_decisions SET workspace_authorization_revision = 2",
+            );
+            yield* fails();
+            yield* sql.unsafe(
+              "UPDATE sandbox_policy_decisions SET workspace_authorization_revision = 1, permission_grant_id = ?",
+              [permissionGrantId],
+            );
+            yield* fails();
+            yield* sql.unsafe(
+              "UPDATE sandbox_policy_decisions SET permission_grant_id = NULL, operator_config_digest = ?",
+              ["b".repeat(64)],
+            );
+            yield* fails();
+          }),
+          app,
+        );
+      }),
+  );
+
+  it.effect(
+    "rejects Workspace writes against a legacy schema without manufacturing grant provenance",
+    () =>
+      Effect.gen(function* () {
+        const base = layer({ filename: ":memory:" });
+        const app = Layer.mergeAll(
+          base,
+          Layer.provide(TransactionPortLive, base),
+          Layer.provide(SandboxPolicyDecisionStoreLive, base),
+        );
+        yield* Effect.provide(
+          Effect.gen(function* () {
+            const sql = yield* SqlClient;
+            yield* sql.unsafe(createCommands);
+            yield* sql.unsafe(createTable);
+            const tx = yield* TransactionPortTag;
+            const store = yield* SandboxPolicyDecisionStorePort;
+            const {
+              permissionGrantId: _grant,
+              grantPermissionCommandId: _command,
+              grantIssuerPrincipal: _issuer,
+              ...fields
+            } = decision;
+            expect(
+              (yield* Effect.result(
+                tx.transact(
+                  store.insertCommitted({
+                    ...fields,
+                    authorityKind: "WorkspaceAuthorization",
+                    workspaceAuthorizationRevision: 1,
+                  }),
+                ),
+              ))._tag,
+            ).toBe("Failure");
+            expect(
+              yield* sql.unsafe("SELECT * FROM sandbox_policy_decisions"),
+            ).toEqual([]);
+          }),
+          app,
+        );
+      }),
+  );
+
+  it.effect(
+    "round-trips the exact decision key and returns the current immutable head",
+    () =>
+      Effect.gen(function* () {
+        const base = layer({ filename: ":memory:" });
+        const app = Layer.mergeAll(
+          base,
+          Layer.provide(TransactionPortLive, base),
+          Layer.provide(SandboxPolicyDecisionStoreLive, base),
+        );
+        yield* Effect.provide(
+          Effect.gen(function* () {
+            const sql = yield* SqlClient;
+            yield* sql.unsafe(createCommands);
+            yield* sql.unsafe(createTable);
+            const transactions = yield* TransactionPortTag;
+            const store = yield* SandboxPolicyDecisionStorePort;
+            yield* transactions.transact(store.insertCommitted(decision));
+            yield* sql.unsafe(
+              "INSERT INTO commands (command_id, project_id, schema_version, resolution, result_json) VALUES (?, ?, '2', 'Committed', ?)",
+              [
+                decisionCommandId,
+                projectId,
+                encodeSandboxPolicyDecisionCommittedInternalV1(committedResult),
+              ],
+            );
+            const exact = yield* transactions.transact(
+              store.findExact(decision),
+            );
+            expect(Option.getOrNull(exact)).toEqual({
+              decision,
+              result: committedResult,
             });
-          yield* sql.unsafe("UPDATE commands SET schema_version = '2'");
-          yield* fails();
-          yield* sql.unsafe("UPDATE commands SET schema_version = '1'");
-          yield* sql.unsafe(
-            "UPDATE sandbox_policy_decisions SET workspace_authorization_revision = 2",
-          );
-          yield* fails();
-          yield* sql.unsafe(
-            "UPDATE sandbox_policy_decisions SET workspace_authorization_revision = 1, permission_grant_id = ?",
-            [permissionGrantId],
-          );
-          yield* fails();
-          yield* sql.unsafe(
-            "UPDATE sandbox_policy_decisions SET permission_grant_id = NULL, operator_config_digest = ?",
-            ["b".repeat(64)],
-          );
-          yield* fails();
-        }),
-        app,
-      ),
-    );
-  });
-
-  it("rejects Workspace writes against a legacy schema without manufacturing grant provenance", async () => {
-    const base = layer({ filename: ":memory:" });
-    const app = Layer.mergeAll(
-      base,
-      Layer.provide(TransactionPortLive, base),
-      Layer.provide(SandboxPolicyDecisionStoreLive, base),
-    );
-    await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          const sql = yield* SqlClient;
-          yield* sql.unsafe(createCommands);
-          yield* sql.unsafe(createTable);
-          const tx = yield* TransactionPortTag;
-          const store = yield* SandboxPolicyDecisionStorePort;
-          const {
-            permissionGrantId: _grant,
-            grantPermissionCommandId: _command,
-            grantIssuerPrincipal: _issuer,
-            ...fields
-          } = decision;
-          expect(
-            (yield* Effect.result(
-              tx.transact(
-                store.insertCommitted({
-                  ...fields,
-                  authorityKind: "WorkspaceAuthorization",
-                  workspaceAuthorizationRevision: 1,
-                }),
+            const current = yield* transactions.transact(
+              store.findCurrentForExecution(
+                projectId,
+                workspaceId,
+                executionId,
               ),
-            ))._tag,
-          ).toBe("Failure");
-          expect(
-            yield* sql.unsafe("SELECT * FROM sandbox_policy_decisions"),
-          ).toEqual([]);
-        }),
-        app,
-      ),
-    );
-  });
+            );
+            expect(Option.getOrNull(current)).toEqual({
+              decision,
+              result: committedResult,
+            });
+          }),
+          app,
+        );
+      }),
+  );
 
-  it("round-trips the exact decision key and returns the current immutable head", async () => {
-    const base = layer({ filename: ":memory:" });
-    const app = Layer.mergeAll(
-      base,
-      Layer.provide(TransactionPortLive, base),
-      Layer.provide(SandboxPolicyDecisionStoreLive, base),
-    );
-    await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          const sql = yield* SqlClient;
-          yield* sql.unsafe(createCommands);
-          yield* sql.unsafe(createTable);
-          const transactions = yield* TransactionPortTag;
-          const store = yield* SandboxPolicyDecisionStorePort;
-          yield* transactions.transact(store.insertCommitted(decision));
-          yield* sql.unsafe(
-            "INSERT INTO commands (command_id, project_id, schema_version, resolution, result_json) VALUES (?, ?, '2', 'Committed', ?)",
-            [
-              decisionCommandId,
-              projectId,
-              encodeSandboxPolicyDecisionCommittedInternalV1(committedResult),
-            ],
-          );
-          const exact = yield* transactions.transact(store.findExact(decision));
-          expect(Option.getOrNull(exact)).toEqual({
-            decision,
-            result: committedResult,
-          });
-          const current = yield* transactions.transact(
-            store.findCurrentForExecution(projectId, workspaceId, executionId),
-          );
-          expect(Option.getOrNull(current)).toEqual({
-            decision,
-            result: committedResult,
-          });
-        }),
-        app,
-      ),
-    );
-  });
-
-  it("fails closed on non-canonical or corrupt stored policy JSON", async () => {
-    const base = layer({ filename: ":memory:" });
-    const app = Layer.mergeAll(
-      base,
-      Layer.provide(TransactionPortLive, base),
-      Layer.provide(SandboxPolicyDecisionStoreLive, base),
-    );
-    await Effect.runPromise(
-      Effect.provide(
+  it.effect("fails closed on non-canonical or corrupt stored policy JSON", () =>
+    Effect.gen(function* () {
+      const base = layer({ filename: ":memory:" });
+      const app = Layer.mergeAll(
+        base,
+        Layer.provide(TransactionPortLive, base),
+        Layer.provide(SandboxPolicyDecisionStoreLive, base),
+      );
+      yield* Effect.provide(
         Effect.gen(function* () {
           const sql = yield* SqlClient;
           yield* sql.unsafe(createCommands);
@@ -500,113 +515,117 @@ describe("SandboxPolicyDecisionStore", () => {
           }
         }),
         app,
-      ),
-    );
-  });
+      );
+    }),
+  );
 
-  it("does not reinterpret a legacy string targetRef in a stored receipt", async () => {
-    const base = layer({ filename: ":memory:" });
-    const app = Layer.mergeAll(
-      base,
-      Layer.provide(TransactionPortLive, base),
-      Layer.provide(SandboxPolicyDecisionStoreLive, base),
-    );
-    await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          const sql = yield* SqlClient;
-          yield* sql.unsafe(createCommands);
-          yield* sql.unsafe(createTable);
-          const transactions = yield* TransactionPortTag;
-          const store = yield* SandboxPolicyDecisionStorePort;
-          yield* transactions.transact(store.insertCommitted(decision));
-          const objectTargetRef =
-            '"targetRef":{"version":1,"kind":"RegionDigest","resourceSpace":"filesystem","regionIdentityDigest":"' +
-            "9".repeat(64) +
-            '"}';
-          const encoded =
-            encodeSandboxPolicyDecisionCommittedInternalV1(committedResult);
-          expect(encoded).toContain(objectTargetRef);
-          yield* sql.unsafe(
-            "INSERT INTO commands (command_id, project_id, schema_version, resolution, result_json) VALUES (?, ?, '1', 'Committed', ?)",
-            [
-              decisionCommandId,
-              projectId,
-              encoded.replace(objectTargetRef, '"targetRef":"workspace"'),
-            ],
-          );
-          const outcome = yield* Effect.match(
-            transactions.transact(
-              store.findCurrentForExecution(
+  it.effect(
+    "does not reinterpret a legacy string targetRef in a stored receipt",
+    () =>
+      Effect.gen(function* () {
+        const base = layer({ filename: ":memory:" });
+        const app = Layer.mergeAll(
+          base,
+          Layer.provide(TransactionPortLive, base),
+          Layer.provide(SandboxPolicyDecisionStoreLive, base),
+        );
+        yield* Effect.provide(
+          Effect.gen(function* () {
+            const sql = yield* SqlClient;
+            yield* sql.unsafe(createCommands);
+            yield* sql.unsafe(createTable);
+            const transactions = yield* TransactionPortTag;
+            const store = yield* SandboxPolicyDecisionStorePort;
+            yield* transactions.transact(store.insertCommitted(decision));
+            const objectTargetRef =
+              '"targetRef":{"version":1,"kind":"RegionDigest","resourceSpace":"filesystem","regionIdentityDigest":"' +
+              "9".repeat(64) +
+              '"}';
+            const encoded =
+              encodeSandboxPolicyDecisionCommittedInternalV1(committedResult);
+            expect(encoded).toContain(objectTargetRef);
+            yield* sql.unsafe(
+              "INSERT INTO commands (command_id, project_id, schema_version, resolution, result_json) VALUES (?, ?, '1', 'Committed', ?)",
+              [
+                decisionCommandId,
                 projectId,
-                workspaceId,
-                executionId,
+                encoded.replace(objectTargetRef, '"targetRef":"workspace"'),
+              ],
+            );
+            const outcome = yield* Effect.match(
+              transactions.transact(
+                store.findCurrentForExecution(
+                  projectId,
+                  workspaceId,
+                  executionId,
+                ),
               ),
-            ),
-            {
-              onFailure: (error) => ({ _tag: "Left" as const, error }),
-              onSuccess: (value) => ({ _tag: "Right" as const, value }),
-            },
-          );
-          if (outcome._tag === "Left") {
-            expect(outcome.error).toMatchObject({
-              _tag: "PersistenceCorruption",
-              repository: "SandboxPolicyDecisionStore",
-              operation: "find-current-for-execution",
-            });
-          } else {
-            throw new Error("legacy string targetRef unexpectedly decoded");
-          }
-        }),
-        app,
-      ),
-    );
-  });
+              {
+                onFailure: (error) => ({ _tag: "Left" as const, error }),
+                onSuccess: (value) => ({ _tag: "Right" as const, value }),
+              },
+            );
+            if (outcome._tag === "Left") {
+              expect(outcome.error).toMatchObject({
+                _tag: "PersistenceCorruption",
+                repository: "SandboxPolicyDecisionStore",
+                operation: "find-current-for-execution",
+              });
+            } else {
+              throw new Error("legacy string targetRef unexpectedly decoded");
+            }
+          }),
+          app,
+        );
+      }),
+  );
 
-  it("fails closed when the immutable row has no matching command result", async () => {
-    const base = layer({ filename: ":memory:" });
-    const app = Layer.mergeAll(
-      base,
-      Layer.provide(TransactionPortLive, base),
-      Layer.provide(SandboxPolicyDecisionStoreLive, base),
-    );
-    await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          const sql = yield* SqlClient;
-          yield* sql.unsafe(createCommands);
-          yield* sql.unsafe(createTable);
-          const transactions = yield* TransactionPortTag;
-          const store = yield* SandboxPolicyDecisionStorePort;
-          yield* transactions.transact(store.insertCommitted(decision));
-          yield* sql.unsafe(
-            "INSERT INTO commands (command_id, project_id, schema_version, resolution, result_json) VALUES (?, ?, '1', 'Committed', ?)",
-            [decisionCommandId, projectId, "{}"],
-          );
-          const outcome = yield* Effect.match(
-            transactions.transact(
-              store.findCurrentForExecution(
-                projectId,
-                workspaceId,
-                executionId,
+  it.effect(
+    "fails closed when the immutable row has no matching command result",
+    () =>
+      Effect.gen(function* () {
+        const base = layer({ filename: ":memory:" });
+        const app = Layer.mergeAll(
+          base,
+          Layer.provide(TransactionPortLive, base),
+          Layer.provide(SandboxPolicyDecisionStoreLive, base),
+        );
+        yield* Effect.provide(
+          Effect.gen(function* () {
+            const sql = yield* SqlClient;
+            yield* sql.unsafe(createCommands);
+            yield* sql.unsafe(createTable);
+            const transactions = yield* TransactionPortTag;
+            const store = yield* SandboxPolicyDecisionStorePort;
+            yield* transactions.transact(store.insertCommitted(decision));
+            yield* sql.unsafe(
+              "INSERT INTO commands (command_id, project_id, schema_version, resolution, result_json) VALUES (?, ?, '1', 'Committed', ?)",
+              [decisionCommandId, projectId, "{}"],
+            );
+            const outcome = yield* Effect.match(
+              transactions.transact(
+                store.findCurrentForExecution(
+                  projectId,
+                  workspaceId,
+                  executionId,
+                ),
               ),
-            ),
-            {
-              onFailure: (error) => ({ _tag: "Left" as const, error }),
-              onSuccess: (value) => ({ _tag: "Right" as const, value }),
-            },
-          );
-          expect(outcome._tag).toBe("Left");
-          if (outcome._tag === "Left") {
-            expect(outcome.error).toMatchObject({
-              _tag: "PersistenceCorruption",
-              repository: "SandboxPolicyDecisionStore",
-              operation: "find-current-for-execution",
-            });
-          }
-        }),
-        app,
-      ),
-    );
-  });
+              {
+                onFailure: (error) => ({ _tag: "Left" as const, error }),
+                onSuccess: (value) => ({ _tag: "Right" as const, value }),
+              },
+            );
+            expect(outcome._tag).toBe("Left");
+            if (outcome._tag === "Left") {
+              expect(outcome.error).toMatchObject({
+                _tag: "PersistenceCorruption",
+                repository: "SandboxPolicyDecisionStore",
+                operation: "find-current-for-execution",
+              });
+            }
+          }),
+          app,
+        );
+      }),
+  );
 });

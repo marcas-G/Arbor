@@ -10,9 +10,10 @@ import {
   ToolInvocationStore,
   TransactionPort,
 } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import { ReconciliationSourceLive } from "../../../packages/tool-runtime/src/index.js";
 import {
   layer,
@@ -129,47 +130,47 @@ const intent = (id: string, semantics: string) => ({
 });
 
 describe("P4 reconciliation source", () => {
-  it("reports only reconcilable unsettled invocations", async () => {
-    const app = makeApp();
-    const program = Effect.gen(function* () {
-      yield* runMigrations(P36_MIGRATIONS);
-      yield* seed;
-      const tx = yield* TransactionPort;
-      const store = yield* ToolInvocationStore;
-      const source = yield* ReconciliationSource;
-      yield* tx.transact(
-        store.recordIntent(
-          intent("tin_018f2b3c-4d5e-7abc-8def-0123456789a1", "Reconcilable"),
-          executionFence,
-          fenceNow,
-        ),
-      );
-      yield* tx.transact(
-        store.recordIntent(
-          intent("tin_018f2b3c-4d5e-7abc-8def-0123456789a2", "ReadOnly"),
-          executionFence,
-          fenceNow,
-        ),
-      );
-      yield* tx.transact(
-        store.recordIntent(
-          intent("tin_018f2b3c-4d5e-7abc-8def-0123456789a3", "NonIdempotent"),
-          executionFence,
-          fenceNow,
-        ),
-      );
-      return yield* tx.transact(source.pending(executionId));
-    });
-    const pending = await Effect.runPromise(
-      Effect.provide(program, app) as Effect.Effect<
+  it.effect("reports only reconcilable unsettled invocations", () =>
+    Effect.gen(function* () {
+      const app = makeApp();
+      const program = Effect.gen(function* () {
+        yield* runMigrations(P36_MIGRATIONS);
+        yield* seed;
+        const tx = yield* TransactionPort;
+        const store = yield* ToolInvocationStore;
+        const source = yield* ReconciliationSource;
+        yield* tx.transact(
+          store.recordIntent(
+            intent("tin_018f2b3c-4d5e-7abc-8def-0123456789a1", "Reconcilable"),
+            executionFence,
+            fenceNow,
+          ),
+        );
+        yield* tx.transact(
+          store.recordIntent(
+            intent("tin_018f2b3c-4d5e-7abc-8def-0123456789a2", "ReadOnly"),
+            executionFence,
+            fenceNow,
+          ),
+        );
+        yield* tx.transact(
+          store.recordIntent(
+            intent("tin_018f2b3c-4d5e-7abc-8def-0123456789a3", "NonIdempotent"),
+            executionFence,
+            fenceNow,
+          ),
+        );
+        return yield* tx.transact(source.pending(executionId));
+      });
+      const pending = yield* Effect.provide(program, app) as Effect.Effect<
         ReadonlyArray<string>,
         unknown,
         never
-      >,
-    );
-    expect([...pending].sort()).toEqual([
-      "tin_018f2b3c-4d5e-7abc-8def-0123456789a1",
-      "tin_018f2b3c-4d5e-7abc-8def-0123456789a3",
-    ]);
-  });
+      >;
+      expect([...pending].sort()).toEqual([
+        "tin_018f2b3c-4d5e-7abc-8def-0123456789a1",
+        "tin_018f2b3c-4d5e-7abc-8def-0123456789a3",
+      ]);
+    }),
+  );
 });

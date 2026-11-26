@@ -1,8 +1,9 @@
 import type { ControlApprovalRecord } from "@arbor/ports";
 import { ControlApprovalStore, TransactionPort } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import { layer } from "../src/client.js";
 import { ControlApprovalStoreLive } from "../src/control-approval.js";
 import { runMigrations } from "../src/migrate.js";
@@ -30,15 +31,15 @@ const record: ControlApprovalRecord = {
 };
 
 describe("CAPA migration 0030 control approval store", () => {
-  it("decides and single-consumes one exact action", async () => {
-    const base = layer({ filename: ":memory:" });
-    const app = Layer.mergeAll(
-      base,
-      Layer.provide(TransactionPortLive, base),
-      Layer.provide(ControlApprovalStoreLive, base),
-    );
-    await Effect.runPromise(
-      Effect.provide(
+  it.effect("decides and single-consumes one exact action", () =>
+    Effect.gen(function* () {
+      const base = layer({ filename: ":memory:" });
+      const app = Layer.mergeAll(
+        base,
+        Layer.provide(TransactionPortLive, base),
+        Layer.provide(ControlApprovalStoreLive, base),
+      );
+      yield* Effect.provide(
         Effect.gen(function* () {
           yield* runMigrations(P30_MIGRATIONS);
           const sql = yield* SqlClient;
@@ -162,7 +163,7 @@ describe("CAPA migration 0030 control approval store", () => {
           ).toBe(true);
         }),
         app,
-      ),
-    );
-  });
+      );
+    }),
+  );
 });

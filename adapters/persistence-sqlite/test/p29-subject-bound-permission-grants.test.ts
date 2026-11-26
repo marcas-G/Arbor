@@ -5,9 +5,10 @@ import {
   WorkspaceId,
 } from "@arbor/domain";
 import { PermissionGrantRepository, TransactionPort } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import { layer } from "../src/client.js";
 import { runMigrations } from "../src/migrate.js";
 import { P28_MIGRATIONS, P29_MIGRATIONS } from "../src/migrations.js";
@@ -15,15 +16,15 @@ import { PermissionGrantRepositoryLive } from "../src/permission-grant-repositor
 import { TransactionPortLive } from "../src/transaction.js";
 
 describe("CAPA migration 0029 subject-bound PermissionGrant", () => {
-  it("revokes legacy unbound grants and round-trips a bound grant", async () => {
-    const base = layer({ filename: ":memory:" });
-    const app = Layer.mergeAll(
-      base,
-      Layer.provide(TransactionPortLive, base),
-      Layer.provide(PermissionGrantRepositoryLive, base),
-    );
-    await Effect.runPromise(
-      Effect.provide(
+  it.effect("revokes legacy unbound grants and round-trips a bound grant", () =>
+    Effect.gen(function* () {
+      const base = layer({ filename: ":memory:" });
+      const app = Layer.mergeAll(
+        base,
+        Layer.provide(TransactionPortLive, base),
+        Layer.provide(PermissionGrantRepositoryLive, base),
+      );
+      yield* Effect.provide(
         Effect.gen(function* () {
           yield* runMigrations(P28_MIGRATIONS);
           const sql = yield* SqlClient;
@@ -79,7 +80,7 @@ describe("CAPA migration 0029 subject-bound PermissionGrant", () => {
           });
         }),
         app,
-      ),
-    );
-  });
+      );
+    }),
+  );
 });

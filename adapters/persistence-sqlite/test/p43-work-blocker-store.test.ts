@@ -10,9 +10,10 @@ import {
   TransactionPort,
   WorkBlockerStore,
 } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect } from "vitest";
 import {
   createSchema42TestDatabaseFactory,
   type Schema42TestDatabaseFactory,
@@ -185,159 +186,187 @@ describe("P43 WorkBlocker and Inbox sequence adapters", () => {
     ]);
   });
 
-  it("keeps legacy Inbox admission functional before P43", async () => {
-    const database = createSchema42Case();
-    try {
-      const program = Effect.gen(function* () {
-        yield* seed;
-        const tx = yield* TransactionPort;
-        const inbox = yield* InboxProjectionStore;
-        const entry: InboxEntry = {
-          recipientWorkspaceId: workspaceId,
-          entryKey: "legacy-entry",
-          kind: "Message",
-          summary: "legacy",
-          admittedAt: "t0",
-        };
-        yield* tx.transact(inbox.admitUpsert(entry));
-        return yield* tx.transact(
-          inbox.countByKey(workspaceId, entry.entryKey),
-        );
-      });
-      expect(
-        await Effect.runPromise(
-          Effect.provide(program, appLayer(database.databaseFilename)),
-        ),
-      ).toBe(1);
-    } finally {
-      database.cleanup();
-    }
-  }, 30_000);
+  it.effect(
+    "keeps legacy Inbox admission functional before P43",
+    () =>
+      Effect.gen(function* () {
+        const database = createSchema42Case();
+        try {
+          const program = Effect.gen(function* () {
+            yield* seed;
+            const tx = yield* TransactionPort;
+            const inbox = yield* InboxProjectionStore;
+            const entry: InboxEntry = {
+              recipientWorkspaceId: workspaceId,
+              entryKey: "legacy-entry",
+              kind: "Message",
+              summary: "legacy",
+              admittedAt: "t0",
+            };
+            yield* tx.transact(inbox.admitUpsert(entry));
+            return yield* tx.transact(
+              inbox.countByKey(workspaceId, entry.entryKey),
+            );
+          });
+          expect(
+            yield* Effect.provide(program, appLayer(database.databaseFilename)),
+          ).toBe(1);
+        } finally {
+          database.cleanup();
+        }
+      }),
+    30_000,
+  );
 
-  it("opens, updates idempotently, reopens, resolves, and supersedes with revision guards", async () => {
-    const database = createSchema42Case();
-    try {
-      const program = Effect.gen(function* () {
-        yield* applyP43AndSeed;
-        const tx = yield* TransactionPort;
-        const store = yield* WorkBlockerStore;
+  it.effect(
+    "opens, updates idempotently, reopens, resolves, and supersedes with revision guards",
+    () =>
+      Effect.gen(function* () {
+        const database = createSchema42Case();
+        try {
+          const program = Effect.gen(function* () {
+            yield* applyP43AndSeed;
+            const tx = yield* TransactionPort;
+            const store = yield* WorkBlockerStore;
 
-        const opened = yield* tx.transact(store.openOrUpdate(baseBlocker));
-        const first = yield* tx.transact(store.findById(baseBlocker.blockerId));
-        const replayed = yield* tx.transact(store.openOrUpdate(baseBlocker));
-        const afterReplay = yield* tx.transact(
-          store.findById(baseBlocker.blockerId),
-        );
+            const opened = yield* tx.transact(store.openOrUpdate(baseBlocker));
+            const first = yield* tx.transact(
+              store.findById(baseBlocker.blockerId),
+            );
+            const replayed = yield* tx.transact(
+              store.openOrUpdate(baseBlocker),
+            );
+            const afterReplay = yield* tx.transact(
+              store.findById(baseBlocker.blockerId),
+            );
 
-        const refreshed = yield* tx.transact(
-          store.openOrUpdate({
-            ...baseBlocker,
-            latestRequestRef: "blob:req-2",
-          }),
-        );
-        const updated = yield* tx.transact(
-          store.findById(baseBlocker.blockerId),
-        );
-        const resolution = {
-          blockerId: baseBlocker.blockerId,
-          workId,
-          targetWorkRevision: baseBlocker.targetWorkRevision,
-          successfulActionRefs: ["success:action-1"] as const,
-        };
-        yield* tx.transact(store.resolve(resolution));
-        yield* tx.transact(store.resolve(resolution));
-        const resolved = yield* tx.transact(
-          store.findById(baseBlocker.blockerId),
-        );
+            const refreshed = yield* tx.transact(
+              store.openOrUpdate({
+                ...baseBlocker,
+                latestRequestRef: "blob:req-2",
+              }),
+            );
+            const updated = yield* tx.transact(
+              store.findById(baseBlocker.blockerId),
+            );
+            const resolution = {
+              blockerId: baseBlocker.blockerId,
+              workId,
+              targetWorkRevision: baseBlocker.targetWorkRevision,
+              successfulActionRefs: ["success:action-1"] as const,
+            };
+            yield* tx.transact(store.resolve(resolution));
+            yield* tx.transact(store.resolve(resolution));
+            const resolved = yield* tx.transact(
+              store.findById(baseBlocker.blockerId),
+            );
 
-        const reopened = yield* tx.transact(
-          store.openOrUpdate({ ...refreshed, latestRequestRef: "blob:req-3" }),
-        );
-        yield* tx.transact(
-          store.supersede(workId, baseBlocker.targetWorkRevision),
-        );
-        const superseded = yield* tx.transact(
-          store.findById(baseBlocker.blockerId),
-        );
-        return {
-          opened,
-          replayed,
-          first,
-          afterReplay,
-          updated,
-          resolved,
-          reopened,
-          superseded,
-        };
-      });
-      const result = await Effect.runPromise(
-        Effect.provide(program, appLayer(database.databaseFilename)),
-      );
-      expect(result.opened.revision).toBe(0);
-      expect(result.replayed.revision).toBe(0);
-      expect(Option.isSome(result.first)).toBe(true);
-      expect(Option.getOrThrow(result.first).revision).toBe(0);
-      expect(Option.getOrThrow(result.afterReplay).revision).toBe(0);
-      expect(Option.getOrThrow(result.updated).latestRequestRef).toBe(
-        "blob:req-2",
-      );
-      expect(Option.getOrThrow(result.updated).revision).toBe(1);
-      expect(Option.getOrThrow(result.resolved).state).toBe("Resolved");
-      expect(Option.getOrThrow(result.resolved).revision).toBe(2);
-      expect(Option.getOrThrow(result.superseded).state).toBe("Superseded");
-      expect(Option.getOrThrow(result.superseded).revision).toBe(4);
-      expect(result.reopened.state).toBe("Open");
-      expect(result.reopened.revision).toBe(3);
-    } finally {
-      database.cleanup();
-    }
-  }, 120_000);
+            const reopened = yield* tx.transact(
+              store.openOrUpdate({
+                ...refreshed,
+                latestRequestRef: "blob:req-3",
+              }),
+            );
+            yield* tx.transact(
+              store.supersede(workId, baseBlocker.targetWorkRevision),
+            );
+            const superseded = yield* tx.transact(
+              store.findById(baseBlocker.blockerId),
+            );
+            return {
+              opened,
+              replayed,
+              first,
+              afterReplay,
+              updated,
+              resolved,
+              reopened,
+              superseded,
+            };
+          });
+          const result = yield* Effect.provide(
+            program,
+            appLayer(database.databaseFilename),
+          );
+          expect(result.opened.revision).toBe(0);
+          expect(result.replayed.revision).toBe(0);
+          expect(Option.isSome(result.first)).toBe(true);
+          expect(Option.getOrThrow(result.first).revision).toBe(0);
+          expect(Option.getOrThrow(result.afterReplay).revision).toBe(0);
+          expect(Option.getOrThrow(result.updated).latestRequestRef).toBe(
+            "blob:req-2",
+          );
+          expect(Option.getOrThrow(result.updated).revision).toBe(1);
+          expect(Option.getOrThrow(result.resolved).state).toBe("Resolved");
+          expect(Option.getOrThrow(result.resolved).revision).toBe(2);
+          expect(Option.getOrThrow(result.superseded).state).toBe("Superseded");
+          expect(Option.getOrThrow(result.superseded).revision).toBe(4);
+          expect(result.reopened.state).toBe("Open");
+          expect(result.reopened.revision).toBe(3);
+        } finally {
+          database.cleanup();
+        }
+      }),
+    120_000,
+  );
 
-  it("advances Inbox sequence only on new admissions, and keeps it monotonic after consume", async () => {
-    const database = createSchema42Case();
-    try {
-      const program = Effect.gen(function* () {
-        yield* applyP43AndSeed;
-        const tx = yield* TransactionPort;
-        const inbox = yield* InboxProjectionStore;
-        const entry: InboxEntry = {
-          recipientWorkspaceId: workspaceId,
-          entryKey: "settlement:one",
-          kind: "WorkBlocked" as InboxEntry["kind"],
-          summary: "blocked",
-          admittedAt: "t1",
-        };
-        const before = yield* tx.transact(inbox.currentSequence(workspaceId));
-        yield* tx.transact(inbox.admitUpsertSequenced(entry));
-        const once = yield* tx.transact(inbox.currentSequence(workspaceId));
-        yield* tx.transact(inbox.admitUpsertSequenced(entry));
-        const replay = yield* tx.transact(inbox.currentSequence(workspaceId));
-        yield* tx.transact(inbox.markConsumed(workspaceId, "settlement:one"));
-        const afterConsume = yield* tx.transact(
-          inbox.currentSequence(workspaceId),
-        );
-        yield* tx.transact(
-          inbox.admitUpsertSequenced({
-            ...entry,
-            entryKey: "settlement:two",
-            admittedAt: "t2",
-          }),
-        );
-        const next = yield* tx.transact(inbox.currentSequence(workspaceId));
-        return { before, once, replay, afterConsume, next };
-      });
-      const result = await Effect.runPromise(
-        Effect.provide(program, appLayer(database.databaseFilename)),
-      );
-      expect(result).toEqual({
-        before: 0,
-        once: 1,
-        replay: 1,
-        afterConsume: 1,
-        next: 2,
-      });
-    } finally {
-      database.cleanup();
-    }
-  }, 120_000);
+  it.effect(
+    "advances Inbox sequence only on new admissions, and keeps it monotonic after consume",
+    () =>
+      Effect.gen(function* () {
+        const database = createSchema42Case();
+        try {
+          const program = Effect.gen(function* () {
+            yield* applyP43AndSeed;
+            const tx = yield* TransactionPort;
+            const inbox = yield* InboxProjectionStore;
+            const entry: InboxEntry = {
+              recipientWorkspaceId: workspaceId,
+              entryKey: "settlement:one",
+              kind: "WorkBlocked" as InboxEntry["kind"],
+              summary: "blocked",
+              admittedAt: "t1",
+            };
+            const before = yield* tx.transact(
+              inbox.currentSequence(workspaceId),
+            );
+            yield* tx.transact(inbox.admitUpsertSequenced(entry));
+            const once = yield* tx.transact(inbox.currentSequence(workspaceId));
+            yield* tx.transact(inbox.admitUpsertSequenced(entry));
+            const replay = yield* tx.transact(
+              inbox.currentSequence(workspaceId),
+            );
+            yield* tx.transact(
+              inbox.markConsumed(workspaceId, "settlement:one"),
+            );
+            const afterConsume = yield* tx.transact(
+              inbox.currentSequence(workspaceId),
+            );
+            yield* tx.transact(
+              inbox.admitUpsertSequenced({
+                ...entry,
+                entryKey: "settlement:two",
+                admittedAt: "t2",
+              }),
+            );
+            const next = yield* tx.transact(inbox.currentSequence(workspaceId));
+            return { before, once, replay, afterConsume, next };
+          });
+          const result = yield* Effect.provide(
+            program,
+            appLayer(database.databaseFilename),
+          );
+          expect(result).toEqual({
+            before: 0,
+            once: 1,
+            replay: 1,
+            afterConsume: 1,
+            next: 2,
+          });
+        } finally {
+          database.cleanup();
+        }
+      }),
+    120_000,
+  );
 });
