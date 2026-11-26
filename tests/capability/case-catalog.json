@@ -52,7 +52,8 @@
         "apps/single-workspace/test/i0-send-message.test.ts",
         "apps/single-workspace/test/i0-send-message-durable.test.ts",
         "tests/p6-send-message.test.ts",
-        "tests/p6-acceptance.test.ts"
+        "tests/p6/story-a.test.ts",
+        "tests/p6/story-e.test.ts"
       ],
       "l2ProviderMode": "FAKE",
       "l3": {
@@ -127,7 +128,8 @@
       "title": "Responsibility Delegation",
       "l1Suites": ["packages/domain/test/workspace.test.ts"],
       "l2Suites": [
-        "tests/p6-acceptance.test.ts",
+        "tests/p6/story-a.test.ts",
+        "tests/p6/story-b.test.ts",
         "tests/p6-formation-consumer.test.ts",
         "tests/p6-formation-governance.test.ts"
       ],
@@ -208,7 +210,8 @@
       "title": "Completion / Acceptance",
       "l1Suites": ["packages/domain/test/work.test.ts"],
       "l2Suites": [
-        "tests/p8-acceptance.test.ts",
+        "tests/p8/story-a.test.ts",
+        "tests/p8/story-d.test.ts",
         "tests/p8-acceptance-commands.test.ts"
       ],
       "l3": {
