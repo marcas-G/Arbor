@@ -33,7 +33,7 @@ const historicalSchemaFixtureOwners = [
   // Explicit legacy/fail-closed replay qualification.
   "adapters/persistence-sqlite/test/p40-observation-schema44-fail-closed.test.ts",
   "tests/p4-schema44-profileless-shell2-recovery.test.ts",
-  "tests/workspace-sandbox-authorization.test.ts",
+  "tests/sandbox-authorization/support.ts",
   // The runtime schema gate deliberately manufactures old versions to reject
   // them and explicitly upgrades 48 -> current in its positive control.
   "apps/single-workspace/test/p38-runtime-schema-boundary.test.ts",
