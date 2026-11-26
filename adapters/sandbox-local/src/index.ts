@@ -32,11 +32,28 @@ export {
  * inherits the same requirement. */
 export { SANDBOX_ENV_ALLOWLIST, sandboxEnvironment };
 
+/** DID v1.25 EWB: trusted-local binding. It binds admitted filesystem roots
+ * directly and is deliberately not an OS process-isolation boundary.
+ *
+ * E07: the Layer owns the adapter's cleanup obligation. Legacy (pre-EWB)
+ * compositions bind an owned mkdtemp root per handle; handles still open when
+ * the Layer's Scope closes have their legacy roots removed there, so an
+ * interrupted invocation or daemon teardown no longer leaves `arbor-sbx-*`
+ * roots behind. Workspace-mounted handles never delete their bound root. */
 export const SandboxPortLive: Layer.Layer<SandboxPort> = Layer.effect(
   SandboxPort,
-  Effect.sync(() => {
+  Effect.gen(function* () {
     const handles = new Set<string>();
     const legacyRoots = new Set<string>();
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        for (const rootPath of legacyRoots) {
+          rmSync(rootPath, { recursive: true, force: true });
+        }
+        legacyRoots.clear();
+        handles.clear();
+      }),
+    );
     return SandboxPort.of({
       open: (input) =>
         Effect.sync(() => {
