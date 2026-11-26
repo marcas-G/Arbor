@@ -8,14 +8,12 @@ import type {
   ProductionFixture,
   ProductionFixtureSetupProbeEvent,
 } from "../../../../functional/support/production-fixture.js";
-import {
-  type makeDeadlinePublicClient,
-  waitForPublic,
-} from "../../../../functional/support/public-client.js";
+import { waitForPublic } from "../../../../functional/support/public-client.js";
 import {
   type BoundProviderRequestEvidence,
   discoverProductionProviderConfig,
   finishRealProviderFixture,
+  type makeDeadlinePublicClient,
   type ProviderCapture,
   type ProviderRequestEvidence,
   repositoryBuildAssets,
@@ -30,7 +28,7 @@ const CAPTURE_FILE_ENV = "ARBOR_PUBLIC_S1_CAPTURE_FILE";
 const RESPONSE_GATE_DIRECTORY_ENV = "ARBOR_PUBLIC_S1_RESPONSE_GATE_DIR";
 const JOURNEY_BUDGET_MS = 20 * 60_000;
 
-interface TranscriptEntry {
+export interface TranscriptEntry {
   readonly kind: string;
   readonly body?: string;
   readonly messageId?: string;
@@ -41,7 +39,7 @@ interface TranscriptEntry {
   };
 }
 
-interface TranscriptPage {
+export interface TranscriptPage {
   readonly entries: ReadonlyArray<TranscriptEntry>;
 }
 
@@ -265,8 +263,6 @@ export {
   requestText,
   requireBoundProviderRequests,
   skipReason,
-  type TranscriptEntry,
-  type TranscriptPage,
   transcript,
   waitWithinDeadline,
   withRealFixture,
