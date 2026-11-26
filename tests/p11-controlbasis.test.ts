@@ -1,371 +1,45 @@
 import { readFileSync } from "node:fs";
 import { Effect, Layer } from "effect";
-import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
-import { BlobStorePortLive } from "../adapters/blob-local/src/index.js";
-// P12 `05` §5.1 (TR-1): advancement only via the internal capability.
+// P12 `05` §5.1 (TR-1): advancement only via the internal capability —
+// deliberately not re-exported from the persistence adapter index, so the
+// harness cannot own this edge; the test binds it on top of `harness.app`.
 import {
   EnvironmentRevisionAdvancement,
   EnvironmentRevisionAdvancementLive,
 } from "../adapters/persistence-sqlite/src/environment-advancement.js";
 import {
-  AcceptanceRepositoryLive,
-  ClockLive,
-  ConversationAttemptStoreLive,
-  ConversationCheckpointStoreLive,
-  ConversationResponseJobStoreLive,
-  DecisionRequestStoreLive,
-  DomainEventJournalLive,
-  EnvironmentRevisionStoreLive,
-  ExecutionRepositoryLive,
-  FormationFulfillmentStoreLive,
-  FormationProposalStoreLive,
-  HumanMessageStoreLive,
-  IdGeneratorLive,
-  InboxProjectionStoreLive,
-  LocalPlanStoreLive,
-  layer,
   P16_MIGRATIONS,
-  P39RecoveryEvidenceStoreLive,
-  ProjectRepositoryLive,
-  ProviderTurnStoreLive,
-  RecoveryAttentionFactStoreLive,
-  RuntimeClockLive,
   runMigrations,
-  SessionRepositoryLive,
-  ToolInvocationStoreLive,
-  TransactionPortLive,
-  VerificationRepositoryLive,
-  WorkRepositoryLive,
-  WorkspaceRepositoryLive,
 } from "../adapters/persistence-sqlite/src/index.js";
-import { FakeProviderLive } from "../adapters/provider-fake/src/index.js";
 import { WorkspaceKnowledgePortLive } from "../apps/single-workspace/src/workspace-knowledge.js";
 import { WorkspacePlacementPortLive } from "../apps/single-workspace/src/workspace-placement.js";
-import {
-  type AgentActionHandler,
-  AgentLoopDriverLive,
-  ControlBasisResolverLive,
-  checkFreshness,
-  ModelDecisionServiceLive,
-  makeControlToolRegistry,
-} from "../packages/agent-runtime/src/index.js";
-import {
-  type AgentExecutionState,
-  type CommandSubmissionContext,
-  type Execution,
-  ExecutionId,
-  Principal,
-  ProjectId,
-  parse,
-  SessionId,
-  WorkspaceId,
-} from "../packages/domain/dist/index.js";
-import {
-  type ControlBasis,
-  ModelContext,
-  makeTurnProfileResolver,
-  type PrepareTurnInput,
-  TurnProfileResolver,
-} from "../packages/model-context/src/index.js";
+import { checkFreshness } from "../packages/agent-runtime/src/index.js";
+import type { ControlBasis } from "../packages/model-context/src/index.js";
 import {
   EnvironmentRevisionStore,
   ExecutionDriverPort,
-  ModelCapabilityPort,
-  type RuntimeSafetyGateService,
   TransactionPort,
 } from "../packages/ports/src/index.js";
-import { ProviderRuntimeLive } from "../packages/provider-runtime/src/index.js";
+import { makeModelDecisionHarness } from "../packages/testkit/src/index.js";
 import {
-  agentDriverTestDependencies,
-  FixedSecretStoreLive,
-} from "../packages/testkit/src/index.js";
-import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-project-resource-source.js";
-
-const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789b1");
-// Same project (anchor is project-scoped), one workspace per execution:
-// the schema allows only one unsettled workspace-binding execution per workspace.
-const workspaceIds = [
-  parse(WorkspaceId)("ws_018f2b3c-4d5e-7abc-8def-0123456789b1"),
-  parse(WorkspaceId)("ws_018f2b3c-4d5e-7abc-8def-0123456789b2"),
-] as const;
-const sessionIds = [
-  parse(SessionId)("ses_018f2b3c-4d5e-7abc-8def-0123456789b1"),
-  parse(SessionId)("ses_018f2b3c-4d5e-7abc-8def-0123456789b2"),
-] as const;
-const executionIds = [
-  parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789b1"),
-  parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789b2"),
-] as const;
-const principal = parse(Principal)("worker:a");
-
-const executionOf = (index: 0 | 1): Execution => ({
-  executionId: executionIds[index],
+  allowGate,
+  contextOf,
+  executionOf,
   projectId,
-  workspaceId: workspaceIds[index],
-  binding: {
-    _tag: "WorkspaceExecution",
-    workspaceId: workspaceIds[index],
-    episode: {
-      _tag: "InboxEpisode",
-      entryKey: `control-basis-${index}`,
-      inputKind: "TestInput",
-    },
-  },
-  sessionId: sessionIds[index],
-  admittedAt: "t",
-  stopRequestedAt: null,
-  state: { status: "Active", settlement: null },
-});
+  seed,
+  sendHandler,
+  sendMessageTurn,
+  stateOf,
+} from "./support/model-decision-fixtures.js";
 
-const stateOf = (index: 0 | 1): AgentExecutionState => ({
-  executionId: executionIds[index],
-  episode: {
-    _tag: "InboxEpisode",
-    entryKey: `control-basis-${index}`,
-    inputKind: "TestInput",
-  },
-  wakeReason: { _tag: "WorkSelected" },
-  currentMode: "execute",
-  activeSkillRefs: [],
-  turnNo: 0,
-  recentDirectiveRefs: [],
-  recentActionFingerprints: [],
-  updatedAt: "t",
-});
-
-const contextOf = (index: 0 | 1): CommandSubmissionContext => ({
-  _tag: "ExecutionOrigin",
-  principal,
-  executionId: executionIds[index],
-  fencingGeneration: 0 as never,
-});
-
-const allowGate: RuntimeSafetyGateService = {
-  admitActivity: () => Effect.succeed("Continue" as const),
-};
-
-const capability = Layer.succeed(ModelCapabilityPort, {
-  resolve: () =>
-    Effect.succeed({
-      modelRef: "model-a",
-      family: "f",
-      contextWindow: 8000,
-      outputCeiling: 512,
-      toolProtocol: "json",
-    }),
-});
-
-const sendHandler: AgentActionHandler = {
-  action: "SendMessage",
-  handle: () =>
-    Effect.succeed({
-      _tag: "Settle",
-      settlement: {
-        _tag: "Completed",
-        result: { _tag: "CoordinationCompleted" },
-      },
-    }),
-};
-const controlRegistry = makeControlToolRegistry([sendHandler]);
-
-const sendMessageTurn = (body: string) => [
-  {
-    _tag: "ToolCallProposed" as const,
-    callRef: "c1",
-    toolName: "send_message",
-    argumentsJson: JSON.stringify({
-      kind: "Query",
-      body,
-      recipientWorkspaceId: String(workspaceIds[1]),
-    }),
-  },
-  { _tag: "TurnCompleted" as const, finishReason: "ToolCall" as const },
-];
-
-/** Recording double for the ModelContext port: the minimal observable
- * surface for "which ControlBasis did the driver bind at prepareTurn". */
-const recordingModelContext = (recorded: Array<ControlBasis>) =>
-  Layer.succeed(ModelContext, {
-    prepareTurn: (input: PrepareTurnInput) =>
-      Effect.sync(() => {
-        recorded.push(input.controlBasis);
-        return {
-          _tag: "Ready" as const,
-          turn: {
-            request: {
-              modelRef: "model-a",
-              instructions: [],
-              messages: [],
-              toolDefinitions: [],
-              outputContractRef: "tool-invocation-v1",
-              budget: { maxOutputTokens: input.maxOutputTokens },
-              cacheHints: [],
-            },
-            toolRoutes: [{ name: "send_message", route: "Control" as const }],
-            manifest: {
-              providerTurnId: input.providerTurnId,
-              executionId: input.executionId,
-              sessionId: input.sessionId,
-              contextEpoch: input.contextEpoch,
-              modelRef: "model-a",
-              instructionFragments: [],
-              contextRefs: [],
-              skillRefs: [],
-              toolRefs: ["Control:send_message@1"],
-              toolRoutes: [{ name: "send_message", route: "Control" as const }],
-              outputContractRef: "tool-invocation-v1",
-              budgetDecision: { maxOutputTokens: input.maxOutputTokens },
-              compiledRequestHash: "hash-p11-controlbasis",
-              controlBasis: input.controlBasis,
-            },
-          },
-        };
-      }),
-  });
-
-const makeApp = () => {
-  const recorded: Array<ControlBasis> = [];
-  const base = layer({ filename: ":memory:" });
-  const infra = Layer.mergeAll(
-    base,
-    ClockLive,
-    RuntimeClockLive,
-    IdGeneratorLive,
-  );
-  const provider = FakeProviderLive({
+const makeApp = () =>
+  makeModelDecisionHarness({
     turns: [sendMessageTurn("first"), sendMessageTurn("second")],
-  });
-  const providerRuntime = Layer.provide(
-    ProviderRuntimeLive(),
-    Layer.mergeAll(
-      provider,
-      Layer.provide(ProviderTurnStoreLive, infra),
-      Layer.provide(TransactionPortLive, infra),
-      FixedSecretStoreLive(),
-      infra,
-    ),
-  );
-  const revisions = Layer.provide(EnvironmentRevisionStoreLive, infra);
-  const advancement = Layer.provide(EnvironmentRevisionAdvancementLive, infra);
-  const tx = Layer.provide(TransactionPortLive, infra);
-  const turnProfiles = Layer.succeed(
-    TurnProfileResolver,
-    makeTurnProfileResolver({
-      toolCatalog: {
-        visibleRefs: () => Effect.succeed([]),
-        resolveForModel: (ref) =>
-          Effect.fail({ _tag: "ToolNotRegistered", ref }),
-      },
-      controlCatalog: controlRegistry,
-    }),
-  );
-  const driverDependencies = agentDriverTestDependencies({
-    infra,
-    sessions: Layer.provide(SessionRepositoryLive, infra),
-    environmentRevisions: revisions,
+    controlHandlers: [sendHandler],
     workspaceKnowledge: WorkspaceKnowledgePortLive,
     workspacePlacement: WorkspacePlacementPortLive,
   });
-  const modelDecision = Layer.provide(
-    ModelDecisionServiceLive(),
-    Layer.mergeAll(
-      driverDependencies,
-      infra,
-      recordingModelContext(recorded),
-      providerRuntime,
-      capability,
-      turnProfiles,
-    ),
-  );
-  const driver = Layer.provide(
-    AgentLoopDriverLive({ controlRegistry }),
-    Layer.mergeAll(driverDependencies, modelDecision, infra),
-  );
-  return {
-    app: Layer.mergeAll(
-      infra,
-      driver,
-      providerRuntime,
-      capability,
-      revisions,
-      advancement,
-      tx,
-    ),
-    recorded,
-  };
-};
-
-const seed = Effect.gen(function* () {
-  const sql = yield* SqlClient;
-  yield* sql.withTransaction(
-    Effect.gen(function* () {
-      for (const [index, sessionId] of sessionIds.entries()) {
-        yield* sql.unsafe(
-          "INSERT INTO sessions (session_id, binding_kind, workspace_id, execution_id, context_epoch, created_at) VALUES (?,?,?,?,?,?)",
-          [sessionId, "WorkspacePrimary", workspaceIds[index], null, 0, "t"],
-        );
-      }
-      yield* sql.unsafe(
-        "INSERT INTO projects (project_id, name, root_workspace_id, project_policy, project_policy_revision, default_configuration, environment_ref, lifecycle, revision, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-        [
-          projectId,
-          "p",
-          workspaceIds[0],
-          "{}",
-          0,
-          "{}",
-          "local",
-          "Open",
-          0,
-          "t",
-          "t",
-        ],
-      );
-      yield* ensureLegacyProjectResourceSourceFixture();
-      for (const [index, workspaceId] of workspaceIds.entries()) {
-        yield* sql.unsafe(
-          "INSERT INTO workspaces (workspace_id, project_id, parent_workspace_id, name, responsibility_definition, responsibility_revision, resource_boundary, resource_boundary_revision, agent_binding, primary_session_id, current_work_id, workspace_policy, workspace_policy_revision, revision, lifecycle, created_at, updated_at) VALUES (?,?,NULL,?,?,?,?,?,?,?,NULL,?,?,?,?,?,?)",
-          [
-            workspaceId,
-            projectId,
-            "w",
-            "{}",
-            0,
-            "{}",
-            0,
-            "{}",
-            sessionIds[index],
-            "{}",
-            0,
-            0,
-            "Active",
-            "t",
-            "t",
-          ],
-        );
-      }
-      for (const [index, executionId] of executionIds.entries()) {
-        yield* sql.unsafe(
-          "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, focus_kind, focus_work_id, parent_execution_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?,?,?,?,NULL,NULL,NULL,?,?,NULL,NULL,NULL,NULL)",
-          [
-            executionId,
-            projectId,
-            "workspace",
-            workspaceIds[index],
-            "coordination",
-            sessionIds[index],
-            "t",
-          ],
-        );
-        yield* sql.unsafe(
-          "INSERT INTO execution_leases (execution_id, worker_id, generation, expires_at, updated_at) VALUES (?,?,?,?,?)",
-          [executionId, "worker", 0, "9999-12-31T00:00:00.000Z", "t"],
-        );
-      }
-    }),
-  );
-});
 
 const drive = (index: 0 | 1) =>
   Effect.gen(function* () {
@@ -440,7 +114,7 @@ describe("P11 GQ4b ControlBasis environmentRevision service-internal read", () =
         const second = yield* drive(1);
         return [first, second];
       }),
-      app,
+      Layer.provideMerge(EnvironmentRevisionAdvancementLive, app),
     );
     expect(settlement.map((s) => s._tag)).toEqual(["Completed", "Completed"]);
     expect(recorded[0]?.environmentRevision).toBe("7");

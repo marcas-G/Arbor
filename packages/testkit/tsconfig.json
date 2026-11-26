@@ -18,13 +18,22 @@
       "path": "../application"
     },
     {
+      "path": "../model-context"
+    },
+    {
       "path": "../agent-runtime"
+    },
+    {
+      "path": "../provider-runtime"
     },
     {
       "path": "../../adapters/blob-local"
     },
     {
       "path": "../../adapters/persistence-sqlite"
+    },
+    {
+      "path": "../../adapters/provider-fake"
     }
   ]
 }
