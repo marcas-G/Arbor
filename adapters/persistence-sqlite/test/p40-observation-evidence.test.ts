@@ -15,8 +15,9 @@ import {
   type ToolObservationReplayAttentionFact,
   TransactionScope,
 } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Cause, Effect, Exit, Option } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import { makeProjectAttentionProjectionStore } from "../src/attention-projection.js";
 import * as persistenceExports from "../src/index.js";
 import * as migrationExports from "../src/migrations.js";
@@ -111,94 +112,98 @@ const baseAttentionFacts = () => ({
 });
 
 describe("P40 tool observation evidence module", () => {
-  it("rejects a directly applied v2 AssignWork event at the P10 store boundary", async () => {
-    let writes = 0;
-    const noOp = Effect.succeed(undefined);
-    const projection = makeProjectAttentionProjectionStore(
-      projectId,
-      {
-        ...baseAttentionFacts(),
-        findAssignWorkBindingFailure: () =>
-          Effect.succeed(Option.some(assignWorkFact)),
-      },
-      {
-        putAssignWorkBindingFailure: () => {
-          writes += 1;
-          return noOp;
-        },
-        putDeliverReplayFailure: () => noOp,
-        putToolObservationReplayFailure: () => noOp,
-        resetProject: () => noOp,
-        reconcileWorkspaceResourceActivation: () => noOp,
-        reconcileStaleWorkRevisionRows: () => noOp,
-      },
-    );
-    const unsupported: DomainEvent<unknown> = {
-      eventId,
-      projectId,
-      sequence: parse(EventSequence)(1),
-      eventType: "AssignWorkTargetBindingEscalated",
-      eventVersion: 2,
-      occurredAt: detectedAt,
-      aggregateRef: workspaceId,
-      actor: parse(Actor)("system:recovery"),
-      causedByCommandId: commandId,
-      correlationRef: logicalActionId,
-      payload: {
-        _tag: "AssignWorkTargetBindingEscalated",
-        attentionFactId: assignWorkFact.attentionFactId,
-        executionId,
-        targetWorkspaceId: workspaceId,
-        logicalActionId,
-        committedCommandId: commandId,
-        failureCode: "MissingBinding",
-      },
-    };
-    const exit = await Effect.runPromise(
-      Effect.exit(
-        projection.apply([unsupported]).pipe(
-          Effect.provideService(TransactionScope, {
-            session: { id: "p10-direct-v2-test" },
-          }),
-        ),
-      ),
-    );
-    expect(Exit.isFailure(exit)).toBe(true);
-    if (Exit.isFailure(exit)) {
-      expect(Cause.squash(exit.cause)).toMatchObject({
-        _tag: "PersistenceCorruption",
-        repository: "ConsumerOffsetStore",
-        operation: "p10-attention-apply",
-        reason:
-          "AssignWork binding event does not exactly match its immutable P9 fact",
-      });
-    }
-    expect(writes).toBe(0);
-  });
+  it.effect(
+    "rejects a directly applied v2 AssignWork event at the P10 store boundary",
+    () =>
+      Effect.gen(function* () {
+        let writes = 0;
+        const noOp = Effect.succeed(undefined);
+        const projection = makeProjectAttentionProjectionStore(
+          projectId,
+          {
+            ...baseAttentionFacts(),
+            findAssignWorkBindingFailure: () =>
+              Effect.succeed(Option.some(assignWorkFact)),
+          },
+          {
+            putAssignWorkBindingFailure: () => {
+              writes += 1;
+              return noOp;
+            },
+            putDeliverReplayFailure: () => noOp,
+            putToolObservationReplayFailure: () => noOp,
+            resetProject: () => noOp,
+            reconcileWorkspaceResourceActivation: () => noOp,
+            reconcileStaleWorkRevisionRows: () => noOp,
+          },
+        );
+        const unsupported: DomainEvent<unknown> = {
+          eventId,
+          projectId,
+          sequence: parse(EventSequence)(1),
+          eventType: "AssignWorkTargetBindingEscalated",
+          eventVersion: 2,
+          occurredAt: detectedAt,
+          aggregateRef: workspaceId,
+          actor: parse(Actor)("system:recovery"),
+          causedByCommandId: commandId,
+          correlationRef: logicalActionId,
+          payload: {
+            _tag: "AssignWorkTargetBindingEscalated",
+            attentionFactId: assignWorkFact.attentionFactId,
+            executionId,
+            targetWorkspaceId: workspaceId,
+            logicalActionId,
+            committedCommandId: commandId,
+            failureCode: "MissingBinding",
+          },
+        };
+        const exit = yield* Effect.exit(
+          projection.apply([unsupported]).pipe(
+            Effect.provideService(TransactionScope, {
+              session: { id: "p10-direct-v2-test" },
+            }),
+          ),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(Cause.squash(exit.cause)).toMatchObject({
+            _tag: "PersistenceCorruption",
+            repository: "ConsumerOffsetStore",
+            operation: "p10-attention-apply",
+            reason:
+              "AssignWork binding event does not exactly match its immutable P9 fact",
+          });
+        }
+        expect(writes).toBe(0);
+      }),
+  );
 
-  it("allows the pre-P40 P10 projection to run without the P40-only replay-fact source", async () => {
-    const noOp = Effect.succeed(undefined);
-    const projection = makeProjectAttentionProjectionStore(
-      projectId,
-      baseAttentionFacts(),
-      {
-        putAssignWorkBindingFailure: () => noOp,
-        putDeliverReplayFailure: () => noOp,
-        putToolObservationReplayFailure: () => noOp,
-        resetProject: () => noOp,
-        reconcileWorkspaceResourceActivation: () => noOp,
-        reconcileStaleWorkRevisionRows: () => noOp,
-      },
-    );
-    const applied = await Effect.runPromise(
-      projection.apply([]).pipe(
-        Effect.provideService(TransactionScope, {
-          session: { id: "pre-p40" },
-        }),
-      ),
-    );
-    expect(applied).toBeUndefined();
-  });
+  it.effect(
+    "allows the pre-P40 P10 projection to run without the P40-only replay-fact source",
+    () =>
+      Effect.gen(function* () {
+        const noOp = Effect.succeed(undefined);
+        const projection = makeProjectAttentionProjectionStore(
+          projectId,
+          baseAttentionFacts(),
+          {
+            putAssignWorkBindingFailure: () => noOp,
+            putDeliverReplayFailure: () => noOp,
+            putToolObservationReplayFailure: () => noOp,
+            resetProject: () => noOp,
+            reconcileWorkspaceResourceActivation: () => noOp,
+            reconcileStaleWorkRevisionRows: () => noOp,
+          },
+        );
+        const applied = yield* projection.apply([]).pipe(
+          Effect.provideService(TransactionScope, {
+            session: { id: "pre-p40" },
+          }),
+        );
+        expect(applied).toBeUndefined();
+      }),
+  );
 
   it("exports an unregistered version-40 migration for the exact P39 prefix", () => {
     expect(p36Migrations?.at(-1)?.id).toBe(36);
@@ -239,80 +244,84 @@ describe("P40 tool observation evidence module", () => {
     ).toBeDefined();
   });
 
-  it("projects only an exact immutable P9 replay-failure event into the P10 source row", async () => {
-    let projected: ToolObservationReplayAttentionFact | undefined;
-    const noOp = Effect.succeed(undefined);
-    const projection = makeProjectAttentionProjectionStore(
-      projectId,
-      baseAttentionFacts(),
-      {
-        putAssignWorkBindingFailure: () => noOp,
-        putDeliverReplayFailure: () => noOp,
-        putToolObservationReplayFailure: (fact) => {
-          projected = fact;
-          return noOp;
-        },
-        resetProject: () => noOp,
-        reconcileWorkspaceResourceActivation: () => noOp,
-        reconcileStaleWorkRevisionRows: () => noOp,
-      },
-      undefined,
-      { findById: () => Effect.succeed(Option.some(replayFact)) },
-    );
-    await Effect.runPromise(
-      projection.apply([replayEvent]).pipe(
-        Effect.provideService(TransactionScope, {
-          session: { id: "p40-test" },
-        }),
-      ),
-    );
-    expect(projected).toEqual(replayFact);
-  });
-
-  it("does not materialize P10 Attention when the immutable P9 fact and event disagree", async () => {
-    let writes = 0;
-    const noOp = Effect.succeed(undefined);
-    const projection = makeProjectAttentionProjectionStore(
-      projectId,
-      baseAttentionFacts(),
-      {
-        putAssignWorkBindingFailure: () => noOp,
-        putDeliverReplayFailure: () => noOp,
-        putToolObservationReplayFailure: () => {
-          writes += 1;
-          return noOp;
-        },
-        resetProject: () => noOp,
-        reconcileWorkspaceResourceActivation: () => noOp,
-        reconcileStaleWorkRevisionRows: () => noOp,
-      },
-      undefined,
-      { findById: () => Effect.succeed(Option.some(replayFact)) },
-    );
-    const invalid: DomainEvent<unknown> = {
-      ...replayEvent,
-      payload: {
-        _tag: "ToolObservationReplayEvidenceEscalated",
-        attentionFactId,
-        executionId,
-        targetWorkspaceId: workspaceId,
-        logicalActionId,
-        providerTurnId,
-        callRef,
-        invocationId,
-        failureCode: "HashMismatch",
-      },
-    };
-    const exit = await Effect.runPromise(
-      Effect.exit(
-        projection.apply([invalid]).pipe(
+  it.effect(
+    "projects only an exact immutable P9 replay-failure event into the P10 source row",
+    () =>
+      Effect.gen(function* () {
+        let projected: ToolObservationReplayAttentionFact | undefined;
+        const noOp = Effect.succeed(undefined);
+        const projection = makeProjectAttentionProjectionStore(
+          projectId,
+          baseAttentionFacts(),
+          {
+            putAssignWorkBindingFailure: () => noOp,
+            putDeliverReplayFailure: () => noOp,
+            putToolObservationReplayFailure: (fact) => {
+              projected = fact;
+              return noOp;
+            },
+            resetProject: () => noOp,
+            reconcileWorkspaceResourceActivation: () => noOp,
+            reconcileStaleWorkRevisionRows: () => noOp,
+          },
+          undefined,
+          { findById: () => Effect.succeed(Option.some(replayFact)) },
+        );
+        yield* projection.apply([replayEvent]).pipe(
           Effect.provideService(TransactionScope, {
             session: { id: "p40-test" },
           }),
-        ),
-      ),
-    );
-    expect(Exit.isFailure(exit)).toBe(true);
-    expect(writes).toBe(0);
-  });
+        );
+        expect(projected).toEqual(replayFact);
+      }),
+  );
+
+  it.effect(
+    "does not materialize P10 Attention when the immutable P9 fact and event disagree",
+    () =>
+      Effect.gen(function* () {
+        let writes = 0;
+        const noOp = Effect.succeed(undefined);
+        const projection = makeProjectAttentionProjectionStore(
+          projectId,
+          baseAttentionFacts(),
+          {
+            putAssignWorkBindingFailure: () => noOp,
+            putDeliverReplayFailure: () => noOp,
+            putToolObservationReplayFailure: () => {
+              writes += 1;
+              return noOp;
+            },
+            resetProject: () => noOp,
+            reconcileWorkspaceResourceActivation: () => noOp,
+            reconcileStaleWorkRevisionRows: () => noOp,
+          },
+          undefined,
+          { findById: () => Effect.succeed(Option.some(replayFact)) },
+        );
+        const invalid: DomainEvent<unknown> = {
+          ...replayEvent,
+          payload: {
+            _tag: "ToolObservationReplayEvidenceEscalated",
+            attentionFactId,
+            executionId,
+            targetWorkspaceId: workspaceId,
+            logicalActionId,
+            providerTurnId,
+            callRef,
+            invocationId,
+            failureCode: "HashMismatch",
+          },
+        };
+        const exit = yield* Effect.exit(
+          projection.apply([invalid]).pipe(
+            Effect.provideService(TransactionScope, {
+              session: { id: "p40-test" },
+            }),
+          ),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(writes).toBe(0);
+      }),
+  );
 });

@@ -1,7 +1,8 @@
 import { TransactionPort, TransactionScope } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Duration, Effect, Exit, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import {
   layer,
   makeTransactionPortLive,
@@ -65,81 +66,92 @@ const program = Effect.gen(function* () {
 });
 
 describe("transaction port", () => {
-  it("runs a body in one scope, rejects nesting, and rolls back on failure", async () => {
-    const result = await Effect.runPromise(Effect.provide(program, app));
-    expect(result.scopeId).toBe("sqlite");
-    expect(Exit.isFailure(result.nested)).toBe(true);
-    expect(Exit.isFailure(result.rolledBack)).toBe(true);
-    expect(result.ids).toEqual(["p1"]);
-    if (Exit.isFailure(result.nested)) {
-      expect(JSON.stringify(result.nested.cause)).toContain(
-        "nested transaction rejected",
-      );
-    }
-  });
+  it.effect(
+    "runs a body in one scope, rejects nesting, and rolls back on failure",
+    () =>
+      Effect.gen(function* () {
+        const result = yield* Effect.provide(program, app);
+        expect(result.scopeId).toBe("sqlite");
+        expect(Exit.isFailure(result.nested)).toBe(true);
+        expect(Exit.isFailure(result.rolledBack)).toBe(true);
+        expect(result.ids).toEqual(["p1"]);
+        if (Exit.isFailure(result.nested)) {
+          expect(JSON.stringify(result.nested.cause)).toContain(
+            "nested transaction rejected",
+          );
+        }
+      }),
+  );
 
-  it("serializes independent concurrent transactions on the shared connection", async () => {
-    const concurrent = Effect.gen(function* () {
-      yield* runMigrations(P1_MIGRATIONS);
-      const tx = yield* TransactionPort;
-      const write = (projectId: string, delayMs: number) =>
-        tx.transact(
+  it.live(
+    "serializes independent concurrent transactions on the shared connection",
+    () =>
+      Effect.gen(function* () {
+        const concurrent = Effect.gen(function* () {
+          yield* runMigrations(P1_MIGRATIONS);
+          const tx = yield* TransactionPort;
+          const write = (projectId: string, delayMs: number) =>
+            tx.transact(
+              Effect.gen(function* () {
+                if (delayMs > 0) yield* Effect.sleep(Duration.millis(delayMs));
+                const sql = yield* SqlClient;
+                yield* sql.unsafe(
+                  "INSERT INTO project_event_sequences (project_id, last_sequence) VALUES (?, 1)",
+                  [projectId],
+                );
+              }),
+            );
+          yield* Effect.all(
+            [write("concurrent-a", 25), write("concurrent-b", 0)],
+            {
+              concurrency: "unbounded",
+            },
+          );
+          const sql = yield* SqlClient;
+          return yield* sql.unsafe<{ project_id: string }>(
+            "SELECT project_id FROM project_event_sequences ORDER BY project_id",
+          );
+        });
+
+        const rows = yield* Effect.provide(concurrent, app);
+        expect(rows.map((row) => row.project_id)).toEqual([
+          "concurrent-a",
+          "concurrent-b",
+        ]);
+      }),
+  );
+
+  it.effect("keeps the qualification probe pre-BEGIN and fail-silent", () =>
+    Effect.gen(function* () {
+      const events: string[] = [];
+      const qualificationApp = Layer.provideMerge(
+        makeTransactionPortLive(async (event) => {
+          events.push(event.boundary);
+          throw new Error("test-only observer failure");
+        }),
+        layer({ filename: ":memory:" }),
+      );
+      const qualification = Effect.gen(function* () {
+        yield* runMigrations(P1_MIGRATIONS);
+        const tx = yield* TransactionPort;
+        yield* tx.transact(
           Effect.gen(function* () {
-            if (delayMs > 0) yield* Effect.sleep(Duration.millis(delayMs));
+            events.push("body");
             const sql = yield* SqlClient;
             yield* sql.unsafe(
-              "INSERT INTO project_event_sequences (project_id, last_sequence) VALUES (?, 1)",
-              [projectId],
+              "INSERT INTO project_event_sequences (project_id, last_sequence) VALUES ('probe-fail-silent', 1)",
             );
           }),
         );
-      yield* Effect.all([write("concurrent-a", 25), write("concurrent-b", 0)], {
-        concurrency: "unbounded",
+        const sql = yield* SqlClient;
+        return yield* sql.unsafe<{ project_id: string }>(
+          "SELECT project_id FROM project_event_sequences WHERE project_id = 'probe-fail-silent'",
+        );
       });
-      const sql = yield* SqlClient;
-      return yield* sql.unsafe<{ project_id: string }>(
-        "SELECT project_id FROM project_event_sequences ORDER BY project_id",
-      );
-    });
 
-    const rows = await Effect.runPromise(Effect.provide(concurrent, app));
-    expect(rows.map((row) => row.project_id)).toEqual([
-      "concurrent-a",
-      "concurrent-b",
-    ]);
-  });
-
-  it("keeps the qualification probe pre-BEGIN and fail-silent", async () => {
-    const events: string[] = [];
-    const qualificationApp = Layer.provideMerge(
-      makeTransactionPortLive(async (event) => {
-        events.push(event.boundary);
-        throw new Error("test-only observer failure");
-      }),
-      layer({ filename: ":memory:" }),
-    );
-    const qualification = Effect.gen(function* () {
-      yield* runMigrations(P1_MIGRATIONS);
-      const tx = yield* TransactionPort;
-      yield* tx.transact(
-        Effect.gen(function* () {
-          events.push("body");
-          const sql = yield* SqlClient;
-          yield* sql.unsafe(
-            "INSERT INTO project_event_sequences (project_id, last_sequence) VALUES ('probe-fail-silent', 1)",
-          );
-        }),
-      );
-      const sql = yield* SqlClient;
-      return yield* sql.unsafe<{ project_id: string }>(
-        "SELECT project_id FROM project_event_sequences WHERE project_id = 'probe-fail-silent'",
-      );
-    });
-
-    const rows = await Effect.runPromise(
-      Effect.provide(qualification, qualificationApp),
-    );
-    expect(events).toEqual(["BeforeBegin", "body"]);
-    expect(rows).toEqual([{ project_id: "probe-fail-silent" }]);
-  });
+      const rows = yield* Effect.provide(qualification, qualificationApp);
+      expect(events).toEqual(["BeforeBegin", "body"]);
+      expect(rows).toEqual([{ project_id: "probe-fail-silent" }]);
+    }),
+  );
 });

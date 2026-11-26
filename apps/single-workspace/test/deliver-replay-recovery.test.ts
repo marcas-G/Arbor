@@ -18,8 +18,9 @@ import {
   type StoredCommandResolution,
   sha256Hex,
 } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Cause, Effect, Exit, Option } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import { deliverMessageGatewayHandler } from "../src/control-actions.js";
 
 const providerTurnId = providerTurnInferenceId(
@@ -297,185 +298,232 @@ const baseDependencies = (options: {
 };
 
 describe("P37 Deliver receipt recovery", () => {
-  it("receipt-first converges an exact prior-generation delivery despite a different candidate fingerprint", async () => {
-    const fixture = baseDependencies({
-      existingEffect: true,
-      priorReceipt: committedPriorReceipt(),
-    });
-    const handler = deliverMessageGatewayHandler(fixture.dependencies as never);
-    const result = await Effect.runPromise(handler.handle(input(1)));
+  it.effect(
+    "receipt-first converges an exact prior-generation delivery despite a different candidate fingerprint",
+    () =>
+      Effect.gen(function* () {
+        const fixture = baseDependencies({
+          existingEffect: true,
+          priorReceipt: committedPriorReceipt(),
+        });
+        const handler = deliverMessageGatewayHandler(
+          fixture.dependencies as never,
+        );
+        const result = yield* handler.handle(input(1));
 
-    expect(result).toMatchObject({
-      _tag: "Observation",
-      observation: {
-        text: `DeliverableDelivered(${deliverableId}, ${recipientWorkspaceId})`,
-      },
-    });
-    expect(fixture.counts()).toMatchObject({
-      gatewayCalls: 0,
-      failureWrites: 0,
-      failureCodes: [],
-    });
-    expect(fixture.counts().effectReads).toBeGreaterThan(0);
-  });
-
-  it("keeps a prior Committed receipt blocked when its result disagrees with exact effects", async () => {
-    const fixture = baseDependencies({
-      existingEffect: true,
-      priorReceipt: committedPriorReceipt({
-        ...committedResult,
-        deliverableId: `del_${newUuid7("p37-deliver-recovery", "other-deliverable")}`,
+        expect(result).toMatchObject({
+          _tag: "Observation",
+          observation: {
+            text: `DeliverableDelivered(${deliverableId}, ${recipientWorkspaceId})`,
+          },
+        });
+        expect(fixture.counts()).toMatchObject({
+          gatewayCalls: 0,
+          failureWrites: 0,
+          failureCodes: [],
+        });
+        expect(fixture.counts().effectReads).toBeGreaterThan(0);
       }),
-    });
-    const handler = deliverMessageGatewayHandler(fixture.dependencies as never);
-    const exit = await Effect.runPromiseExit(handler.handle(input(1)));
+  );
 
-    expect(Exit.isFailure(exit)).toBe(true);
-    if (Exit.isFailure(exit)) {
-      const failure = Cause.findErrorOption(exit.cause);
-      expect(Option.isSome(failure)).toBe(true);
-      if (Option.isSome(failure)) {
-        expect(failure.value._tag).toBe("AgentActionRecoveryBlocked");
-      }
-    }
-    expect(fixture.counts()).toMatchObject({
-      gatewayCalls: 0,
-      failureWrites: 1,
-      failureCodes: ["PriorReceiptResultMismatch"],
-    });
-  });
+  it.effect(
+    "keeps a prior Committed receipt blocked when its result disagrees with exact effects",
+    () =>
+      Effect.gen(function* () {
+        const fixture = baseDependencies({
+          existingEffect: true,
+          priorReceipt: committedPriorReceipt({
+            ...committedResult,
+            deliverableId: `del_${newUuid7("p37-deliver-recovery", "other-deliverable")}`,
+          }),
+        });
+        const handler = deliverMessageGatewayHandler(
+          fixture.dependencies as never,
+        );
+        const exit = yield* Effect.exit(handler.handle(input(1)));
 
-  it("keeps a prior Committed receipt blocked when the stored Message row drifts", async () => {
-    const fixture = baseDependencies({
-      existingEffect: true,
-      priorReceipt: committedPriorReceipt(),
-      messageBodyRef: "drifted Message bodyRef",
-    });
-    const handler = deliverMessageGatewayHandler(fixture.dependencies as never);
-    const exit = await Effect.runPromiseExit(handler.handle(input(1)));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const failure = Cause.findErrorOption(exit.cause);
+          expect(Option.isSome(failure)).toBe(true);
+          if (Option.isSome(failure)) {
+            expect(failure.value._tag).toBe("AgentActionRecoveryBlocked");
+          }
+        }
+        expect(fixture.counts()).toMatchObject({
+          gatewayCalls: 0,
+          failureWrites: 1,
+          failureCodes: ["PriorReceiptResultMismatch"],
+        });
+      }),
+  );
 
-    expect(Exit.isFailure(exit)).toBe(true);
-    if (Exit.isFailure(exit)) {
-      const failure = Cause.findErrorOption(exit.cause);
-      expect(Option.isSome(failure)).toBe(true);
-      if (Option.isSome(failure)) {
-        expect(failure.value._tag).toBe("AgentActionRecoveryBlocked");
-      }
-    }
-    expect(fixture.counts()).toMatchObject({
-      gatewayCalls: 0,
-      failureWrites: 1,
-      failureCodes: ["PriorReceiptResultMismatch"],
-    });
-  });
+  it.effect(
+    "keeps a prior Committed receipt blocked when the stored Message row drifts",
+    () =>
+      Effect.gen(function* () {
+        const fixture = baseDependencies({
+          existingEffect: true,
+          priorReceipt: committedPriorReceipt(),
+          messageBodyRef: "drifted Message bodyRef",
+        });
+        const handler = deliverMessageGatewayHandler(
+          fixture.dependencies as never,
+        );
+        const exit = yield* Effect.exit(handler.handle(input(1)));
 
-  it("keeps a prior Committed receipt blocked when MessageSent binds another Deliverable", async () => {
-    const fixture = baseDependencies({
-      existingEffect: true,
-      priorReceipt: committedPriorReceipt(),
-      messageEventDeliverableId: `del_${newUuid7(
-        "p37-deliver-recovery",
-        "event-other-deliverable",
-      )}`,
-    });
-    const handler = deliverMessageGatewayHandler(fixture.dependencies as never);
-    const exit = await Effect.runPromiseExit(handler.handle(input(1)));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const failure = Cause.findErrorOption(exit.cause);
+          expect(Option.isSome(failure)).toBe(true);
+          if (Option.isSome(failure)) {
+            expect(failure.value._tag).toBe("AgentActionRecoveryBlocked");
+          }
+        }
+        expect(fixture.counts()).toMatchObject({
+          gatewayCalls: 0,
+          failureWrites: 1,
+          failureCodes: ["PriorReceiptResultMismatch"],
+        });
+      }),
+  );
 
-    expect(Exit.isFailure(exit)).toBe(true);
-    if (Exit.isFailure(exit)) {
-      const failure = Cause.findErrorOption(exit.cause);
-      expect(Option.isSome(failure)).toBe(true);
-      if (Option.isSome(failure)) {
-        expect(failure.value._tag).toBe("AgentActionRecoveryBlocked");
-      }
-    }
-    expect(fixture.counts()).toMatchObject({
-      gatewayCalls: 0,
-      failureWrites: 1,
-      failureCodes: ["PriorReceiptResultMismatch"],
-    });
-  });
+  it.effect(
+    "keeps a prior Committed receipt blocked when MessageSent binds another Deliverable",
+    () =>
+      Effect.gen(function* () {
+        const fixture = baseDependencies({
+          existingEffect: true,
+          priorReceipt: committedPriorReceipt(),
+          messageEventDeliverableId: `del_${newUuid7(
+            "p37-deliver-recovery",
+            "event-other-deliverable",
+          )}`,
+        });
+        const handler = deliverMessageGatewayHandler(
+          fixture.dependencies as never,
+        );
+        const exit = yield* Effect.exit(handler.handle(input(1)));
 
-  it("keeps same-generation fingerprint drift blocked for the same CommandId", async () => {
-    const fixture = baseDependencies({
-      existingEffect: true,
-      priorReceipt: committedPriorReceipt(
-        committedResult,
-        generationOneCommandId,
-      ),
-    });
-    const handler = deliverMessageGatewayHandler(fixture.dependencies as never);
-    const exit = await Effect.runPromiseExit(handler.handle(input(1)));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const failure = Cause.findErrorOption(exit.cause);
+          expect(Option.isSome(failure)).toBe(true);
+          if (Option.isSome(failure)) {
+            expect(failure.value._tag).toBe("AgentActionRecoveryBlocked");
+          }
+        }
+        expect(fixture.counts()).toMatchObject({
+          gatewayCalls: 0,
+          failureWrites: 1,
+          failureCodes: ["PriorReceiptResultMismatch"],
+        });
+      }),
+  );
 
-    expect(Exit.isFailure(exit)).toBe(true);
-    if (Exit.isFailure(exit)) {
-      const failure = Cause.findErrorOption(exit.cause);
-      expect(Option.isSome(failure)).toBe(true);
-      if (Option.isSome(failure)) {
-        expect(failure.value._tag).toBe("AgentActionRecoveryBlocked");
-      }
-    }
-    expect(fixture.counts()).toMatchObject({
-      gatewayCalls: 0,
-      failureWrites: 1,
-      failureCodes: ["PriorReceiptResultMismatch"],
-    });
-  });
+  it.effect(
+    "keeps same-generation fingerprint drift blocked for the same CommandId",
+    () =>
+      Effect.gen(function* () {
+        const fixture = baseDependencies({
+          existingEffect: true,
+          priorReceipt: committedPriorReceipt(
+            committedResult,
+            generationOneCommandId,
+          ),
+        });
+        const handler = deliverMessageGatewayHandler(
+          fixture.dependencies as never,
+        );
+        const exit = yield* Effect.exit(handler.handle(input(1)));
 
-  it("does not adopt gen0 direct-write evidence from a later lease generation", async () => {
-    const fixture = baseDependencies({ existingEffect: true });
-    const handler = deliverMessageGatewayHandler(fixture.dependencies as never);
-    const exit = await Effect.runPromiseExit(handler.handle(input(1)));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const failure = Cause.findErrorOption(exit.cause);
+          expect(Option.isSome(failure)).toBe(true);
+          if (Option.isSome(failure)) {
+            expect(failure.value._tag).toBe("AgentActionRecoveryBlocked");
+          }
+        }
+        expect(fixture.counts()).toMatchObject({
+          gatewayCalls: 0,
+          failureWrites: 1,
+          failureCodes: ["PriorReceiptResultMismatch"],
+        });
+      }),
+  );
 
-    expect(Exit.isFailure(exit)).toBe(true);
-    if (Exit.isFailure(exit)) {
-      const failure = Cause.findErrorOption(exit.cause);
-      expect(Option.isSome(failure)).toBe(true);
-      if (Option.isSome(failure)) {
-        expect(failure.value._tag).toBe("AgentActionRecoveryBlocked");
-      }
-    }
-    expect(fixture.counts()).toMatchObject({
-      gatewayCalls: 0,
-      failureWrites: 1,
-      failureCodes: ["PriorReceiptEffectConflict"],
-    });
-  });
+  it.effect(
+    "does not adopt gen0 direct-write evidence from a later lease generation",
+    () =>
+      Effect.gen(function* () {
+        const fixture = baseDependencies({ existingEffect: true });
+        const handler = deliverMessageGatewayHandler(
+          fixture.dependencies as never,
+        );
+        const exit = yield* Effect.exit(handler.handle(input(1)));
 
-  it("stays blocked by an existing failure fact before re-reading drifted effects", async () => {
-    const fact: DeliverReplayAttentionFact = {
-      attentionFactId: `att_${sha256Hex(
-        JSON.stringify({ version: 1, executionId, logicalActionId, messageId }),
-      )}`,
-      eventId: "evt_original",
-      projectId: projectId as never,
-      executionId: executionId as never,
-      targetWorkspaceId: senderWorkspaceId as never,
-      logicalActionId,
-      messageId,
-      failureCode: "PriorReceiptEffectConflict",
-      firstDetectedAt: "2026-10-11T00:00:02.000Z",
-    };
-    const fixture = baseDependencies({
-      priorFact: fact,
-      existingEffect: false,
-    });
-    const handler = deliverMessageGatewayHandler(fixture.dependencies as never);
-    const exit = await Effect.runPromiseExit(handler.handle(input(1)));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const failure = Cause.findErrorOption(exit.cause);
+          expect(Option.isSome(failure)).toBe(true);
+          if (Option.isSome(failure)) {
+            expect(failure.value._tag).toBe("AgentActionRecoveryBlocked");
+          }
+        }
+        expect(fixture.counts()).toMatchObject({
+          gatewayCalls: 0,
+          failureWrites: 1,
+          failureCodes: ["PriorReceiptEffectConflict"],
+        });
+      }),
+  );
 
-    expect(Exit.isFailure(exit)).toBe(true);
-    if (Exit.isFailure(exit)) {
-      const failure = Cause.findErrorOption(exit.cause);
-      expect(Option.isSome(failure)).toBe(true);
-      if (Option.isSome(failure)) {
-        expect(failure.value._tag).toBe("AgentActionRecoveryBlocked");
-      }
-    }
-    expect(fixture.counts()).toMatchObject({
-      gatewayCalls: 0,
-      failureWrites: 0,
-      effectReads: 0,
-    });
-    expect(fixture.counts().factLookups).toEqual([fact.attentionFactId]);
-  });
+  it.effect(
+    "stays blocked by an existing failure fact before re-reading drifted effects",
+    () =>
+      Effect.gen(function* () {
+        const fact: DeliverReplayAttentionFact = {
+          attentionFactId: `att_${sha256Hex(
+            JSON.stringify({
+              version: 1,
+              executionId,
+              logicalActionId,
+              messageId,
+            }),
+          )}`,
+          eventId: "evt_original",
+          projectId: projectId as never,
+          executionId: executionId as never,
+          targetWorkspaceId: senderWorkspaceId as never,
+          logicalActionId,
+          messageId,
+          failureCode: "PriorReceiptEffectConflict",
+          firstDetectedAt: "2026-10-11T00:00:02.000Z",
+        };
+        const fixture = baseDependencies({
+          priorFact: fact,
+          existingEffect: false,
+        });
+        const handler = deliverMessageGatewayHandler(
+          fixture.dependencies as never,
+        );
+        const exit = yield* Effect.exit(handler.handle(input(1)));
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const failure = Cause.findErrorOption(exit.cause);
+          expect(Option.isSome(failure)).toBe(true);
+          if (Option.isSome(failure)) {
+            expect(failure.value._tag).toBe("AgentActionRecoveryBlocked");
+          }
+        }
+        expect(fixture.counts()).toMatchObject({
+          gatewayCalls: 0,
+          failureWrites: 0,
+          effectReads: 0,
+        });
+        expect(fixture.counts().factLookups).toEqual([fact.attentionFactId]);
+      }),
+  );
 });

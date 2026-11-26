@@ -12,9 +12,10 @@ import {
   LeaseService,
   TransactionPort,
 } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import {
   ClockLive,
   ExecutionRepositoryLive,
@@ -112,70 +113,87 @@ const seed = Effect.gen(function* () {
 });
 
 describe("P2 LeaseService", () => {
-  it("acquires, softly releases, and keeps the generation monotonic", async () => {
-    const app = makeApp();
-    const program = Effect.gen(function* () {
-      yield* runMigrations(P12_MIGRATIONS);
-      yield* seed;
-      const tx = yield* TransactionPort;
-      const repo = yield* ExecutionRepository;
-      const leases = yield* LeaseService;
-      const clock = yield* Clock;
-      yield* tx.transact(repo.tryAdmitMainExecution(execution));
+  it.effect(
+    "acquires, softly releases, and keeps the generation monotonic",
+    () =>
+      Effect.gen(function* () {
+        const app = makeApp();
+        const program = Effect.gen(function* () {
+          yield* runMigrations(P12_MIGRATIONS);
+          yield* seed;
+          const tx = yield* TransactionPort;
+          const repo = yield* ExecutionRepository;
+          const leases = yield* LeaseService;
+          const clock = yield* Clock;
+          yield* tx.transact(repo.tryAdmitMainExecution(execution));
 
-      const first = yield* tx.transact(
-        leases.acquire(executionId, "worker-a", "inc-a"),
-      );
-      const blocked = yield* tx
-        .transact(leases.acquire(executionId, "worker-b", "inc-b"))
-        .pipe(Effect.flip);
-      const staleRenew = yield* tx
-        .transact(leases.renew(executionId, "worker-a", "inc-a", 99 as never))
-        .pipe(Effect.flip);
-      yield* tx.transact(
-        leases.release(executionId, "worker-a", "inc-a", first.generation),
-      );
-      const reacquired = yield* tx.transact(
-        leases.acquire(executionId, "worker-c", "inc-c"),
-      );
-      const now = yield* clock.now();
-      const invalidated = yield* tx.transact(leases.invalidateExpired(now));
-      const current = yield* tx.transact(repo.currentLease(executionId));
-      return { first, blocked, staleRenew, reacquired, invalidated, current };
-    });
-    const r = await Effect.runPromise(Effect.provide(program, app));
-    expect(r.first.generation).toBe(0);
-    expect((r.blocked as { _tag: string })._tag).toBe("LeaseFencingRejected");
-    expect((r.staleRenew as { _tag: string })._tag).toBe(
-      "LeaseFencingRejected",
-    );
-    expect(r.reacquired.generation).toBe(1);
-    expect(r.invalidated).toBe(0);
-    expect(Option.isSome(r.current)).toBe(true);
-  });
+          const first = yield* tx.transact(
+            leases.acquire(executionId, "worker-a", "inc-a"),
+          );
+          const blocked = yield* tx
+            .transact(leases.acquire(executionId, "worker-b", "inc-b"))
+            .pipe(Effect.flip);
+          const staleRenew = yield* tx
+            .transact(
+              leases.renew(executionId, "worker-a", "inc-a", 99 as never),
+            )
+            .pipe(Effect.flip);
+          yield* tx.transact(
+            leases.release(executionId, "worker-a", "inc-a", first.generation),
+          );
+          const reacquired = yield* tx.transact(
+            leases.acquire(executionId, "worker-c", "inc-c"),
+          );
+          const now = yield* clock.now();
+          const invalidated = yield* tx.transact(leases.invalidateExpired(now));
+          const current = yield* tx.transact(repo.currentLease(executionId));
+          return {
+            first,
+            blocked,
+            staleRenew,
+            reacquired,
+            invalidated,
+            current,
+          };
+        });
+        const r = yield* Effect.provide(program, app);
+        expect(r.first.generation).toBe(0);
+        expect((r.blocked as { _tag: string })._tag).toBe(
+          "LeaseFencingRejected",
+        );
+        expect((r.staleRenew as { _tag: string })._tag).toBe(
+          "LeaseFencingRejected",
+        );
+        expect(r.reacquired.generation).toBe(1);
+        expect(r.invalidated).toBe(0);
+        expect(Option.isSome(r.current)).toBe(true);
+      }),
+  );
 
-  it("counts expired active executions", async () => {
-    const app = makeApp();
-    const program = Effect.gen(function* () {
-      yield* runMigrations(P12_MIGRATIONS);
-      yield* seed;
-      const tx = yield* TransactionPort;
-      const repo = yield* ExecutionRepository;
-      const leases = yield* LeaseService;
-      yield* tx.transact(repo.tryAdmitMainExecution(execution));
-      yield* tx.transact(
-        repo.tryAcquireLease(
-          executionId,
-          "worker-a",
-          "inc-a",
-          "2000-01-01T00:00:00.000Z",
-        ),
-      );
-      return yield* tx.transact(
-        leases.invalidateExpired("2999-01-01T00:00:00.000Z"),
-      );
-    });
-    const invalidated = await Effect.runPromise(Effect.provide(program, app));
-    expect(invalidated).toBe(1);
-  });
+  it.effect("counts expired active executions", () =>
+    Effect.gen(function* () {
+      const app = makeApp();
+      const program = Effect.gen(function* () {
+        yield* runMigrations(P12_MIGRATIONS);
+        yield* seed;
+        const tx = yield* TransactionPort;
+        const repo = yield* ExecutionRepository;
+        const leases = yield* LeaseService;
+        yield* tx.transact(repo.tryAdmitMainExecution(execution));
+        yield* tx.transact(
+          repo.tryAcquireLease(
+            executionId,
+            "worker-a",
+            "inc-a",
+            "2000-01-01T00:00:00.000Z",
+          ),
+        );
+        return yield* tx.transact(
+          leases.invalidateExpired("2999-01-01T00:00:00.000Z"),
+        );
+      });
+      const invalidated = yield* Effect.provide(program, app);
+      expect(invalidated).toBe(1);
+    }),
+  );
 });

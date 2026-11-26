@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
+import { it } from "@effect/vitest";
 import { Effect } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import {
   loadSandboxAuthorityBundleSnapshotV1Forensic,
   type SandboxAuthorityForensicReadPort,
@@ -61,86 +62,86 @@ const sourceFor = (
 });
 
 describe("P5 SandboxAuthorityBundleV1", () => {
-  it("validates canonical bundle/high-water and returns one immutable snapshot", async () => {
-    const current = fixture();
-    const source = sourceFor(current.bundleJson, current.highWaterJson);
-    const result = await Effect.runPromise(
-      loadSandboxAuthorityBundleSnapshotV1Forensic(source),
-    );
-    expect(result._tag).toBe("Available");
-    if (result._tag !== "Available") return;
-    expect(result.snapshot.bundleDigest).toBe(current.bundleDigest);
-    expect(result.snapshot.issuerConfigSnapshot).toMatchObject({
-      config: current.bundle.issuerConfig,
-      configDigest: current.bundle.issuerConfigDigest,
-      authorityBundleRevision: 1,
-      authorityBundleDigest: current.bundleDigest,
-      providerRegistryRevision: 1,
-      providerRegistryDigest: current.bundle.providerRegistryDigest,
-    });
-    expect(Object.isFrozen(result.snapshot)).toBe(true);
-    expect(Object.keys(source).sort()).toEqual([
-      "readSandboxAuthorityHighWater",
-      "readVerifiedSandboxAuthorityBundle",
-    ]);
-    expect(source).not.toHaveProperty("commitSandboxAuthorityHighWater");
-    expect(source).not.toHaveProperty("appendSandboxAuthorityAudit");
-  });
-
-  it("never advances high-water when a forensic source is ahead", async () => {
-    const previous = fixture(1);
-    const next = fixture(2);
-    const result = await Effect.runPromise(
-      loadSandboxAuthorityBundleSnapshotV1Forensic(
-        sourceFor(next.bundleJson, previous.highWaterJson),
-      ),
-    );
-    expect(result).toEqual({
-      _tag: "Unavailable",
-      failure: "HighWaterCommitFailed",
-    });
-  });
-
-  it.each([
-    [undefined, "HighWaterMissing"],
-    ["{bad", "HighWaterCorrupt"],
-  ] as const)(
-    "fails closed for invalid high-water %s",
-    async (highWater, failure) => {
-      const current = fixture();
-      const result = await Effect.runPromise(
-        loadSandboxAuthorityBundleSnapshotV1Forensic(
-          sourceFor(current.bundleJson, highWater),
-        ),
-      );
-      expect(result).toEqual({ _tag: "Unavailable", failure });
-    },
+  it.effect(
+    "validates canonical bundle/high-water and returns one immutable snapshot",
+    () =>
+      Effect.gen(function* () {
+        const current = fixture();
+        const source = sourceFor(current.bundleJson, current.highWaterJson);
+        const result =
+          yield* loadSandboxAuthorityBundleSnapshotV1Forensic(source);
+        expect(result._tag).toBe("Available");
+        if (result._tag !== "Available") return;
+        expect(result.snapshot.bundleDigest).toBe(current.bundleDigest);
+        expect(result.snapshot.issuerConfigSnapshot).toMatchObject({
+          config: current.bundle.issuerConfig,
+          configDigest: current.bundle.issuerConfigDigest,
+          authorityBundleRevision: 1,
+          authorityBundleDigest: current.bundleDigest,
+          providerRegistryRevision: 1,
+          providerRegistryDigest: current.bundle.providerRegistryDigest,
+        });
+        expect(Object.isFrozen(result.snapshot)).toBe(true);
+        expect(Object.keys(source).sort()).toEqual([
+          "readSandboxAuthorityHighWater",
+          "readVerifiedSandboxAuthorityBundle",
+        ]);
+        expect(source).not.toHaveProperty("commitSandboxAuthorityHighWater");
+        expect(source).not.toHaveProperty("appendSandboxAuthorityAudit");
+      }),
   );
 
-  it("rejects bundle tampering and source rollback without updating high-water", async () => {
-    const current = fixture(2);
-    const prior = fixture(1);
-    const tampered = current.bundleJson.replace(
-      '"sourceIdentity":"host-config-test"',
-      '"sourceIdentity":"host-config-test","unknown":true',
-    );
-    const malformed = await Effect.runPromise(
-      loadSandboxAuthorityBundleSnapshotV1Forensic(
-        sourceFor(tampered, current.highWaterJson),
-      ),
-    );
-    expect(malformed).toEqual({
-      _tag: "Unavailable",
-      failure: "BundleMalformed",
-    });
-    const rollback = await Effect.runPromise(
-      loadSandboxAuthorityBundleSnapshotV1Forensic(
-        sourceFor(prior.bundleJson, current.highWaterJson),
-      ),
-    );
-    expect(rollback).toEqual({
-      _tag: "Unavailable",
-      failure: "RevisionRollback",
-    });
-  });
+  it.effect("never advances high-water when a forensic source is ahead", () =>
+    Effect.gen(function* () {
+      const previous = fixture(1);
+      const next = fixture(2);
+      const result = yield* loadSandboxAuthorityBundleSnapshotV1Forensic(
+        sourceFor(next.bundleJson, previous.highWaterJson),
+      );
+      expect(result).toEqual({
+        _tag: "Unavailable",
+        failure: "HighWaterCommitFailed",
+      });
+    }),
+  );
+
+  it.effect.each<[string | undefined, string]>([
+    [undefined, "HighWaterMissing"],
+    ["{bad", "HighWaterCorrupt"],
+  ])("fails closed for invalid high-water %s", ([highWater, failure]) =>
+    Effect.gen(function* () {
+      const current = fixture();
+      const result = yield* loadSandboxAuthorityBundleSnapshotV1Forensic(
+        sourceFor(current.bundleJson, highWater),
+      );
+      expect(result).toEqual({ _tag: "Unavailable", failure });
+    }),
+  );
+
+  it.effect(
+    "rejects bundle tampering and source rollback without updating high-water",
+    () =>
+      Effect.gen(function* () {
+        const current = fixture(2);
+        const prior = fixture(1);
+        const tampered = current.bundleJson.replace(
+          '"sourceIdentity":"host-config-test"',
+          '"sourceIdentity":"host-config-test","unknown":true',
+        );
+        const malformed = yield* loadSandboxAuthorityBundleSnapshotV1Forensic(
+          sourceFor(tampered, current.highWaterJson),
+        );
+        expect(malformed).toEqual({
+          _tag: "Unavailable",
+          failure: "BundleMalformed",
+        });
+        const rollback = yield* loadSandboxAuthorityBundleSnapshotV1Forensic(
+          sourceFor(prior.bundleJson, current.highWaterJson),
+        );
+        expect(rollback).toEqual({
+          _tag: "Unavailable",
+          failure: "RevisionRollback",
+        });
+      }),
+  );
 });
