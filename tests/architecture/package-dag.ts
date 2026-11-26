@@ -9,7 +9,19 @@ export const ALLOWED_EDGES: Record<string, ReadonlyArray<string>> = {
   "tool-runtime": ["domain", "ports"],
   "projection-runtime": ["domain", "ports"],
   "api-contracts": ["domain"],
-  testkit: ["domain", "ports", "application"],
+  // AGENTS.md: "testkit | test-only dependencies". The driver assembly
+  // helper composes production adapters/runtime for tests; testkit is a
+  // consumer-side tier (like apps/*), never a production dependency of
+  // any package, so adapter/runtime edges here cannot invert the DAG.
+  testkit: [
+    "domain",
+    "ports",
+    "application",
+    "model-context",
+    "agent-runtime",
+    "persistence-sqlite",
+    "blob-local",
+  ],
   "persistence-sqlite": ["domain", "ports"],
   "environment-local": ["domain", "ports"],
   "environment-resolver-local": ["domain", "ports"],
