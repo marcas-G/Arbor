@@ -31,6 +31,11 @@ import { loadDecisionSessionContext } from "./decision/context/session.js";
 import { loadDecisionWorkspaceContext } from "./decision/context/workspace.js";
 import type { ModelDecisionDependencies } from "./decision/contract.js";
 import { loadConversationDecisionContext } from "./decision/conversation-context.js";
+import {
+  foldConversationDecisionContextError,
+  foldSettlementProposalError,
+  foldStartupRecoveryError,
+} from "./decision/errors.js";
 import { prepareTurnForDecision } from "./decision/preparation/turn.js";
 import { invokePreparedProviderTurn } from "./decision/provider/invocation.js";
 import { replayPreparedProviderTurn } from "./decision/provider/replay.js";
@@ -240,7 +245,7 @@ export const runModelDecision = (
       compactionDependencies,
       readExecutionTimeline,
       loadWorkCompactionPinning,
-    });
+    }).pipe(Effect.mapError(foldStartupRecoveryError));
     if (startupRecovery._tag === "Complete") {
       return startupRecovery.outcome;
     }
@@ -287,7 +292,7 @@ export const runModelDecision = (
             loopStep,
             providerTurnId,
             settlement,
-          });
+          }).pipe(Effect.mapError(foldSettlementProposalError));
           return { _tag: "Settle", settlement };
         });
       const conversationContext = yield* loadConversationDecisionContext(
@@ -301,7 +306,7 @@ export const runModelDecision = (
           readExecutionTimeline,
           proposeSettlement,
         },
-      );
+      ).pipe(Effect.mapError(foldConversationDecisionContextError));
       if (conversationContext._tag === "Restart") continue;
       if (conversationContext._tag === "Complete") {
         return conversationContext.outcome;
