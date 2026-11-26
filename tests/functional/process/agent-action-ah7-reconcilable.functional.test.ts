@@ -3906,7 +3906,74 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
             ),
           ),
         ).toEqual(crashedTarget.providerTurns);
-        expect(targetProviderCalls).toBeLessThanOrEqual(2);
+        expect(
+          targetProviderCalls,
+          targetProviderCalls <= 2
+            ? undefined
+            : JSON.stringify({
+                targetProviderCalls,
+                providerReplyOperations,
+                providerRequests: fixture.providerCalls.map((call) => ({
+                  messageRoles: call.messages.map(
+                    (message) => message.role ?? null,
+                  ),
+                  messageTail: call.messages.slice(-4).map((message) => ({
+                    role: message.role ?? null,
+                    content:
+                      typeof message.content === "string"
+                        ? message.content.slice(-240)
+                        : message.content,
+                  })),
+                  offeredTools: call.tools
+                    .map((tool) => tool.function?.name)
+                    .filter((name): name is string => name !== undefined),
+                })),
+                runtimeProbeEvents: runtimeProbeEvents
+                  .filter(
+                    (event) =>
+                      event.executionId === targetExecutionId ||
+                      event.invocationId === hit?.invocationId,
+                  )
+                  .map((event) => ({
+                    boundary: event.boundary,
+                    outcomeTag: event.outcomeTag,
+                    admissionResult: event.admissionResult,
+                    executionId: event.executionId,
+                    invocationId: event.invocationId,
+                  })),
+                durable: {
+                  invocations: recovered.toolInvocations
+                    .filter(
+                      (invocation) =>
+                        invocation.execution_id === targetExecutionId,
+                    )
+                    .map((invocation) => ({
+                      invocation_id: invocation.invocation_id,
+                      settlement_kind: invocation.settlement_kind,
+                      effect_admission_state: invocation.effect_admission_state,
+                      selected_attempt_no: invocation.selected_attempt_no,
+                    })),
+                  actions: recovered.actions
+                    .filter(
+                      (action) => action.execution_id === targetExecutionId,
+                    )
+                    .map((action) => ({
+                      call_ref: action.call_ref,
+                      state: action.state,
+                      disposition: action.disposition,
+                    })),
+                  steps: recovered.steps
+                    .filter((step) => step.execution_id === targetExecutionId)
+                    .map((step) => ({
+                      logical_step_no: step.logical_step_no,
+                      repair_attempt: step.repair_attempt,
+                      state: step.state,
+                      next_action_index: step.next_action_index,
+                    })),
+                },
+                daemonErrors: fixture.daemonErrors,
+              }),
+        ).toBeLessThanOrEqual(2);
         if (noEffectRetryDenied) {
           expect(contentAfter).toBeNull();
           expect(externalEffects).toHaveLength(0);
