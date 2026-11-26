@@ -6,8 +6,9 @@ import type {
   TransactionPortService,
   TransactionScope,
 } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect, Option } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import { issueExecutableApproval } from "../src/executable-approval-issuance.js";
 
 const binding = (): ExecutableApprovalBinding => ({
@@ -80,161 +81,109 @@ const recordFor = (
 });
 
 describe("Executable approval issuance", () => {
-  it("passes the exact trusted binding and lease to the atomic Pending writer", async () => {
-    let persisted:
-      | Parameters<ExecutableApprovalStoreService["putPendingExact"]>[0]
-      | undefined;
-    const expected = recordFor({
-      ...binding(),
-      approvalId: "apr_first",
-      requestedAt: "2026-10-11T00:00:00.000Z",
-      expiresAt: "2026-10-11T00:15:00.000Z",
-    });
-    const store: ExecutableApprovalStoreService = {
-      findByActionKey: () => Effect.succeed(Option.none()),
-      findById: () => Effect.succeed(Option.none()),
-      findPendingForExecution: () => Effect.succeed(Option.none()),
-      decide: () => Effect.succeed(Option.none()),
-      listResolved: () => Effect.succeed([]),
-      consumeApproved: () => Effect.succeed(false),
-      expireDue: () => Effect.succeed([]),
-      cancelForExecution: () => Effect.succeed([]),
-      putPendingExact: (request) => {
-        persisted = request;
-        return Effect.succeed(expected);
-      },
-    };
-
-    const result = await Effect.runPromise(
-      issueExecutableApproval(
-        {
-          binding: binding(),
-          authority: authority(),
+  it.effect(
+    "passes the exact trusted binding and lease to the atomic Pending writer",
+    () =>
+      Effect.gen(function* () {
+        let persisted:
+          | Parameters<ExecutableApprovalStoreService["putPendingExact"]>[0]
+          | undefined;
+        const expected = recordFor({
+          ...binding(),
+          approvalId: "apr_first",
           requestedAt: "2026-10-11T00:00:00.000Z",
-          executionFence: {
-            executionId: "exe_ea_test" as never,
-            workerId: "worker-1",
-            workerIncarnationId: "incarnation-1",
-            fencingGeneration: 4 as never,
+          expiresAt: "2026-10-11T00:15:00.000Z",
+        });
+        const store: ExecutableApprovalStoreService = {
+          findByActionKey: () => Effect.succeed(Option.none()),
+          findById: () => Effect.succeed(Option.none()),
+          findPendingForExecution: () => Effect.succeed(Option.none()),
+          decide: () => Effect.succeed(Option.none()),
+          listResolved: () => Effect.succeed([]),
+          consumeApproved: () => Effect.succeed(false),
+          expireDue: () => Effect.succeed([]),
+          cancelForExecution: () => Effect.succeed([]),
+          putPendingExact: (request) => {
+            persisted = request;
+            return Effect.succeed(expected);
           },
-        },
-        {
-          store,
-          transaction: transaction(),
-          resolveCandidate: () =>
-            Effect.succeed({
-              approvalId: "apr_first",
-              expiresAt: "2026-10-11T00:15:00.000Z",
-            }),
-        },
-      ),
-    );
+        };
 
-    expect(result).toMatchObject({
-      approvalId: "apr_first",
-      routeKind: "Executable",
-      state: "Pending",
-      revision: 0,
-    });
-    expect(persisted).toMatchObject({
-      executionFence: {
-        executionId: "exe_ea_test",
-        workerId: "worker-1",
-        workerIncarnationId: "incarnation-1",
-        fencingGeneration: 4,
-      },
-      logicalStepNo: 3,
-      repairAttempt: 1,
-      actionIndex: 0,
-      logicalActionId: "lac_ea_test",
-      toolInvocationId: "tin_ea_test",
-    });
-  });
-
-  it("reuses the committed binding and first TTL on same-action replay", async () => {
-    const committed = recordFor({
-      ...binding(),
-      approvalId: "apr_existing",
-      requestedAt: "2026-10-11T00:00:00.000Z",
-      expiresAt: "2026-10-11T00:15:00.000Z",
-    });
-    let candidateResolutions = 0;
-    let pendingWrites = 0;
-    const store: ExecutableApprovalStoreService = {
-      findByActionKey: () => Effect.succeed(Option.some(committed)),
-      findById: () => Effect.succeed(Option.some(committed)),
-      findPendingForExecution: () => Effect.succeed(Option.none()),
-      decide: () => Effect.succeed(Option.none()),
-      listResolved: () => Effect.succeed([]),
-      consumeApproved: () => Effect.succeed(false),
-      expireDue: () => Effect.succeed([]),
-      cancelForExecution: () => Effect.succeed([]),
-      putPendingExact: () => {
-        pendingWrites += 1;
-        return Effect.succeed(committed);
-      },
-    };
-
-    const result = await Effect.runPromise(
-      issueExecutableApproval(
-        {
-          binding: binding(),
-          authority: authority(),
-          requestedAt: "2026-10-11T00:10:00.000Z",
-          executionFence: {
-            executionId: "exe_ea_test" as never,
-            workerId: "worker-1",
-            workerIncarnationId: "incarnation-1",
-            fencingGeneration: 4 as never,
-          },
-        },
-        {
-          store,
-          transaction: transaction(),
-          resolveCandidate: () => {
-            candidateResolutions += 1;
-            return Effect.succeed({
-              approvalId: "apr_new",
-              expiresAt: "2026-10-11T00:25:00.000Z",
-            });
-          },
-        },
-      ),
-    );
-
-    expect(result).not.toBe("ExecutionStopping");
-    if (result === "ExecutionStopping") throw new Error("unexpected Stop");
-    expect(result.approvalId).toBe("apr_existing");
-    expect(result.expiresAt).toBe("2026-10-11T00:15:00.000Z");
-    expect(candidateResolutions).toBe(0);
-    expect(pendingWrites).toBe(0);
-  });
-
-  it("fails closed when the logical-action key is reused with changed arguments", async () => {
-    const changed = { ...binding(), argumentsJson: '{"path":"other"}' };
-    const committed = recordFor({
-      ...binding(),
-      approvalId: "apr_existing",
-      requestedAt: "2026-10-11T00:00:00.000Z",
-      expiresAt: "2026-10-11T00:15:00.000Z",
-    });
-    const store: ExecutableApprovalStoreService = {
-      findByActionKey: () => Effect.succeed(Option.some(committed)),
-      findById: () => Effect.succeed(Option.some(committed)),
-      findPendingForExecution: () => Effect.succeed(Option.none()),
-      decide: () => Effect.succeed(Option.none()),
-      listResolved: () => Effect.succeed([]),
-      consumeApproved: () => Effect.succeed(false),
-      expireDue: () => Effect.succeed([]),
-      cancelForExecution: () => Effect.succeed([]),
-      putPendingExact: () => Effect.die("must not write on binding conflict"),
-    };
-
-    const failure = await Effect.runPromise(
-      Effect.flip(
-        issueExecutableApproval(
+        const result = yield* issueExecutableApproval(
           {
-            binding: changed,
+            binding: binding(),
+            authority: authority(),
+            requestedAt: "2026-10-11T00:00:00.000Z",
+            executionFence: {
+              executionId: "exe_ea_test" as never,
+              workerId: "worker-1",
+              workerIncarnationId: "incarnation-1",
+              fencingGeneration: 4 as never,
+            },
+          },
+          {
+            store,
+            transaction: transaction(),
+            resolveCandidate: () =>
+              Effect.succeed({
+                approvalId: "apr_first",
+                expiresAt: "2026-10-11T00:15:00.000Z",
+              }),
+          },
+        );
+
+        expect(result).toMatchObject({
+          approvalId: "apr_first",
+          routeKind: "Executable",
+          state: "Pending",
+          revision: 0,
+        });
+        expect(persisted).toMatchObject({
+          executionFence: {
+            executionId: "exe_ea_test",
+            workerId: "worker-1",
+            workerIncarnationId: "incarnation-1",
+            fencingGeneration: 4,
+          },
+          logicalStepNo: 3,
+          repairAttempt: 1,
+          actionIndex: 0,
+          logicalActionId: "lac_ea_test",
+          toolInvocationId: "tin_ea_test",
+        });
+      }),
+  );
+
+  it.effect(
+    "reuses the committed binding and first TTL on same-action replay",
+    () =>
+      Effect.gen(function* () {
+        const committed = recordFor({
+          ...binding(),
+          approvalId: "apr_existing",
+          requestedAt: "2026-10-11T00:00:00.000Z",
+          expiresAt: "2026-10-11T00:15:00.000Z",
+        });
+        let candidateResolutions = 0;
+        let pendingWrites = 0;
+        const store: ExecutableApprovalStoreService = {
+          findByActionKey: () => Effect.succeed(Option.some(committed)),
+          findById: () => Effect.succeed(Option.some(committed)),
+          findPendingForExecution: () => Effect.succeed(Option.none()),
+          decide: () => Effect.succeed(Option.none()),
+          listResolved: () => Effect.succeed([]),
+          consumeApproved: () => Effect.succeed(false),
+          expireDue: () => Effect.succeed([]),
+          cancelForExecution: () => Effect.succeed([]),
+          putPendingExact: () => {
+            pendingWrites += 1;
+            return Effect.succeed(committed);
+          },
+        };
+
+        const result = yield* issueExecutableApproval(
+          {
+            binding: binding(),
             authority: authority(),
             requestedAt: "2026-10-11T00:10:00.000Z",
             executionFence: {
@@ -247,21 +196,80 @@ describe("Executable approval issuance", () => {
           {
             store,
             transaction: transaction(),
-            resolveCandidate: () => Effect.die("must not resolve a new ID"),
+            resolveCandidate: () => {
+              candidateResolutions += 1;
+              return Effect.succeed({
+                approvalId: "apr_new",
+                expiresAt: "2026-10-11T00:25:00.000Z",
+              });
+            },
           },
-        ),
-      ),
-    );
+        );
 
-    expect(failure).toMatchObject({
-      _tag: "ExecutableApprovalBindingConflict",
-      key: {
-        executionId: "exe_ea_test",
-        logicalStepNo: 3,
-        repairAttempt: 1,
-        actionIndex: 0,
-        logicalActionId: "lac_ea_test",
-      },
-    });
-  });
+        expect(result).not.toBe("ExecutionStopping");
+        if (result === "ExecutionStopping") throw new Error("unexpected Stop");
+        expect(result.approvalId).toBe("apr_existing");
+        expect(result.expiresAt).toBe("2026-10-11T00:15:00.000Z");
+        expect(candidateResolutions).toBe(0);
+        expect(pendingWrites).toBe(0);
+      }),
+  );
+
+  it.effect(
+    "fails closed when the logical-action key is reused with changed arguments",
+    () =>
+      Effect.gen(function* () {
+        const changed = { ...binding(), argumentsJson: '{"path":"other"}' };
+        const committed = recordFor({
+          ...binding(),
+          approvalId: "apr_existing",
+          requestedAt: "2026-10-11T00:00:00.000Z",
+          expiresAt: "2026-10-11T00:15:00.000Z",
+        });
+        const store: ExecutableApprovalStoreService = {
+          findByActionKey: () => Effect.succeed(Option.some(committed)),
+          findById: () => Effect.succeed(Option.some(committed)),
+          findPendingForExecution: () => Effect.succeed(Option.none()),
+          decide: () => Effect.succeed(Option.none()),
+          listResolved: () => Effect.succeed([]),
+          consumeApproved: () => Effect.succeed(false),
+          expireDue: () => Effect.succeed([]),
+          cancelForExecution: () => Effect.succeed([]),
+          putPendingExact: () =>
+            Effect.die("must not write on binding conflict"),
+        };
+
+        const failure = yield* Effect.flip(
+          issueExecutableApproval(
+            {
+              binding: changed,
+              authority: authority(),
+              requestedAt: "2026-10-11T00:10:00.000Z",
+              executionFence: {
+                executionId: "exe_ea_test" as never,
+                workerId: "worker-1",
+                workerIncarnationId: "incarnation-1",
+                fencingGeneration: 4 as never,
+              },
+            },
+            {
+              store,
+              transaction: transaction(),
+              resolveCandidate: () => Effect.die("must not resolve a new ID"),
+            },
+          ),
+        );
+
+        expect(failure).toMatchObject({
+          _tag: "ExecutableApprovalBindingConflict",
+          key: {
+            executionId: "exe_ea_test",
+            logicalStepNo: 3,
+            repairAttempt: 1,
+            actionIndex: 0,
+            logicalActionId: "lac_ea_test",
+          },
+        });
+      }),
+  );
 });

@@ -1,51 +1,58 @@
 import type { ExecutionId, LeaseFencingRejected } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import {
   containFencingRejection,
   containLeaseFencingRejected,
 } from "../src/wake-consumer.js";
 
 describe("containFencingRejection", () => {
-  it("ends the wake successfully when ownership was lost", async () => {
-    const lost: LeaseFencingRejected = {
-      _tag: "LeaseFencingRejected",
-      executionId: "exe_00000000-0000-7000-8000-000000000000" as ExecutionId,
-      generation: 0 as LeaseFencingRejected["generation"],
-    };
+  it.effect("ends the wake successfully when ownership was lost", () =>
+    Effect.gen(function* () {
+      const lost: LeaseFencingRejected = {
+        _tag: "LeaseFencingRejected",
+        executionId: "exe_00000000-0000-7000-8000-000000000000" as ExecutionId,
+        generation: 0 as LeaseFencingRejected["generation"],
+      };
 
-    await expect(
-      Effect.runPromise(containFencingRejection(Effect.fail(lost))),
-    ).resolves.toBeUndefined();
-  });
+      expect(yield* containFencingRejection(Effect.fail(lost))).toBeUndefined();
+    }),
+  );
 
-  it("contains the terminal settlement rejection after a stale lease", async () => {
-    await expect(
-      Effect.runPromise(
-        containFencingRejection(
-          Effect.fail({ _tag: "FencingRejected" as const }),
-        ),
-      ),
-    ).resolves.toBeUndefined();
-  });
+  it.effect(
+    "contains the terminal settlement rejection after a stale lease",
+    () =>
+      Effect.gen(function* () {
+        expect(
+          yield* containFencingRejection(
+            Effect.fail({ _tag: "FencingRejected" as const }),
+          ),
+        ).toBeUndefined();
+      }),
+  );
 
-  it("preserves unrelated failures", async () => {
-    const failure = { _tag: "OtherFailure", reason: "not ownership loss" };
+  it.effect("preserves unrelated failures", () =>
+    Effect.gen(function* () {
+      const failure = { _tag: "OtherFailure", reason: "not ownership loss" };
 
-    await expect(
-      Effect.runPromise(containFencingRejection(Effect.fail(failure))),
-    ).rejects.toMatchObject(failure);
-  });
+      expect(
+        yield* Effect.flip(containFencingRejection(Effect.fail(failure))),
+      ).toMatchObject(failure);
+    }),
+  );
 
-  it("keeps the legacy helper equivalent", async () => {
-    const lost: LeaseFencingRejected = {
-      _tag: "LeaseFencingRejected",
-      executionId: "exe_00000000-0000-7000-8000-000000000000" as ExecutionId,
-      generation: 0 as LeaseFencingRejected["generation"],
-    };
+  it.effect("keeps the legacy helper equivalent", () =>
+    Effect.gen(function* () {
+      const lost: LeaseFencingRejected = {
+        _tag: "LeaseFencingRejected",
+        executionId: "exe_00000000-0000-7000-8000-000000000000" as ExecutionId,
+        generation: 0 as LeaseFencingRejected["generation"],
+      };
 
-    await expect(
-      Effect.runPromise(containLeaseFencingRejected(Effect.fail(lost))),
-    ).resolves.toBeUndefined();
-  });
+      expect(
+        yield* containLeaseFencingRejected(Effect.fail(lost)),
+      ).toBeUndefined();
+    }),
+  );
 });

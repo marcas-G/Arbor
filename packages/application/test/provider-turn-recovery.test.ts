@@ -5,8 +5,9 @@ import {
   TransactionScope,
   type UnsettledProviderTurn,
 } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import { recoverUnsettledProviderTurns } from "../src/provider-turn-recovery.js";
 
 const turn: UnsettledProviderTurn = {
@@ -41,40 +42,42 @@ const turn: UnsettledProviderTurn = {
 };
 
 describe("ProviderTurn recovery deadline", () => {
-  it("fails closed when the persisted absolute deadline is malformed", async () => {
-    let failedTurns = 0;
-    const turns = {
-      findUnsettledByProject: () => Effect.succeed([turn]),
-      recordRecoveryDecision: () => Effect.void,
-      failTurn: () =>
-        Effect.sync(() => {
-          failedTurns += 1;
-        }),
-    } as unknown as ProviderTurnStoreService;
-    const tx: TransactionPortService = {
-      transact: (body) =>
-        Effect.provideService(body, TransactionScope, {
-          session: { id: "test" },
-        }),
-    };
-    const report = await Effect.runPromise(
-      recoverUnsettledProviderTurns(
-        {
-          turns,
-          tx,
-          clock: { now: () => Effect.succeed("2026-09-30T00:00:00.000Z") },
-        },
-        "prj_deadline_invalid" as never,
-        "runtime:test" as never,
-      ),
-    );
+  it.effect(
+    "fails closed when the persisted absolute deadline is malformed",
+    () =>
+      Effect.gen(function* () {
+        let failedTurns = 0;
+        const turns = {
+          findUnsettledByProject: () => Effect.succeed([turn]),
+          recordRecoveryDecision: () => Effect.void,
+          failTurn: () =>
+            Effect.sync(() => {
+              failedTurns += 1;
+            }),
+        } as unknown as ProviderTurnStoreService;
+        const tx: TransactionPortService = {
+          transact: (body) =>
+            Effect.provideService(body, TransactionScope, {
+              session: { id: "test" },
+            }),
+        };
+        const report = yield* recoverUnsettledProviderTurns(
+          {
+            turns,
+            tx,
+            clock: { now: () => Effect.succeed("2026-09-30T00:00:00.000Z") },
+          },
+          "prj_deadline_invalid" as never,
+          "runtime:test" as never,
+        );
 
-    expect(report.retryPlan).toEqual([]);
-    expect(report.failedTurns).toHaveLength(1);
-    expect(report.failedTurns[0]?.retryDecision).toMatchObject({
-      decision: "Stop",
-      safety: "UnsafeReplay",
-    });
-    expect(failedTurns).toBe(1);
-  });
+        expect(report.retryPlan).toEqual([]);
+        expect(report.failedTurns).toHaveLength(1);
+        expect(report.failedTurns[0]?.retryDecision).toMatchObject({
+          decision: "Stop",
+          safety: "UnsafeReplay",
+        });
+        expect(failedTurns).toBe(1);
+      }),
+  );
 });

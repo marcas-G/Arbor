@@ -1,7 +1,8 @@
 import type { SkillRegistryService } from "@arbor/ports";
 import { SkillRegistry } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import {
   progressiveLoad,
   SKILL_AUTHORITY_ROLE,
@@ -31,18 +32,24 @@ const fakeRegistry: SkillRegistryService = {
 const layer = Layer.succeed(SkillRegistry, fakeRegistry);
 
 describe("P3 skills surface", () => {
-  it("loads summary first and body only on demand", async () => {
-    const summaryOnly = await Effect.runPromise(
-      Effect.provide(progressiveLoad(fakeRegistry, "skill-a", false), layer),
-    );
-    expect(summaryOnly.summary).toBe("skill-a:Summary");
-    expect(summaryOnly.body).toBeNull();
+  it.effect("loads summary first and body only on demand", () =>
+    Effect.gen(function* () {
+      const summaryOnly = yield* progressiveLoad(
+        fakeRegistry,
+        "skill-a",
+        false,
+      ).pipe(Effect.provide(layer));
+      expect(summaryOnly.summary).toBe("skill-a:Summary");
+      expect(summaryOnly.body).toBeNull();
 
-    const withBody = await Effect.runPromise(
-      Effect.provide(progressiveLoad(fakeRegistry, "skill-a", true), layer),
-    );
-    expect(withBody.body).toBe("skill-a:Body");
-  });
+      const withBody = yield* progressiveLoad(
+        fakeRegistry,
+        "skill-a",
+        true,
+      ).pipe(Effect.provide(layer));
+      expect(withBody.body).toBe("skill-a:Body");
+    }),
+  );
 
   it("keeps skills at A5 and unable to override A0-A3", () => {
     expect(SKILL_AUTHORITY_ROLE).toBe("A5");

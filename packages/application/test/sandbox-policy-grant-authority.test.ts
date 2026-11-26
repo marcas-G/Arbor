@@ -10,8 +10,9 @@ import {
   SemanticRequestFingerprint,
   WorkspaceId,
 } from "@arbor/domain";
+import { it } from "@effect/vitest";
 import { Effect } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import {
   type AuthorityDecisionInput,
   AuthorityResolverPort,
@@ -88,76 +89,84 @@ const input = (overrides: Record<string, unknown> = {}) => {
 };
 
 const resolve = (value: AuthorityDecisionInput) =>
-  Effect.runPromise(
-    Effect.provide(
-      Effect.gen(function* () {
-        const resolver = yield* AuthorityResolverPort;
-        return yield* resolver.resolve(value);
-      }),
-      AuthorityResolverPortLive,
-    ),
-  );
+  Effect.gen(function* () {
+    const resolver = yield* AuthorityResolverPort;
+    return yield* resolver.resolve(value);
+  }).pipe(Effect.provide(AuthorityResolverPortLive));
 
 describe("P12 sandbox GrantPermission issuer authority", () => {
-  it("authorizes only the exact configured human issuer for an active exact Execution", async () => {
-    expect(configSnapshot.configDigest).not.toBe(
-      configSnapshot.operatorConfigDigest,
-    );
-    await expect(resolve(input())).resolves.toMatchObject({
-      _tag: "GrantPermissionAuthority",
-      permissionGrantId,
-      sandboxPolicyIssuerBinding: {
-        executionId,
-        operatorConfigRevision: 9,
-        operatorConfigDigest: "f".repeat(64),
-        authorityBundleRevision: 4,
-        authorityBundleDigest: "b".repeat(64),
-        providerRegistryRevision: 3,
-        providerRegistryDigest: "c".repeat(64),
-      },
-    });
-  });
+  it.effect(
+    "authorizes only the exact configured human issuer for an active exact Execution",
+    () =>
+      Effect.gen(function* () {
+        expect(configSnapshot.configDigest).not.toBe(
+          configSnapshot.operatorConfigDigest,
+        );
+        expect(yield* resolve(input())).toMatchObject({
+          _tag: "GrantPermissionAuthority",
+          permissionGrantId,
+          sandboxPolicyIssuerBinding: {
+            executionId,
+            operatorConfigRevision: 9,
+            operatorConfigDigest: "f".repeat(64),
+            authorityBundleRevision: 4,
+            authorityBundleDigest: "b".repeat(64),
+            providerRegistryRevision: 3,
+            providerRegistryDigest: "c".repeat(64),
+          },
+        });
+      }),
+  );
 
-  it.each([
+  it.effect.each([
     { issuer: "user:other" },
     { subject: { _tag: "HumanPrincipal", principal } },
     { target: "exe_018f2b3c-4d5e-7abc-8def-0123456789a2" },
     { expiresAt: "2026-10-18T00:00:00.000Z" },
-  ])(
-    "denies invalid issuer, subject, target or lifetime %#",
-    async (override) => {
-      await expect(resolve(input(override))).rejects.toMatchObject({
+  ])("denies invalid issuer, subject, target or lifetime %#", (override) =>
+    Effect.gen(function* () {
+      expect(yield* Effect.flip(resolve(input(override)))).toMatchObject({
         _tag: "NoApplicableGrant",
         commandType: "GrantPermission",
       });
-    },
+    }),
   );
 
-  it("does not let the ordinary human override or a missing config issue the special Grant", async () => {
-    const withoutSnapshot = {
-      ...input(),
-      governance: { authenticatedHumans: [principal], directParentOf: [] },
-      sandboxPolicyGrantIssuerConfigSnapshot: undefined,
-    } as never;
-    await expect(resolve(withoutSnapshot)).rejects.toMatchObject({
-      _tag: "NoApplicableGrant",
-    });
-  });
-
-  it("denies a valid authenticated issuer removed from the current issuer allowlist while operator F remains valid", async () => {
-    await expect(
-      resolve({
-        ...input(),
-        sandboxPolicyGrantIssuerConfigSnapshot: {
-          ...configSnapshot,
-          config: { ...configSnapshot.config, issuers: [] },
-        },
+  it.effect(
+    "does not let the ordinary human override or a missing config issue the special Grant",
+    () =>
+      Effect.gen(function* () {
+        const withoutSnapshot = {
+          ...input(),
+          governance: { authenticatedHumans: [principal], directParentOf: [] },
+          sandboxPolicyGrantIssuerConfigSnapshot: undefined,
+        } as never;
+        expect(yield* Effect.flip(resolve(withoutSnapshot))).toMatchObject({
+          _tag: "NoApplicableGrant",
+        });
       }),
-    ).rejects.toMatchObject({
-      _tag: "NoApplicableGrant",
-      commandType: "GrantPermission",
-    });
-  });
+  );
+
+  it.effect(
+    "denies a valid authenticated issuer removed from the current issuer allowlist while operator F remains valid",
+    () =>
+      Effect.gen(function* () {
+        expect(
+          yield* Effect.flip(
+            resolve({
+              ...input(),
+              sandboxPolicyGrantIssuerConfigSnapshot: {
+                ...configSnapshot,
+                config: { ...configSnapshot.config, issuers: [] },
+              },
+            }),
+          ),
+        ).toMatchObject({
+          _tag: "NoApplicableGrant",
+          commandType: "GrantPermission",
+        });
+      }),
+  );
 });
 
 describe("P12 DecideSandboxPolicy CAPA preflight", () => {
@@ -248,56 +257,73 @@ describe("P12 DecideSandboxPolicy CAPA preflight", () => {
     } as AuthorityDecisionInput;
   };
 
-  it("binds the exact active human grant, episode and immutable issuer provenance", async () => {
-    await expect(resolve(decisionInput())).resolves.toMatchObject({
-      _tag: "SandboxPolicyDecisionAuthority",
-      principal: subjectPrincipal,
-      workspaceId,
-      executionId,
-      episodeRevision: 2,
-      permissionGrant: { permissionGrantId, revision: 3, state: "Active" },
-      issuerProvenance: {
-        issuerPrincipal: principal,
-        operatorConfigRevision: 9,
-        operatorConfigDigest: "f".repeat(64),
-      },
-      operatorConfigRevision: 9,
-      operatorConfigDigest: "f".repeat(64),
-    });
-  });
-
-  it("denies old operator-F provenance after operator config rotates while issuer A remains valid", async () => {
-    await expect(
-      resolve({
-        ...decisionInput(),
-        sandboxPolicyGrantIssuerConfigSnapshot: {
-          ...configSnapshot,
-          operatorConfigRevision: 10,
-          operatorConfigDigest: "e".repeat(64),
-        },
+  it.effect(
+    "binds the exact active human grant, episode and immutable issuer provenance",
+    () =>
+      Effect.gen(function* () {
+        expect(yield* resolve(decisionInput())).toMatchObject({
+          _tag: "SandboxPolicyDecisionAuthority",
+          principal: subjectPrincipal,
+          workspaceId,
+          executionId,
+          episodeRevision: 2,
+          permissionGrant: { permissionGrantId, revision: 3, state: "Active" },
+          issuerProvenance: {
+            issuerPrincipal: principal,
+            operatorConfigRevision: 9,
+            operatorConfigDigest: "f".repeat(64),
+          },
+          operatorConfigRevision: 9,
+          operatorConfigDigest: "f".repeat(64),
+        });
       }),
-    ).rejects.toMatchObject({
-      _tag: "NoApplicableGrant",
-      commandType: "DecideSandboxPolicy",
-    });
-  });
-
-  it.each([{ executionId: "exe_018f2b3c-4d5e-7abc-8def-0123456789a2" }])(
-    "denies a foreign execution identity %#",
-    async (override) => {
-      await expect(resolve(decisionInput(override))).rejects.toMatchObject({
-        _tag: "NoApplicableGrant",
-        commandType: "DecideSandboxPolicy",
-      });
-    },
   );
 
-  it("leaves caller expected episode revision to the P1 transaction CAS", async () => {
-    await expect(
-      resolve(decisionInput({ expectedEpisodeRevision: 1 })),
-    ).resolves.toMatchObject({
-      _tag: "SandboxPolicyDecisionAuthority",
-      episodeRevision: 2,
-    });
-  });
+  it.effect(
+    "denies old operator-F provenance after operator config rotates while issuer A remains valid",
+    () =>
+      Effect.gen(function* () {
+        expect(
+          yield* Effect.flip(
+            resolve({
+              ...decisionInput(),
+              sandboxPolicyGrantIssuerConfigSnapshot: {
+                ...configSnapshot,
+                operatorConfigRevision: 10,
+                operatorConfigDigest: "e".repeat(64),
+              },
+            }),
+          ),
+        ).toMatchObject({
+          _tag: "NoApplicableGrant",
+          commandType: "DecideSandboxPolicy",
+        });
+      }),
+  );
+
+  it.effect.each([{ executionId: "exe_018f2b3c-4d5e-7abc-8def-0123456789a2" }])(
+    "denies a foreign execution identity %#",
+    (override) =>
+      Effect.gen(function* () {
+        expect(
+          yield* Effect.flip(resolve(decisionInput(override))),
+        ).toMatchObject({
+          _tag: "NoApplicableGrant",
+          commandType: "DecideSandboxPolicy",
+        });
+      }),
+  );
+
+  it.effect(
+    "leaves caller expected episode revision to the P1 transaction CAS",
+    () =>
+      Effect.gen(function* () {
+        expect(
+          yield* resolve(decisionInput({ expectedEpisodeRevision: 1 })),
+        ).toMatchObject({
+          _tag: "SandboxPolicyDecisionAuthority",
+          episodeRevision: 2,
+        });
+      }),
+  );
 });

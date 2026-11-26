@@ -1,6 +1,7 @@
 import { makeWorkspacePolicy } from "@arbor/domain";
+import { it } from "@effect/vitest";
 import { Effect } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import {
   AuthorityResolverPort,
   AuthorityResolverPortLive,
@@ -30,22 +31,18 @@ const input = (requestedCapabilities: ReadonlyArray<string>) => ({
 });
 
 describe("tool authority baseline", () => {
-  it("allows boundary-limited read without a grant and denies shell without a grant", async () => {
-    const result = await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          const resolver = yield* AuthorityResolverPort;
-          const read = yield* resolver.resolveInvocation(input(["fs:read"]));
-          const shell = yield* Effect.flip(
-            resolver.resolveInvocation(input(["shell:exec"])),
-          );
-          return { read, shell };
-        }),
-        AuthorityResolverPortLive,
-      ),
-    );
-    expect(result.read.allowedCapabilities).toEqual(["fs:read"]);
-    expect(result.read.expiresAt).toBe("2026-10-01T00:01:00.000Z");
-    expect(result.shell._tag).toBe("NoApplicableGrant");
-  });
+  it.effect(
+    "allows boundary-limited read without a grant and denies shell without a grant",
+    () =>
+      Effect.gen(function* () {
+        const resolver = yield* AuthorityResolverPort;
+        const read = yield* resolver.resolveInvocation(input(["fs:read"]));
+        const shell = yield* Effect.flip(
+          resolver.resolveInvocation(input(["shell:exec"])),
+        );
+        expect(read.allowedCapabilities).toEqual(["fs:read"]);
+        expect(read.expiresAt).toBe("2026-10-01T00:01:00.000Z");
+        expect(shell._tag).toBe("NoApplicableGrant");
+      }).pipe(Effect.provide(AuthorityResolverPortLive)),
+  );
 });

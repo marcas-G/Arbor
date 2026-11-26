@@ -1,6 +1,7 @@
 import { TransactionScope } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect, Option } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import { runAttentionPollOnce } from "../src/attention-poll-loop.js";
 
 const projectId = "prj_attention_poll" as never;
@@ -156,134 +157,152 @@ const makeDeps = (
 };
 
 describe("P37 P10 Attention poll coordinator", () => {
-  it("projects the retained F18 queue independently of the journal offset", async () => {
-    const trace: Array<string> = [];
-    const claim = {
-      projectId,
-      attentionFactId: "f18-fact",
-      leaseOwner: policy.leaseOwner,
-      leaseGeneration: 2,
-      leaseExpiresAt: "2026-10-11T00:00:31.000Z",
-    };
-    const result = await Effect.runPromise(
-      runAttentionPollOnce(
-        "p10-rebuild:attention",
-        policy,
-        makeDeps(trace, {
+  it.effect(
+    "projects the retained F18 queue independently of the journal offset",
+    () =>
+      Effect.gen(function* () {
+        const trace: Array<string> = [];
+        const claim = {
+          projectId,
+          attentionFactId: "f18-fact",
+          leaseOwner: policy.leaseOwner,
+          leaseGeneration: 2,
+          leaseExpiresAt: "2026-10-11T00:00:31.000Z",
+        };
+        const result = yield* runAttentionPollOnce(
+          "p10-rebuild:attention",
+          policy,
+          makeDeps(trace, {
+            journal: {
+              readAfterRaw: () => {
+                trace.push("read-raw");
+                return Effect.succeed([]);
+              },
+              decodeRaw: () => Effect.die("empty journal has no events"),
+            },
+            verificationReconciliationQueue: {
+              claimAttentionQueue: () => {
+                trace.push("claim-f18-queue");
+                return Effect.succeed([claim]);
+              },
+              projectAttentionClaim: () => {
+                trace.push("project-f18-marker-and-queue");
+                return Effect.succeed(true);
+              },
+            },
+          }),
+        );
+        expect(result.lastSequence).toBe(0);
+        expect(trace).toContain("claim-f18-queue");
+        expect(trace).toContain("project-f18-marker-and-queue");
+        expect(trace).not.toContain("advance:1");
+        expect(trace.indexOf("claim-f18-queue")).toBeLessThan(
+          trace.indexOf("read-raw"),
+        );
+      }),
+  );
+
+  it.effect(
+    "uses raw event identity first and commits projection, queue ACK, offset and claim together",
+    () =>
+      Effect.gen(function* () {
+        const trace: Array<string> = [];
+        yield* runAttentionPollOnce(
+          "p10-rebuild:attention",
+          policy,
+          makeDeps(trace),
+        );
+
+        expect(trace.indexOf("read-raw")).toBeLessThan(
+          trace.indexOf("lookup-fact"),
+        );
+        expect(trace.indexOf("lookup-fact")).toBeLessThan(
+          trace.indexOf("decode-raw"),
+        );
+        expect(trace.indexOf("put-marker")).toBeLessThan(
+          trace.indexOf("ack-queue"),
+        );
+        expect(trace.indexOf("ack-queue")).toBeLessThan(
+          trace.indexOf("advance:1"),
+        );
+        expect(trace.indexOf("advance:1")).toBeLessThan(
+          trace.indexOf("complete-success"),
+        );
+        expect(trace.filter((entry) => entry === "transaction")).toHaveLength(
+          2,
+        );
+      }),
+  );
+
+  it.effect(
+    "emits the Deliver Attention post-commit qualification boundary after marker, ACK, offset and claim settlement",
+    () =>
+      Effect.gen(function* () {
+        const trace: Array<string> = [];
+        yield* runAttentionPollOnce(
+          "p10-rebuild:attention",
+          policy,
+          makeDeps(trace, {
+            qualificationProbe: (event: {
+              readonly boundary: string;
+              readonly projectId: unknown;
+              readonly attentionFactId: string;
+            }) => {
+              trace.push(
+                `probe:${event.boundary}:${event.projectId}:${event.attentionFactId}`,
+              );
+              return Promise.resolve();
+            },
+          }),
+        );
+
+        const committed = trace.indexOf("complete-success");
+        const probe = trace.findIndex((entry) => entry.startsWith("probe:"));
+        expect(trace.indexOf("put-marker")).toBeLessThan(probe);
+        expect(trace.indexOf("ack-queue")).toBeLessThan(probe);
+        expect(trace.indexOf("advance:1")).toBeLessThan(probe);
+        expect(committed).toBeLessThan(probe);
+        expect(trace[probe]).toBe(
+          `probe:P10AfterDeliverAttentionConsumerCommit:${projectId}:${fact.attentionFactId}`,
+        );
+      }),
+  );
+
+  it.effect(
+    "fails closed on an exact Deliver type without its P9 fact before decoding or advancing",
+    () =>
+      Effect.gen(function* () {
+        const trace: Array<string> = [];
+        const deps = makeDeps(trace, {
+          recoveryFacts: {
+            findDeliverReplayFailureByEventId: () => {
+              trace.push("lookup-fact");
+              return Effect.succeed(Option.none());
+            },
+            listPendingDeliverReplayAttention: () => Effect.succeed([]),
+            acknowledgePendingDeliverReplayAttention: () => Effect.void,
+          },
           journal: {
             readAfterRaw: () => {
               trace.push("read-raw");
-              return Effect.succeed([]);
+              return Effect.succeed([
+                { ...candidate, payloadJsonRaw: "not-json" },
+              ]);
             },
-            decodeRaw: () => Effect.die("empty journal has no events"),
-          },
-          verificationReconciliationQueue: {
-            claimAttentionQueue: () => {
-              trace.push("claim-f18-queue");
-              return Effect.succeed([claim]);
-            },
-            projectAttentionClaim: () => {
-              trace.push("project-f18-marker-and-queue");
-              return Effect.succeed(true);
+            decodeRaw: () => {
+              trace.push("decode-raw");
+              return Effect.die(
+                "Deliver payload must not be decoded before P9 lookup",
+              );
             },
           },
-        }),
-      ),
-    );
-    expect(result.lastSequence).toBe(0);
-    expect(trace).toContain("claim-f18-queue");
-    expect(trace).toContain("project-f18-marker-and-queue");
-    expect(trace).not.toContain("advance:1");
-    expect(trace.indexOf("claim-f18-queue")).toBeLessThan(
-      trace.indexOf("read-raw"),
-    );
-  });
+        });
 
-  it("uses raw event identity first and commits projection, queue ACK, offset and claim together", async () => {
-    const trace: Array<string> = [];
-    await Effect.runPromise(
-      runAttentionPollOnce("p10-rebuild:attention", policy, makeDeps(trace)),
-    );
-
-    expect(trace.indexOf("read-raw")).toBeLessThan(
-      trace.indexOf("lookup-fact"),
-    );
-    expect(trace.indexOf("lookup-fact")).toBeLessThan(
-      trace.indexOf("decode-raw"),
-    );
-    expect(trace.indexOf("put-marker")).toBeLessThan(
-      trace.indexOf("ack-queue"),
-    );
-    expect(trace.indexOf("ack-queue")).toBeLessThan(trace.indexOf("advance:1"));
-    expect(trace.indexOf("advance:1")).toBeLessThan(
-      trace.indexOf("complete-success"),
-    );
-    expect(trace.filter((entry) => entry === "transaction")).toHaveLength(2);
-  });
-
-  it("emits the Deliver Attention post-commit qualification boundary after marker, ACK, offset and claim settlement", async () => {
-    const trace: Array<string> = [];
-    await Effect.runPromise(
-      runAttentionPollOnce(
-        "p10-rebuild:attention",
-        policy,
-        makeDeps(trace, {
-          qualificationProbe: (event: {
-            readonly boundary: string;
-            readonly projectId: unknown;
-            readonly attentionFactId: string;
-          }) => {
-            trace.push(
-              `probe:${event.boundary}:${event.projectId}:${event.attentionFactId}`,
-            );
-            return Promise.resolve();
-          },
-        }),
-      ),
-    );
-
-    const committed = trace.indexOf("complete-success");
-    const probe = trace.findIndex((entry) => entry.startsWith("probe:"));
-    expect(trace.indexOf("put-marker")).toBeLessThan(probe);
-    expect(trace.indexOf("ack-queue")).toBeLessThan(probe);
-    expect(trace.indexOf("advance:1")).toBeLessThan(probe);
-    expect(committed).toBeLessThan(probe);
-    expect(trace[probe]).toBe(
-      `probe:P10AfterDeliverAttentionConsumerCommit:${projectId}:${fact.attentionFactId}`,
-    );
-  });
-
-  it("fails closed on an exact Deliver type without its P9 fact before decoding or advancing", async () => {
-    const trace: Array<string> = [];
-    const deps = makeDeps(trace, {
-      recoveryFacts: {
-        findDeliverReplayFailureByEventId: () => {
-          trace.push("lookup-fact");
-          return Effect.succeed(Option.none());
-        },
-        listPendingDeliverReplayAttention: () => Effect.succeed([]),
-        acknowledgePendingDeliverReplayAttention: () => Effect.void,
-      },
-      journal: {
-        readAfterRaw: () => {
-          trace.push("read-raw");
-          return Effect.succeed([{ ...candidate, payloadJsonRaw: "not-json" }]);
-        },
-        decodeRaw: () => {
-          trace.push("decode-raw");
-          return Effect.die(
-            "Deliver payload must not be decoded before P9 lookup",
-          );
-        },
-      },
-    });
-
-    await Effect.runPromise(
-      runAttentionPollOnce("p10-rebuild:attention", policy, deps),
-    );
-    expect(trace).toContain("record-failure:MissingP9Fact");
-    expect(trace).not.toContain("decode-raw");
-    expect(trace).not.toContain("advance:1");
-    expect(trace).not.toContain("complete-success");
-  });
+        yield* runAttentionPollOnce("p10-rebuild:attention", policy, deps);
+        expect(trace).toContain("record-failure:MissingP9Fact");
+        expect(trace).not.toContain("decode-raw");
+        expect(trace).not.toContain("advance:1");
+        expect(trace).not.toContain("complete-success");
+      }),
+  );
 });

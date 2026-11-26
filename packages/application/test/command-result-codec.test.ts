@@ -1,6 +1,7 @@
 import type { StoredCommandResolution } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import {
   COMMAND_RECEIPT_DECODER_DESCRIPTORS,
   decodeRegisteredCommandReceipt,
@@ -76,583 +77,615 @@ describe("registered command receipt decoders", () => {
     ]);
   });
 
-  it("accepts a current positive DTO example for every registered descriptor", async () => {
-    const projectId = id("prj");
-    const workspaceId = id("ws");
-    const workId = id("wrk");
-    const executionId = id("exe");
-    const sessionId = id("ses");
-    const verificationId = id("ver");
-    const messageId = id("msg");
-    const dependencyId = id("dep");
-    const deliverableId = id("del");
-    const policyEpisode = {
-      _tag: "InboxEpisode" as const,
-      entryKey: "inbox:one",
-      inputKind: "HumanMessage",
-    };
-    const policySummary: EffectivePolicySummaryV1 = {
-      version: 1,
-      kind: "TrustedLocalUnconfinedV1",
-      projectId: projectId as never,
-      workspaceId: workspaceId as never,
-      executionId: executionId as never,
-      episodeBinding: policyEpisode,
-      workspaceRevision: 1,
-      resourceBoundaryRevision: 1,
-      resourceBoundaryDigest: "a".repeat(64),
-      sandboxEnvironmentBasisDigest: "b".repeat(64),
-      policyRevision: 1,
-      expiresAt: "2026-10-20T00:00:00.000Z",
-      trustedRuntimeIdentity: "TrustedLocal",
-      trustedRuntimeVersion: "builtin-v1",
-      profile: "FullAccess",
-      networkBoundary: "Unconfined",
-      sandboxHandleBindingDigest: "c".repeat(64),
-      mounts: [
-        {
-          mountId: "workspace",
-          targetRef: {
-            version: 1,
-            kind: "RegionDigest",
-            resourceSpace: "filesystem",
-            regionIdentityDigest: "9".repeat(64),
-          },
-          targetIdentityDigest: "d".repeat(64),
-          access: "ReadOnly",
-        },
-      ],
-      environmentAllowlist: ["PATH"],
-      limits: {
-        wallTimeMs: 1000,
-        stdoutBytes: 1000,
-        stderrBytes: 1000,
-        processCount: 1,
-        memoryBytes: 1024,
-        cpuTimeMs: 1000,
-      },
-      auditRefs: ["audit:one"],
-      authorityBundleRevision: 1,
-      authorityBundleDigest: "e".repeat(64),
-      operatorConfigRevision: 1,
-      operatorConfigDigest: "f".repeat(64),
-    };
-    const policyDigest = createHash("sha256")
-      .update(encodeEffectivePolicySummaryV1(policySummary))
-      .digest("hex");
-    const {
-      trustedRuntimeIdentity: _identity,
-      trustedRuntimeVersion: _version,
-      networkBoundary: _networkBoundary,
-      ...commonPolicy
-    } = policySummary;
-    const workspacePolicySnapshot = {
-      ...commonPolicy,
-      version: 2 as const,
-      kind: "OsEnforced" as const,
-      profile: "ReadOnly" as const,
-      providerId: "linux-bwrap",
-      providerVersion: "1.0",
-      capabilityRevision: 1,
-      osFamily: "Linux" as const,
-      osBuild: "linux",
-      qualificationEvidenceRef: `blob:sha256:${"1".repeat(64)}`,
-      networkPolicy: {
-        version: 1 as const,
-        mode: "Disabled" as const,
-        destinations: [],
-      },
-      networkPolicyDigest: createHash("sha256")
-        .update(
-          encodeNetworkPolicyV1({
-            version: 1,
-            mode: "Disabled",
-            destinations: [],
-          }),
-        )
-        .digest("hex"),
-      networkBrokerControls: networkBrokerControlsV2ForMode("Disabled"),
-      providerRegistryRevision: 1,
-      providerRegistryDigest: "2".repeat(64),
-    };
-    const workspacePolicyResult = {
-      version: 3,
-      workspaceAuthorizationRevision: 1,
-      commandId: id("cmd"),
-      projectId,
-      workspaceId,
-      executionId,
-      episodeBinding: policyEpisode,
-      policyRevision: 1,
-      policyDigest: createHash("sha256")
-        .update(encodeEffectivePolicySummaryV2(workspacePolicySnapshot))
-        .digest("hex"),
-      effectivePolicySnapshot: JSON.parse(
-        encodeEffectivePolicySummaryV2(workspacePolicySnapshot),
-      ),
-    };
-    const validResults: Readonly<Record<string, unknown>> = {
-      BindWorkspaceSandboxPolicy: workspacePolicyResult,
-      AuthorizeWorkspaceSandbox: {
-        authorization: {
+  it.effect(
+    "accepts a current positive DTO example for every registered descriptor",
+    () =>
+      Effect.gen(function* () {
+        const projectId = id("prj");
+        const workspaceId = id("ws");
+        const workId = id("wrk");
+        const executionId = id("exe");
+        const sessionId = id("ses");
+        const verificationId = id("ver");
+        const messageId = id("msg");
+        const dependencyId = id("dep");
+        const deliverableId = id("del");
+        const policyEpisode = {
+          _tag: "InboxEpisode" as const,
+          entryKey: "inbox:one",
+          inputKind: "HumanMessage",
+        };
+        const policySummary: EffectivePolicySummaryV1 = {
           version: 1,
-          projectId,
-          workspaceId,
-          authorizationRevision: 1,
-          commandId: id("cmd"),
-          actorPrincipal: "user:local",
-          recordedAt: "2026-11-16T00:00:00Z",
-          state: "Granted",
-          origin: { kind: "Human", principal: "user:local" },
-          resourceBoundaryRevision: 0,
-          workspacePolicyRevision: 0,
-          profile: "WorkspaceWrite",
+          kind: "TrustedLocalUnconfinedV1",
+          projectId: projectId as never,
+          workspaceId: workspaceId as never,
+          executionId: executionId as never,
+          episodeBinding: policyEpisode,
+          workspaceRevision: 1,
+          resourceBoundaryRevision: 1,
+          resourceBoundaryDigest: "a".repeat(64),
+          sandboxEnvironmentBasisDigest: "b".repeat(64),
+          policyRevision: 1,
+          expiresAt: "2026-10-20T00:00:00.000Z",
+          trustedRuntimeIdentity: "TrustedLocal",
+          trustedRuntimeVersion: "builtin-v1",
+          profile: "FullAccess",
+          networkBoundary: "Unconfined",
+          sandboxHandleBindingDigest: "c".repeat(64),
+          mounts: [
+            {
+              mountId: "workspace",
+              targetRef: {
+                version: 1,
+                kind: "RegionDigest",
+                resourceSpace: "filesystem",
+                regionIdentityDigest: "9".repeat(64),
+              },
+              targetIdentityDigest: "d".repeat(64),
+              access: "ReadOnly",
+            },
+          ],
+          environmentAllowlist: ["PATH"],
+          limits: {
+            wallTimeMs: 1000,
+            stdoutBytes: 1000,
+            stderrBytes: 1000,
+            processCount: 1,
+            memoryBytes: 1024,
+            cpuTimeMs: 1000,
+          },
+          auditRefs: ["audit:one"],
+          authorityBundleRevision: 1,
+          authorityBundleDigest: "e".repeat(64),
+          operatorConfigRevision: 1,
+          operatorConfigDigest: "f".repeat(64),
+        };
+        const policyDigest = createHash("sha256")
+          .update(encodeEffectivePolicySummaryV1(policySummary))
+          .digest("hex");
+        const {
+          trustedRuntimeIdentity: _identity,
+          trustedRuntimeVersion: _version,
+          networkBoundary: _networkBoundary,
+          ...commonPolicy
+        } = policySummary;
+        const workspacePolicySnapshot = {
+          ...commonPolicy,
+          version: 2 as const,
+          kind: "OsEnforced" as const,
+          profile: "ReadOnly" as const,
           providerId: "linux-bwrap",
-          networkPolicy: { version: 1, mode: "Enabled", destinations: [] },
-          expiresAt: null,
-        },
-      },
-      RevokeWorkspaceSandboxAuthorization: {
-        authorization: {
-          version: 1,
+          providerVersion: "1.0",
+          capabilityRevision: 1,
+          osFamily: "Linux" as const,
+          osBuild: "linux",
+          qualificationEvidenceRef: `blob:sha256:${"1".repeat(64)}`,
+          networkPolicy: {
+            version: 1 as const,
+            mode: "Disabled" as const,
+            destinations: [],
+          },
+          networkPolicyDigest: createHash("sha256")
+            .update(
+              encodeNetworkPolicyV1({
+                version: 1,
+                mode: "Disabled",
+                destinations: [],
+              }),
+            )
+            .digest("hex"),
+          networkBrokerControls: networkBrokerControlsV2ForMode("Disabled"),
+          providerRegistryRevision: 1,
+          providerRegistryDigest: "2".repeat(64),
+        };
+        const workspacePolicyResult = {
+          version: 3,
+          workspaceAuthorizationRevision: 1,
+          commandId: id("cmd"),
           projectId,
           workspaceId,
-          authorizationRevision: 2,
-          commandId: id("cmd"),
-          actorPrincipal: "user:local",
-          recordedAt: "2026-11-16T00:00:00Z",
-          state: "Revoked",
-        },
-      },
-      CreateProject: {
-        projectId,
-        rootWorkspaceId: workspaceId,
-        primarySessionId: sessionId,
-      },
-      CreateChildWorkspace: {
-        workspaceId,
-        projectId,
-        parentWorkspaceId: workspaceId,
-        primarySessionId: sessionId,
-      },
-      AssignWork: { workId, workspaceId, lifecycle: "Open", revision: 0 },
-      UpdateResourceBoundary: {
-        workspaceId,
-        revision: 0,
-        resourceBoundaryRevision: 0,
-        releasedClaimIds: [],
-      },
-      RenameProject: { revision: 0, name: "Arbor" },
-      CloseProject: { revision: 0, lifecycle: "Closed" },
-      SelectCurrentWork: { workspaceId, workId, revision: 0 },
-      AdmitExecution: {
-        executionId,
-        workspaceId,
-        sessionId,
-        bindingKind: "WorkspaceMain",
-      },
-      StopExecution: { executionId, stopRequestedAt: "2026-10-17T00:00:00Z" },
-      SettleExecution: {
-        executionId,
-        settlement: {
-          _tag: "Completed",
-          result: {
-            _tag: "Yielded",
-            reason: "waiting",
-            waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
-          },
-        },
-      },
-      SendMessage: {
-        messageId,
-        admitted: true,
-        promotion: { closesCorrelation: null, triggersReevaluation: false },
-      },
-      DeliverMessage: {
-        messageId,
-        deliverableId,
-        senderWorkspaceId: workspaceId,
-        recipientWorkspaceId: workspaceId,
-        admitted: true,
-      },
-      DeclareDependency: {
-        dependencyId,
-        consumerWorkId: workId,
-        state: "Unsatisfied",
-        revision: 0,
-      },
-      ProduceDeliverable: {
-        deliverableId,
-        sourceWorkId: workId,
-        sourceWorkRevision: 0,
-        kind: "report",
-        artifactRoles: [],
-      },
-      SatisfyDependency: {
-        dependencyId,
-        state: "Satisfied",
-        dependencyRevision: 1,
-        deliverableId,
-        satisfiedAtDependencyRevision: 1,
-        wakeSignals: [],
-      },
-      RecordDecision: {
-        proposalId: id("fpr"),
-        proposalRevision: 0,
-        decision: "Approve",
-        state: "Approved",
-      },
-      ResolveControlApproval: {
-        approvalId: "approval-id",
-        executionId,
-        state: "Approved",
-        revision: 1,
-      },
-      ResolveExecutableApproval: {
-        approvalId: "approval-id",
-        executionId,
-        state: "Approved",
-        revision: 1,
-      },
-      SteerWork: {
-        workId,
-        workspaceId,
-        lifecycle: "Open",
-        fromRevision: 0,
-        toRevision: 1,
-        severity: "Normal",
-      },
-      AcceptWorkOutcome: {
-        acceptanceId: id("acc"),
-        workId,
-        targetWorkRevision: 0,
-        verificationId,
-      },
-      CompleteWork: {
-        workId,
-        workspaceId,
-        lifecycle: "Completed",
-        revision: 1,
-        clearedCurrentWork: true,
-      },
-      StartVerification: {
-        verificationId,
-        workId,
-        targetWorkRevision: 0,
-        ownerWorkspaceId: workspaceId,
-        state: "Open",
-        verifierExecutionId: executionId,
-      },
-      RecordVerificationEvidence: {
-        verificationId,
-        evidenceId: id("evd"),
-        state: "Recorded",
-      },
-      ConcludeVerification: {
-        verificationId,
-        state: "Concluded",
-        verdict: "Unknown",
-        summaryRef: "sha256:summary",
-        wakeSignals: [],
-        channel1Release: { workId, targetWorkRevision: 0 },
-      },
-      RetryVerification: {
-        workId,
-        orphanedVerificationId: verificationId,
-        successorVerificationId: id("ver"),
-        verifierExecutionId: executionId,
-        state: "OrphanedAndRetried",
-      },
-      GrantPermission: { permissionGrantId: id("pgr"), state: "Active" },
-      DecideSandboxPolicy: {
-        version: 1,
-        commandId: id("cmd"),
-        projectId,
-        workspaceId,
-        executionId,
-        episodeBinding: policyEpisode,
-        policyRevision: 1,
-        policyDigest,
-        effectivePolicySnapshot: policySummary,
-      },
-      RevokePermission: { permissionGrantId: id("pgr"), state: "Revoked" },
-      SubmitHumanMessage: { messageId, state: "Pending" },
-      ResumeConversationResponse: {
-        messageId,
-        state: "Queued",
-        revision: 1,
-      },
-      CancelConversationResponse: {
-        messageId,
-        state: "Cancelled",
-        revision: 1,
-      },
-    };
-
-    for (const descriptor of COMMAND_RECEIPT_DECODER_DESCRIPTORS) {
-      const result =
-        descriptor.commandType === "ConcludeVerification" &&
-        descriptor.schemaVersion === "2"
-          ? {
-              ...(validResults.ConcludeVerification as Record<string, unknown>),
-              verdict: "Pass",
-              conclusionReason: null,
-              missionSnapshot: {
-                goal: "goal",
-                criteria: [
-                  {
-                    criterionId: "criterion-1",
-                    requirement: "requirement-1",
-                    required: true,
-                  },
-                ],
-                riskRequirements: [],
-              },
-              criteriaResults: [
-                {
-                  criterionId: "criterion-1",
-                  requirement: "requirement-1",
-                  required: true,
-                  verdict: "Pass",
-                  evidenceRefs: [`evd_${uuid}`],
-                },
-              ],
-              snapshotStatus: "Available",
-            }
-          : validResults[descriptor.commandType];
-      expect(
-        result,
-        `${descriptor.commandType}@${descriptor.schemaVersion}`,
-      ).toBeDefined();
-      const decoded = await Effect.runPromise(
-        either(
-          decodeRegisteredCommandReceipt(
-            stored({
-              schemaVersion: descriptor.schemaVersion,
-              resultJson: JSON.stringify(result),
-            }),
-            descriptor.commandType,
-            descriptor.schemaVersion,
+          executionId,
+          episodeBinding: policyEpisode,
+          policyRevision: 1,
+          policyDigest: createHash("sha256")
+            .update(encodeEffectivePolicySummaryV2(workspacePolicySnapshot))
+            .digest("hex"),
+          effectivePolicySnapshot: JSON.parse(
+            encodeEffectivePolicySummaryV2(workspacePolicySnapshot),
           ),
-        ),
-      );
-      expect(
-        decoded._tag,
-        `${descriptor.commandType}@${descriptor.schemaVersion}`,
-      ).toBe("Right");
-    }
-  });
-
-  it("decodes exact registered committed DTOs and restores the omitted optional ConcludeVerification field", async () => {
-    const conclusion = stored({
-      resolution: "Committed",
-      resultJson: JSON.stringify({
-        verificationId: `ver_${uuid}`,
-        state: "Concluded",
-        verdict: "Unknown",
-        summaryRef: "sha256:summary",
-        wakeSignals: [],
-        channel1Release: {
-          workId: `wrk_${uuid}`,
-          targetWorkRevision: 1,
-        },
-      }),
-      terminalErrorJson: null,
-    });
-
-    const decoded = await Effect.runPromise(
-      decodeRegisteredCommandReceipt(conclusion, "ConcludeVerification", "1"),
-    );
-
-    expect(decoded.resolution._tag).toBe("Committed");
-    if (decoded.resolution._tag === "Committed") {
-      expect(decoded.resolution.result).toHaveProperty(
-        "conclusionReason",
-        undefined,
-      );
-    }
-  });
-
-  it("keeps ConcludeVerification v1 strict while decoding its exact v2 snapshot DTO", async () => {
-    const base = {
-      verificationId: `ver_${uuid}`,
-      state: "Concluded",
-      verdict: "Pass",
-      summaryRef: "sha256:summary",
-      wakeSignals: [],
-      channel1Release: {
-        workId: `wrk_${uuid}`,
-        targetWorkRevision: 1,
-      },
-    };
-    const v1WithV2Fields = await Effect.runPromise(
-      either(
-        decodeRegisteredCommandReceipt(
-          stored({
-            resultJson: JSON.stringify({
-              ...base,
-              missionSnapshot: {
-                goal: "goal",
-                criteria: [],
-                riskRequirements: [],
+        };
+        const validResults: Readonly<Record<string, unknown>> = {
+          BindWorkspaceSandboxPolicy: workspacePolicyResult,
+          AuthorizeWorkspaceSandbox: {
+            authorization: {
+              version: 1,
+              projectId,
+              workspaceId,
+              authorizationRevision: 1,
+              commandId: id("cmd"),
+              actorPrincipal: "user:local",
+              recordedAt: "2026-11-16T00:00:00Z",
+              state: "Granted",
+              origin: { kind: "Human", principal: "user:local" },
+              resourceBoundaryRevision: 0,
+              workspacePolicyRevision: 0,
+              profile: "WorkspaceWrite",
+              providerId: "linux-bwrap",
+              networkPolicy: { version: 1, mode: "Enabled", destinations: [] },
+              expiresAt: null,
+            },
+          },
+          RevokeWorkspaceSandboxAuthorization: {
+            authorization: {
+              version: 1,
+              projectId,
+              workspaceId,
+              authorizationRevision: 2,
+              commandId: id("cmd"),
+              actorPrincipal: "user:local",
+              recordedAt: "2026-11-16T00:00:00Z",
+              state: "Revoked",
+            },
+          },
+          CreateProject: {
+            projectId,
+            rootWorkspaceId: workspaceId,
+            primarySessionId: sessionId,
+          },
+          CreateChildWorkspace: {
+            workspaceId,
+            projectId,
+            parentWorkspaceId: workspaceId,
+            primarySessionId: sessionId,
+          },
+          AssignWork: { workId, workspaceId, lifecycle: "Open", revision: 0 },
+          UpdateResourceBoundary: {
+            workspaceId,
+            revision: 0,
+            resourceBoundaryRevision: 0,
+            releasedClaimIds: [],
+          },
+          RenameProject: { revision: 0, name: "Arbor" },
+          CloseProject: { revision: 0, lifecycle: "Closed" },
+          SelectCurrentWork: { workspaceId, workId, revision: 0 },
+          AdmitExecution: {
+            executionId,
+            workspaceId,
+            sessionId,
+            bindingKind: "WorkspaceMain",
+          },
+          StopExecution: {
+            executionId,
+            stopRequestedAt: "2026-10-17T00:00:00Z",
+          },
+          SettleExecution: {
+            executionId,
+            settlement: {
+              _tag: "Completed",
+              result: {
+                _tag: "Yielded",
+                reason: "waiting",
+                waitSpec: { mode: "Any", conditions: [{ _tag: "Manual" }] },
               },
-              criteriaResults: [],
-              snapshotStatus: "Available",
-            }),
+            },
+          },
+          SendMessage: {
+            messageId,
+            admitted: true,
+            promotion: { closesCorrelation: null, triggersReevaluation: false },
+          },
+          DeliverMessage: {
+            messageId,
+            deliverableId,
+            senderWorkspaceId: workspaceId,
+            recipientWorkspaceId: workspaceId,
+            admitted: true,
+          },
+          DeclareDependency: {
+            dependencyId,
+            consumerWorkId: workId,
+            state: "Unsatisfied",
+            revision: 0,
+          },
+          ProduceDeliverable: {
+            deliverableId,
+            sourceWorkId: workId,
+            sourceWorkRevision: 0,
+            kind: "report",
+            artifactRoles: [],
+          },
+          SatisfyDependency: {
+            dependencyId,
+            state: "Satisfied",
+            dependencyRevision: 1,
+            deliverableId,
+            satisfiedAtDependencyRevision: 1,
+            wakeSignals: [],
+          },
+          RecordDecision: {
+            proposalId: id("fpr"),
+            proposalRevision: 0,
+            decision: "Approve",
+            state: "Approved",
+          },
+          ResolveControlApproval: {
+            approvalId: "approval-id",
+            executionId,
+            state: "Approved",
+            revision: 1,
+          },
+          ResolveExecutableApproval: {
+            approvalId: "approval-id",
+            executionId,
+            state: "Approved",
+            revision: 1,
+          },
+          SteerWork: {
+            workId,
+            workspaceId,
+            lifecycle: "Open",
+            fromRevision: 0,
+            toRevision: 1,
+            severity: "Normal",
+          },
+          AcceptWorkOutcome: {
+            acceptanceId: id("acc"),
+            workId,
+            targetWorkRevision: 0,
+            verificationId,
+          },
+          CompleteWork: {
+            workId,
+            workspaceId,
+            lifecycle: "Completed",
+            revision: 1,
+            clearedCurrentWork: true,
+          },
+          StartVerification: {
+            verificationId,
+            workId,
+            targetWorkRevision: 0,
+            ownerWorkspaceId: workspaceId,
+            state: "Open",
+            verifierExecutionId: executionId,
+          },
+          RecordVerificationEvidence: {
+            verificationId,
+            evidenceId: id("evd"),
+            state: "Recorded",
+          },
+          ConcludeVerification: {
+            verificationId,
+            state: "Concluded",
+            verdict: "Unknown",
+            summaryRef: "sha256:summary",
+            wakeSignals: [],
+            channel1Release: { workId, targetWorkRevision: 0 },
+          },
+          RetryVerification: {
+            workId,
+            orphanedVerificationId: verificationId,
+            successorVerificationId: id("ver"),
+            verifierExecutionId: executionId,
+            state: "OrphanedAndRetried",
+          },
+          GrantPermission: { permissionGrantId: id("pgr"), state: "Active" },
+          DecideSandboxPolicy: {
+            version: 1,
+            commandId: id("cmd"),
+            projectId,
+            workspaceId,
+            executionId,
+            episodeBinding: policyEpisode,
+            policyRevision: 1,
+            policyDigest,
+            effectivePolicySnapshot: policySummary,
+          },
+          RevokePermission: { permissionGrantId: id("pgr"), state: "Revoked" },
+          SubmitHumanMessage: { messageId, state: "Pending" },
+          ResumeConversationResponse: {
+            messageId,
+            state: "Queued",
+            revision: 1,
+          },
+          CancelConversationResponse: {
+            messageId,
+            state: "Cancelled",
+            revision: 1,
+          },
+        };
+
+        for (const descriptor of COMMAND_RECEIPT_DECODER_DESCRIPTORS) {
+          const result =
+            descriptor.commandType === "ConcludeVerification" &&
+            descriptor.schemaVersion === "2"
+              ? {
+                  ...(validResults.ConcludeVerification as Record<
+                    string,
+                    unknown
+                  >),
+                  verdict: "Pass",
+                  conclusionReason: null,
+                  missionSnapshot: {
+                    goal: "goal",
+                    criteria: [
+                      {
+                        criterionId: "criterion-1",
+                        requirement: "requirement-1",
+                        required: true,
+                      },
+                    ],
+                    riskRequirements: [],
+                  },
+                  criteriaResults: [
+                    {
+                      criterionId: "criterion-1",
+                      requirement: "requirement-1",
+                      required: true,
+                      verdict: "Pass",
+                      evidenceRefs: [`evd_${uuid}`],
+                    },
+                  ],
+                  snapshotStatus: "Available",
+                }
+              : validResults[descriptor.commandType];
+          expect(
+            result,
+            `${descriptor.commandType}@${descriptor.schemaVersion}`,
+          ).toBeDefined();
+          const decoded = yield* either(
+            decodeRegisteredCommandReceipt(
+              stored({
+                schemaVersion: descriptor.schemaVersion,
+                resultJson: JSON.stringify(result),
+              }),
+              descriptor.commandType,
+              descriptor.schemaVersion,
+            ),
+          );
+          expect(
+            decoded._tag,
+            `${descriptor.commandType}@${descriptor.schemaVersion}`,
+          ).toBe("Right");
+        }
+      }),
+  );
+
+  it.effect(
+    "decodes exact registered committed DTOs and restores the omitted optional ConcludeVerification field",
+    () =>
+      Effect.gen(function* () {
+        const conclusion = stored({
+          resolution: "Committed",
+          resultJson: JSON.stringify({
+            verificationId: `ver_${uuid}`,
+            state: "Concluded",
+            verdict: "Unknown",
+            summaryRef: "sha256:summary",
+            wakeSignals: [],
+            channel1Release: {
+              workId: `wrk_${uuid}`,
+              targetWorkRevision: 1,
+            },
           }),
+          terminalErrorJson: null,
+        });
+
+        const decoded = yield* decodeRegisteredCommandReceipt(
+          conclusion,
           "ConcludeVerification",
           "1",
-        ),
-      ),
-    );
-    expect(v1WithV2Fields._tag).toBe("Left");
+        );
 
-    const v2Result = {
-      ...base,
-      conclusionReason: null,
-      missionSnapshot: {
-        goal: "goal",
-        criteria: [
-          {
-            criterionId: "criterion-1",
-            requirement: "requirement-1",
-            required: true,
-          },
-        ],
-        riskRequirements: [],
-      },
-      criteriaResults: [
-        {
-          criterionId: "criterion-1",
-          requirement: "requirement-1",
-          required: true,
+        expect(decoded.resolution._tag).toBe("Committed");
+        if (decoded.resolution._tag === "Committed") {
+          expect(decoded.resolution.result).toHaveProperty(
+            "conclusionReason",
+            undefined,
+          );
+        }
+      }),
+  );
+
+  it.effect(
+    "keeps ConcludeVerification v1 strict while decoding its exact v2 snapshot DTO",
+    () =>
+      Effect.gen(function* () {
+        const base = {
+          verificationId: `ver_${uuid}`,
+          state: "Concluded",
           verdict: "Pass",
-          evidenceRefs: [`evd_${uuid}`],
-        },
-      ],
-      snapshotStatus: "Available",
-    };
-    const v2 = await Effect.runPromise(
-      decodeRegisteredCommandReceipt(
-        stored({ schemaVersion: "2", resultJson: JSON.stringify(v2Result) }),
-        "ConcludeVerification",
-        "2",
-      ),
-    );
-    expect(v2.resolution._tag).toBe("Committed");
-
-    for (const invalid of [
-      { ...v2Result, unexpected: true },
-      (() => {
-        const { conclusionReason: _reason, ...omitted } = v2Result;
-        return omitted;
-      })(),
-      { ...v2Result, conclusionReason: "" },
-      { ...v2Result, criteriaResults: [] },
-      {
-        ...v2Result,
-        criteriaResults: [{ ...v2Result.criteriaResults[0], verdict: "Fail" }],
-      },
-    ]) {
-      const rejected = await Effect.runPromise(
-        either(
-          decodeRegisteredCommandReceipt(
-            stored({ schemaVersion: "2", resultJson: JSON.stringify(invalid) }),
-            "ConcludeVerification",
-            "2",
-          ),
-        ),
-      );
-      expect(rejected._tag).toBe("Left");
-    }
-  });
-
-  it("decodes the internal P1 resource-boundary receipt and rejects unregistered command types", async () => {
-    const internal = stored({
-      resultJson: JSON.stringify({
-        workspaceId: `ws_${uuid}`,
-        revision: 1,
-        resourceBoundaryRevision: 1,
-        releasedClaimIds: [],
-      }),
-    });
-    const decoded = await Effect.runPromise(
-      decodeRegisteredCommandReceipt(internal, "UpdateResourceBoundary", "1"),
-    );
-    expect(decoded.resolution._tag).toBe("Committed");
-
-    const unknown = await Effect.runPromise(
-      either(decodeRegisteredCommandReceipt(stored(), "UnknownCommand", "1")),
-    );
-    expect(unknown._tag).toBe("Left");
-  });
-
-  it("fails closed for malformed JSON, wrong result shape, unknown versions, and corrupt resolution columns", async () => {
-    const cases = [
-      stored({ resultJson: '{"sentinel":', terminalErrorJson: null }),
-      stored({ resultJson: JSON.stringify({ sentinel: "private" }) }),
-      stored({ schemaVersion: "99" }),
-      stored({ resolution: "Unknown" as never }),
-      stored({ resultJson: null }),
-    ];
-
-    for (const row of cases) {
-      const result = await Effect.runPromise(
-        either(decodeRegisteredCommandReceipt(row, "SubmitHumanMessage", "1")),
-      );
-      expect(result._tag).toBe("Left");
-      if (result._tag === "Left") {
-        expect(result.left).toMatchObject({
-          _tag: "PersistenceCorruption",
-          repository: "CommandStore",
-          operation: "decodeReceipt",
-          reason: "stored command receipt does not match its registered schema",
-        });
-        expect(JSON.stringify(result.left)).not.toContain("sentinel");
-        expect(JSON.stringify(result.left)).not.toContain("private");
-      }
-    }
-  });
-
-  it("validates the complete rejection union and rejects extra or missing members", async () => {
-    const valid = stored({
-      resolution: "TerminalRejected",
-      resultJson: null,
-      terminalErrorJson: JSON.stringify({
-        _tag: "IdempotencyConflict",
-        commandId: `cmd_${uuid}`,
-      }),
-    });
-    const decoded = await Effect.runPromise(
-      decodeRegisteredCommandReceipt(valid, "SubmitHumanMessage", "1"),
-    );
-    expect(decoded.resolution._tag).toBe("TerminalRejected");
-
-    for (const error of [
-      { _tag: "IdempotencyConflict" },
-      {
-        _tag: "IdempotencyConflict",
-        commandId: "cmd_f23receiptunit0000000000000000000000",
-        detail: "private",
-      },
-      { _tag: "NotInUnion" },
-    ]) {
-      const result = await Effect.runPromise(
-        either(
+          summaryRef: "sha256:summary",
+          wakeSignals: [],
+          channel1Release: {
+            workId: `wrk_${uuid}`,
+            targetWorkRevision: 1,
+          },
+        };
+        const v1WithV2Fields = yield* either(
           decodeRegisteredCommandReceipt(
             stored({
-              resolution: "TerminalRejected",
-              resultJson: null,
-              terminalErrorJson: JSON.stringify(error),
+              resultJson: JSON.stringify({
+                ...base,
+                missionSnapshot: {
+                  goal: "goal",
+                  criteria: [],
+                  riskRequirements: [],
+                },
+                criteriaResults: [],
+                snapshotStatus: "Available",
+              }),
             }),
-            "SubmitHumanMessage",
+            "ConcludeVerification",
             "1",
           ),
-        ),
-      );
-      expect(result._tag).toBe("Left");
-    }
-  });
+        );
+        expect(v1WithV2Fields._tag).toBe("Left");
+
+        const v2Result = {
+          ...base,
+          conclusionReason: null,
+          missionSnapshot: {
+            goal: "goal",
+            criteria: [
+              {
+                criterionId: "criterion-1",
+                requirement: "requirement-1",
+                required: true,
+              },
+            ],
+            riskRequirements: [],
+          },
+          criteriaResults: [
+            {
+              criterionId: "criterion-1",
+              requirement: "requirement-1",
+              required: true,
+              verdict: "Pass",
+              evidenceRefs: [`evd_${uuid}`],
+            },
+          ],
+          snapshotStatus: "Available",
+        };
+        const v2 = yield* decodeRegisteredCommandReceipt(
+          stored({ schemaVersion: "2", resultJson: JSON.stringify(v2Result) }),
+          "ConcludeVerification",
+          "2",
+        );
+        expect(v2.resolution._tag).toBe("Committed");
+
+        for (const invalid of [
+          { ...v2Result, unexpected: true },
+          (() => {
+            const { conclusionReason: _reason, ...omitted } = v2Result;
+            return omitted;
+          })(),
+          { ...v2Result, conclusionReason: "" },
+          { ...v2Result, criteriaResults: [] },
+          {
+            ...v2Result,
+            criteriaResults: [
+              { ...v2Result.criteriaResults[0], verdict: "Fail" },
+            ],
+          },
+        ]) {
+          const rejected = yield* either(
+            decodeRegisteredCommandReceipt(
+              stored({
+                schemaVersion: "2",
+                resultJson: JSON.stringify(invalid),
+              }),
+              "ConcludeVerification",
+              "2",
+            ),
+          );
+          expect(rejected._tag).toBe("Left");
+        }
+      }),
+  );
+
+  it.effect(
+    "decodes the internal P1 resource-boundary receipt and rejects unregistered command types",
+    () =>
+      Effect.gen(function* () {
+        const internal = stored({
+          resultJson: JSON.stringify({
+            workspaceId: `ws_${uuid}`,
+            revision: 1,
+            resourceBoundaryRevision: 1,
+            releasedClaimIds: [],
+          }),
+        });
+        const decoded = yield* decodeRegisteredCommandReceipt(
+          internal,
+          "UpdateResourceBoundary",
+          "1",
+        );
+        expect(decoded.resolution._tag).toBe("Committed");
+
+        const unknown = yield* either(
+          decodeRegisteredCommandReceipt(stored(), "UnknownCommand", "1"),
+        );
+        expect(unknown._tag).toBe("Left");
+      }),
+  );
+
+  it.effect(
+    "fails closed for malformed JSON, wrong result shape, unknown versions, and corrupt resolution columns",
+    () =>
+      Effect.gen(function* () {
+        const cases = [
+          stored({ resultJson: '{"sentinel":', terminalErrorJson: null }),
+          stored({ resultJson: JSON.stringify({ sentinel: "private" }) }),
+          stored({ schemaVersion: "99" }),
+          stored({ resolution: "Unknown" as never }),
+          stored({ resultJson: null }),
+        ];
+
+        for (const row of cases) {
+          const result = yield* either(
+            decodeRegisteredCommandReceipt(row, "SubmitHumanMessage", "1"),
+          );
+          expect(result._tag).toBe("Left");
+          if (result._tag === "Left") {
+            expect(result.left).toMatchObject({
+              _tag: "PersistenceCorruption",
+              repository: "CommandStore",
+              operation: "decodeReceipt",
+              reason:
+                "stored command receipt does not match its registered schema",
+            });
+            expect(JSON.stringify(result.left)).not.toContain("sentinel");
+            expect(JSON.stringify(result.left)).not.toContain("private");
+          }
+        }
+      }),
+  );
+
+  it.effect(
+    "validates the complete rejection union and rejects extra or missing members",
+    () =>
+      Effect.gen(function* () {
+        const valid = stored({
+          resolution: "TerminalRejected",
+          resultJson: null,
+          terminalErrorJson: JSON.stringify({
+            _tag: "IdempotencyConflict",
+            commandId: `cmd_${uuid}`,
+          }),
+        });
+        const decoded = yield* decodeRegisteredCommandReceipt(
+          valid,
+          "SubmitHumanMessage",
+          "1",
+        );
+        expect(decoded.resolution._tag).toBe("TerminalRejected");
+
+        for (const error of [
+          { _tag: "IdempotencyConflict" },
+          {
+            _tag: "IdempotencyConflict",
+            commandId: "cmd_f23receiptunit0000000000000000000000",
+            detail: "private",
+          },
+          { _tag: "NotInUnion" },
+        ]) {
+          const result = yield* either(
+            decodeRegisteredCommandReceipt(
+              stored({
+                resolution: "TerminalRejected",
+                resultJson: null,
+                terminalErrorJson: JSON.stringify(error),
+              }),
+              "SubmitHumanMessage",
+              "1",
+            ),
+          );
+          expect(result._tag).toBe("Left");
+        }
+      }),
+  );
 });
 
 import { createHash } from "node:crypto";
