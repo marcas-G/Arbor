@@ -16,9 +16,10 @@ import {
 } from "@arbor/domain";
 import type { AdmitExecutionPayload } from "@arbor/execution-runtime";
 import { SessionRepository, TransactionPort } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect } from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
 import {
   createCurrentSchemaTestDatabaseFactory,
@@ -159,68 +160,71 @@ const admit = (executionId: ExecutionId, commandId: CommandId) =>
   });
 
 describe("P5 multi-turn session continuity", () => {
-  it("reuses the same primary session across Executions and keeps entries", async () => {
-    const fixture = createSchema44Case();
-    schema44Cleanups.push(fixture.cleanup);
-    const app = buildSingleWorkspaceLayer({
-      databaseFile: fixture.databaseFilename,
-    });
-    const result = await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          yield* seed;
-          yield* ensureLegacyProjectResourceSourceFixture();
-          const first = yield* admit(
-            execution1,
-            parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789a1"),
-          );
-          const tx = yield* TransactionPort;
-          const sessions = yield* SessionRepository;
-          yield* tx.transact(
-            sessions.appendEntry(sessionId, {
-              entryKind: "Input",
-              payload: { x: 1 },
-            }),
-          );
-          const sql = yield* SqlClient;
-          yield* sql.unsafe(
-            "UPDATE executions SET settlement_kind = 'Interrupted', settlement_json = '{}', settled_at = 't' WHERE execution_id = ?",
-            [execution1],
-          );
-          const second = yield* admit(
-            execution2,
-            parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789a2"),
-          );
-          const rows = yield* sql.unsafe<{ session_id: string }>(
-            "SELECT session_id FROM executions ORDER BY execution_id",
-          );
-          const entries = yield* sql.unsafe<{ count: number }>(
-            "SELECT COUNT(*) AS count FROM session_entries WHERE session_id = ?",
-            [sessionId],
-          );
-          return {
-            first,
-            second,
-            sessions: rows.map((r) => r.session_id),
-            entries: Number(entries[0]?.count ?? 0),
-          };
-        }),
-        app,
-      ) as unknown as Effect.Effect<
-        {
-          first: { resolution: { _tag: string } };
-          second: { resolution: { _tag: string } };
-          sessions: ReadonlyArray<string>;
-          entries: number;
-        },
-        unknown,
-        never
-      >,
-    );
-    expect(result.first.resolution._tag).toBe("Committed");
-    expect(result.second.resolution._tag).toBe("Committed");
-    expect(new Set(result.sessions)).toEqual(new Set([sessionId]));
-    expect(result.entries).toBe(1);
-    void Option;
-  }, 120_000);
+  it.effect(
+    "reuses the same primary session across Executions and keeps entries",
+    () =>
+      Effect.gen(function* () {
+        const fixture = createSchema44Case();
+        schema44Cleanups.push(fixture.cleanup);
+        const app = buildSingleWorkspaceLayer({
+          databaseFile: fixture.databaseFilename,
+        });
+        const result = yield* Effect.provide(
+          Effect.gen(function* () {
+            yield* seed;
+            yield* ensureLegacyProjectResourceSourceFixture();
+            const first = yield* admit(
+              execution1,
+              parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+            );
+            const tx = yield* TransactionPort;
+            const sessions = yield* SessionRepository;
+            yield* tx.transact(
+              sessions.appendEntry(sessionId, {
+                entryKind: "Input",
+                payload: { x: 1 },
+              }),
+            );
+            const sql = yield* SqlClient;
+            yield* sql.unsafe(
+              "UPDATE executions SET settlement_kind = 'Interrupted', settlement_json = '{}', settled_at = 't' WHERE execution_id = ?",
+              [execution1],
+            );
+            const second = yield* admit(
+              execution2,
+              parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789a2"),
+            );
+            const rows = yield* sql.unsafe<{ session_id: string }>(
+              "SELECT session_id FROM executions ORDER BY execution_id",
+            );
+            const entries = yield* sql.unsafe<{ count: number }>(
+              "SELECT COUNT(*) AS count FROM session_entries WHERE session_id = ?",
+              [sessionId],
+            );
+            return {
+              first,
+              second,
+              sessions: rows.map((r) => r.session_id),
+              entries: Number(entries[0]?.count ?? 0),
+            };
+          }),
+          app,
+        ) as unknown as Effect.Effect<
+          {
+            first: { resolution: { _tag: string } };
+            second: { resolution: { _tag: string } };
+            sessions: ReadonlyArray<string>;
+            entries: number;
+          },
+          unknown,
+          never
+        >;
+        expect(result.first.resolution._tag).toBe("Committed");
+        expect(result.second.resolution._tag).toBe("Committed");
+        expect(new Set(result.sessions)).toEqual(new Set([sessionId]));
+        expect(result.entries).toBe(1);
+        void Option;
+      }),
+    120_000,
+  );
 });

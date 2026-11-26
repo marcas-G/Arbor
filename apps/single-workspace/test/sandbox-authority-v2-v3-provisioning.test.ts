@@ -13,8 +13,9 @@ import {
   SandboxAuthorityProvisioningStore,
   type SandboxAuthorityProvisioningStoreService,
 } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import { loadSandboxAuthorityBundleSnapshotCurrent } from "../src/sandbox-authority-bundle.js";
 import { provisionSandboxAuthorityV2ToV3 } from "../src/sandbox-authority-v2-v3-provisioning.js";
 import { rotateSandboxAuthorityV3Trust } from "../src/sandbox-authority-v3-rotation.js";
@@ -127,257 +128,296 @@ const makeStore = (
 };
 
 describe("Windows D2 operator-only V2 to V3 source-first cutover", () => {
-  it("preserves exact V2 bytes and fails closed between source and high-water", async () => {
-    const fixture = makeStore();
-    let between: unknown;
-    const result = await Effect.runPromise(
-      provisionSandboxAuthorityV2ToV3({
-        trustSetCanonicalJson: trust,
-        atStage: (stage) =>
-          Effect.gen(function* () {
-            if (stage === "AfterV3SourceDurableBeforeHighWater")
-              between = yield* loadSandboxAuthorityBundleSnapshotCurrent(
-                fixture.store,
-                "2026-10-20T00:00:00.000Z",
-                [],
-              );
+  it.effect(
+    "preserves exact V2 bytes and fails closed between source and high-water",
+    () =>
+      Effect.gen(function* () {
+        const fixture = makeStore();
+        let between: unknown;
+        const result = yield* provisionSandboxAuthorityV2ToV3({
+          trustSetCanonicalJson: trust,
+          atStage: (stage) =>
+            Effect.gen(function* () {
+              if (stage === "AfterV3SourceDurableBeforeHighWater")
+                between = yield* loadSandboxAuthorityBundleSnapshotCurrent(
+                  fixture.store,
+                  "2026-10-20T00:00:00.000Z",
+                  [],
+                );
+            }),
+        }).pipe(
+          Effect.provideService(
+            SandboxAuthorityProvisioningStore,
+            fixture.store,
+          ),
+        );
+        expect(between).toEqual({
+          _tag: "Unavailable",
+          failure: "HighWaterCorrupt",
+        });
+        expect(
+          fixture.state.forensic.get(result.preservedV2BundleEvidenceId),
+        ).toBe(fixture.originalSource);
+        expect(
+          fixture.state.forensic.get(result.preservedV2HighWaterEvidenceId),
+        ).toBe(fixture.originalHighWater);
+        const preservedAudit = fixture.state.forensic.get(
+          result.preservedV2AuditEvidenceId,
+        );
+        if (preservedAudit === undefined)
+          throw new Error("audit was not preserved");
+        expect(fixture.state.audit.startsWith(preservedAudit)).toBe(true);
+        expect(preservedAudit).toContain('"outcome":"Loaded"');
+        expect(preservedAudit).not.toContain("HighWaterCorrupt");
+        const current = yield* loadSandboxAuthorityBundleSnapshotCurrent(
+          fixture.store,
+          "2026-10-20T00:00:00.000Z",
+          [],
+        );
+        expect(current._tag).toBe("Available");
+        if (current._tag === "Available")
+          expect(current.snapshot.bundle.version).toBe(3);
+      }),
+  );
+
+  it.effect(
+    "requires audit preservation and never mutates source without it",
+    () =>
+      Effect.gen(function* () {
+        const fixture = makeStore();
+        const { readSandboxAuthorityAuditForensic: _ignored, ...withoutAudit } =
+          fixture.store;
+        const result = yield* provisionSandboxAuthorityV2ToV3({
+          trustSetCanonicalJson: trust,
+        }).pipe(
+          Effect.provideService(
+            SandboxAuthorityProvisioningStore,
+            withoutAudit,
+          ),
+          Effect.match({
+            onFailure: (reason) => reason,
+            onSuccess: () => "Succeeded",
           }),
-      }).pipe(
-        Effect.provideService(SandboxAuthorityProvisioningStore, fixture.store),
-      ),
-    );
-    expect(between).toEqual({
-      _tag: "Unavailable",
-      failure: "HighWaterCorrupt",
-    });
-    expect(fixture.state.forensic.get(result.preservedV2BundleEvidenceId)).toBe(
-      fixture.originalSource,
-    );
-    expect(
-      fixture.state.forensic.get(result.preservedV2HighWaterEvidenceId),
-    ).toBe(fixture.originalHighWater);
-    const preservedAudit = fixture.state.forensic.get(
-      result.preservedV2AuditEvidenceId,
-    );
-    if (preservedAudit === undefined)
-      throw new Error("audit was not preserved");
-    expect(fixture.state.audit.startsWith(preservedAudit)).toBe(true);
-    expect(preservedAudit).toContain('"outcome":"Loaded"');
-    expect(preservedAudit).not.toContain("HighWaterCorrupt");
-    const current = await Effect.runPromise(
-      loadSandboxAuthorityBundleSnapshotCurrent(
-        fixture.store,
-        "2026-10-20T00:00:00.000Z",
-        [],
-      ),
-    );
-    expect(current._tag).toBe("Available");
-    if (current._tag === "Available")
-      expect(current.snapshot.bundle.version).toBe(3);
-  });
+        );
+        expect(result).toBe("V2AuditUnavailable");
+        expect(fixture.state.source).toBe(fixture.originalSource);
+        expect(fixture.state.highWater).toBe(fixture.originalHighWater);
+      }),
+  );
 
-  it("requires audit preservation and never mutates source without it", async () => {
-    const fixture = makeStore();
-    const { readSandboxAuthorityAuditForensic: _ignored, ...withoutAudit } =
-      fixture.store;
-    const result = await Effect.runPromise(
-      provisionSandboxAuthorityV2ToV3({ trustSetCanonicalJson: trust }).pipe(
-        Effect.provideService(SandboxAuthorityProvisioningStore, withoutAudit),
-        Effect.match({
-          onFailure: (reason) => reason,
-          onSuccess: () => "Succeeded",
-        }),
-      ),
-    );
-    expect(result).toBe("V2AuditUnavailable");
-    expect(fixture.state.source).toBe(fixture.originalSource);
-    expect(fixture.state.highWater).toBe(fixture.originalHighWater);
-  });
+  it.effect(
+    "refuses an audit append racing forensic preservation and source write",
+    () =>
+      Effect.gen(function* () {
+        const fixture = makeStore();
+        let reads = 0;
+        const driftingStore: SandboxAuthorityProvisioningStoreService = {
+          ...fixture.store,
+          readSandboxAuthorityAuditForensic: () =>
+            Effect.sync(() =>
+              ++reads === 1
+                ? fixture.state.audit
+                : `${fixture.state.audit}late\n`,
+            ),
+        };
+        const result = yield* provisionSandboxAuthorityV2ToV3({
+          trustSetCanonicalJson: trust,
+        }).pipe(
+          Effect.provideService(
+            SandboxAuthorityProvisioningStore,
+            driftingStore,
+          ),
+          Effect.match({
+            onFailure: (reason) => reason,
+            onSuccess: () => "Succeeded",
+          }),
+        );
+        expect(result).toBe("V2PairDrifted");
+        expect(fixture.state.source).toBe(fixture.originalSource);
+      }),
+  );
 
-  it("refuses an audit append racing forensic preservation and source write", async () => {
-    const fixture = makeStore();
-    let reads = 0;
-    const driftingStore: SandboxAuthorityProvisioningStoreService = {
-      ...fixture.store,
-      readSandboxAuthorityAuditForensic: () =>
-        Effect.sync(() =>
-          ++reads === 1 ? fixture.state.audit : `${fixture.state.audit}late\n`,
-        ),
-    };
-    const result = await Effect.runPromise(
-      provisionSandboxAuthorityV2ToV3({ trustSetCanonicalJson: trust }).pipe(
-        Effect.provideService(SandboxAuthorityProvisioningStore, driftingStore),
-        Effect.match({
-          onFailure: (reason) => reason,
-          onSuccess: () => "Succeeded",
-        }),
-      ),
-    );
-    expect(result).toBe("V2PairDrifted");
-    expect(fixture.state.source).toBe(fixture.originalSource);
-  });
-
-  it("cannot carry a V2 Windows Supported row into V3", async () => {
-    const supported: SandboxProviderQualificationEntryV1 = {
-      providerId: "windows-restricted-appcontainer-job",
-      providerVersion: "t3d-v1",
-      capabilityRevision: 1,
-      osFamily: "Windows",
-      osBuild: "10.0.19045",
-      tuple: {
-        profile: "ReadOnly",
-        networkMode: "Disabled",
-        networkPolicyCodecVersion: 1,
-        enforcementRuleSetDigest: "a".repeat(64),
-      },
-      status: "Supported",
-      qualificationEvidenceRef: `blob:sha256:${"b".repeat(64)}`,
-    };
-    const fixture = makeStore([supported]);
-    const rejected = await Effect.runPromise(
-      provisionSandboxAuthorityV2ToV3({ trustSetCanonicalJson: trust }).pipe(
-        Effect.provideService(SandboxAuthorityProvisioningStore, fixture.store),
-        Effect.match({
-          onFailure: (reason) => reason,
-          onSuccess: () => "Succeeded",
-        }),
-      ),
-    );
-    expect(rejected).toBe("RegistryDowngradeRequired");
-    expect(fixture.state.source).toBe(fixture.originalSource);
-    const downgraded = encodeSandboxProviderQualificationRegistryV1({
-      version: 1,
-      revision: 2,
-      entries: [
-        {
-          ...supported,
-          status: "Experimental",
-          qualificationEvidenceRef: null,
+  it.effect("cannot carry a V2 Windows Supported row into V3", () =>
+    Effect.gen(function* () {
+      const supported: SandboxProviderQualificationEntryV1 = {
+        providerId: "windows-restricted-appcontainer-job",
+        providerVersion: "t3d-v1",
+        capabilityRevision: 1,
+        osFamily: "Windows",
+        osBuild: "10.0.19045",
+        tuple: {
+          profile: "ReadOnly",
+          networkMode: "Disabled",
+          networkPolicyCodecVersion: 1,
+          enforcementRuleSetDigest: "a".repeat(64),
         },
-      ],
-    });
-    const completed = await Effect.runPromise(
-      provisionSandboxAuthorityV2ToV3({
+        status: "Supported",
+        qualificationEvidenceRef: `blob:sha256:${"b".repeat(64)}`,
+      };
+      const fixture = makeStore([supported]);
+      const rejected = yield* provisionSandboxAuthorityV2ToV3({
         trustSetCanonicalJson: trust,
-        providerRegistryCanonicalJson: downgraded,
       }).pipe(
         Effect.provideService(SandboxAuthorityProvisioningStore, fixture.store),
-      ),
-    );
-    expect(completed.bundle.providerRegistryRevision).toBe(2);
-    expect(completed.bundle.providerRegistry.entries[0]?.status).toBe(
-      "Experimental",
-    );
-  });
-
-  it("rotates/revokes only with newer trust and registry revisions", async () => {
-    const fixture = makeStore();
-    const first = await Effect.runPromise(
-      provisionSandboxAuthorityV2ToV3({ trustSetCanonicalJson: trust }).pipe(
-        Effect.provideService(SandboxAuthorityProvisioningStore, fixture.store),
-      ),
-    );
-    const alteredTrust = {
-      ...first.bundle.windowsOperatorTrustSet,
-      revision: 2,
-      keys: first.bundle.windowsOperatorTrustSet.keys.map((key) => ({
-        ...key,
-        status: "Retiring" as const,
-      })),
-      revokedKeyIds: ["operator-2026-a"],
-    };
-    const trustV2 = encodeWindowsNativeOperatorTrustSetV1(alteredTrust);
-    const registryV2 = encodeSandboxProviderQualificationRegistryV1({
-      ...first.bundle.providerRegistry,
-      revision: 2,
-    });
-    let intermediate: unknown;
-    const rotated = await Effect.runPromise(
-      rotateSandboxAuthorityV3Trust({
-        trustSetCanonicalJson: trustV2,
-        providerRegistryCanonicalJson: registryV2,
-        atStage: (stage) =>
-          Effect.gen(function* () {
-            if (stage === "AfterV3SourceDurableBeforeHighWater")
-              intermediate = yield* loadSandboxAuthorityBundleSnapshotCurrent(
-                fixture.store,
-                "2026-10-20T00:00:00.000Z",
-                [],
-              );
-          }),
-      }).pipe(
-        Effect.provideService(SandboxAuthorityProvisioningStore, fixture.store),
-      ),
-    );
-    expect(intermediate).toEqual({
-      _tag: "Unavailable",
-      failure: "HighWaterCommitFailed",
-    });
-    expect(rotated.windowsOperatorTrustSetRevision).toBe(2);
-    expect(rotated.providerRegistryRevision).toBe(2);
-    const replay = first.bundleCanonicalJson;
-    fixture.state.source = replay;
-    const stale = await Effect.runPromise(
-      loadSandboxAuthorityBundleSnapshotCurrent(
-        fixture.store,
-        "2026-10-20T00:00:00.000Z",
-        [],
-      ),
-    );
-    expect(stale).toEqual({ _tag: "Unavailable", failure: "RevisionRollback" });
-  });
-
-  it("requires capability revision advance even when rotation changes the tuple", async () => {
-    const row: SandboxProviderQualificationEntryV1 = {
-      providerId: "windows-restricted-appcontainer-job",
-      providerVersion: "t3d-v1",
-      capabilityRevision: 1,
-      osFamily: "Windows",
-      osBuild: "10.0.19045",
-      tuple: {
-        profile: "ReadOnly",
-        networkMode: "Disabled",
-        networkPolicyCodecVersion: 1,
-        enforcementRuleSetDigest: "a".repeat(64),
-      },
-      status: "Experimental",
-      qualificationEvidenceRef: null,
-    };
-    const fixture = makeStore([row]);
-    const first = await Effect.runPromise(
-      provisionSandboxAuthorityV2ToV3({ trustSetCanonicalJson: trust }).pipe(
-        Effect.provideService(SandboxAuthorityProvisioningStore, fixture.store),
-      ),
-    );
-    const trustV2 = encodeWindowsNativeOperatorTrustSetV1({
-      ...first.bundle.windowsOperatorTrustSet,
-      revision: 2,
-      revokedKeyIds: ["operator-2026-a"],
-    });
-    const changedTupleSameRevision =
-      encodeSandboxProviderQualificationRegistryV1({
+        Effect.match({
+          onFailure: (reason) => reason,
+          onSuccess: () => "Succeeded",
+        }),
+      );
+      expect(rejected).toBe("RegistryDowngradeRequired");
+      expect(fixture.state.source).toBe(fixture.originalSource);
+      const downgraded = encodeSandboxProviderQualificationRegistryV1({
         version: 1,
         revision: 2,
         entries: [
           {
-            ...row,
-            tuple: { ...row.tuple, enforcementRuleSetDigest: "b".repeat(64) },
+            ...supported,
+            status: "Experimental",
+            qualificationEvidenceRef: null,
           },
         ],
       });
-    const rejected = await Effect.runPromise(
-      rotateSandboxAuthorityV3Trust({
-        trustSetCanonicalJson: trustV2,
-        providerRegistryCanonicalJson: changedTupleSameRevision,
+      const completed = yield* provisionSandboxAuthorityV2ToV3({
+        trustSetCanonicalJson: trust,
+        providerRegistryCanonicalJson: downgraded,
       }).pipe(
         Effect.provideService(SandboxAuthorityProvisioningStore, fixture.store),
-        Effect.match({
-          onFailure: (reason) => reason,
-          onSuccess: () => "Succeeded",
-        }),
-      ),
-    );
-    expect(rejected).toBe("CapabilityRevisionInvalid");
-    expect(fixture.state.source).toBe(first.bundleCanonicalJson);
-  });
+      );
+      expect(completed.bundle.providerRegistryRevision).toBe(2);
+      expect(completed.bundle.providerRegistry.entries[0]?.status).toBe(
+        "Experimental",
+      );
+    }),
+  );
+
+  it.effect(
+    "rotates/revokes only with newer trust and registry revisions",
+    () =>
+      Effect.gen(function* () {
+        const fixture = makeStore();
+        const first = yield* provisionSandboxAuthorityV2ToV3({
+          trustSetCanonicalJson: trust,
+        }).pipe(
+          Effect.provideService(
+            SandboxAuthorityProvisioningStore,
+            fixture.store,
+          ),
+        );
+        const alteredTrust = {
+          ...first.bundle.windowsOperatorTrustSet,
+          revision: 2,
+          keys: first.bundle.windowsOperatorTrustSet.keys.map((key) => ({
+            ...key,
+            status: "Retiring" as const,
+          })),
+          revokedKeyIds: ["operator-2026-a"],
+        };
+        const trustV2 = encodeWindowsNativeOperatorTrustSetV1(alteredTrust);
+        const registryV2 = encodeSandboxProviderQualificationRegistryV1({
+          ...first.bundle.providerRegistry,
+          revision: 2,
+        });
+        let intermediate: unknown;
+        const rotated = yield* rotateSandboxAuthorityV3Trust({
+          trustSetCanonicalJson: trustV2,
+          providerRegistryCanonicalJson: registryV2,
+          atStage: (stage) =>
+            Effect.gen(function* () {
+              if (stage === "AfterV3SourceDurableBeforeHighWater")
+                intermediate = yield* loadSandboxAuthorityBundleSnapshotCurrent(
+                  fixture.store,
+                  "2026-10-20T00:00:00.000Z",
+                  [],
+                );
+            }),
+        }).pipe(
+          Effect.provideService(
+            SandboxAuthorityProvisioningStore,
+            fixture.store,
+          ),
+        );
+        expect(intermediate).toEqual({
+          _tag: "Unavailable",
+          failure: "HighWaterCommitFailed",
+        });
+        expect(rotated.windowsOperatorTrustSetRevision).toBe(2);
+        expect(rotated.providerRegistryRevision).toBe(2);
+        const replay = first.bundleCanonicalJson;
+        fixture.state.source = replay;
+        const stale = yield* loadSandboxAuthorityBundleSnapshotCurrent(
+          fixture.store,
+          "2026-10-20T00:00:00.000Z",
+          [],
+        );
+        expect(stale).toEqual({
+          _tag: "Unavailable",
+          failure: "RevisionRollback",
+        });
+      }),
+  );
+
+  it.effect(
+    "requires capability revision advance even when rotation changes the tuple",
+    () =>
+      Effect.gen(function* () {
+        const row: SandboxProviderQualificationEntryV1 = {
+          providerId: "windows-restricted-appcontainer-job",
+          providerVersion: "t3d-v1",
+          capabilityRevision: 1,
+          osFamily: "Windows",
+          osBuild: "10.0.19045",
+          tuple: {
+            profile: "ReadOnly",
+            networkMode: "Disabled",
+            networkPolicyCodecVersion: 1,
+            enforcementRuleSetDigest: "a".repeat(64),
+          },
+          status: "Experimental",
+          qualificationEvidenceRef: null,
+        };
+        const fixture = makeStore([row]);
+        const first = yield* provisionSandboxAuthorityV2ToV3({
+          trustSetCanonicalJson: trust,
+        }).pipe(
+          Effect.provideService(
+            SandboxAuthorityProvisioningStore,
+            fixture.store,
+          ),
+        );
+        const trustV2 = encodeWindowsNativeOperatorTrustSetV1({
+          ...first.bundle.windowsOperatorTrustSet,
+          revision: 2,
+          revokedKeyIds: ["operator-2026-a"],
+        });
+        const changedTupleSameRevision =
+          encodeSandboxProviderQualificationRegistryV1({
+            version: 1,
+            revision: 2,
+            entries: [
+              {
+                ...row,
+                tuple: {
+                  ...row.tuple,
+                  enforcementRuleSetDigest: "b".repeat(64),
+                },
+              },
+            ],
+          });
+        const rejected = yield* rotateSandboxAuthorityV3Trust({
+          trustSetCanonicalJson: trustV2,
+          providerRegistryCanonicalJson: changedTupleSameRevision,
+        }).pipe(
+          Effect.provideService(
+            SandboxAuthorityProvisioningStore,
+            fixture.store,
+          ),
+          Effect.match({
+            onFailure: (reason) => reason,
+            onSuccess: () => "Succeeded",
+          }),
+        );
+        expect(rejected).toBe("CapabilityRevisionInvalid");
+        expect(fixture.state.source).toBe(first.bundleCanonicalJson);
+      }),
+  );
 });

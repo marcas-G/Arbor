@@ -1,6 +1,7 @@
+import { it } from "@effect/vitest";
 import { Effect, Layer, Result } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import {
   ClockLive,
   ExecutionRepositoryLive,
@@ -161,66 +162,74 @@ const request = {
 };
 
 describe("SCRC durable input promotion", () => {
-  it("promotes one Inbox source exactly once and consumes it atomically", async () => {
-    const program = Effect.gen(function* () {
-      yield* runFixtureMigrations;
-      yield* seed;
-      const promotions = yield* InputPromotionService;
-      const first = yield* promotions.promoteInbox(request);
-      const replay = yield* promotions.promoteInbox(request);
-      const sql = yield* SqlClient;
-      const rows = yield* sql.unsafe<{ count: number }>(
-        "SELECT COUNT(*) AS count FROM session_entries WHERE item_type = 'UserMessage' AND source_kind = 'InboxEntry' AND source_ref = 'msg:one'",
-      );
-      const provenance = yield* sql.unsafe<{
-        causal_binding_json: string | null;
-      }>(
-        "SELECT causal_binding_json FROM session_entries WHERE item_type = 'UserMessage' AND source_ref = 'msg:one'",
-      );
-      const inbox = yield* sql.unsafe<{ consumed_at: string | null }>(
-        "SELECT consumed_at FROM inbox_entries WHERE workspace_id = ? AND entry_key = ?",
-        [workspaceId, "msg:one"],
-      );
-      return {
-        first,
-        replay,
-        count: Number(rows[0]?.count),
-        inbox,
-        provenance,
-      };
-    });
-    const result = await Effect.runPromise(Effect.provide(program, makeApp()));
-    expect(result.first).toEqual({ sequence: 0, inserted: true });
-    expect(result.replay).toEqual({ sequence: 0, inserted: false });
-    expect(result.count).toBe(1);
-    expect(result.inbox[0]?.consumed_at).not.toBeNull();
-    expect(result.provenance[0]?.causal_binding_json).not.toBeNull();
-  });
+  it.effect(
+    "promotes one Inbox source exactly once and consumes it atomically",
+    () =>
+      Effect.gen(function* () {
+        const program = Effect.gen(function* () {
+          yield* runFixtureMigrations;
+          yield* seed;
+          const promotions = yield* InputPromotionService;
+          const first = yield* promotions.promoteInbox(request);
+          const replay = yield* promotions.promoteInbox(request);
+          const sql = yield* SqlClient;
+          const rows = yield* sql.unsafe<{ count: number }>(
+            "SELECT COUNT(*) AS count FROM session_entries WHERE item_type = 'UserMessage' AND source_kind = 'InboxEntry' AND source_ref = 'msg:one'",
+          );
+          const provenance = yield* sql.unsafe<{
+            causal_binding_json: string | null;
+          }>(
+            "SELECT causal_binding_json FROM session_entries WHERE item_type = 'UserMessage' AND source_ref = 'msg:one'",
+          );
+          const inbox = yield* sql.unsafe<{ consumed_at: string | null }>(
+            "SELECT consumed_at FROM inbox_entries WHERE workspace_id = ? AND entry_key = ?",
+            [workspaceId, "msg:one"],
+          );
+          return {
+            first,
+            replay,
+            count: Number(rows[0]?.count),
+            inbox,
+            provenance,
+          };
+        });
+        const result = yield* Effect.provide(program, makeApp());
+        expect(result.first).toEqual({ sequence: 0, inserted: true });
+        expect(result.replay).toEqual({ sequence: 0, inserted: false });
+        expect(result.count).toBe(1);
+        expect(result.inbox[0]?.consumed_at).not.toBeNull();
+        expect(result.provenance[0]?.causal_binding_json).not.toBeNull();
+      }),
+  );
 
-  it("rolls back Session append when Inbox consumption fails, then retries cleanly", async () => {
-    const program = Effect.gen(function* () {
-      yield* runFixtureMigrations;
-      yield* seed;
-      const sql = yield* SqlClient;
-      yield* sql.unsafe(`
+  it.effect(
+    "rolls back Session append when Inbox consumption fails, then retries cleanly",
+    () =>
+      Effect.gen(function* () {
+        const program = Effect.gen(function* () {
+          yield* runFixtureMigrations;
+          yield* seed;
+          const sql = yield* SqlClient;
+          yield* sql.unsafe(`
         CREATE TRIGGER scrc_fail_consume
         BEFORE UPDATE OF consumed_at ON inbox_entries
         BEGIN
           SELECT RAISE(ABORT, 'fault-before-inbox-consume');
         END
       `);
-      const promotions = yield* InputPromotionService;
-      const failed = yield* Effect.result(promotions.promoteInbox(request));
-      const afterFailure = yield* sql.unsafe<{ count: number }>(
-        "SELECT COUNT(*) AS count FROM session_entries WHERE item_type = 'UserMessage'",
-      );
-      yield* sql.unsafe("DROP TRIGGER scrc_fail_consume");
-      const retry = yield* promotions.promoteInbox(request);
-      return { failed, afterFailure, retry };
-    });
-    const result = await Effect.runPromise(Effect.provide(program, makeApp()));
-    expect(Result.isFailure(result.failed)).toBe(true);
-    expect(Number(result.afterFailure[0]?.count)).toBe(0);
-    expect(result.retry).toEqual({ sequence: 0, inserted: true });
-  });
+          const promotions = yield* InputPromotionService;
+          const failed = yield* Effect.result(promotions.promoteInbox(request));
+          const afterFailure = yield* sql.unsafe<{ count: number }>(
+            "SELECT COUNT(*) AS count FROM session_entries WHERE item_type = 'UserMessage'",
+          );
+          yield* sql.unsafe("DROP TRIGGER scrc_fail_consume");
+          const retry = yield* promotions.promoteInbox(request);
+          return { failed, afterFailure, retry };
+        });
+        const result = yield* Effect.provide(program, makeApp());
+        expect(Result.isFailure(result.failed)).toBe(true);
+        expect(Number(result.afterFailure[0]?.count)).toBe(0);
+        expect(result.retry).toEqual({ sequence: 0, inserted: true });
+      }),
+  );
 });

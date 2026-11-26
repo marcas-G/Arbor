@@ -4,9 +4,10 @@ import {
   DomainEventJournal,
   TransactionPort,
 } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import {
   ClockLive,
   ConsumerDeadLetterStoreLive,
@@ -73,164 +74,182 @@ const projectionRows = Effect.gen(function* () {
 });
 
 describe("journal consumer", () => {
-  it("rejects an unsupported writer pair before allocating a sequence", async () => {
-    const program = Effect.gen(function* () {
-      yield* runMigrations(P1_MIGRATIONS);
-      const result = yield* Effect.result(
-        append([draft("WorkspaceCreated", 2)]),
-      );
-      const sql = yield* SqlClient;
-      const sequenceRows = yield* sql.unsafe<{ last_sequence: number }>(
-        "SELECT last_sequence FROM project_event_sequences WHERE project_id = ?",
-        [projectId],
-      );
-      const eventRows = yield* sql.unsafe<{ count: number }>(
-        "SELECT COUNT(*) AS count FROM domain_events WHERE project_id = ?",
-        [projectId],
-      );
-      return { result, sequenceRows, eventRows };
-    });
-    const { result, sequenceRows, eventRows } = await Effect.runPromise(
-      Effect.provide(program, makeApp()),
-    );
-    expect(result._tag).toBe("Failure");
-    expect(sequenceRows).toHaveLength(0);
-    expect(eventRows[0]?.count).toBe(0);
-  });
-
-  it("reads offset 0 when fresh and applies a batch, advancing the offset", async () => {
-    const program = Effect.gen(function* () {
-      yield* runMigrations(P1_MIGRATIONS);
-      const fresh = yield* readOffset(consumerId);
-      yield* append([draft("ProjectCreated"), draft("WorkspaceCreated")]);
-      const result = yield* runConsumerBatch(consumerId, projectId, 10);
-      const offset = yield* readOffset(consumerId);
-      const rows = yield* projectionRows;
-      return { fresh, result, offset, rows };
-    });
-    const { fresh, result, offset, rows } = await Effect.runPromise(
-      Effect.provide(program, makeApp()),
-    );
-    expect(fresh).toBe(0);
-    expect(result.applied).toBe(2);
-    expect(result.quarantined).toBe(0);
-    expect(result.lastSequence).toBe(2);
-    expect(offset).toBe(2);
-    expect(rows.map((row) => row.sequence)).toEqual([1, 2]);
-  });
-
-  it("quarantines a poison event and advances past it", async () => {
-    const program = Effect.gen(function* () {
-      yield* runMigrations(P1_MIGRATIONS);
-      yield* append([draft("ProjectCreated", 1)]);
-      const tx = yield* TransactionPort;
-      yield* tx.transact(
-        Effect.gen(function* () {
-          const sql = yield* SqlClient;
-          yield* sql.unsafe(
-            "INSERT INTO domain_events (event_id, project_id, sequence, event_type, event_version, occurred_at, aggregate_ref, actor, caused_by_command_id, caused_by_event_id, correlation_ref, payload_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-            [
-              "evt_unsupported_pair",
-              projectId,
-              2,
-              "WorkspaceCreated",
-              2,
-              "t",
-              projectId,
-              actor,
-              null,
-              null,
-              null,
-              "{}",
-            ],
+  it.effect(
+    "rejects an unsupported writer pair before allocating a sequence",
+    () =>
+      Effect.gen(function* () {
+        const program = Effect.gen(function* () {
+          yield* runMigrations(P1_MIGRATIONS);
+          const result = yield* Effect.result(
+            append([draft("WorkspaceCreated", 2)]),
           );
-          yield* sql.unsafe(
-            "UPDATE project_event_sequences SET last_sequence = 2 WHERE project_id = ?",
+          const sql = yield* SqlClient;
+          const sequenceRows = yield* sql.unsafe<{ last_sequence: number }>(
+            "SELECT last_sequence FROM project_event_sequences WHERE project_id = ?",
             [projectId],
           );
-        }),
-      );
-      yield* append([draft("WorkCompleted", 1)]);
-      const result = yield* runConsumerBatch(consumerId, projectId, 10);
-      const offset = yield* readOffset(consumerId);
-      const rows = yield* projectionRows;
-      const sql = yield* SqlClient;
-      const letters = yield* sql.unsafe<{ sequence: number }>(
-        "SELECT sequence FROM consumer_dead_letters WHERE consumer_id = ?",
-        [consumerId],
-      );
-      return { result, offset, rows, letters };
-    });
-    const { result, offset, rows, letters } = await Effect.runPromise(
-      Effect.provide(program, makeApp()),
-    );
-    expect(result.applied).toBe(2);
-    expect(result.quarantined).toBe(1);
-    expect(result.lastSequence).toBe(3);
-    expect(offset).toBe(3);
-    expect(rows.map((row) => row.sequence)).toEqual([1, 3]);
-    expect(letters.map((row) => row.sequence)).toEqual([2]);
-  });
+          const eventRows = yield* sql.unsafe<{ count: number }>(
+            "SELECT COUNT(*) AS count FROM domain_events WHERE project_id = ?",
+            [projectId],
+          );
+          return { result, sequenceRows, eventRows };
+        });
+        const { result, sequenceRows, eventRows } = yield* Effect.provide(
+          program,
+          makeApp(),
+        );
+        expect(result._tag).toBe("Failure");
+        expect(sequenceRows).toHaveLength(0);
+        expect(eventRows[0]?.count).toBe(0);
+      }),
+  );
 
-  it("re-applies idempotently on redelivery", async () => {
-    const program = Effect.gen(function* () {
-      yield* runMigrations(P1_MIGRATIONS);
-      yield* append([draft("ProjectCreated"), draft("WorkspaceCreated")]);
-      yield* runConsumerBatch(consumerId, projectId, 10);
-      const second = yield* runConsumerBatch(consumerId, projectId, 10);
-      const rows = yield* projectionRows;
-      return { second, rows };
-    });
-    const { second, rows } = await Effect.runPromise(
-      Effect.provide(program, makeApp()),
-    );
-    expect(second.applied).toBe(0);
-    expect(second.lastSequence).toBe(2);
-    expect(rows).toHaveLength(2);
-  });
+  it.effect(
+    "reads offset 0 when fresh and applies a batch, advancing the offset",
+    () =>
+      Effect.gen(function* () {
+        const program = Effect.gen(function* () {
+          yield* runMigrations(P1_MIGRATIONS);
+          const fresh = yield* readOffset(consumerId);
+          yield* append([draft("ProjectCreated"), draft("WorkspaceCreated")]);
+          const result = yield* runConsumerBatch(consumerId, projectId, 10);
+          const offset = yield* readOffset(consumerId);
+          const rows = yield* projectionRows;
+          return { fresh, result, offset, rows };
+        });
+        const { fresh, result, offset, rows } = yield* Effect.provide(
+          program,
+          makeApp(),
+        );
+        expect(fresh).toBe(0);
+        expect(result.applied).toBe(2);
+        expect(result.quarantined).toBe(0);
+        expect(result.lastSequence).toBe(2);
+        expect(offset).toBe(2);
+        expect(rows.map((row) => row.sequence)).toEqual([1, 2]);
+      }),
+  );
 
-  it("refuses rebuild below the pruned floor and replays otherwise", async () => {
-    const program = Effect.gen(function* () {
-      yield* runMigrations(P1_MIGRATIONS);
-      const tx = yield* TransactionPort;
-      const offsets = yield* ConsumerOffsetStore;
-      const sql = yield* SqlClient;
-      yield* append([
-        draft("ProjectCreated"),
-        draft("WorkspaceCreated"),
-        draft("WorkCompleted"),
-      ]);
-      yield* runConsumerBatch(consumerId, projectId, 10);
-      yield* sql.unsafe(
-        "DELETE FROM domain_events WHERE project_id = ? AND sequence = 1",
-        [projectId],
+  it.effect("quarantines a poison event and advances past it", () =>
+    Effect.gen(function* () {
+      const program = Effect.gen(function* () {
+        yield* runMigrations(P1_MIGRATIONS);
+        yield* append([draft("ProjectCreated", 1)]);
+        const tx = yield* TransactionPort;
+        yield* tx.transact(
+          Effect.gen(function* () {
+            const sql = yield* SqlClient;
+            yield* sql.unsafe(
+              "INSERT INTO domain_events (event_id, project_id, sequence, event_type, event_version, occurred_at, aggregate_ref, actor, caused_by_command_id, caused_by_event_id, correlation_ref, payload_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+              [
+                "evt_unsupported_pair",
+                projectId,
+                2,
+                "WorkspaceCreated",
+                2,
+                "t",
+                projectId,
+                actor,
+                null,
+                null,
+                null,
+                "{}",
+              ],
+            );
+            yield* sql.unsafe(
+              "UPDATE project_event_sequences SET last_sequence = 2 WHERE project_id = ?",
+              [projectId],
+            );
+          }),
+        );
+        yield* append([draft("WorkCompleted", 1)]);
+        const result = yield* runConsumerBatch(consumerId, projectId, 10);
+        const offset = yield* readOffset(consumerId);
+        const rows = yield* projectionRows;
+        const sql = yield* SqlClient;
+        const letters = yield* sql.unsafe<{ sequence: number }>(
+          "SELECT sequence FROM consumer_dead_letters WHERE consumer_id = ?",
+          [consumerId],
+        );
+        return { result, offset, rows, letters };
+      });
+      const { result, offset, rows, letters } = yield* Effect.provide(
+        program,
+        makeApp(),
       );
-      // The offset adapter is monotonic; model this recovery fixture's lost
-      // canonical offset directly so it truly sits below floor-1.
-      yield* sql.unsafe(
-        "UPDATE consumer_offsets SET last_sequence = 0 WHERE consumer_id = ? AND project_id = ?",
-        [consumerId, projectId],
-      );
-      const refused = yield* rebuildProjection(consumerId, projectId).pipe(
-        Effect.flip,
-      );
-      yield* tx.transact(offsets.advance(consumerId, projectId, 3));
-      const rebuilt = yield* rebuildProjection(consumerId, projectId);
-      const offset = yield* readOffset(consumerId);
-      const rows = yield* projectionRows;
-      return { refused, rebuilt, offset, rows };
-    });
-    const { refused, rebuilt, offset, rows } = await Effect.runPromise(
-      Effect.provide(program, makeApp()),
-    );
-    expect(refused._tag).toBe("ConsumerRebuildRefused");
-    // P9-011 realignment: the rebuild replays ALL retained domain_events
-    // (P1 `05` §6 "replay domain_events"; P9-011 RB-4 same-state
-    // guarantee; PR1 batch-path parity) — the offset rewind target is
-    // floor-1 (clamped 0) so the exclusive batch read delivers the
-    // floor event too.
-    expect(rebuilt).toEqual({ replayed: 2, floor: 2 });
-    expect(offset).toBe(3);
-    expect(rows.map((row) => row.sequence)).toEqual([2, 3]);
-  });
+      expect(result.applied).toBe(2);
+      expect(result.quarantined).toBe(1);
+      expect(result.lastSequence).toBe(3);
+      expect(offset).toBe(3);
+      expect(rows.map((row) => row.sequence)).toEqual([1, 3]);
+      expect(letters.map((row) => row.sequence)).toEqual([2]);
+    }),
+  );
+
+  it.effect("re-applies idempotently on redelivery", () =>
+    Effect.gen(function* () {
+      const program = Effect.gen(function* () {
+        yield* runMigrations(P1_MIGRATIONS);
+        yield* append([draft("ProjectCreated"), draft("WorkspaceCreated")]);
+        yield* runConsumerBatch(consumerId, projectId, 10);
+        const second = yield* runConsumerBatch(consumerId, projectId, 10);
+        const rows = yield* projectionRows;
+        return { second, rows };
+      });
+      const { second, rows } = yield* Effect.provide(program, makeApp());
+      expect(second.applied).toBe(0);
+      expect(second.lastSequence).toBe(2);
+      expect(rows).toHaveLength(2);
+    }),
+  );
+
+  it.effect(
+    "refuses rebuild below the pruned floor and replays otherwise",
+    () =>
+      Effect.gen(function* () {
+        const program = Effect.gen(function* () {
+          yield* runMigrations(P1_MIGRATIONS);
+          const tx = yield* TransactionPort;
+          const offsets = yield* ConsumerOffsetStore;
+          const sql = yield* SqlClient;
+          yield* append([
+            draft("ProjectCreated"),
+            draft("WorkspaceCreated"),
+            draft("WorkCompleted"),
+          ]);
+          yield* runConsumerBatch(consumerId, projectId, 10);
+          yield* sql.unsafe(
+            "DELETE FROM domain_events WHERE project_id = ? AND sequence = 1",
+            [projectId],
+          );
+          // The offset adapter is monotonic; model this recovery fixture's lost
+          // canonical offset directly so it truly sits below floor-1.
+          yield* sql.unsafe(
+            "UPDATE consumer_offsets SET last_sequence = 0 WHERE consumer_id = ? AND project_id = ?",
+            [consumerId, projectId],
+          );
+          const refused = yield* rebuildProjection(consumerId, projectId).pipe(
+            Effect.flip,
+          );
+          yield* tx.transact(offsets.advance(consumerId, projectId, 3));
+          const rebuilt = yield* rebuildProjection(consumerId, projectId);
+          const offset = yield* readOffset(consumerId);
+          const rows = yield* projectionRows;
+          return { refused, rebuilt, offset, rows };
+        });
+        const { refused, rebuilt, offset, rows } = yield* Effect.provide(
+          program,
+          makeApp(),
+        );
+        expect(refused._tag).toBe("ConsumerRebuildRefused");
+        // P9-011 realignment: the rebuild replays ALL retained domain_events
+        // (P1 `05` §6 "replay domain_events"; P9-011 RB-4 same-state
+        // guarantee; PR1 batch-path parity) — the offset rewind target is
+        // floor-1 (clamped 0) so the exclusive batch read delivers the
+        // floor event too.
+        expect(rebuilt).toEqual({ replayed: 2, floor: 2 });
+        expect(offset).toBe(3);
+        expect(rows.map((row) => row.sequence)).toEqual([2, 3]);
+      }),
+  );
 });

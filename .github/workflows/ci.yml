@@ -1,11 +1,6 @@
 name: Arbor CI
 
 on:
-  merge_group:
-  pull_request:
-    branches: [master]
-  push:
-    branches: [master]
   workflow_dispatch:
 
 concurrency:
@@ -81,6 +76,9 @@ jobs:
 
       - name: Manifest checks
         run: pnpm test:manifest
+
+      - name: Semantic-naming transition gate
+        run: node scripts/governance/check-semantic-naming.mjs --baseline "${{ steps.comparison_base.outputs.sha }}"
 
       - name: Core tests
         run: pnpm test

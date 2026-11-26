@@ -2,78 +2,23 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { mkdir, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Effect, Layer, Option } from "effect";
+import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, describe, expect, it } from "vitest";
-import { makeBlobStorePortLive } from "../adapters/blob-local/src/index.js";
-import { ProjectEnvironmentPortLive } from "../adapters/environment-local/src/index.js";
 import { EnvironmentResolverLocalLive } from "../adapters/environment-resolver-local/src/index.js";
-// P12 `05` §5.1 (TR-1): advancement only via the internal capability.
 import {
-  EnvironmentRevisionAdvancement,
-  EnvironmentRevisionAdvancementLive,
-} from "../adapters/persistence-sqlite/src/environment-advancement.js";
-import {
-  AcceptanceRepositoryLive,
   ClockLive,
-  ClockTest,
-  CommandStoreLive,
-  ConversationAttemptStoreLive,
-  ConversationCheckpointStoreLive,
-  ConversationResponseJobStoreLive,
-  DecisionRequestStoreLive,
   DomainEventJournalLive,
   EnvironmentRevisionStoreLive,
-  ExecutionRepositoryLive,
-  FormationFulfillmentStoreLive,
-  FormationProposalStoreLive,
-  HumanMessageStoreLive,
   IdGeneratorLive,
-  InboxProjectionStoreLive,
-  LocalPlanStoreLive,
   layer,
   P16_MIGRATIONS,
-  P39RecoveryEvidenceStoreLive,
-  ProjectRepositoryLive,
-  ProviderTurnStoreLive,
   RecordEnvironmentChangeLive,
-  RecoveryAttentionFactStoreLive,
-  ResourceOwnershipRepositoryLive,
   RuntimeClockLive,
   runMigrations,
-  SessionRepositoryLive,
-  ToolInvocationStoreLive,
   TransactionPortLive,
-  VerificationRepositoryLive,
-  WorkRepositoryLive,
-  WorkspaceRepositoryLive,
   WorkWaitStoreLive,
 } from "../adapters/persistence-sqlite/src/index.js";
-import { FakeProviderLive } from "../adapters/provider-fake/src/index.js";
-import {
-  SandboxWorktreeDeps,
-  SandboxWorktreeLive,
-  type SandboxWorktreeOptions,
-  type SandboxWorktreeProvisionRequest,
-  type SandboxWorktreeRetirement,
-  type SandboxWriteBackChange,
-} from "../adapters/sandbox-worktree/src/index.js";
-import { WorkspaceKnowledgePortLive } from "../apps/single-workspace/src/workspace-knowledge.js";
-import { WorkspacePlacementPortLive } from "../apps/single-workspace/src/workspace-placement.js";
-import {
-  type AgentActionHandler,
-  AgentLoopRuntimeLive,
-  ControlBasisResolverLive,
-  checkFreshness,
-  ModelDecisionServiceLive,
-  makeControlToolRegistry,
-} from "../packages/agent-runtime/src/index.js";
-import {
-  type CreateWorktreePayload,
-  makeCreateWorktreeHandler,
-  makeRetireWorktreeHandler,
-  type RetireWorktreePayload,
-} from "../packages/application/src/commands/worktree-lifecycle.js";
 import {
   type DriftReport,
   type EnvironmentDriftDeps,
@@ -83,34 +28,13 @@ import {
   type DriftSubmissionFace,
   startupDriftProbe,
 } from "../packages/application/src/environment-drift-startup.js";
-import * as stalenessModule from "../packages/application/src/environment-staleness.js";
-import {
-  type EnvironmentChangeFact,
-  verificationFreshness,
-} from "../packages/application/src/environment-staleness.js";
-import {
-  CommandGateway,
-  CommandGatewayLive,
-  type CommandGatewayService,
-  type CommandHandler,
-  CommandHandlerRegistry,
-  FenceStopCheckInertLive,
-  type GatewayEnvelope,
-  InputPromotionServiceLive,
-  semanticRequestFingerprint,
-} from "../packages/application/src/index.js";
+import { verificationFreshness } from "../packages/application/src/environment-staleness.js";
 import {
   Actor,
-  type AgentExecutionState,
-  type CanonicalResourceRegion,
-  type CommandSubmissionContext,
   concludeVerification,
-  type Execution,
-  ExecutionId,
   Principal,
   type ProjectId,
   parse,
-  SessionId,
   startVerification,
   type Verification,
   VerificationId,
@@ -120,42 +44,36 @@ import {
   WorkspaceId,
 } from "../packages/domain/dist/index.js";
 import {
-  type ControlBasis,
-  ModelContext,
-  type PrepareTurnInput,
-} from "../packages/model-context/src/index.js";
-import {
   type EnvironmentObservation,
   EnvironmentReProbePort,
   EnvironmentResolverPort,
   type EnvironmentResolverService,
   EnvironmentRevisionStore,
   type EnvironmentRevisionStoreService,
-  ExecutionDriverPort,
-  ModelCapabilityPort,
-  ProjectEnvironmentPort,
   RecordEnvironmentChange,
   type RecordEnvironmentChangeService,
-  ResourceOwnershipRepository,
-  type RuntimeSafetyGateService,
-  SandboxPort,
-  type SandboxPortService,
   TransactionPort,
   type TransactionPortService,
-  TransactionScope,
-  WorkspaceRepository,
-  type WorktreeRecord,
-  WorktreeStore,
-  type WorktreeStoreService,
 } from "../packages/ports/src/index.js";
-import { ProviderRuntimeLive } from "../packages/provider-runtime/src/index.js";
-import { FixedSecretStoreLive } from "../packages/testkit/src/index.js";
-import { makeControlTurnProfileLayer } from "./support/control-turn-profile-layer.js";
 import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-project-resource-source.js";
 
 // P11-012 acceptance: one story per closure invariant CI-1..CI-5 (P11 `00`
 // §Five closure invariants) + the end-to-end environment story + the
 // P5–P10 regression guard reference. Mechanical evidence only.
+//
+// Suite-slimming (no guard-strength loss — each invariant stays covered by
+// its dedicated suite, which carries the stronger assertions):
+// - CI-2 (ControlBasis DecisionStale) → tests/p11-controlbasis.test.ts
+//   (verbatim scenario, plus the anchor-uninitialized case).
+// - CI-3 (worktree terminal closure) → gateway half in
+//   tests/p11-worktree.test.ts (release-first precondition with full-error
+//   toEqual + the WorktreeRetired event payload); sandbox ephemeral half
+//   in tests/p11-sandbox-handoff.test.ts (B3c: same retire chain asserted
+//   plus the written-back file contents). The release call site itself is
+//   proven live in tests/p11-ownership-wiring.test.ts (releaseClaimsInRegions).
+// - CI-5 (verdict immutability + staleness prohibitions) →
+//   tests/p11-staleness.test.ts (the mirrored original, stronger: it also
+//   covers narrow-overlap CURRENT, null-target CURRENT, staleAttentionRow).
 
 // ---------------------------------------------------------------------------
 // shared identities / fixtures
@@ -164,21 +82,13 @@ import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-proje
 const PROJECT =
   "prj_018f2b3c-4d5e-7abc-8def-0123456789aa" as never as ProjectId;
 const WS = parse(WorkspaceId)("ws_018f2b3c-4d5e-7abc-8def-0123456789aa");
-const OPERATOR = parse(Principal)("user:operator");
-const ACTOR = parse(Actor)("user:operator");
+const _OPERATOR = parse(Principal)("user:operator");
+const _ACTOR = parse(Actor)("user:operator");
 
 const suiteTmp = mkdtempSync(join(tmpdir(), "p11-acceptance-"));
 afterAll(() => {
   rmSync(suiteTmp, { recursive: true, force: true });
 });
-
-/** Canonical region fixture in the frozen comparator encoding
- * * (04-sqlite-schema.md §3.3 — object normalizedRegion, never a raw path). */
-const regionFixture = (path: string): CanonicalResourceRegion =>
-  ({
-    resourceSpaceId: "filesystem",
-    normalizedRegion: { kind: "FileTree", path },
-  }) as CanonicalResourceRegion;
 
 const seedProjectRows = (sql: SqlClient) =>
   sql.withTransaction(
@@ -292,7 +202,6 @@ const driftAppLayer = (
     ...(reprobe === undefined ? ([] as const) : [reprobe]),
   );
   const rec = Layer.provide(RecordEnvironmentChangeLive, recDeps);
-  const _sessions = Layer.provide(SessionRepositoryLive, infra);
   const revisions = Layer.provide(EnvironmentRevisionStoreLive, infra);
   const resolver = Layer.provide(EnvironmentResolverLocalLive, base);
   return Layer.mergeAll(
@@ -389,660 +298,6 @@ const concludedVerification = (
 };
 
 // ---------------------------------------------------------------------------
-// CI-2 fixture (driver + recording ModelContext — p11-controlbasis pattern)
-// ---------------------------------------------------------------------------
-
-const cbProjectId = PROJECT;
-const cbWorkspaceIds = [
-  parse(WorkspaceId)("ws_018f2b3c-4d5e-7abc-8def-0123456789b1"),
-  parse(WorkspaceId)("ws_018f2b3c-4d5e-7abc-8def-0123456789b2"),
-] as const;
-const cbSessionIds = [
-  parse(SessionId)("ses_018f2b3c-4d5e-7abc-8def-0123456789b1"),
-  parse(SessionId)("ses_018f2b3c-4d5e-7abc-8def-0123456789b2"),
-] as const;
-const cbExecutionIds = [
-  parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789b1"),
-  parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789b2"),
-] as const;
-
-const cbExecutionOf = (index: 0 | 1): Execution => ({
-  executionId: cbExecutionIds[index],
-  projectId: cbProjectId,
-  workspaceId: cbWorkspaceIds[index],
-  binding: {
-    _tag: "WorkspaceExecution",
-    workspaceId: cbWorkspaceIds[index],
-    episode: {
-      _tag: "InboxEpisode",
-      entryKey: `acceptance-control-basis-${index}`,
-      inputKind: "TestInput",
-    },
-  },
-  sessionId: cbSessionIds[index],
-  admittedAt: "t",
-  stopRequestedAt: null,
-  state: { status: "Active", settlement: null },
-});
-
-const cbStateOf = (index: 0 | 1): AgentExecutionState => ({
-  executionId: cbExecutionIds[index],
-  episode: {
-    _tag: "InboxEpisode",
-    entryKey: `acceptance-control-basis-${index}`,
-    inputKind: "TestInput",
-  },
-  wakeReason: { _tag: "WorkSelected" },
-  currentMode: "execute",
-  activeSkillRefs: [],
-  turnNo: 0,
-  recentDirectiveRefs: [],
-  recentActionFingerprints: [],
-  updatedAt: "t",
-});
-
-const cbContextOf = (index: 0 | 1): CommandSubmissionContext => ({
-  _tag: "ExecutionOrigin",
-  principal: OPERATOR,
-  executionId: cbExecutionIds[index],
-  fencingGeneration: 0 as never,
-});
-
-const allowGate: RuntimeSafetyGateService = {
-  admitActivity: () => Effect.succeed("Continue" as const),
-};
-
-const cbCapability = Layer.succeed(ModelCapabilityPort, {
-  resolve: () =>
-    Effect.succeed({
-      modelRef: "model-a",
-      family: "f",
-      contextWindow: 8000,
-      outputCeiling: 512,
-      toolProtocol: "json",
-    }),
-});
-
-const cbSendMessageTurn = (body: string) => [
-  {
-    _tag: "ToolCallProposed" as const,
-    callRef: "c1",
-    toolName: "send_message",
-    argumentsJson: JSON.stringify({
-      kind: "Query",
-      body,
-      recipientWorkspaceId: String(cbWorkspaceIds[1]),
-    }),
-  },
-  { _tag: "TurnCompleted" as const, finishReason: "ToolCall" as const },
-];
-
-const cbSendHandler: AgentActionHandler = {
-  action: "SendMessage",
-  handle: () =>
-    Effect.succeed({
-      _tag: "Settle",
-      settlement: {
-        _tag: "Completed",
-        result: { _tag: "CoordinationCompleted" },
-      },
-    }),
-};
-const cbControlRegistry = makeControlToolRegistry([cbSendHandler]);
-
-const cbRecordingModelContext = (recorded: Array<ControlBasis>) =>
-  Layer.succeed(ModelContext, {
-    prepareTurn: (input: PrepareTurnInput) =>
-      Effect.sync(() => {
-        recorded.push(input.controlBasis);
-        return {
-          _tag: "Ready" as const,
-          turn: {
-            request: {
-              modelRef: "model-a",
-              instructions: [],
-              messages: [],
-              toolDefinitions: [],
-              outputContractRef: "tool-invocation-v1",
-              budget: { maxOutputTokens: input.maxOutputTokens },
-              cacheHints: [],
-            },
-            toolRoutes: [{ name: "send_message", route: "Control" as const }],
-            manifest: {
-              providerTurnId: input.providerTurnId,
-              executionId: input.executionId,
-              sessionId: input.sessionId,
-              contextEpoch: input.contextEpoch,
-              modelRef: "model-a",
-              instructionFragments: [],
-              contextRefs: [],
-              skillRefs: [],
-              toolRefs: ["Control:send_message@1"],
-              toolRoutes: [{ name: "send_message", route: "Control" as const }],
-              outputContractRef: "tool-invocation-v1",
-              budgetDecision: { maxOutputTokens: input.maxOutputTokens },
-              compiledRequestHash: "hash-p11-acceptance",
-              controlBasis: input.controlBasis,
-            },
-          },
-        };
-      }),
-  });
-
-const cbMakeApp = () => {
-  const recorded: Array<ControlBasis> = [];
-  const cbBlobRoot = mkdtempSync(join(tmpdir(), "arbor-p11-cb-blobs-"));
-  const base = layer({ filename: ":memory:" });
-  const infra = Layer.mergeAll(
-    base,
-    ClockLive,
-    RuntimeClockLive,
-    IdGeneratorLive,
-  );
-  const provider = FakeProviderLive({
-    turns: [cbSendMessageTurn("first"), cbSendMessageTurn("second")],
-  });
-  const providerRuntime = Layer.provide(
-    ProviderRuntimeLive(),
-    Layer.mergeAll(
-      provider,
-      Layer.provide(ProviderTurnStoreLive, infra),
-      Layer.provide(TransactionPortLive, infra),
-      FixedSecretStoreLive(),
-      infra,
-    ),
-  );
-  const sessions = Layer.provide(SessionRepositoryLive, infra);
-  const revisions = Layer.provide(EnvironmentRevisionStoreLive, infra);
-  const advancement = Layer.provide(EnvironmentRevisionAdvancementLive, infra);
-  const tx = Layer.provide(TransactionPortLive, infra);
-  const turnProfiles = makeControlTurnProfileLayer(cbControlRegistry);
-  const driverDependencies = Layer.mergeAll(
-    infra,
-    cbRecordingModelContext(recorded),
-    providerRuntime,
-    cbCapability,
-    Layer.provide(SessionRepositoryLive, infra),
-    Layer.provide(HumanMessageStoreLive, infra),
-    Layer.provide(ProjectRepositoryLive, infra),
-    Layer.provide(WorkspaceRepositoryLive, infra),
-    Layer.provide(WorkRepositoryLive, infra),
-    Layer.provide(InboxProjectionStoreLive, infra),
-    Layer.provide(
-      InputPromotionServiceLive,
-      Layer.mergeAll(
-        infra,
-        tx,
-        sessions,
-        Layer.provide(InboxProjectionStoreLive, infra),
-        Layer.provide(ExecutionRepositoryLive, infra),
-      ),
-    ),
-    Layer.provide(ConversationResponseJobStoreLive, infra),
-    Layer.provide(ConversationAttemptStoreLive, infra),
-    Layer.provide(ConversationCheckpointStoreLive, infra),
-    Layer.provide(
-      ControlBasisResolverLive,
-      Layer.mergeAll(
-        infra,
-        Layer.provide(TransactionPortLive, infra),
-        Layer.provide(ProjectRepositoryLive, infra),
-        Layer.provide(WorkspaceRepositoryLive, infra),
-        Layer.provide(WorkRepositoryLive, infra),
-        revisions,
-      ),
-    ),
-    Layer.provide(ExecutionRepositoryLive, infra),
-    Layer.provide(
-      RecoveryAttentionFactStoreLive,
-      Layer.mergeAll(infra, Layer.provide(DomainEventJournalLive, infra)),
-    ),
-    Layer.provide(ToolInvocationStoreLive, infra),
-    Layer.provide(P39RecoveryEvidenceStoreLive, infra),
-    Layer.provide(LocalPlanStoreLive, infra),
-    Layer.provide(DecisionRequestStoreLive, infra),
-    Layer.provide(
-      WorkspaceKnowledgePortLive,
-      Layer.mergeAll(
-        infra,
-        tx,
-        Layer.provide(WorkRepositoryLive, infra),
-        Layer.provide(VerificationRepositoryLive, infra),
-        Layer.provide(AcceptanceRepositoryLive, infra),
-        Layer.provide(FormationProposalStoreLive, infra),
-        Layer.provide(FormationFulfillmentStoreLive, infra),
-        Layer.provide(WorkspaceRepositoryLive, infra),
-      ),
-    ),
-    Layer.provide(
-      WorkspacePlacementPortLive,
-      Layer.mergeAll(
-        infra,
-        tx,
-        Layer.provide(WorkRepositoryLive, infra),
-        Layer.provide(VerificationRepositoryLive, infra),
-        Layer.provide(AcceptanceRepositoryLive, infra),
-        Layer.provide(FormationProposalStoreLive, infra),
-        Layer.provide(FormationFulfillmentStoreLive, infra),
-        Layer.provide(WorkspaceRepositoryLive, infra),
-      ),
-    ),
-    makeBlobStorePortLive(cbBlobRoot),
-    tx,
-    revisions,
-  );
-  const modelDecision = Layer.provide(
-    ModelDecisionServiceLive(),
-    Layer.merge(driverDependencies, turnProfiles),
-  );
-  const driver = Layer.provide(
-    AgentLoopRuntimeLive({ controlRegistry: cbControlRegistry }),
-    Layer.merge(driverDependencies, modelDecision),
-  );
-  return {
-    app: Layer.mergeAll(driverDependencies, driver, advancement),
-    recorded,
-  };
-};
-
-const cbSeed = Effect.gen(function* () {
-  const sql = yield* SqlClient;
-  yield* sql.withTransaction(
-    Effect.gen(function* () {
-      for (const [index, sessionId] of cbSessionIds.entries()) {
-        yield* sql.unsafe(
-          "INSERT INTO sessions (session_id, binding_kind, workspace_id, execution_id, context_epoch, created_at) VALUES (?,?,?,?,?,?)",
-          [sessionId, "WorkspacePrimary", cbWorkspaceIds[index], null, 0, "t"],
-        );
-      }
-      yield* sql.unsafe(
-        "INSERT INTO projects (project_id, name, root_workspace_id, project_policy, project_policy_revision, default_configuration, environment_ref, lifecycle, revision, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-        [
-          cbProjectId,
-          "p",
-          cbWorkspaceIds[0],
-          "{}",
-          0,
-          "{}",
-          "local",
-          "Open",
-          0,
-          "t",
-          "t",
-        ],
-      );
-      yield* ensureLegacyProjectResourceSourceFixture();
-      for (const [index, workspaceId] of cbWorkspaceIds.entries()) {
-        yield* sql.unsafe(
-          "INSERT INTO workspaces (workspace_id, project_id, parent_workspace_id, name, responsibility_definition, responsibility_revision, resource_boundary, resource_boundary_revision, agent_binding, primary_session_id, current_work_id, workspace_policy, workspace_policy_revision, revision, lifecycle, created_at, updated_at) VALUES (?,?,NULL,?,?,?,?,?,?,?,NULL,?,?,?,?,?,?)",
-          [
-            workspaceId,
-            cbProjectId,
-            "w",
-            "{}",
-            0,
-            "{}",
-            0,
-            "{}",
-            cbSessionIds[index],
-            "{}",
-            0,
-            0,
-            "Active",
-            "t",
-            "t",
-          ],
-        );
-      }
-      for (const [index, executionId] of cbExecutionIds.entries()) {
-        yield* sql.unsafe(
-          "INSERT INTO executions (execution_id, project_id, binding_kind, workspace_id, focus_kind, focus_work_id, parent_execution_id, mission, session_id, admitted_at, stop_requested_at, settlement_kind, settlement_json, settled_at) VALUES (?,?,?,?,?,NULL,NULL,NULL,?,?,NULL,NULL,NULL,NULL)",
-          [
-            executionId,
-            cbProjectId,
-            "workspace",
-            cbWorkspaceIds[index],
-            "coordination",
-            cbSessionIds[index],
-            "t",
-          ],
-        );
-        yield* sql.unsafe(
-          "INSERT INTO execution_leases (execution_id, worker_id, generation, expires_at, updated_at) VALUES (?,?,?,?,?)",
-          [executionId, "worker", 0, "9999-12-31T00:00:00.000Z", "t"],
-        );
-      }
-    }),
-  );
-});
-
-const cbDrive = (index: 0 | 1) =>
-  Effect.gen(function* () {
-    const driver = yield* ExecutionDriverPort;
-    return yield* driver.drive({
-      execution: cbExecutionOf(index),
-      agentExecutionState: cbStateOf(index),
-      wakeReason: { _tag: "WorkSelected" },
-      context: cbContextOf(index),
-      safetyGate: allowGate,
-    });
-  });
-
-// ---------------------------------------------------------------------------
-// CI-3 fixture (gateway + worktree store — p11-worktree pattern)
-// ---------------------------------------------------------------------------
-
-const WORKTREES_TEST_DDL = `
-CREATE TABLE IF NOT EXISTS worktrees (
-  worktree_id     TEXT PRIMARY KEY,
-  project_id      TEXT NOT NULL REFERENCES projects(project_id),
-  workspace_id    TEXT NOT NULL REFERENCES workspaces(workspace_id),
-  path            TEXT NOT NULL,
-  repository_ref  TEXT,
-  branch          TEXT,
-  state           TEXT NOT NULL CHECK (state IN ('Active','Retired')),
-  created_at      TEXT NOT NULL,
-  retired_at      TEXT,
-  CHECK ((state = 'Active') = (retired_at IS NULL))
-);
-CREATE INDEX idx_worktrees_workspace ON worktrees(workspace_id);
-`;
-
-interface WorktreeRow {
-  readonly worktree_id: string;
-  readonly project_id: string;
-  readonly workspace_id: string;
-  readonly path: string;
-  readonly repository_ref: string | null;
-  readonly branch: string | null;
-  readonly state: string;
-  readonly created_at: string;
-  readonly retired_at: string | null;
-}
-
-const toWorktreeRecord = (row: WorktreeRow): WorktreeRecord => ({
-  worktreeId: row.worktree_id,
-  projectId: row.project_id as ProjectId,
-  workspaceId: row.workspace_id as never,
-  address: {
-    _tag: "GitWorktree",
-    path: row.path,
-    ...(row.repository_ref === null
-      ? {}
-      : { repositoryRef: row.repository_ref }),
-    ...(row.branch === null ? {} : { branch: row.branch }),
-  },
-  state: row.state as "Active" | "Retired",
-  createdAt: row.created_at,
-  ...(row.retired_at === null ? {} : { retiredAt: row.retired_at }),
-});
-
-const WorktreeStoreTestLive: Layer.Layer<WorktreeStore, never, SqlClient> =
-  Layer.effect(
-    WorktreeStore,
-    Effect.gen(function* () {
-      const sql = yield* SqlClient;
-      const selectById = (worktreeId: string) =>
-        sql.unsafe<WorktreeRow>(
-          "SELECT * FROM worktrees WHERE worktree_id = ?",
-          [worktreeId],
-        );
-      const service = {
-        insert: (record: WorktreeRecord) =>
-          Effect.gen(function* () {
-            yield* TransactionScope;
-            yield* sql.unsafe(
-              "INSERT INTO worktrees (worktree_id, project_id, workspace_id, path, repository_ref, branch, state, created_at, retired_at) VALUES (?,?,?,?,?,?,?,?,NULL)",
-              [
-                record.worktreeId,
-                record.projectId,
-                record.workspaceId,
-                record.address.path,
-                record.address.repositoryRef ?? null,
-                record.address.branch ?? null,
-                record.state,
-                record.createdAt,
-              ],
-            );
-          }),
-        findById: (worktreeId: string) =>
-          Effect.gen(function* () {
-            yield* TransactionScope;
-            const rows = yield* selectById(worktreeId);
-            return rows.length === 0
-              ? Option.none()
-              : Option.some(toWorktreeRecord(rows[0] as WorktreeRow));
-          }),
-        findByWorkspace: (workspaceId: WorkspaceId) =>
-          Effect.gen(function* () {
-            yield* TransactionScope;
-            const rows = yield* sql.unsafe<WorktreeRow>(
-              "SELECT * FROM worktrees WHERE workspace_id = ? ORDER BY worktree_id",
-              [workspaceId],
-            );
-            return rows.map(toWorktreeRecord);
-          }),
-        retireIfActive: (worktreeId: string, retiredAt: string) =>
-          Effect.gen(function* () {
-            yield* TransactionScope;
-            yield* sql.unsafe(
-              "UPDATE worktrees SET state = 'Retired', retired_at = ? WHERE worktree_id = ? AND state = 'Active'",
-              [retiredAt, worktreeId],
-            );
-            const rows = yield* selectById(worktreeId);
-            if (rows.length === 0) {
-              return Option.none();
-            }
-            const row = rows[0] as WorktreeRow;
-            return row.state === "Retired"
-              ? Option.some(toWorktreeRecord(row))
-              : Option.none();
-          }),
-      };
-      return WorktreeStore.of(service as unknown as WorktreeStoreService);
-    }),
-  );
-
-type WtAppEnv =
-  | CommandGateway
-  | SqlClient
-  | TransactionPort
-  | WorktreeStore
-  | WorkspaceRepository
-  | ProjectEnvironmentPort
-  | ResourceOwnershipRepository;
-
-const wtMakeApp = (): Layer.Layer<WtAppEnv> => {
-  const base = layer({ filename: ":memory:" });
-  const infra = Layer.mergeAll(base, ClockTest("t"), IdGeneratorLive);
-  const registry = Layer.provide(
-    Layer.effect(
-      CommandHandlerRegistry,
-      Effect.gen(function* () {
-        const worktrees = yield* WorktreeStore;
-        const workspaces = yield* WorkspaceRepository;
-        const environment = yield* ProjectEnvironmentPort;
-        const ownership = yield* ResourceOwnershipRepository;
-        const handlers: ReadonlyArray<CommandHandler<unknown, unknown>> = [
-          makeCreateWorktreeHandler({
-            worktrees,
-            workspaces,
-          }) as unknown as CommandHandler<unknown, unknown>,
-          makeRetireWorktreeHandler({
-            worktrees,
-            environment,
-            ownership,
-          }) as unknown as CommandHandler<unknown, unknown>,
-        ];
-        return CommandHandlerRegistry.of({
-          lookup: (commandType) => {
-            const handler = handlers.find(
-              (candidate) => candidate.commandType === commandType,
-            );
-            return handler === undefined ? Option.none() : Option.some(handler);
-          },
-        });
-      }),
-    ),
-    Layer.mergeAll(
-      Layer.provide(WorktreeStoreTestLive, base),
-      Layer.provide(WorkspaceRepositoryLive, infra),
-      Layer.provide(ResourceOwnershipRepositoryLive, infra),
-      ProjectEnvironmentPortLive,
-    ),
-  );
-  const gatewayDeps = Layer.mergeAll(
-    infra,
-    registry,
-    Layer.provide(TransactionPortLive, infra),
-    Layer.provide(CommandStoreLive, infra),
-    Layer.provide(DomainEventJournalLive, infra),
-    FenceStopCheckInertLive,
-  );
-  return Layer.mergeAll(
-    gatewayDeps,
-    Layer.provide(CommandGatewayLive, gatewayDeps),
-  ) as Layer.Layer<WtAppEnv>;
-};
-
-const wtRun = <A, E>(program: Effect.Effect<A, E, WtAppEnv>): Promise<A> =>
-  Effect.runPromise(Effect.scoped(Effect.provide(program, wtMakeApp())));
-
-const wtCreatePayload = (
-  overrides: Partial<CreateWorktreePayload> = {},
-): CreateWorktreePayload => ({
-  worktreeId: "wt_acc1",
-  projectId: PROJECT,
-  workspaceId: WS,
-  address: { _tag: "GitWorktree", path: "/repo/wt-acc1" },
-  ...overrides,
-});
-
-const wtRetirePayload = (
-  overrides: Partial<RetireWorktreePayload> = {},
-): RetireWorktreePayload => ({
-  worktreeId: "wt_acc1",
-  expectedState: "Active",
-  ...overrides,
-});
-
-type GatewayAuthority = Parameters<CommandGatewayService["execute"]>[2];
-
-const wtSubmit = <P>(
-  gw: CommandGatewayService,
-  args: {
-    readonly commandType: "CreateWorktree" | "RetireWorktree";
-    readonly commandId: string;
-    readonly payload: P;
-  },
-) => {
-  const envelope: GatewayEnvelope<P> = {
-    commandType: args.commandType,
-    commandId: args.commandId as never,
-    projectId: PROJECT,
-    actor: ACTOR,
-    issuedAt: "t9",
-    payload: args.payload,
-  };
-  return gw.execute(envelope, { _tag: "External", principal: OPERATOR }, {
-    _tag:
-      args.commandType === "CreateWorktree"
-        ? "CreateWorktreeAuthority"
-        : "RetireWorktreeAuthority",
-    principal: OPERATOR,
-    commandId: args.commandId as never,
-    semanticRequestFingerprint: semanticRequestFingerprint({
-      commandType: args.commandType,
-      projectId: PROJECT,
-      actor: ACTOR,
-      schemaVersion: "1",
-      payload: args.payload,
-    }),
-    projectId: PROJECT,
-    ...(args.commandType === "CreateWorktree"
-      ? {
-          targetWorkspaceId: (args.payload as CreateWorktreePayload)
-            .workspaceId,
-          worktreeId: (args.payload as CreateWorktreePayload).worktreeId,
-        }
-      : { worktreeId: (args.payload as RetireWorktreePayload).worktreeId }),
-  } as GatewayAuthority);
-};
-
-// --- CI-3 sandbox half (fake wiring log — p11-sandbox-handoff pattern) ---
-
-interface SandboxLog {
-  readonly createWorktree: Array<SandboxWorktreeProvisionRequest>;
-  readonly recordEnvironmentChange: Array<SandboxWriteBackChange>;
-  readonly retireWorktree: Array<SandboxWorktreeRetirement>;
-}
-
-const emptySandboxLog = (): SandboxLog => ({
-  createWorktree: [],
-  recordEnvironmentChange: [],
-  retireWorktree: [],
-});
-
-const sandboxWorktreeRun = async <A, E>(
-  program: (sbx: SandboxPortService) => Effect.Effect<A, E>,
-  options: SandboxWorktreeOptions = {},
-): Promise<{ result: A; log: SandboxLog }> => {
-  const log = emptySandboxLog();
-  const worktreeStoreFake = Layer.succeed(
-    WorktreeStore,
-    WorktreeStore.of({
-      insert: () => Effect.void,
-      findById: () => Effect.succeed(Option.none()),
-      findByWorkspace: () => Effect.succeed([]),
-      retireIfActive: () => Effect.succeed(Option.none()),
-    } as unknown as WorktreeStoreService),
-  );
-  const txFake = Layer.succeed(
-    TransactionPort,
-    TransactionPort.of({
-      transact: (body) =>
-        Effect.provideService(body, TransactionScope, {
-          session: { id: "p11-acceptance-sbx" },
-        }),
-    }),
-  );
-  const depsFake = Layer.succeed(
-    SandboxWorktreeDeps,
-    SandboxWorktreeDeps.of({
-      createWorktree: (request) =>
-        Effect.sync(() => {
-          log.createWorktree.push(request);
-          return { worktreeId: "wt_sbx_1", path: request.path };
-        }),
-      recordEnvironmentChange: (change) =>
-        Effect.sync(() => {
-          log.recordEnvironmentChange.push(change);
-        }),
-      retireWorktree: (retirement) =>
-        Effect.sync(() => {
-          log.retireWorktree.push(retirement);
-        }),
-    }),
-  );
-  const effect = Effect.gen(function* () {
-    const sandbox = yield* SandboxPort;
-    return yield* program(sandbox);
-  });
-  const result = await Effect.runPromise(
-    Effect.scoped(
-      Effect.provide(
-        effect,
-        Layer.provide(
-          SandboxWorktreeLive({ baseDir: suiteTmp, ...options }),
-          Layer.mergeAll(worktreeStoreFake, txFake, depsFake),
-        ),
-      ),
-    ),
-  );
-  return { result, log };
-};
-
-// ---------------------------------------------------------------------------
 // the suite
 // ---------------------------------------------------------------------------
 
@@ -1120,159 +375,17 @@ describe("p11-acceptance (P11 00 CI-1..CI-5 + end-to-end story)", () => {
     );
   });
 
-  it("CI-2 real ControlBasis — driver has no hardcoded env revision (grep) and an anchor move trips DecisionStale (p11-controlbasis pattern)", async () => {
-    const source = readFileSync(
-      join(
-        import.meta.dirname,
-        "..",
-        "packages/agent-runtime/src/agent-loop-driver.ts",
-      ),
-      "utf8",
-    );
-    expect(source.includes('"env"')).toBe(false);
+  // CI-2 SLIMMED: covered by tests/p11-controlbasis.test.ts (verbatim
+  // scenario, stronger: it adds the anchor-uninitialized '0' case and the
+  // hardcoded-'env' grep as its own dedicated test).
 
-    const { app, recorded } = cbMakeApp();
-    const settlements = await Effect.runPromise(
-      Effect.scoped(
-        Effect.provide(
-          Effect.gen(function* () {
-            yield* runMigrations(P16_MIGRATIONS);
-            yield* cbSeed;
-            const store = yield* EnvironmentRevisionStore;
-            const advancement = yield* EnvironmentRevisionAdvancement;
-            const tx = yield* TransactionPort;
-            yield* tx.transact(store.record(cbProjectId, "7"));
-            const first = yield* cbDrive(0);
-            const advanced = yield* tx.transact(
-              advancement.advanceAnchor(cbProjectId, "7"),
-            );
-            expect(advanced).toEqual({ _tag: "Advanced", to: "8" });
-            const second = yield* cbDrive(1);
-            return [first, second];
-          }),
-          app,
-        ),
-      ),
-    );
-    expect(
-      (settlements as ReadonlyArray<{ readonly _tag: string }>).map(
-        (settlement) => settlement._tag,
-      ),
-    ).toEqual(["Completed", "Completed"]);
-    expect(recorded[0]?.environmentRevision).toBe("7");
-    expect(recorded[1]?.environmentRevision).toBe("8");
-    const stale = checkFreshness(
-      recorded[0] as ControlBasis,
-      recorded[1] as ControlBasis,
-      "Weak",
-    );
-    expect(stale?._tag).toBe("DecisionStale");
-    expect(stale?.changed).toContain("environmentRevision");
-  });
-
-  it("CI-3 worktree terminal closure — retire refused while claims are active, release unblocks, commit closes; sandbox ephemeral close rides the retire callback chain", async () => {
-    // -- gateway half (release-first, then terminal closure) --
-    await wtRun(
-      Effect.gen(function* () {
-        yield* runMigrations(P16_MIGRATIONS);
-        const sql = yield* SqlClient;
-        const gw = yield* CommandGateway;
-        yield* sql.unsafe(WORKTREES_TEST_DDL, []);
-        yield* seedProjectRows(sql);
-
-        const created = yield* wtSubmit(gw, {
-          commandType: "CreateWorktree",
-          commandId: "cmd_wt_acc_0001",
-          payload: wtCreatePayload(),
-        });
-        expect(created.resolution._tag).toBe("Committed");
-
-        // active claim inside the worktree region -> typed refusal, no
-        // terminal transition, no event
-        yield* sql.unsafe(
-          "INSERT INTO resource_ownership (claim_id, workspace_id, resource_space_id, canonical_region, source_address_snapshot, resource_boundary_revision, resolved_at_environment_revision, created_at, released_at) VALUES ('clm_acc',?, 'filesystem', ?, '{\"_tag\":\"GitWorktree\",\"path\":\"/repo/wt-acc1\"}', 1, '1', 't', NULL)",
-          [
-            WS,
-            JSON.stringify({
-              resourceSpaceId: "filesystem",
-              normalizedRegion: {
-                kind: "GitWorktree",
-                path: "/repo/wt-acc1/sub",
-              },
-            }),
-          ],
-        );
-        const blocked = yield* wtSubmit(gw, {
-          commandType: "RetireWorktree",
-          commandId: "cmd_wt_acc_0002",
-          payload: wtRetirePayload(),
-        });
-        expect(blocked.resolution._tag).toBe("TerminalRejected");
-        if (blocked.resolution._tag === "TerminalRejected") {
-          expect(
-            (blocked.resolution.error as { readonly _tag: string })._tag,
-          ).toBe("ActiveClaimsExist");
-        }
-        const stillActive = yield* sql.unsafe<{ state: string }>(
-          "SELECT state FROM worktrees WHERE worktree_id = 'wt_acc1'",
-        );
-        expect(stillActive[0]?.state).toBe("Active");
-        const noEvent = yield* sql.unsafe<{ count: number }>(
-          "SELECT COUNT(*) AS count FROM domain_events WHERE event_type = 'WorktreeRetired'",
-        );
-        expect(Number(noEvent[0]?.count)).toBe(0);
-
-        // release-first: after the release path frees the claim, the
-        // terminal transition commits and closes the lifecycle
-        yield* sql.unsafe(
-          "UPDATE resource_ownership SET released_at = 't1' WHERE claim_id = 'clm_acc'",
-        );
-        const retired = yield* wtSubmit(gw, {
-          commandType: "RetireWorktree",
-          commandId: "cmd_wt_acc_0003",
-          payload: wtRetirePayload(),
-        });
-        expect(retired.resolution._tag).toBe("Committed");
-        const closed = yield* sql.unsafe<{
-          state: string;
-          retired_at: string;
-        }>(
-          "SELECT state, retired_at FROM worktrees WHERE worktree_id = 'wt_acc1'",
-        );
-        expect(closed[0]?.state).toBe("Retired");
-        expect(closed[0]?.retired_at).toBe("t9");
-        const event = yield* sql.unsafe<{ count: number }>(
-          "SELECT COUNT(*) AS count FROM domain_events WHERE event_type = 'WorktreeRetired'",
-        );
-        expect(Number(event[0]?.count)).toBe(1);
-      }),
-    );
-
-    // -- sandbox half: ephemeral close -> write-back REC + retire chain --
-    const fresh = join(suiteTmp, "ci3-ephemeral-wt");
-    const { log } = await sandboxWorktreeRun(
-      (sbx) =>
-        Effect.gen(function* () {
-          const handle = yield* sbx.open({
-            executionId: parse(ExecutionId)(
-              "exe_018f2b3c-4d5e-7abc-8def-0123456789aa",
-            ),
-            workspaceId: WS,
-            regions: [
-              {
-                resourceSpaceId: "filesystem",
-                normalizedRegion: { kind: "GitWorktree", path: fresh },
-              },
-            ],
-          });
-          yield* sbx.close(handle);
-        }),
-      { provisionOnOpen: true },
-    );
-    expect(log.recordEnvironmentChange).toHaveLength(1);
-    expect(log.recordEnvironmentChange[0]?.cause).toBe("Governance");
-    expect(log.retireWorktree).toEqual([{ worktreeId: "wt_sbx_1" }]);
-  });
+  // CI-3 SLIMMED: covered by tests/p11-worktree.test.ts (gateway half —
+  // "RetireWorktree precondition (P11 09 §3 / CI-3, §1.4A release-first)"
+  // asserts the same refusal/release/commit closure with the full
+  // ActiveClaimsExist error payload via toEqual) and
+  // tests/p11-sandbox-handoff.test.ts (sandbox half — B3c ephemeral retire
+  // at close asserts the same Governance write-back + retire chain plus
+  // the persisted write-back file contents).
 
   it("CI-4 drift convergence — probe -> Drift -> governed REC -> NoDrift; NoDrift never submits; a second conflict stops at Attention", async () => {
     const dir = join(suiteTmp, "ci4-tree");
@@ -1369,77 +482,11 @@ describe("p11-acceptance (P11 00 CI-1..CI-5 + end-to-end story)", () => {
     );
   });
 
-  it("CI-5 verdict immutability — four-state overlay keeps the stored verdict byte-identical; the staleness module carries no write path (p11-staleness prohibitions)", () => {
-    const modulePath = join(
-      import.meta.dirname,
-      "..",
-      "packages",
-      "application",
-      "src",
-      "environment-staleness.ts",
-    );
-    const source = readFileSync(modulePath, "utf8");
-
-    const alreadySeen: ReadonlyArray<EnvironmentChangeFact> = [
-      { toRevision: "1", changedRegions: [regionFixture("/pkg-a")] },
-    ];
-    const advanced: ReadonlyArray<EnvironmentChangeFact> = [
-      { toRevision: "2", changedRegions: [regionFixture("/pkg-a")] },
-    ];
-
-    // PASS+CURRENT: equality is already-seen
-    const passCurrent = concludedVerification("Pass", "1");
-    expect(
-      verificationFreshness(
-        {
-          targetEnvironmentRevision: passCurrent.targetEnvironmentRevision,
-          boundRegions: [regionFixture("/pkg-a/module-1")],
-        },
-        alreadySeen,
-      ),
-    ).toBe("CURRENT");
-    expect(passCurrent.state).toEqual({ status: "Concluded", verdict: "Pass" });
-
-    // PASS/FAIL/UNKNOWN + STALE: the four states, one stored verdict each
-    for (const verdict of ["Pass", "Fail", "Unknown"] as const) {
-      const verification = concludedVerification(verdict, "1");
-      const before = structuredClone(verification);
-      expect(
-        verificationFreshness(
-          {
-            targetEnvironmentRevision: verification.targetEnvironmentRevision,
-            boundRegions: [regionFixture("/pkg-a/module-1")],
-          },
-          advanced,
-        ),
-      ).toBe("STALE");
-      expect(verification.state).toEqual({ status: "Concluded", verdict });
-      expect(verification).toEqual(before); // overlay never mutated the row
-    }
-
-    // prohibitions (07 §2, mirrored from tests/p11-staleness.test.ts)
-    for (const literal of ['"Pass"', '"Fail"', '"Unknown"']) {
-      expect(source.includes(literal), literal).toBe(false);
-    }
-    for (const forbidden of [
-      "Effect",
-      "Gateway",
-      "Repository",
-      "Store",
-      "Journal",
-      "PendingDomainEvent",
-      ".transact",
-      ".insert",
-      ".update",
-    ]) {
-      expect(source.includes(forbidden), forbidden).toBe(false);
-    }
-    expect(Object.keys(stalenessModule).sort()).toEqual([
-      "ownershipClaimFreshness",
-      "staleAttentionRow",
-      "verificationFreshness",
-    ]);
-  });
+  // CI-5 SLIMMED: covered by tests/p11-staleness.test.ts — this test was
+  // a verbatim mirror of its "four states" + "three prohibitions" tests
+  // (the file's own comment said "mirrored from tests/p11-staleness.test.ts");
+  // the original also covers narrow-overlap CURRENT, null-target CURRENT
+  // and staleAttentionRow on top.
 
   it("Story A — real fs tmp tree: observe -> external mtime change -> Drift -> governed REC -> EnvironmentChanged event + wake target + STALE overlay; zero verdict mutation throughout", async () => {
     const dir = join(suiteTmp, "story-a-tree");
@@ -1571,11 +618,11 @@ describe("p11-acceptance (P11 00 CI-1..CI-5 + end-to-end story)", () => {
     // per-phase representative suites exist (P5..P10 stay wired in)
     const representatives: ReadonlyArray<[string, string]> = [
       ["P5", "apps/single-workspace/test/p5-slice-acceptance.test.ts"],
-      ["P6", "tests/p6-acceptance.test.ts"],
-      ["P7", "tests/p7-acceptance.test.ts"],
-      ["P8", "tests/p8-acceptance.test.ts"],
-      ["P9", "tests/p9-acceptance.test.ts"],
-      ["P10", "tests/p10-acceptance.test.ts"],
+      ["P6", "tests/p6/story-a.test.ts"],
+      ["P7", "tests/p7/p7-acceptance.test.ts"],
+      ["P8", "tests/p8/story-a.test.ts"],
+      ["P9", "tests/p9/p9-story-a.test.ts"],
+      ["P10", "tests/p10/actions.test.ts"],
     ];
     for (const [phase, relative] of representatives) {
       expect(existsSync(join(import.meta.dirname, "..", relative)), phase).toBe(

@@ -40,6 +40,7 @@ import {
   projectConversationCheckpointHistory,
 } from "../checkpoint/conversation/projection.js";
 import type { ModelDecisionDependencies } from "./contract.js";
+import type { ConversationDecisionContextError } from "./errors.js";
 
 type ConversationDecisionDependencies = Pick<
   ModelDecisionDependencies,
@@ -81,7 +82,11 @@ export type ConversationDecisionContextResult =
 
 /** Load the exact ConversationResponseEpisode context. A native binding
  * rebase restarts the caller's existing decision loop; terminal recovery
- * returns its existing outcome. No new turn or settlement authority is added. */
+ * returns its existing outcome. No new turn or settlement authority is added.
+ * E09: store, transaction and compaction failures propagate as their narrow
+ * union; the decision driver folds once at its ExecutionDriverError boundary.
+ * `failure` is forwarded unchanged to the checkpoint receipt validator, an
+ * already-folded ExecutionDriverError boundary. */
 export const loadConversationDecisionContext = (
   dependencies: ConversationDecisionDependencies,
   phase: {
@@ -102,7 +107,7 @@ export const loadConversationDecisionContext = (
   },
 ): Effect.Effect<
   ConversationDecisionContextResult,
-  ExecutionDriverError,
+  ConversationDecisionContextError,
   // E05 sink: conversation evidence capabilities acquired directly.
   | HumanMessageStore
   | ConversationResponseJobStore
@@ -149,9 +154,9 @@ export const loadConversationDecisionContext = (
     let conversationProjection: ConversationCheckpointProjection | undefined;
     let conversationCurrentJob: ConversationResponseJob | undefined;
     const history = conversationExecution
-      ? yield* tx
-          .transact(humanMessages.listForWorkspace(input.execution.workspaceId))
-          .pipe(Effect.mapError(failure))
+      ? yield* tx.transact(
+          humanMessages.listForWorkspace(input.execution.workspaceId),
+        )
       : [];
     let claimed = undefined as (typeof history)[number] | undefined;
     const placementExecution =
@@ -162,34 +167,28 @@ export const loadConversationDecisionContext = (
         dependencies.conversationCheckpoints === undefined ||
         loopStepFence === undefined
       ) {
-        return yield* Effect.fail(
-          failure({
-            _tag: "ConversationCheckpointStoreUnavailable",
-            executionId: input.execution.executionId,
-          }),
-        );
+        return yield* Effect.fail<ConversationDecisionContextError>({
+          _tag: "ConversationCheckpointStoreUnavailable",
+          executionId: input.execution.executionId,
+        });
       }
-      const existingOwner = yield* tx
-        .transact(
-          dependencies.conversationCheckpoints.findOwner(
-            input.execution.workspaceId,
-          ),
-        )
-        .pipe(Effect.mapError(failure));
+      const existingOwner = yield* tx.transact(
+        dependencies.conversationCheckpoints.findOwner(
+          input.execution.workspaceId,
+        ),
+      );
       conversationOwner = Option.isSome(existingOwner)
         ? existingOwner.value
-        : yield* tx
-            .transact(
-              dependencies.conversationCheckpoints.initializeIfAbsent({
-                rootWorkspaceId: input.execution.workspaceId,
-                initializedAt: yield* now(),
-                fence: loopStepFence,
-              }),
-            )
-            .pipe(Effect.mapError(failure));
-      const responseJobRows = yield* tx
-        .transact(responseJobs.listForWorkspace(input.execution.workspaceId))
-        .pipe(Effect.mapError(failure));
+        : yield* tx.transact(
+            dependencies.conversationCheckpoints.initializeIfAbsent({
+              rootWorkspaceId: input.execution.workspaceId,
+              initializedAt: yield* now(),
+              fence: loopStepFence,
+            }),
+          );
+      const responseJobRows = yield* tx.transact(
+        responseJobs.listForWorkspace(input.execution.workspaceId),
+      );
       const currentResponseJob = responseJobRows.find(
         (job) => String(job.messageId) === exactConversation.messageId,
       );
@@ -198,13 +197,11 @@ export const loadConversationDecisionContext = (
         currentResponseJob.state._tag !== "Running" ||
         currentResponseJob.state.executionId !== input.execution.executionId
       ) {
-        return yield* Effect.fail(
-          failure({
-            _tag: "ConversationResponseJobNotCurrent",
-            messageId: exactConversation.messageId,
-            executionId: input.execution.executionId,
-          }),
-        );
+        return yield* Effect.fail<ConversationDecisionContextError>({
+          _tag: "ConversationResponseJobNotCurrent",
+          messageId: exactConversation.messageId,
+          executionId: input.execution.executionId,
+        });
       }
       const conversationAttempts: import("@arbor/ports").ConversationAttempt[] =
         [];
@@ -216,9 +213,9 @@ export const loadConversationDecisionContext = (
         if (job.state._tag !== "Answered" && job.state._tag !== "Running") {
           continue;
         }
-        const attempts = yield* tx
-          .transact(responseAttempts.list(job.messageId))
-          .pipe(Effect.mapError(failure));
+        const attempts = yield* tx.transact(
+          responseAttempts.list(job.messageId),
+        );
         conversationAttempts.push(...attempts);
         const wantedExecutionId = job.state.executionId;
         const wantedAttemptNo =
@@ -234,9 +231,9 @@ export const loadConversationDecisionContext = (
           exactAttempt !== undefined &&
           !seenExecutionIds.has(String(exactAttempt.executionId))
         ) {
-          const found = yield* tx
-            .transact(executions.findById(exactAttempt.executionId))
-            .pipe(Effect.mapError(failure));
+          const found = yield* tx.transact(
+            executions.findById(exactAttempt.executionId),
+          );
           if (Option.isSome(found)) {
             conversationExecutions.push(found.value);
           }
@@ -254,13 +251,11 @@ export const loadConversationDecisionContext = (
         currentExecution: input.execution,
       });
       if (historyProjection._tag === "Blocked") {
-        return yield* Effect.fail(
-          failure({
-            _tag: "ConversationCheckpointProjectionBlocked",
-            reason: historyProjection.reason,
-            messageId: exactConversation.messageId,
-          }),
-        );
+        return yield* Effect.fail<ConversationDecisionContextError>({
+          _tag: "ConversationCheckpointProjectionBlocked",
+          reason: historyProjection.reason,
+          messageId: exactConversation.messageId,
+        });
       }
       conversationProjection = historyProjection.projection;
       claimed =
@@ -274,9 +269,9 @@ export const loadConversationDecisionContext = (
           checkpoint.bindingFingerprint,
         )
       ) {
-        return yield* Effect.fail(
-          failure({ _tag: "ConversationCheckpointEvidenceInvalid" }),
-        );
+        return yield* Effect.fail<ConversationDecisionContextError>({
+          _tag: "ConversationCheckpointEvidenceInvalid",
+        });
       }
       if (checkpoint.checkpointKind !== null) {
         yield* validateConversationCheckpointReceipt({
@@ -292,38 +287,34 @@ export const loadConversationDecisionContext = (
           dependencies.blobs === undefined ||
           checkpoint.checkpointRef === null
         ) {
-          return yield* Effect.fail(
-            failure({ _tag: "ConversationCheckpointBlobStoreUnavailable" }),
-          );
+          return yield* Effect.fail<ConversationDecisionContextError>({
+            _tag: "ConversationCheckpointBlobStoreUnavailable",
+          });
         }
-        const bytes = yield* dependencies.blobs
-          .get(checkpoint.checkpointRef)
-          .pipe(Effect.mapError(failure));
+        const bytes = yield* dependencies.blobs.get(checkpoint.checkpointRef);
         let summary: string;
         try {
           summary = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
         } catch {
-          return yield* Effect.fail(
-            failure({ _tag: "ConversationCheckpointBlobInvalid" }),
-          );
+          return yield* Effect.fail<ConversationDecisionContextError>({
+            _tag: "ConversationCheckpointBlobInvalid",
+          });
         }
         if (summary.trim().length === 0) {
-          return yield* Effect.fail(
-            failure({ _tag: "ConversationCheckpointBlobInvalid" }),
-          );
+          return yield* Effect.fail<ConversationDecisionContextError>({
+            _tag: "ConversationCheckpointBlobInvalid",
+          });
         }
         const summaryReceipt =
           providerTurns === undefined ||
           conversationOwner?.producerProviderTurnId === null ||
           conversationOwner?.producerProviderTurnId === undefined
             ? undefined
-            : yield* tx
-                .transact(
-                  providerTurns.findSettledResult(
-                    conversationOwner.producerProviderTurnId,
-                  ),
-                )
-                .pipe(Effect.mapError(failure));
+            : yield* tx.transact(
+                providerTurns.findSettledResult(
+                  conversationOwner.producerProviderTurnId,
+                ),
+              );
         const providerSummary =
           summaryReceipt?._tag === "SettledSuccess"
             ? summaryReceipt.canonicalEvents
@@ -337,9 +328,9 @@ export const loadConversationDecisionContext = (
           providerSummary.length === 0 ||
           providerSummary !== summary.trim()
         ) {
-          return yield* Effect.fail(
-            failure({ _tag: "ConversationCheckpointBlobMismatch" }),
-          );
+          return yield* Effect.fail<ConversationDecisionContextError>({
+            _tag: "ConversationCheckpointBlobMismatch",
+          });
         }
         conversationCheckpointItems.push({
           _tag: "ContextUpdate",
@@ -356,9 +347,9 @@ export const loadConversationDecisionContext = (
           checkpoint.checkpointRef === null ||
           checkpoint.bindingFingerprint === null
         ) {
-          return yield* Effect.fail(
-            failure({ _tag: "ConversationCheckpointNativeBindingInvalid" }),
-          );
+          return yield* Effect.fail<ConversationDecisionContextError>({
+            _tag: "ConversationCheckpointNativeBindingInvalid",
+          });
         }
         const bindingUse = conversationCheckpointBindingUse({
           checkpointKind: checkpoint.checkpointKind,
@@ -423,19 +414,17 @@ export const loadConversationDecisionContext = (
               checkpointStore: dependencies.conversationCheckpoints,
               providerTurns:
                 providerTurns ??
-                (yield* Effect.fail(
-                  failure({ _tag: "ProviderTurnStoreUnavailable" }),
-                )),
+                (yield* Effect.fail<ConversationDecisionContextError>({
+                  _tag: "ProviderTurnStoreUnavailable",
+                })),
               blobs:
                 dependencies.blobs ??
-                (yield* Effect.fail(
-                  failure({
-                    _tag: "ConversationCheckpointBlobStoreUnavailable",
-                  }),
-                )),
+                (yield* Effect.fail<ConversationDecisionContextError>({
+                  _tag: "ConversationCheckpointBlobStoreUnavailable",
+                })),
               tx,
             },
-          ).pipe(Effect.mapError(failure));
+          );
           if ("_tag" in compacted) {
             return {
               _tag: "Complete" as const,
@@ -449,16 +438,16 @@ export const loadConversationDecisionContext = (
             compacted.newEpoch !==
               parse(ContextEpochNumber)(Number(checkpoint.contextEpoch) + 1)
           ) {
-            return yield* Effect.fail(
-              failure({ _tag: "ConversationCheckpointRebaseMismatch" }),
-            );
+            return yield* Effect.fail<ConversationDecisionContextError>({
+              _tag: "ConversationCheckpointRebaseMismatch",
+            });
           }
           return { _tag: "Restart" as const };
         }
       } else if (checkpoint.checkpointKind !== null) {
-        return yield* Effect.fail(
-          failure({ _tag: "ConversationCheckpointEvidenceInvalid" }),
-        );
+        return yield* Effect.fail<ConversationDecisionContextError>({
+          _tag: "ConversationCheckpointEvidenceInvalid",
+        });
       }
       for (const answered of conversationProjection.uncoveredAnswered) {
         conversationMessages.push(
@@ -484,14 +473,14 @@ export const loadConversationDecisionContext = (
         conversationCurrentJob.messageId === exactConversation.messageId
       ) {
         if (loopStep === undefined) {
-          return yield* Effect.fail(
-            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-          );
+          return yield* Effect.fail<ConversationDecisionContextError>({
+            _tag: "AgentLoopStepReplayBindingMismatch",
+          });
         }
         const pinnedStep = loopStep;
-        const p20Links = yield* tx
-          .transact(loopSteps.listProviderTurnLinks(pinnedStep.identity))
-          .pipe(Effect.mapError(failure));
+        const p20Links = yield* tx.transact(
+          loopSteps.listProviderTurnLinks(pinnedStep.identity),
+        );
         const p20Chain = resolveP20OverflowReplacementChain(
           p20Links,
           pinnedStep.identity,
@@ -512,7 +501,7 @@ export const loadConversationDecisionContext = (
               ),
             ],
             { concurrency: 1 },
-          ).pipe(Effect.mapError(failure));
+          );
           if (
             !isP20OverflowReplacementManifestBound({
               step: pinnedStep,
@@ -523,13 +512,11 @@ export const loadConversationDecisionContext = (
             }) ||
             replacementReceipt._tag !== "SettledSuccess"
           ) {
-            return yield* Effect.fail(
-              failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-            );
+            return yield* Effect.fail<ConversationDecisionContextError>({
+              _tag: "AgentLoopStepReplayBindingMismatch",
+            });
           }
-          const timeline = yield* tx
-            .transact(readExecutionTimeline())
-            .pipe(Effect.mapError(failure));
+          const timeline = yield* tx.transact(readExecutionTimeline());
           const outputRows = timeline.filter(
             (entry) =>
               entry.sequence === pinnedStep.modelOutputSessionSequence &&
@@ -561,9 +548,9 @@ export const loadConversationDecisionContext = (
             typeof outputPayload.text !== "string" ||
             typeof outputPayload.finishReason !== "string"
           ) {
-            return yield* Effect.fail(
-              failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-            );
+            return yield* Effect.fail<ConversationDecisionContextError>({
+              _tag: "AgentLoopStepReplayBindingMismatch",
+            });
           }
           const decodedOutput = decodeTurn(replacementReceipt.canonicalEvents);
           if (
@@ -582,9 +569,9 @@ export const loadConversationDecisionContext = (
               }),
             ) !== pinnedStep.decodedOutputHash
           ) {
-            return yield* Effect.fail(
-              failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-            );
+            return yield* Effect.fail<ConversationDecisionContextError>({
+              _tag: "AgentLoopStepReplayBindingMismatch",
+            });
           }
           const settlement: ExecutionSettlement = {
             _tag: "Completed",
@@ -594,25 +581,23 @@ export const loadConversationDecisionContext = (
             },
           };
           const terminalStep = pinnedStep;
-          yield* tx
-            .transact(
-              loopSteps.transition(
-                {
-                  identity: terminalStep.identity,
-                  expectedRevision: terminalStep.revision,
-                  expectedState: "StepEffectsCommitted",
-                  next: {
-                    ...terminalStep,
-                    state: "SettlementProposed",
-                    settlement,
-                    revision: terminalStep.revision + 1,
-                    updatedAt: yield* now(),
-                  },
+          yield* tx.transact(
+            loopSteps.transition(
+              {
+                identity: terminalStep.identity,
+                expectedRevision: terminalStep.revision,
+                expectedState: "StepEffectsCommitted",
+                next: {
+                  ...terminalStep,
+                  state: "SettlementProposed",
+                  settlement,
+                  revision: terminalStep.revision + 1,
+                  updatedAt: yield* now(),
                 },
-                loopStepFence,
-              ),
-            )
-            .pipe(Effect.mapError(failure));
+              },
+              loopStepFence,
+            ),
+          );
           if (options.qualificationProbe !== undefined) {
             yield* Effect.promise(
               () =>

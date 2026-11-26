@@ -1,5 +1,6 @@
+import { it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect } from "vitest";
 import { makeSubmitHumanMessageHandler } from "../packages/application/src/commands/submit-human-message.js";
 import {
   AuthorityResolverPort,
@@ -43,10 +44,9 @@ const scopeLayer = Layer.succeed(TransactionScope, {
 }) as unknown as Layer.Layer<TransactionScope>;
 
 /** Run one handler execution with the TransactionScope stub provided. */
-const run = async <A>(
+const run = <A>(
   effect: Effect.Effect<A, unknown, TransactionScope>,
-): Promise<A> =>
-  Effect.runPromise(Effect.provide(effect, scopeLayer) as Effect.Effect<A>);
+): Effect.Effect<A> => Effect.provide(effect, scopeLayer) as Effect.Effect<A>;
 
 const envelope = (args: {
   readonly messageId: string;
@@ -140,36 +140,46 @@ const submit = (
   );
 
 describe("P14-001 SubmitHumanMessage", () => {
-  it("S2: accepts an authenticated human targeting the root workspace", async () => {
-    const outcome = (await submit(harness, {
-      messageId: "msg_0001",
-      targetWorkspaceId: ROOT,
-      bodyRef: "请帮我规划下一阶段",
-    })) as never as {
-      ok: boolean;
-      value: {
-        result: { state: string };
-        events: ReadonlyArray<{ eventType: string }>;
-      };
-    };
-    expect(outcome.ok).toBe(true);
-    expect(outcome.value.result.state).toBe("Pending");
-    expect(outcome.value.events).toHaveLength(1);
-    expect(outcome.value.events[0]?.eventType).toBe("HumanMessageSubmitted");
-    expect(harness.jobs.get("msg_0001")?.state).toEqual({ _tag: "Queued" });
-  });
+  it.effect(
+    "S2: accepts an authenticated human targeting the root workspace",
+    () =>
+      Effect.gen(function* () {
+        const outcome = (yield* submit(harness, {
+          messageId: "msg_0001",
+          targetWorkspaceId: ROOT,
+          bodyRef: "请帮我规划下一阶段",
+        })) as never as {
+          ok: boolean;
+          value: {
+            result: { state: string };
+            events: ReadonlyArray<{ eventType: string }>;
+          };
+        };
+        expect(outcome.ok).toBe(true);
+        expect(outcome.value.result.state).toBe("Pending");
+        expect(outcome.value.events).toHaveLength(1);
+        expect(outcome.value.events[0]?.eventType).toBe(
+          "HumanMessageSubmitted",
+        );
+        expect(harness.jobs.get("msg_0001")?.state).toEqual({ _tag: "Queued" });
+      }),
+  );
 
-  it("S2: rejects a non-root target (child direct-chat closed at handler level)", async () => {
-    const outcome = (await submit(harness, {
-      messageId: "msg_0002",
-      targetWorkspaceId: CHILD,
-      bodyRef: "child?",
-    })) as never as { ok: boolean; error: { _tag: string } };
-    expect(outcome.ok).toBe(false);
-    expect(outcome.error._tag).toBe("AuthorityDenied");
-    expect(harness.rows.size).toBe(0);
-    expect(harness.inbox).toHaveLength(0);
-  });
+  it.effect(
+    "S2: rejects a non-root target (child direct-chat closed at handler level)",
+    () =>
+      Effect.gen(function* () {
+        const outcome = (yield* submit(harness, {
+          messageId: "msg_0002",
+          targetWorkspaceId: CHILD,
+          bodyRef: "child?",
+        })) as never as { ok: boolean; error: { _tag: string } };
+        expect(outcome.ok).toBe(false);
+        expect(outcome.error._tag).toBe("AuthorityDenied");
+        expect(harness.rows.size).toBe(0);
+        expect(harness.inbox).toHaveLength(0);
+      }),
+  );
 
   it("S2: human-ness is the resolver's job — the handler trusts the authenticated context", () => {
     // The handler deliberately does NOT re-decide human-ness (governance
@@ -179,100 +189,124 @@ describe("P14-001 SubmitHumanMessage", () => {
     expect(harness.handler.stopAdmission).toEqual({ _tag: "Unclassified" });
   });
 
-  it("S1+S3: durable Pending row + HumanConversation inbox admission (≠HumanInput)", async () => {
-    await submit(harness, {
-      messageId: "msg_0004",
-      targetWorkspaceId: ROOT,
-      bodyRef: "正文",
-    });
-    const row = harness.rows.get("msg_0004");
-    expect(row?.state).toBe("Pending");
-    expect(row?.humanPrincipal).toBe(HUMAN);
-    expect(row?.bodyRef).toBe("正文");
-    const entry = harness.inbox[0];
-    expect(entry?.kind).toBe("HumanConversation");
-    expect(entry?.kind).not.toBe("HumanInput");
-    expect(entry?.entryKey).toBe("humanmsg:msg_0004");
-    expect(entry?.recipientWorkspaceId).toBe(ROOT);
-  });
+  it.effect(
+    "S1+S3: durable Pending row + HumanConversation inbox admission (≠HumanInput)",
+    () =>
+      Effect.gen(function* () {
+        yield* submit(harness, {
+          messageId: "msg_0004",
+          targetWorkspaceId: ROOT,
+          bodyRef: "正文",
+        });
+        const row = harness.rows.get("msg_0004");
+        expect(row?.state).toBe("Pending");
+        expect(row?.humanPrincipal).toBe(HUMAN);
+        expect(row?.bodyRef).toBe("正文");
+        const entry = harness.inbox[0];
+        expect(entry?.kind).toBe("HumanConversation");
+        expect(entry?.kind).not.toBe("HumanInput");
+        expect(entry?.entryKey).toBe("humanmsg:msg_0004");
+        expect(entry?.recipientWorkspaceId).toBe(ROOT);
+      }),
+  );
 
-  it("S1: same messageId + same fingerprint converges (idempotent, one row, no extra event)", async () => {
-    const args = {
-      messageId: "msg_0005",
-      targetWorkspaceId: ROOT,
-      bodyRef: "同一条消息",
-    };
-    await submit(harness, args);
-    const second = (await submit(harness, {
-      ...args,
-      commandId: "cmd_p14_0002",
-    })) as never as {
-      ok: boolean;
-      value: { events: ReadonlyArray<unknown> };
-    };
-    expect(second.ok).toBe(true);
-    expect(second.value.events).toHaveLength(0);
-    expect(harness.rows.size).toBe(1);
-  });
+  it.effect(
+    "S1: same messageId + same fingerprint converges (idempotent, one row, no extra event)",
+    () =>
+      Effect.gen(function* () {
+        const args = {
+          messageId: "msg_0005",
+          targetWorkspaceId: ROOT,
+          bodyRef: "同一条消息",
+        };
+        yield* submit(harness, args);
+        const second = (yield* submit(harness, {
+          ...args,
+          commandId: "cmd_p14_0002",
+        })) as never as {
+          ok: boolean;
+          value: { events: ReadonlyArray<unknown> };
+        };
+        expect(second.ok).toBe(true);
+        expect(second.value.events).toHaveLength(0);
+        expect(harness.rows.size).toBe(1);
+      }),
+  );
 
-  it("S1: same messageId + different body rejects with IdempotencyConflict", async () => {
-    await submit(harness, {
-      messageId: "msg_0006",
-      targetWorkspaceId: ROOT,
-      bodyRef: "原消息",
-    });
-    const conflict = (await submit(harness, {
-      messageId: "msg_0006",
-      targetWorkspaceId: ROOT,
-      bodyRef: "改了内容",
-      commandId: "cmd_p14_0003",
-    })) as never as { ok: boolean; error: { _tag: string } };
-    expect(conflict.ok).toBe(false);
-    expect(conflict.error._tag).toBe("IdempotencyConflict");
-    expect(harness.rows.size).toBe(1);
-  });
+  it.effect(
+    "S1: same messageId + different body rejects with IdempotencyConflict",
+    () =>
+      Effect.gen(function* () {
+        yield* submit(harness, {
+          messageId: "msg_0006",
+          targetWorkspaceId: ROOT,
+          bodyRef: "原消息",
+        });
+        const conflict = (yield* submit(harness, {
+          messageId: "msg_0006",
+          targetWorkspaceId: ROOT,
+          bodyRef: "改了内容",
+          commandId: "cmd_p14_0003",
+        })) as never as { ok: boolean; error: { _tag: string } };
+        expect(conflict.ok).toBe(false);
+        expect(conflict.error._tag).toBe("IdempotencyConflict");
+        expect(harness.rows.size).toBe(1);
+      }),
+  );
 
-  it("S3: event carries humanPrincipal and never a senderWorkspaceId", async () => {
-    const outcome = (await submit(harness, {
-      messageId: "msg_0007",
-      targetWorkspaceId: ROOT,
-      bodyRef: "事件形状",
-    })) as never as {
-      ok: boolean;
-      value: { events: ReadonlyArray<{ payload: Record<string, unknown> }> };
-    };
-    expect(outcome.ok).toBe(true);
-    const payload = outcome.value.events[0]?.payload ?? {};
-    expect(payload.humanPrincipal).toBe(HUMAN);
-    expect("senderWorkspaceId" in payload).toBe(false);
-    expect(payload.rootWorkspaceId).toBe(ROOT);
-  });
+  it.effect(
+    "S3: event carries humanPrincipal and never a senderWorkspaceId",
+    () =>
+      Effect.gen(function* () {
+        const outcome = (yield* submit(harness, {
+          messageId: "msg_0007",
+          targetWorkspaceId: ROOT,
+          bodyRef: "事件形状",
+        })) as never as {
+          ok: boolean;
+          value: {
+            events: ReadonlyArray<{ payload: Record<string, unknown> }>;
+          };
+        };
+        expect(outcome.ok).toBe(true);
+        const payload = outcome.value.events[0]?.payload ?? {};
+        expect(payload.humanPrincipal).toBe(HUMAN);
+        expect("senderWorkspaceId" in payload).toBe(false);
+        expect(payload.rootWorkspaceId).toBe(ROOT);
+      }),
+  );
 
-  it("S3: no Work/Steer artifacts (single HumanMessageSubmitted event)", async () => {
-    const outcome = (await submit(harness, {
-      messageId: "msg_0008",
-      targetWorkspaceId: ROOT,
-      bodyRef: "无 steer 语义",
-    })) as never as {
-      ok: boolean;
-      value: { events: ReadonlyArray<{ eventType: string }> };
-    };
-    expect(outcome.ok).toBe(true);
-    const eventTypes = outcome.value.events.map((event) => event.eventType);
-    expect(eventTypes).toEqual(["HumanMessageSubmitted"]);
-    expect(eventTypes).not.toContain("WorkSteered");
-    expect(eventTypes).not.toContain("HumanInterventionApplied");
-  });
+  it.effect(
+    "S3: no Work/Steer artifacts (single HumanMessageSubmitted event)",
+    () =>
+      Effect.gen(function* () {
+        const outcome = (yield* submit(harness, {
+          messageId: "msg_0008",
+          targetWorkspaceId: ROOT,
+          bodyRef: "无 steer 语义",
+        })) as never as {
+          ok: boolean;
+          value: { events: ReadonlyArray<{ eventType: string }> };
+        };
+        expect(outcome.ok).toBe(true);
+        const eventTypes = outcome.value.events.map((event) => event.eventType);
+        expect(eventTypes).toEqual(["HumanMessageSubmitted"]);
+        expect(eventTypes).not.toContain("WorkSteered");
+        expect(eventTypes).not.toContain("HumanInterventionApplied");
+      }),
+  );
 
-  it("rejects an empty bodyRef with ResourceExhausted", async () => {
-    const outcome = (await submit(harness, {
-      messageId: "msg_0009",
-      targetWorkspaceId: ROOT,
-      bodyRef: "",
-    })) as never as { ok: boolean; error: { _tag: string } };
-    expect(outcome.ok).toBe(false);
-    expect(outcome.error._tag).toBe("ResourceExhausted");
-  });
+  it.effect("rejects an empty bodyRef with ResourceExhausted", () =>
+    Effect.gen(function* () {
+      const outcome = (yield* submit(harness, {
+        messageId: "msg_0009",
+        targetWorkspaceId: ROOT,
+        bodyRef: "",
+      })) as never as { ok: boolean; error: { _tag: string } };
+      expect(outcome.ok).toBe(false);
+      expect(outcome.error._tag).toBe("ResourceExhausted");
+    }),
+  );
 });
 
 /**
@@ -309,65 +343,64 @@ const decisionInput = (
     policy: {},
   }) as never;
 
-const resolveError = (input: never): Promise<{ _tag: string }> =>
-  Effect.runPromise(
-    Effect.provide(
-      Effect.gen(function* () {
-        const resolver = yield* AuthorityResolverPort;
-        return yield* Effect.flip(resolver.resolve(input));
-      }) as unknown as Effect.Effect<
-        { _tag: string },
-        never,
-        AuthorityResolverPort
-      >,
-      AuthorityResolverPortLive,
-    ),
-  );
+const resolveError = (input: never): Effect.Effect<{ _tag: string }> =>
+  Effect.gen(function* () {
+    const resolver = yield* AuthorityResolverPort;
+    return yield* Effect.flip(resolver.resolve(input));
+  }).pipe(
+    Effect.provide(AuthorityResolverPortLive),
+  ) as unknown as Effect.Effect<{ _tag: string }>;
 
 describe("P14-001 resolver root-only exact binding (seam S2)", () => {
-  it("user: principal + root target resolves to SubmitHumanMessageAuthority", async () => {
-    const fact = await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          const resolver = yield* AuthorityResolverPort;
-          return yield* resolver.resolve(
-            decisionInput(HUMAN, {
-              messageId: "msg_resolve_1",
-              targetWorkspaceId: ROOT,
-              bodyRef: "hi",
-            }),
-          );
-        }) as unknown as Effect.Effect<
-          { readonly _tag: string; readonly targetWorkspaceId: string },
-          never,
-          AuthorityResolverPort
-        >,
-        AuthorityResolverPortLive,
-      ),
-    );
-    expect(fact._tag).toBe("SubmitHumanMessageAuthority");
-    expect(fact.targetWorkspaceId).toBe(ROOT);
-  });
-
-  it("child target is denied (root-only override rule)", async () => {
-    const error = await resolveError(
-      decisionInput(HUMAN, {
-        messageId: "msg_resolve_2",
-        targetWorkspaceId: CHILD,
-        bodyRef: "hi child",
+  it.effect(
+    "user: principal + root target resolves to SubmitHumanMessageAuthority",
+    () =>
+      Effect.gen(function* () {
+        const fact = yield* Effect.provide(
+          Effect.gen(function* () {
+            const resolver = yield* AuthorityResolverPort;
+            return yield* resolver.resolve(
+              decisionInput(HUMAN, {
+                messageId: "msg_resolve_1",
+                targetWorkspaceId: ROOT,
+                bodyRef: "hi",
+              }),
+            );
+          }) as unknown as Effect.Effect<
+            { readonly _tag: string; readonly targetWorkspaceId: string },
+            never,
+            AuthorityResolverPort
+          >,
+          AuthorityResolverPortLive,
+        );
+        expect(fact._tag).toBe("SubmitHumanMessageAuthority");
+        expect(fact.targetWorkspaceId).toBe(ROOT);
       }),
-    );
-    expect(error._tag).toBe("GovernanceOverrideDenied");
-  });
+  );
 
-  it("agent principal is denied (existing governance denial path)", async () => {
-    const error = await resolveError(
-      decisionInput(AGENT, {
-        messageId: "msg_resolve_3",
-        targetWorkspaceId: ROOT,
-        bodyRef: "agent",
-      }),
-    );
-    expect(error._tag).toBe("NoApplicableGrant");
-  });
+  it.effect("child target is denied (root-only override rule)", () =>
+    Effect.gen(function* () {
+      const error = yield* resolveError(
+        decisionInput(HUMAN, {
+          messageId: "msg_resolve_2",
+          targetWorkspaceId: CHILD,
+          bodyRef: "hi child",
+        }),
+      );
+      expect(error._tag).toBe("GovernanceOverrideDenied");
+    }),
+  );
+
+  it.effect("agent principal is denied (existing governance denial path)", () =>
+    Effect.gen(function* () {
+      const error = yield* resolveError(
+        decisionInput(AGENT, {
+          messageId: "msg_resolve_3",
+          targetWorkspaceId: ROOT,
+          bodyRef: "agent",
+        }),
+      );
+      expect(error._tag).toBe("NoApplicableGrant");
+    }),
+  );
 });

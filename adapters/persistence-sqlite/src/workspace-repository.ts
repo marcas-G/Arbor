@@ -277,6 +277,17 @@ export const WorkspaceRepositoryLive: Layer.Layer<
           );
           return Number(rows[0]?.count ?? 0) > 0;
         }),
+      listWorkspaceIdsByProject: (projectId) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          const rows = yield* run(
+            sql.unsafe<{ workspace_id: string }>(
+              "SELECT workspace_id FROM workspaces WHERE project_id = ? ORDER BY workspace_id",
+              [projectId],
+            ),
+          );
+          return rows.map((row) => row.workspace_id as WorkspaceId);
+        }),
     });
   }),
 );

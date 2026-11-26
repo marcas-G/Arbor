@@ -2,13 +2,13 @@ import { providerTurnInferenceId, workEpisode } from "@arbor/domain";
 import type {
   AgentLoopStepActionRecord,
   BoundedObservation,
-  ExecutionDriverError,
 } from "@arbor/ports";
 import { sessionCausalBindingForWork, sha256Hex } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { actionRejectionObservation } from "./agent-loop-actions/action-errors.js";
 import { makeBlockedSettlement } from "./agent-loop-actions/blocked-settlement.js";
 import { verifyCommittedStep } from "./agent-loop-actions/committed-step.js";
+import type { AgentLoopActionPhaseError } from "./agent-loop-actions/errors.js";
 import {
   type ExecutableActionResult,
   executeExecutableAction,
@@ -32,6 +32,14 @@ import {
 
 export { makeBlockedSettlement } from "./agent-loop-actions/blocked-settlement.js";
 export type {
+  ActionLedgerError,
+  AgentLoopActionPhaseError,
+  BlockedSettlementError,
+  CommittedStepVerificationError,
+  ExecutableActionError,
+} from "./agent-loop-actions/errors.js";
+export { foldAgentLoopActionPhaseError } from "./agent-loop-actions/errors.js";
+export type {
   AgentLoopActionDependencies,
   AgentLoopActionOutcome,
   ReconciliationEscalationRecorderError,
@@ -50,7 +58,7 @@ export { verifySandboxUnavailableStepActionResume } from "./sandbox-unavailable-
  */
 export const executeAgentLoopActions = (
   dependencies: AgentLoopActionDependencies,
-): Effect.Effect<AgentLoopActionOutcome, ExecutionDriverError> => {
+): Effect.Effect<AgentLoopActionOutcome, AgentLoopActionPhaseError> => {
   const {
     input,
     preparedTurn,
@@ -64,7 +72,6 @@ export const executeAgentLoopActions = (
     recoverExactNotAdmittedAction,
     currentControlBasis,
     admit,
-    failure,
     now,
   } = dependencies;
 
@@ -147,40 +154,38 @@ export const executeAgentLoopActions = (
             recoverExactNotAdmittedAction.providerTurnId ===
               currentLoopStep.providerTurnId))
       ) {
-        const existingActions = yield* tx
-          .transact(loopSteps.listActions(currentLoopStep.identity))
-          .pipe(Effect.mapError(failure));
+        const existingActions = yield* tx.transact(
+          loopSteps.listActions(currentLoopStep.identity),
+        );
         loopAction = existingActions.find(
           (candidate) => candidate.actionIndex === actionIndex,
         );
         if (loopAction === undefined) {
-          loopAction = yield* tx
-            .transact(
-              loopSteps.createAction(
-                {
-                  identity: currentLoopStep.identity,
-                  actionIndex,
-                  logicalActionId: `lac_${sha256Hex(
-                    JSON.stringify({
-                      executionId: input.execution.executionId,
-                      providerTurnId: preparedTurn.manifest.providerTurnId,
-                      callRef: invocation.callRef,
-                      routeKind: route._tag,
-                      actionKind: invocation.toolName,
-                    }),
-                  )}`,
-                  callRef: invocation.callRef,
-                  routeKind: route._tag,
-                  actionKind: invocation.toolName,
-                  inputHash: sha256Hex(invocation.argumentsJson),
-                  state: "Pending",
-                  revision: 0,
-                  updatedAt: yield* now(),
-                },
-                loopStepFence,
-              ),
-            )
-            .pipe(Effect.mapError(failure));
+          loopAction = yield* tx.transact(
+            loopSteps.createAction(
+              {
+                identity: currentLoopStep.identity,
+                actionIndex,
+                logicalActionId: `lac_${sha256Hex(
+                  JSON.stringify({
+                    executionId: input.execution.executionId,
+                    providerTurnId: preparedTurn.manifest.providerTurnId,
+                    callRef: invocation.callRef,
+                    routeKind: route._tag,
+                    actionKind: invocation.toolName,
+                  }),
+                )}`,
+                callRef: invocation.callRef,
+                routeKind: route._tag,
+                actionKind: invocation.toolName,
+                inputHash: sha256Hex(invocation.argumentsJson),
+                state: "Pending",
+                revision: 0,
+                updatedAt: yield* now(),
+              },
+              loopStepFence,
+            ),
+          );
         } else if (loopAction.state !== "Pending") {
           const exactRecovery =
             loopAction.state === "Applied" &&
@@ -356,144 +361,142 @@ export const executeAgentLoopActions = (
             input.execution.executionId,
             turn + 1,
           );
-          yield* tx
-            .transact(
-              Effect.gen(function* () {
-                const staleResult = yield* appendTerminalResult(
-                  invocation,
-                  route,
-                  {
-                    status: "Denied",
-                    disposition: "DecisionStale",
-                    outputText: `${invocation.toolName} skipped because the decision basis became stale`,
+          yield* tx.transact(
+            Effect.gen(function* () {
+              const staleResult = yield* appendTerminalResult(
+                invocation,
+                route,
+                {
+                  status: "Denied",
+                  disposition: "DecisionStale",
+                  outputText: `${invocation.toolName} skipped because the decision basis became stale`,
+                },
+                loopStepFence,
+              );
+              yield* loopSteps.transitionAction(
+                {
+                  identity: staleAction.identity,
+                  actionIndex: staleAction.actionIndex,
+                  expectedRevision: staleAction.revision,
+                  expectedState: "Pending",
+                  next: {
+                    ...staleAction,
+                    state: "SkippedStale",
+                    resultRef: staleResult.resultRef,
+                    disposition: { _tag: "DecisionStale" },
+                    observationSourceRef: staleResult.observationSourceRef,
+                    revision: staleAction.revision + 1,
+                    updatedAt: yield* now(),
                   },
-                  loopStepFence,
+                },
+                loopStepFence,
+              );
+              for (
+                let skippedIndex = actionIndex + 1;
+                skippedIndex < decodedOutput.toolInvocations.length;
+                skippedIndex += 1
+              ) {
+                const skippedInvocation =
+                  decodedOutput.toolInvocations[skippedIndex];
+                if (skippedInvocation === undefined) continue;
+                const skippedClassification = classifyToolRoute(
+                  preparedTurn.toolRoutes,
+                  controlRegistry,
+                  skippedInvocation.toolName,
                 );
-                yield* loopSteps.transitionAction(
-                  {
-                    identity: staleAction.identity,
-                    actionIndex: staleAction.actionIndex,
-                    expectedRevision: staleAction.revision,
-                    expectedState: "Pending",
-                    next: {
-                      ...staleAction,
-                      state: "SkippedStale",
-                      resultRef: staleResult.resultRef,
-                      disposition: { _tag: "DecisionStale" },
-                      observationSourceRef: staleResult.observationSourceRef,
-                      revision: staleAction.revision + 1,
-                      updatedAt: yield* now(),
-                    },
-                  },
-                  loopStepFence,
-                );
-                for (
-                  let skippedIndex = actionIndex + 1;
-                  skippedIndex < decodedOutput.toolInvocations.length;
-                  skippedIndex += 1
-                ) {
-                  const skippedInvocation =
-                    decodedOutput.toolInvocations[skippedIndex];
-                  if (skippedInvocation === undefined) continue;
-                  const skippedClassification = classifyToolRoute(
-                    preparedTurn.toolRoutes,
-                    controlRegistry,
-                    skippedInvocation.toolName,
-                  );
-                  if (skippedClassification._tag === "Invalid") continue;
-                  const skippedRoute =
-                    skippedClassification._tag === "Stale"
-                      ? ({ _tag: skippedClassification.route } as const)
-                      : skippedClassification;
-                  const pending = yield* loopSteps.createAction(
-                    {
-                      identity: staleStep.identity,
-                      actionIndex: skippedIndex,
-                      logicalActionId: `lac_${sha256Hex(
-                        JSON.stringify({
-                          executionId: input.execution.executionId,
-                          providerTurnId: preparedTurn.manifest.providerTurnId,
-                          callRef: skippedInvocation.callRef,
-                          routeKind: skippedRoute._tag,
-                          actionKind: skippedInvocation.toolName,
-                        }),
-                      )}`,
-                      callRef: skippedInvocation.callRef,
-                      routeKind: skippedRoute._tag,
-                      actionKind: skippedInvocation.toolName,
-                      inputHash: sha256Hex(skippedInvocation.argumentsJson),
-                      state: "Pending",
-                      revision: 0,
-                      updatedAt: yield* now(),
-                    },
-                    loopStepFence,
-                  );
-                  const skippedStaleResult = yield* appendTerminalResult(
-                    skippedInvocation,
-                    skippedRoute,
-                    {
-                      status: "Denied",
-                      disposition: "DecisionStale",
-                      outputText: `${skippedInvocation.toolName} skipped because the decision basis became stale`,
-                    },
-                    loopStepFence,
-                  );
-                  yield* loopSteps.transitionAction(
-                    {
-                      identity: pending.identity,
-                      actionIndex: pending.actionIndex,
-                      expectedRevision: pending.revision,
-                      expectedState: "Pending",
-                      next: {
-                        ...pending,
-                        state: "SkippedStale",
-                        resultRef: skippedStaleResult.resultRef,
-                        disposition: { _tag: "DecisionStale" },
-                        observationSourceRef:
-                          skippedStaleResult.observationSourceRef,
-                        revision: pending.revision + 1,
-                        updatedAt: yield* now(),
-                      },
-                    },
-                    loopStepFence,
-                  );
-                }
-                yield* loopSteps.transition(
+                if (skippedClassification._tag === "Invalid") continue;
+                const skippedRoute =
+                  skippedClassification._tag === "Stale"
+                    ? ({ _tag: skippedClassification.route } as const)
+                    : skippedClassification;
+                const pending = yield* loopSteps.createAction(
                   {
                     identity: staleStep.identity,
-                    expectedRevision: staleStep.revision,
-                    expectedState: "ActionsInProgress",
-                    next: {
-                      ...staleStep,
-                      state: "NextStepReady",
-                      nextActionIndex: decodedOutput.toolInvocations.length,
-                      successor: {
-                        ...successorIdentity,
-                        providerTurnId: successorProviderTurnId,
-                      },
-                      nextStepReason: "DecisionStale",
-                      revision: staleStep.revision + 1,
-                      updatedAt: yield* now(),
-                    },
-                  },
-                  loopStepFence,
-                );
-                yield* loopSteps.ensureSuccessor(
-                  staleStep.identity,
-                  {
-                    identity: successorIdentity,
-                    predecessor: staleStep.identity,
-                    providerTurnId: successorProviderTurnId,
-                    state: "Prepared",
-                    nextActionIndex: 0,
+                    actionIndex: skippedIndex,
+                    logicalActionId: `lac_${sha256Hex(
+                      JSON.stringify({
+                        executionId: input.execution.executionId,
+                        providerTurnId: preparedTurn.manifest.providerTurnId,
+                        callRef: skippedInvocation.callRef,
+                        routeKind: skippedRoute._tag,
+                        actionKind: skippedInvocation.toolName,
+                      }),
+                    )}`,
+                    callRef: skippedInvocation.callRef,
+                    routeKind: skippedRoute._tag,
+                    actionKind: skippedInvocation.toolName,
+                    inputHash: sha256Hex(skippedInvocation.argumentsJson),
+                    state: "Pending",
                     revision: 0,
                     updatedAt: yield* now(),
                   },
                   loopStepFence,
                 );
-              }),
-            )
-            .pipe(Effect.mapError(failure));
+                const skippedStaleResult = yield* appendTerminalResult(
+                  skippedInvocation,
+                  skippedRoute,
+                  {
+                    status: "Denied",
+                    disposition: "DecisionStale",
+                    outputText: `${skippedInvocation.toolName} skipped because the decision basis became stale`,
+                  },
+                  loopStepFence,
+                );
+                yield* loopSteps.transitionAction(
+                  {
+                    identity: pending.identity,
+                    actionIndex: pending.actionIndex,
+                    expectedRevision: pending.revision,
+                    expectedState: "Pending",
+                    next: {
+                      ...pending,
+                      state: "SkippedStale",
+                      resultRef: skippedStaleResult.resultRef,
+                      disposition: { _tag: "DecisionStale" },
+                      observationSourceRef:
+                        skippedStaleResult.observationSourceRef,
+                      revision: pending.revision + 1,
+                      updatedAt: yield* now(),
+                    },
+                  },
+                  loopStepFence,
+                );
+              }
+              yield* loopSteps.transition(
+                {
+                  identity: staleStep.identity,
+                  expectedRevision: staleStep.revision,
+                  expectedState: "ActionsInProgress",
+                  next: {
+                    ...staleStep,
+                    state: "NextStepReady",
+                    nextActionIndex: decodedOutput.toolInvocations.length,
+                    successor: {
+                      ...successorIdentity,
+                      providerTurnId: successorProviderTurnId,
+                    },
+                    nextStepReason: "DecisionStale",
+                    revision: staleStep.revision + 1,
+                    updatedAt: yield* now(),
+                  },
+                },
+                loopStepFence,
+              );
+              yield* loopSteps.ensureSuccessor(
+                staleStep.identity,
+                {
+                  identity: successorIdentity,
+                  predecessor: staleStep.identity,
+                  providerTurnId: successorProviderTurnId,
+                  state: "Prepared",
+                  nextActionIndex: 0,
+                  revision: 0,
+                  updatedAt: yield* now(),
+                },
+                loopStepFence,
+              );
+            }),
+          );
         }
         return { _tag: "DecisionStale" };
       }

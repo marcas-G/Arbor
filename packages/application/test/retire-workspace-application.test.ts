@@ -14,8 +14,9 @@ import {
   WorkspaceId,
 } from "@arbor/domain";
 import type { ResourceOwnershipClaimRecord } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect, Option } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import {
   makeRetireWorkspaceApplicationService,
   type RetireWorkspaceApplicationDependencies,
@@ -185,75 +186,79 @@ const makeHarness = (
 };
 
 describe("RetireWorkspace application service", () => {
-  it("reaches the atomic reclaim path using exact persisted provenance and revisions", async () => {
-    const { service, calls } = makeHarness();
-    const outcome = await Effect.runPromise(
-      service.retire({
-        projectId,
-        workspaceId: childId,
-        expectedRevision: child.revision,
-        principal,
-        commandId,
+  it.effect(
+    "reaches the atomic reclaim path using exact persisted provenance and revisions",
+    () =>
+      Effect.gen(function* () {
+        const { service, calls } = makeHarness();
+        const outcome = yield* service.retire({
+          projectId,
+          workspaceId: childId,
+          expectedRevision: child.revision,
+          principal,
+          commandId,
+        });
+        expect(outcome._tag).toBe("Retired");
+        expect(calls).toHaveLength(1);
+        expect(calls[0]).toMatchObject({
+          projectId,
+          childWorkspaceId: childId,
+          delegationSourceId: "formation:proposal-1:2",
+          expectedParentWorkspaceRevision: parent.revision,
+          expectedChildWorkspaceRevision: child.revision,
+          expectedParentBoundaryRevision: parent.resourceBoundaryRevision,
+          expectedChildBoundaryRevision: child.resourceBoundaryRevision,
+          expectedParentClaimRevision: 8,
+          expectedChildClaimRevision: 3,
+          causedByCommandId: commandId,
+          retireChild: true,
+          quiescence: {
+            noUnresolvedEffects: true,
+            noActiveExecution: true,
+            noOpenWork: true,
+            noActiveChildren: true,
+            noUnresolvedIncomingDependencies: true,
+          },
+        });
       }),
-    );
-    expect(outcome._tag).toBe("Retired");
-    expect(calls).toHaveLength(1);
-    expect(calls[0]).toMatchObject({
-      projectId,
-      childWorkspaceId: childId,
-      delegationSourceId: "formation:proposal-1:2",
-      expectedParentWorkspaceRevision: parent.revision,
-      expectedChildWorkspaceRevision: child.revision,
-      expectedParentBoundaryRevision: parent.resourceBoundaryRevision,
-      expectedChildBoundaryRevision: child.resourceBoundaryRevision,
-      expectedParentClaimRevision: 8,
-      expectedChildClaimRevision: 3,
-      causedByCommandId: commandId,
-      retireChild: true,
-      quiescence: {
-        noUnresolvedEffects: true,
-        noActiveExecution: true,
-        noOpenWork: true,
-        noActiveChildren: true,
-        noUnresolvedIncomingDependencies: true,
-      },
-    });
-  });
+  );
 
-  it("fails closed for an active Child claim without exact delegation provenance", async () => {
-    const { service, calls } = makeHarness({ withProvenance: false });
-    const outcome = await Effect.runPromise(
-      service.retire({
-        projectId,
-        workspaceId: childId,
-        expectedRevision: child.revision,
-        principal,
-        commandId,
+  it.effect(
+    "fails closed for an active Child claim without exact delegation provenance",
+    () =>
+      Effect.gen(function* () {
+        const { service, calls } = makeHarness({ withProvenance: false });
+        const outcome = yield* service.retire({
+          projectId,
+          workspaceId: childId,
+          expectedRevision: child.revision,
+          principal,
+          commandId,
+        });
+        expect(outcome).toEqual({
+          _tag: "Refused",
+          reason: "NoExactDelegatedClaim",
+        });
+        expect(calls).toHaveLength(0);
       }),
-    );
-    expect(outcome).toEqual({
-      _tag: "Refused",
-      reason: "NoExactDelegatedClaim",
-    });
-    expect(calls).toHaveLength(0);
-  });
+  );
 
-  it("refuses while a durable Execution remains unsettled", async () => {
-    const { service, calls } = makeHarness({ unresolvedEffects: true });
-    const outcome = await Effect.runPromise(
-      service.retire({
+  it.effect("refuses while a durable Execution remains unsettled", () =>
+    Effect.gen(function* () {
+      const { service, calls } = makeHarness({ unresolvedEffects: true });
+      const outcome = yield* service.retire({
         projectId,
         workspaceId: childId,
         expectedRevision: child.revision,
         principal,
         commandId,
-      }),
-    );
-    expect(outcome).toMatchObject({
-      _tag: "Refused",
-      reason: "RetirePreconditionFailed",
-      detail: "active execution remains bound to the Child",
-    });
-    expect(calls).toHaveLength(0);
-  });
+      });
+      expect(outcome).toMatchObject({
+        _tag: "Refused",
+        reason: "RetirePreconditionFailed",
+        detail: "active execution remains bound to the Child",
+      });
+      expect(calls).toHaveLength(0);
+    }),
+  );
 });

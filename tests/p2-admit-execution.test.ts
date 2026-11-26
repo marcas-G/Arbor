@@ -73,22 +73,22 @@ const makeApp = (held = false, includeReadmissionGate = true) => {
     Layer.provide(ExecutionRepositoryLive, infra),
     Layer.provide(WorkWaitStoreLive, infra),
   );
-  const gate = Layer.succeed(WorkReadmissionGateStore, {
-    hasBlockingSource: () =>
-      Effect.succeed(
-        held
-          ? Option.some({
-              sourceKind: "RuntimeSafetyStopSettlement" as const,
-              executionId: parse(ExecutionId)(
-                "exe_018f2b3c-4d5e-7abc-8def-0123456789ad",
-              ) as ExecutionId,
-            })
-          : Option.none(),
-      ),
-  });
-  const repos = includeReadmissionGate
-    ? Layer.mergeAll(repositoryLayers, gate)
-    : repositoryLayers;
+  const gate = includeReadmissionGate
+    ? Layer.succeed(WorkReadmissionGateStore, {
+        hasBlockingSource: () =>
+          Effect.succeed(
+            held
+              ? Option.some({
+                  sourceKind: "RuntimeSafetyStopSettlement" as const,
+                  executionId: parse(ExecutionId)(
+                    "exe_018f2b3c-4d5e-7abc-8def-0123456789ad",
+                  ) as ExecutionId,
+                })
+              : Option.none(),
+          ),
+      })
+    : Layer.empty;
+  const repos = Layer.mergeAll(repositoryLayers, gate);
   const all = Layer.mergeAll(
     infra,
     repos,
@@ -204,7 +204,7 @@ const authority = (
     ...overrides,
   }) as VerifiedRuntimeCommandAuthority;
 
-const run = (program: Effect.Effect<unknown, unknown, never>) =>
+const run = (program: Effect.Effect<unknown, unknown, unknown>) =>
   Effect.runPromise(program as Effect.Effect<unknown, never, never>);
 
 describe("P2-009 AdmitExecution", () => {
@@ -250,46 +250,19 @@ describe("P2-009 AdmitExecution", () => {
     );
   });
 
-  it("fails closed when WorkspaceMain admission lacks the readmission gate service", async () => {
+  it("fails closed at layer construction when WorkspaceMain admission lacks the readmission gate service (E06)", async () => {
+    // The gate is a required R-channel dependency of the P2 handler
+    // registry: a composition without it can no longer be built, so the
+    // missing-port failure moved from command time to layer build time.
     const app = makeApp(false, false);
-    const commandId = parse(CommandId)(
-      "cmd_018f2b3c-4d5e-7abc-8def-0123456789af",
-    );
-    const executionId = parse(ExecutionId)(
-      "exe_018f2b3c-4d5e-7abc-8def-0123456789af",
-    ) as ExecutionId;
-    const payload = payloadMain(executionId);
-    const program = Effect.gen(function* () {
-      yield* runMigrations(P2_MIGRATIONS);
-      yield* seed;
-      const gw = yield* CommandGateway;
-      const result = yield* Effect.exit(
-        gw.execute(
-          envelope(commandId, payload),
-          systemContext,
-          authority(commandId, payload),
-        ),
-      );
-      const sql = yield* SqlClient;
-      const executions = yield* sql.unsafe<{ readonly count: number }>(
-        "SELECT COUNT(*) AS count FROM executions WHERE execution_id = ?",
-        [executionId],
-      );
-      const receipts = yield* sql.unsafe<{ readonly count: number }>(
-        "SELECT COUNT(*) AS count FROM commands WHERE command_id = ?",
-        [commandId],
-      );
-      return {
-        result,
-        executions: Number(executions[0]?.count),
-        receipts: Number(receipts[0]?.count),
-      };
-    });
-    const result = await run(Effect.provide(program, app));
-    expect(result).toMatchObject({ executions: 0, receipts: 0 });
-    expect(JSON.stringify((result as { result: unknown }).result)).toContain(
-      '"_tag":"PersistenceUnavailable"',
-    );
+    await expect(async () => {
+      const program = Effect.gen(function* () {
+        yield* runMigrations(P2_MIGRATIONS);
+        yield* seed;
+        yield* CommandGateway;
+      });
+      await run(Effect.provide(program, app));
+    }).rejects.toThrow("Service not found: arbor/WorkReadmissionGateStore");
   });
 
   it("admits a WorkspaceMain execution and emits ExecutionAdmitted", async () => {

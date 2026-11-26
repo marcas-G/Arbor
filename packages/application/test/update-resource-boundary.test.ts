@@ -14,8 +14,9 @@ import type {
   WorkspaceRepositoryService,
 } from "@arbor/ports";
 import { TransactionScope } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect, Option } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import {
   makeUpdateResourceBoundaryHandler,
   type UpdateResourceBoundaryPayload,
@@ -134,58 +135,77 @@ const invoke = (
     issuedAt: "2026-10-12T00:00:00.000Z",
     payload: { ...payload, ...payloadOverride },
   };
-  return Effect.runPromise(
-    Effect.provideService(
-      handler.execute(envelope, {
-        _tag: "System",
-        principal: parse(Principal)("user:local-admin"),
-        causationRef: "test",
-      }),
-      TransactionScope,
-      { session: { id: "test" } } as never,
-    ),
-  ).then((outcome) => ({ outcome, released, updates }));
+  return Effect.provideService(
+    handler.execute(envelope, {
+      _tag: "System",
+      principal: parse(Principal)("user:local-admin"),
+      causationRef: "test",
+    }),
+    TransactionScope,
+    { session: { id: "test" } } as never,
+  ).pipe(Effect.map((outcome) => ({ outcome, released, updates })));
 };
 
 describe("UpdateResourceBoundary Application command", () => {
-  it("shrinks only the target Workspace, CASes the boundary, and emits both events", async () => {
-    const { outcome, released, updates } = await invoke();
-    expect(outcome.ok).toBe(true);
-    if (!outcome.ok) return;
-    expect(outcome.value.result).toEqual({
-      workspaceId,
-      revision: 2,
-      resourceBoundaryRevision: 1,
-      releasedClaimIds: ["claim-target-a", "claim-target-b"],
-    });
-    expect(released).toEqual(["claim-target-a", "claim-target-b"]);
-    expect(updates).toEqual([
-      [workspaceId, 1, { basisResponsibilityRevision: 3, addresses: [] }, 1, 2],
-    ]);
-    expect(outcome.value.events.map((event) => event.eventType)).toEqual([
-      "ResourceBoundaryChanged",
-      "ResourceOwnershipChanged",
-    ]);
-    expect(
-      outcome.value.events.every((event) => event.projectId === projectId),
-    ).toBe(true);
-  });
+  it.effect(
+    "shrinks only the target Workspace, CASes the boundary, and emits both events",
+    () =>
+      Effect.gen(function* () {
+        const { outcome, released, updates } = yield* invoke();
+        expect(outcome.ok).toBe(true);
+        if (!outcome.ok) return;
+        expect(outcome.value.result).toEqual({
+          workspaceId,
+          revision: 2,
+          resourceBoundaryRevision: 1,
+          releasedClaimIds: ["claim-target-a", "claim-target-b"],
+        });
+        expect(released).toEqual(["claim-target-a", "claim-target-b"]);
+        expect(updates).toEqual([
+          [
+            workspaceId,
+            1,
+            { basisResponsibilityRevision: 3, addresses: [] },
+            1,
+            2,
+          ],
+        ]);
+        expect(outcome.value.events.map((event) => event.eventType)).toEqual([
+          "ResourceBoundaryChanged",
+          "ResourceOwnershipChanged",
+        ]);
+        expect(
+          outcome.value.events.every((event) => event.projectId === projectId),
+        ).toBe(true);
+      }),
+  );
 
-  it("rejects stale revision without releasing a claim or writing the Workspace", async () => {
-    const { outcome, released, updates } = await invoke({
-      expectedWorkspaceRevision: parse(Revision)(0),
-    });
-    expect(outcome.ok).toBe(false);
-    if (!outcome.ok) expect(outcome.error._tag).toBe("RevisionConflict");
-    expect(released).toEqual([]);
-    expect(updates).toEqual([]);
-  });
+  it.effect(
+    "rejects stale revision without releasing a claim or writing the Workspace",
+    () =>
+      Effect.gen(function* () {
+        const { outcome, released, updates } = yield* invoke({
+          expectedWorkspaceRevision: parse(Revision)(0),
+        });
+        expect(outcome.ok).toBe(false);
+        if (!outcome.ok) expect(outcome.error._tag).toBe("RevisionConflict");
+        expect(released).toEqual([]);
+        expect(updates).toEqual([]);
+      }),
+  );
 
-  it("rejects a foreign Workspace before any ownership or boundary write", async () => {
-    const { outcome, released, updates } = await invoke({}, foreignProjectId);
-    expect(outcome.ok).toBe(false);
-    if (!outcome.ok) expect(outcome.error._tag).toBe("AuthorityDenied");
-    expect(released).toEqual([]);
-    expect(updates).toEqual([]);
-  });
+  it.effect(
+    "rejects a foreign Workspace before any ownership or boundary write",
+    () =>
+      Effect.gen(function* () {
+        const { outcome, released, updates } = yield* invoke(
+          {},
+          foreignProjectId,
+        );
+        expect(outcome.ok).toBe(false);
+        if (!outcome.ok) expect(outcome.error._tag).toBe("AuthorityDenied");
+        expect(released).toEqual([]);
+        expect(updates).toEqual([]);
+      }),
+  );
 });

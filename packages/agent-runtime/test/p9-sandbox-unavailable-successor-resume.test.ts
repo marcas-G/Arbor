@@ -17,18 +17,16 @@ import {
 import {
   SandboxPolicyDecisionStore,
   SandboxProviderUnavailableStore,
-  SessionRepository,
   sha256Hex,
-  TransactionPort,
   TransactionScope,
 } from "@arbor/ports";
-import { Effect, Exit, Layer, Option } from "effect";
+import { Effect, Exit, Option } from "effect";
 import { describe, expect, it } from "vitest";
 import {
-  AgentLoopActionProgressionService,
-  AgentLoopActionProgressionServiceLive,
-} from "../src/agent-loop-action-progression-service.js";
-import { verifySandboxUnavailableStepActionResume } from "../src/agent-loop-actions.js";
+  executeAgentLoopActions,
+  verifySandboxUnavailableStepActionResume,
+} from "../src/agent-loop-actions.js";
+import { completeAgentLoopStep } from "../src/agent-loop-step-completion.js";
 
 const executionId = parse(ExecutionId)(
   "exe_00000000-0000-7000-8000-000000000081",
@@ -493,89 +491,72 @@ describe("P9 SandboxUnavailableV1 successor recovery", () => {
         ]),
     };
     let executableHandlerCalls = 0;
-    const transitioned: { predecessor?: unknown; successor?: unknown } = {};
-    const loopSteps = {
-      find: () => Effect.succeed(Option.some(durable.step)),
-      listActions: () => Effect.succeed(durable.actions),
-      transition: (input: { readonly next: unknown }) =>
-        Effect.sync(() => {
-          transitioned.predecessor = input.next;
-          return input.next;
-        }),
-      ensureSuccessor: (_predecessor: unknown, successor: unknown) =>
-        Effect.sync(() => {
-          transitioned.successor = successor;
-          return successor;
-        }),
-    };
-    const tx = {
-      transact: (body: Effect.Effect<unknown, unknown, never>) =>
-        Effect.provideService(body, TransactionScope, {
-          session: { id: "p9-sandbox-successor-restart" },
-        }),
-    };
-    const preparedTurn = {
-      manifest: {
-        providerTurnId: durable.step.providerTurnId,
-        contextEpoch: 0,
-        modelRef,
-        outputContractRef,
-        controlBasis: {},
-        toolRoutes,
-      },
-      toolRoutes,
-    } as never;
-    const progressionLayer = Layer.provide(
-      AgentLoopActionProgressionServiceLive({
-        controlRegistry: {} as never,
-        executableInvocationHandler: {
-          handle: () => {
-            executableHandlerCalls += 1;
-            return Effect.die("committed unavailable action must not replay");
-          },
-        } as never,
-      }),
-      Layer.mergeAll(
-        Layer.succeed(TransactionPort, tx as never),
-        Layer.succeed(SessionRepository, sessions as never),
-        Layer.succeed(SandboxProviderUnavailableStore, facts as never),
-        Layer.succeed(SandboxPolicyDecisionStore, decisions as never),
-      ),
-    );
-    const replay = Effect.gen(function* () {
-      const progression = yield* AgentLoopActionProgressionService;
-      const bound = yield* progression.forExecution({
-        execution,
-        context: {} as never,
-        loopSteps: loopSteps as never,
-        providerTurns: providerTurns as never,
-        loopStepFence: {
-          executionId,
-          workerId: "worker-restarted",
-          workerIncarnationId: "incarnation-restarted",
-          fencingGeneration: 1,
-        } as never,
-        currentControlBasis: () => Effect.succeed({} as never),
-        admit: () => Effect.succeed("Continue"),
-        failure: (cause: unknown) => cause as never,
-        now: () => Effect.succeed("2026-10-18T10:01:00.000Z"),
-      });
-      return yield* bound.progress({
-        decision: {
-          _tag: "Ready",
-          turn: preparedTurn,
-          output: decodedOutput as never,
-          loopStep: durable.step as never,
-          conversation: false,
+    const replay = executeAgentLoopActions({
+      input: { execution, context: {} as never },
+      preparedTurn: {
+        manifest: {
+          providerTurnId: durable.step.providerTurnId,
+          contextEpoch: 0,
+          modelRef,
+          outputContractRef,
+          controlBasis: {},
+          toolRoutes,
         },
-        turn: 0,
-      });
-    }).pipe(Effect.provide(progressionLayer));
-    const runReplay = () => Effect.runPromiseExit(replay);
+        toolRoutes,
+      } as never,
+      decodedOutput: decodedOutput as never,
+      turn: 0,
+      currentLoopStep: durable.step as never,
+      loopSteps: {
+        find: () => Effect.succeed(Option.some(durable.step)),
+        listActions: () => Effect.succeed(durable.actions),
+      } as never,
+      loopStepFence: {
+        executionId,
+        workerId: "worker-restarted",
+        workerIncarnationId: "incarnation-restarted",
+        fencingGeneration: 1,
+      } as never,
+      tx: {
+        transact: (body: Effect.Effect<unknown, unknown, never>) =>
+          Effect.provideService(body, TransactionScope, {
+            session: { id: "p9-sandbox-successor-restart" },
+          }),
+      } as never,
+      sessions: sessions as never,
+      providerTurns: providerTurns as never,
+      controlRegistry: {} as never,
+      executableInvocationHandler: {
+        handle: () => {
+          executableHandlerCalls += 1;
+          return Effect.die("committed unavailable action must not replay");
+        },
+      } as never,
+      currentControlBasis: () => Effect.succeed({} as never),
+      admit: () => Effect.succeed("Continue"),
+      failure: (cause: unknown) => cause as never,
+      now: () => Effect.succeed("2026-10-18T10:01:00.000Z"),
+    } as never);
+    const runReplay = () =>
+      Effect.runPromiseExit(
+        Effect.provideService(
+          Effect.provideService(
+            Effect.provideService(
+              replay,
+              SandboxProviderUnavailableStore,
+              facts as never,
+            ),
+            SandboxPolicyDecisionStore,
+            decisions as never,
+          ),
+          TransactionScope,
+          { session: { id: "p9-sandbox-successor-restart" } },
+        ),
+      );
     const recoveredExit = await runReplay();
     expect(Exit.isSuccess(recoveredExit)).toBe(true);
     if (Exit.isFailure(recoveredExit)) throw new Error("resume failed");
-    expect(recoveredExit.value._tag).toBe("Continue");
+    expect(recoveredExit.value._tag).toBe("Completed");
     expect(executableHandlerCalls).toBe(0);
 
     durable.actions = [
@@ -600,6 +581,47 @@ describe("P9 SandboxUnavailableV1 successor recovery", () => {
     expect(Exit.isFailure(await runReplay())).toBe(true);
     durable.actions = [priorAppliedAction, terminalAction];
 
+    const transitioned: { predecessor?: unknown; successor?: unknown } = {};
+    const loopSteps = {
+      transition: (input: { readonly next: unknown }) =>
+        Effect.sync(() => {
+          transitioned.predecessor = input.next;
+          return input.next;
+        }),
+      ensureSuccessor: (_predecessor: unknown, successor: unknown) =>
+        Effect.sync(() => {
+          transitioned.successor = successor;
+          return successor;
+        }),
+    };
+    const tx = {
+      transact: (body: Effect.Effect<unknown, unknown, never>) =>
+        Effect.provideService(body, TransactionScope, {
+          session: { id: "p9-sandbox-successor-restart" },
+        }),
+    };
+    const completion = await Effect.runPromise(
+      completeAgentLoopStep({
+        input: { execution, context: {} as never },
+        decodedOutput: decodedOutput as never,
+        observations: [],
+        conversation: false,
+        turn: 0,
+        currentLoopStep: durable.step as never,
+        loopSteps: loopSteps as never,
+        loopStepFence: {
+          executionId,
+          workerId: "w",
+          workerIncarnationId: "i",
+          fencingGeneration: 1,
+        } as never,
+        tx: tx as never,
+        sessions: {} as never,
+        now: () => Effect.succeed("2026-10-18T10:01:01.000Z"),
+      }),
+    );
+
+    expect(completion).toEqual({ _tag: "Continue" });
     expect(transitioned.predecessor).toMatchObject({
       state: "NextStepReady",
       nextActionIndex: 2,

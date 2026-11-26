@@ -38,6 +38,7 @@ import { Context, Effect, Layer } from "effect";
 import type { ModelDecisionOutcome } from "./agent-loop-policy.js";
 import { ControlBasisResolver } from "./control-basis-resolver.js";
 import type { ModelDecisionOptions } from "./decision/contract.js";
+import { foldModelOutputJournalError } from "./decision/errors.js";
 import { toExecutionDriverError } from "./execution-driver-failure.js";
 import { runModelDecision } from "./model-decision.js";
 import { recordAcceptedModelOutput } from "./model-output-journal.js";
@@ -277,12 +278,11 @@ export const ModelDecisionServiceLive = (
                       : { loopStepFence: input.loopStepFence }),
                     tx,
                     sessions,
-                    failure,
                     now: input.now,
                     ...(options.qualificationProbe === undefined
                       ? {}
                       : { qualificationProbe: options.qualificationProbe }),
-                  });
+                  }).pipe(Effect.mapError(foldModelOutputJournalError));
                   return {
                     ...outcome,
                     ...(loopStep === undefined ? {} : { loopStep }),

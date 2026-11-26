@@ -4,7 +4,6 @@ import type {
   AgentLoopStepActionRecord,
   AgentLoopStepRecord,
   BoundedObservation,
-  ExecutionDriverError,
 } from "@arbor/ports";
 import { Effect } from "effect";
 import { safetyStop, stopRequestedSettlement } from "../agent-loop-policy.js";
@@ -17,6 +16,7 @@ import {
   actionRejectionObservation,
   isLeaseFencingRejected,
 } from "./action-errors.js";
+import type { ExecutableActionError } from "./errors.js";
 import type { makeActionLedger } from "./ledger.js";
 import type {
   AgentLoopActionDependencies,
@@ -40,14 +40,9 @@ export const executeExecutableAction = (
   }>,
   durableProgress: boolean,
   ledger: ReturnType<typeof makeActionLedger>,
-): Effect.Effect<ExecutableActionResult, ExecutionDriverError> => {
-  const {
-    input,
-    preparedTurn,
-    loopStepFence,
-    executableInvocationHandler,
-    failure,
-  } = dependencies;
+): Effect.Effect<ExecutableActionResult, ExecutableActionError> => {
+  const { input, preparedTurn, loopStepFence, executableInvocationHandler } =
+    dependencies;
   const {
     persistActionRejection,
     persistActionObservation,
@@ -118,7 +113,7 @@ export const executeExecutableAction = (
         executed.cause._tag === "AgentActionOperationalFailure" &&
         isLeaseFencingRejected(executed.cause.cause)
       ) {
-        return yield* Effect.fail(failure(executed.cause.cause));
+        return yield* Effect.fail(executed.cause.cause);
       }
       const stopSettlement = stopRequestedSettlement(input.execution);
       if (stopSettlement !== undefined) {

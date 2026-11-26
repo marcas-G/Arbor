@@ -7,7 +7,11 @@ export default defineConfig({
       "./tests/functional/support/schema44-global-setup.ts",
     ],
     setupFiles: ["./tests/support/p39-windows-test-setup.ts"],
-    include: ["tests/capability/real-provider/public-s*-*.test.ts"],
+    include: [
+      "tests/capability/real-provider/public-s*-*.test.ts",
+      "tests/capability/real-provider/s1/*.test.ts",
+      "tests/capability/real-provider/s4/*.test.ts",
+    ],
     exclude: ["**/node_modules/**"],
     // Every opt-in public journey owns a 20-minute absolute deadline. This
     // bounded outer margin leaves time for orderly daemon stop and evidence.

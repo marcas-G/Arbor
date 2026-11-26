@@ -15,13 +15,13 @@ import type {
   AgentLoopStepRecord,
   AgentLoopStepStoreService,
   BoundedObservation,
-  ExecutionDriverError,
   SessionRepositoryService,
   TransactionPortService,
 } from "@arbor/ports";
 import { sessionCausalBindingForWork } from "@arbor/ports";
 import { Effect } from "effect";
 import { MAX_TURNS, sessionFence } from "./agent-loop-policy.js";
+import type { AgentLoopStepCompletionError } from "./decision/errors.js";
 import type { AgentLoopQualificationProbe } from "./qualification-probe.js";
 
 export interface AgentLoopStepCompletionDependencies {
@@ -41,7 +41,6 @@ export interface AgentLoopStepCompletionDependencies {
   readonly loopStepFence?: AgentLoopStepFence;
   readonly tx: TransactionPortService;
   readonly sessions: SessionRepositoryService;
-  readonly failure: (cause: unknown) => ExecutionDriverError;
   readonly now: () => Effect.Effect<string>;
   readonly qualificationProbe?: AgentLoopQualificationProbe;
 }
@@ -53,11 +52,13 @@ export type AgentLoopStepCompletion =
 /**
  * Commits post-action observations and advances the durable loop-step state.
  * It is the sole owner of the `ActionsInProgress -> StepEffectsCommitted ->
- * NextStepReady|SettlementProposed` progression.
+ * NextStepReady|SettlementProposed` progression. E09: store, session and
+ * transaction failures propagate as their narrow union; the driver folds
+ * once at its ExecutionDriverError boundary.
  */
 export const completeAgentLoopStep = (
   dependencies: AgentLoopStepCompletionDependencies,
-): Effect.Effect<AgentLoopStepCompletion, ExecutionDriverError> => {
+): Effect.Effect<AgentLoopStepCompletion, AgentLoopStepCompletionError> => {
   const {
     input,
     decodedOutput,
@@ -68,7 +69,6 @@ export const completeAgentLoopStep = (
     loopStepFence,
     tx,
     sessions,
-    failure,
     now,
     qualificationProbe,
   } = dependencies;
@@ -90,18 +90,16 @@ export const completeAgentLoopStep = (
                 : String(currentLoopStep.providerTurnId),
           });
     for (const entry of observations) {
-      yield* tx
-        .transact(
-          sessions.appendEntry(
-            input.execution.sessionId,
-            { entryKind: "Observation", payload: entry },
-            input.context._tag === "ExecutionOrigin"
-              ? sessionFence(input.execution.executionId, input.context)
-              : undefined,
-            causalBinding,
-          ),
-        )
-        .pipe(Effect.mapError(failure));
+      yield* tx.transact(
+        sessions.appendEntry(
+          input.execution.sessionId,
+          { entryKind: "Observation", payload: entry },
+          input.context._tag === "ExecutionOrigin"
+            ? sessionFence(input.execution.executionId, input.context)
+            : undefined,
+          causalBinding,
+        ),
+      );
     }
 
     if (
@@ -121,24 +119,22 @@ export const completeAgentLoopStep = (
           }),
         );
       }
-      currentLoopStep = yield* tx
-        .transact(
-          loopSteps.transition(
-            {
-              identity: actionsCompleteStep.identity,
-              expectedRevision: actionsCompleteStep.revision,
-              expectedState: "ActionsInProgress",
-              next: {
-                ...actionsCompleteStep,
-                state: "StepEffectsCommitted",
-                revision: actionsCompleteStep.revision + 1,
-                updatedAt: yield* now(),
-              },
+      currentLoopStep = yield* tx.transact(
+        loopSteps.transition(
+          {
+            identity: actionsCompleteStep.identity,
+            expectedRevision: actionsCompleteStep.revision,
+            expectedState: "ActionsInProgress",
+            next: {
+              ...actionsCompleteStep,
+              state: "StepEffectsCommitted",
+              revision: actionsCompleteStep.revision + 1,
+              updatedAt: yield* now(),
             },
-            loopStepFence,
-          ),
-        )
-        .pipe(Effect.mapError(failure));
+          },
+          loopStepFence,
+        ),
+      );
       if (qualificationProbe !== undefined) {
         yield* Effect.promise(() =>
           qualificationProbe({
@@ -183,25 +179,23 @@ export const completeAgentLoopStep = (
         loopStepFence !== undefined &&
         currentLoopStep.state === "StepEffectsCommitted"
       ) {
-        yield* tx
-          .transact(
-            loopSteps.transition(
-              {
-                identity: currentLoopStep.identity,
-                expectedRevision: currentLoopStep.revision,
-                expectedState: "StepEffectsCommitted",
-                next: {
-                  ...currentLoopStep,
-                  state: "SettlementProposed",
-                  settlement,
-                  revision: currentLoopStep.revision + 1,
-                  updatedAt: yield* now(),
-                },
+        yield* tx.transact(
+          loopSteps.transition(
+            {
+              identity: currentLoopStep.identity,
+              expectedRevision: currentLoopStep.revision,
+              expectedState: "StepEffectsCommitted",
+              next: {
+                ...currentLoopStep,
+                state: "SettlementProposed",
+                settlement,
+                revision: currentLoopStep.revision + 1,
+                updatedAt: yield* now(),
               },
-              loopStepFence,
-            ),
-          )
-          .pipe(Effect.mapError(failure));
+            },
+            loopStepFence,
+          ),
+        );
       }
       return { _tag: "Settle", settlement };
     }
@@ -225,25 +219,23 @@ export const completeAgentLoopStep = (
         loopStepFence !== undefined &&
         currentLoopStep.state === "StepEffectsCommitted"
       ) {
-        yield* tx
-          .transact(
-            loopSteps.transition(
-              {
-                identity: currentLoopStep.identity,
-                expectedRevision: currentLoopStep.revision,
-                expectedState: "StepEffectsCommitted",
-                next: {
-                  ...currentLoopStep,
-                  state: "SettlementProposed",
-                  settlement,
-                  revision: currentLoopStep.revision + 1,
-                  updatedAt: yield* now(),
-                },
+        yield* tx.transact(
+          loopSteps.transition(
+            {
+              identity: currentLoopStep.identity,
+              expectedRevision: currentLoopStep.revision,
+              expectedState: "StepEffectsCommitted",
+              next: {
+                ...currentLoopStep,
+                state: "SettlementProposed",
+                settlement,
+                revision: currentLoopStep.revision + 1,
+                updatedAt: yield* now(),
               },
-              loopStepFence,
-            ),
-          )
-          .pipe(Effect.mapError(failure));
+            },
+            loopStepFence,
+          ),
+        );
       }
       return { _tag: "Settle", settlement };
     }
@@ -265,44 +257,42 @@ export const completeAgentLoopStep = (
         input.execution.executionId,
         turn + 1,
       );
-      yield* tx
-        .transact(
-          Effect.gen(function* () {
-            yield* loopSteps.transition(
-              {
-                identity: predecessor.identity,
-                expectedRevision: predecessor.revision,
-                expectedState: "StepEffectsCommitted",
-                next: {
-                  ...predecessor,
-                  state: "NextStepReady",
-                  successor: {
-                    ...successorIdentity,
-                    providerTurnId: successorProviderTurnId,
-                  },
-                  nextStepReason: "Continue",
-                  revision: predecessor.revision + 1,
-                  updatedAt: yield* now(),
+      yield* tx.transact(
+        Effect.gen(function* () {
+          yield* loopSteps.transition(
+            {
+              identity: predecessor.identity,
+              expectedRevision: predecessor.revision,
+              expectedState: "StepEffectsCommitted",
+              next: {
+                ...predecessor,
+                state: "NextStepReady",
+                successor: {
+                  ...successorIdentity,
+                  providerTurnId: successorProviderTurnId,
                 },
-              },
-              loopStepFence,
-            );
-            yield* loopSteps.ensureSuccessor(
-              predecessor.identity,
-              {
-                identity: successorIdentity,
-                predecessor: predecessor.identity,
-                providerTurnId: successorProviderTurnId,
-                state: "Prepared",
-                nextActionIndex: 0,
-                revision: 0,
+                nextStepReason: "Continue",
+                revision: predecessor.revision + 1,
                 updatedAt: yield* now(),
               },
-              loopStepFence,
-            );
-          }),
-        )
-        .pipe(Effect.mapError(failure));
+            },
+            loopStepFence,
+          );
+          yield* loopSteps.ensureSuccessor(
+            predecessor.identity,
+            {
+              identity: successorIdentity,
+              predecessor: predecessor.identity,
+              providerTurnId: successorProviderTurnId,
+              state: "Prepared",
+              nextActionIndex: 0,
+              revision: 0,
+              updatedAt: yield* now(),
+            },
+            loopStepFence,
+          );
+        }),
+      );
     }
 
     return { _tag: "Continue" };

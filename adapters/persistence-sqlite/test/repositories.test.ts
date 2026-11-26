@@ -20,9 +20,10 @@ import {
   WorkRepository,
   WorkspaceRepository,
 } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import {
   ClockLive,
   layer,
@@ -209,26 +210,28 @@ const program = Effect.gen(function* () {
 });
 
 describe("repositories", () => {
-  it("round-trips aggregates and enforces CAS", async () => {
-    const result = await Effect.runPromise(Effect.provide(program, app));
-    expect(result.project).toBe(true);
-    expect(result.projectSource).toEqual({
-      _tag: "Profile",
-      resourceProfileRef: "repo-default",
-      version: "7",
-    });
-    expect(result.resourceSourceDecodeFailures).toEqual([
-      "PersistenceCorruption",
-      "PersistenceCorruption",
-      "PersistenceCorruption",
-      "PersistenceCorruption",
-    ]);
-    expect(result.workspace).toBe(true);
-    expect(result.work).toBe(true);
-    expect(result.session).toBe(true);
-    expect(result.updated).toBeUndefined();
-    expect(result.conflicted._tag).toBe("Failure");
-    expect(result.openWork).toBe(true);
-    expect(result.activeChildren).toBe(0);
-  });
+  it.effect("round-trips aggregates and enforces CAS", () =>
+    Effect.gen(function* () {
+      const result = yield* Effect.provide(program, app);
+      expect(result.project).toBe(true);
+      expect(result.projectSource).toEqual({
+        _tag: "Profile",
+        resourceProfileRef: "repo-default",
+        version: "7",
+      });
+      expect(result.resourceSourceDecodeFailures).toEqual([
+        "PersistenceCorruption",
+        "PersistenceCorruption",
+        "PersistenceCorruption",
+        "PersistenceCorruption",
+      ]);
+      expect(result.workspace).toBe(true);
+      expect(result.work).toBe(true);
+      expect(result.session).toBe(true);
+      expect(result.updated).toBeUndefined();
+      expect(result.conflicted._tag).toBe("Failure");
+      expect(result.openWork).toBe(true);
+      expect(result.activeChildren).toBe(0);
+    }),
+  );
 });

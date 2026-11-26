@@ -1,6 +1,7 @@
+import { it } from "@effect/vitest";
 import { Effect, Exit, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect } from "vitest";
 import {
   AttentionProjectionStoreLive,
   ClockLive,
@@ -204,200 +205,206 @@ const withTxFault = (
   }) as never;
 
 describe("P40 P9/P10 durable replay-failure recovery", () => {
-  it("keeps P9 fact/event atomic and projects exactly one P10 row through restart and rebuild", async () => {
-    if (schema48Factory === undefined)
-      throw new Error("Schema 48 factory is missing");
-    const database = schema48Factory.create();
-    databases.push(database);
-    const { app } = makeFixture(database.databaseFilename);
-    await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          yield* seed;
-          const tx = yield* TransactionPort;
-          const invocations = yield* ToolInvocationStore;
-          yield* tx.transact(invocations.recordIntent(intent, fence, now));
-        }),
-        app,
-      ),
-    );
+  it.effect(
+    "keeps P9 fact/event atomic and projects exactly one P10 row through restart and rebuild",
+    () =>
+      Effect.gen(function* () {
+        if (schema48Factory === undefined)
+          throw new Error("Schema 48 factory is missing");
+        const database = schema48Factory.create();
+        databases.push(database);
+        const { app } = makeFixture(database.databaseFilename);
+        yield* Effect.provide(
+          Effect.gen(function* () {
+            yield* seed;
+            const tx = yield* TransactionPort;
+            const invocations = yield* ToolInvocationStore;
+            yield* tx.transact(invocations.recordIntent(intent, fence, now));
+          }),
+          app,
+        );
 
-    const result = await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          const tx = yield* TransactionPort;
-          const sql = yield* SqlClient;
-          const facts = yield* ToolObservationReplayAttentionFactStore;
-          const journal = yield* DomainEventJournal;
-          const rows = yield* AttentionProjectionStore;
-          const offsets = yield* ConsumerOffsetStore;
-          const toolFacts = yield* ToolObservationReplayAttentionFactStore;
-          const listP40Rows = (id: ProjectId) => {
-            const list = rows.listToolObservationReplayFailures;
-            if (list === undefined)
-              return Effect.die("P40 row reader unavailable");
-            return list(id);
-          };
-          const p9Counts = () =>
-            sql.unsafe<{ readonly facts: number; readonly events: number }>(
-              `SELECT
+        const result = yield* Effect.provide(
+          Effect.gen(function* () {
+            const tx = yield* TransactionPort;
+            const sql = yield* SqlClient;
+            const facts = yield* ToolObservationReplayAttentionFactStore;
+            const journal = yield* DomainEventJournal;
+            const rows = yield* AttentionProjectionStore;
+            const offsets = yield* ConsumerOffsetStore;
+            const toolFacts = yield* ToolObservationReplayAttentionFactStore;
+            const listP40Rows = (id: ProjectId) => {
+              const list = rows.listToolObservationReplayFailures;
+              if (list === undefined)
+                return Effect.die("P40 row reader unavailable");
+              return list(id);
+            };
+            const p9Counts = () =>
+              sql.unsafe<{ readonly facts: number; readonly events: number }>(
+                `SELECT
                  (SELECT COUNT(*) FROM tool_observation_replay_attention_facts) AS facts,
                  (SELECT COUNT(*) FROM domain_events
                    WHERE event_type = 'ToolObservationReplayEvidenceEscalated') AS events`,
-            );
-          const recordFailure = () =>
-            facts.recordFailure({
-              projectId: projectId as never,
-              executionId: executionId as never,
-              targetWorkspaceId: workspaceId as never,
-              logicalActionId,
-              providerTurnId,
-              callRef,
-              invocationId: invocationId as never,
-              failureCode,
-              firstDetectedAt: now,
-              executionFence: fence,
-            });
-
-          const p9Before = yield* Effect.exit(
-            tx.transact(
-              Effect.gen(function* () {
-                yield* recordFailure();
-                return yield* Effect.fail(new Error("pre-COMMIT P9 stop"));
-              }),
-            ),
-          );
-          expect(Exit.isFailure(p9Before)).toBe(true);
-          expect((yield* p9Counts())[0]).toEqual({ facts: 0, events: 0 });
-
-          const p9After = yield* Effect.exit(
-            Effect.gen(function* () {
-              const persisted = yield* tx.transact(recordFailure());
-              return yield* Effect.fail(
-                new Error(`post-COMMIT P9 stop:${persisted.attentionFactId}`),
               );
-            }),
-          );
-          expect(Exit.isFailure(p9After)).toBe(true);
-          expect((yield* p9Counts())[0]).toEqual({ facts: 1, events: 1 });
-          const fact = yield* tx.transact(recordFailure());
-          expect(fact.attentionFactId).toBe(
-            `att_${sha256Hex(JSON.stringify({ executionId, invocationId, version: 1 }))}`,
-          );
-          expect((yield* p9Counts())[0]).toEqual({ facts: 1, events: 1 });
+            const recordFailure = () =>
+              facts.recordFailure({
+                projectId: projectId as never,
+                executionId: executionId as never,
+                targetWorkspaceId: workspaceId as never,
+                logicalActionId,
+                providerTurnId,
+                callRef,
+                invocationId: invocationId as never,
+                failureCode,
+                firstDetectedAt: now,
+                executionFence: fence,
+              });
 
-          const p10Projection = makeProjectAttentionProjectionStore(
-            projectId as never,
-            sourceFactsWithoutOtherP10Sources,
-            rows,
-            undefined,
-            toolFacts,
-          );
-          const poll = (txService: TransactionPortService = tx) =>
-            runConsumerBatch(consumerId, projectId as never, 10).pipe(
-              Effect.provideService(ProjectionStore, p10Projection),
-              Effect.provideService(TransactionPort, txService),
+            const p9Before = yield* Effect.exit(
+              tx.transact(
+                Effect.gen(function* () {
+                  yield* recordFailure();
+                  return yield* Effect.fail(new Error("pre-COMMIT P9 stop"));
+                }),
+              ),
             );
-          const p10Before = yield* Effect.exit(
-            poll(withTxFault(tx, "before", { value: true })),
-          );
-          expect(Exit.isFailure(p10Before)).toBe(true);
-          expect(
-            (yield* tx.transact(listP40Rows(projectId as never))).length,
-          ).toBe(0);
-          expect(
-            yield* tx.transact(offsets.read(consumerId, projectId as never)),
-          ).toBe(0);
+            expect(Exit.isFailure(p9Before)).toBe(true);
+            expect((yield* p9Counts())[0]).toEqual({ facts: 0, events: 0 });
 
-          const p10After = yield* Effect.exit(
-            poll(withTxFault(tx, "after", { value: true })),
-          );
-          expect(Exit.isFailure(p10After)).toBe(true);
-          const afterP10Commit = yield* tx.transact(
-            Effect.gen(function* () {
-              return {
-                rows: yield* listP40Rows(projectId as never),
-                offset: yield* offsets.read(consumerId, projectId as never),
-              };
-            }),
-          );
-          expect(afterP10Commit.rows).toHaveLength(1);
-          expect(afterP10Commit.rows[0]).toMatchObject({
-            source: "ToolObservationReplayEvidenceFailure",
-            severity: "ActionRequired",
-            targetWorkspaceId: workspaceId,
-            dedupKey: fact.attentionFactId,
-            sourceFactId: fact.attentionFactId,
-            sourceEventId: fact.eventId,
-            failureCode,
-          });
-          expect(afterP10Commit.offset).toBe(1);
+            const p9After = yield* Effect.exit(
+              Effect.gen(function* () {
+                const persisted = yield* tx.transact(recordFailure());
+                return yield* Effect.fail(
+                  new Error(`post-COMMIT P9 stop:${persisted.attentionFactId}`),
+                );
+              }),
+            );
+            expect(Exit.isFailure(p9After)).toBe(true);
+            expect((yield* p9Counts())[0]).toEqual({ facts: 1, events: 1 });
+            const fact = yield* tx.transact(recordFailure());
+            expect(fact.attentionFactId).toBe(
+              `att_${sha256Hex(JSON.stringify({ executionId, invocationId, version: 1 }))}`,
+            );
+            expect((yield* p9Counts())[0]).toEqual({ facts: 1, events: 1 });
 
-          const rebuildCrash = yield* Effect.exit(
-            rebuildProjection(consumerId, projectId as never, 10, async () => {
-              throw new Error("stop after P10 reset/rewind commit");
-            }).pipe(Effect.provideService(ProjectionStore, p10Projection)),
-          );
-          expect(Exit.isFailure(rebuildCrash)).toBe(true);
-          const rebuildState = yield* tx.transact(
-            Effect.gen(function* () {
-              return {
-                rows: yield* listP40Rows(projectId as never),
-                offset: yield* offsets.read(consumerId, projectId as never),
-              };
-            }),
-          );
-          expect(rebuildState.rows).toHaveLength(0);
-          expect(rebuildState.offset).toBe(0);
+            const p10Projection = makeProjectAttentionProjectionStore(
+              projectId as never,
+              sourceFactsWithoutOtherP10Sources,
+              rows,
+              undefined,
+              toolFacts,
+            );
+            const poll = (txService: TransactionPortService = tx) =>
+              runConsumerBatch(consumerId, projectId as never, 10).pipe(
+                Effect.provideService(ProjectionStore, p10Projection),
+                Effect.provideService(TransactionPort, txService),
+              );
+            const p10Before = yield* Effect.exit(
+              poll(withTxFault(tx, "before", { value: true })),
+            );
+            expect(Exit.isFailure(p10Before)).toBe(true);
+            expect(
+              (yield* tx.transact(listP40Rows(projectId as never))).length,
+            ).toBe(0);
+            expect(
+              yield* tx.transact(offsets.read(consumerId, projectId as never)),
+            ).toBe(0);
 
-          const rebuildRetry = yield* rebuildProjection(
-            consumerId,
-            projectId as never,
-            10,
-          ).pipe(Effect.provideService(ProjectionStore, p10Projection));
-          expect(rebuildRetry.replayed).toBe(1);
-          const rebuilt = yield* tx.transact(
-            Effect.gen(function* () {
-              return {
-                rows: yield* listP40Rows(projectId as never),
-                offset: yield* offsets.read(consumerId, projectId as never),
-              };
-            }),
-          );
-          expect(rebuilt.rows).toHaveLength(1);
-          expect(rebuilt.rows[0]?.dedupKey).toBe(fact.attentionFactId);
-          expect(rebuilt.offset).toBe(1);
-          const retained = yield* tx.transact(
-            journal.readAfter(projectId as never, 0, 10),
-          );
-          expect(retained).toHaveLength(1);
-          const visibleRows = yield* deriveProjectAttention(
-            projectId as never,
-            {
-              listWorkspacesByProject: () => Effect.succeed([]),
-              listExecutionSettlementFacts: () => Effect.succeed([]),
-              listOpenVerifications: () => Effect.succeed([]),
-              listUnsatisfiedDependencies: () => Effect.succeed([]),
-              readEvents: () => Effect.succeed([]),
-              listWorksByWorkspace: () => Effect.succeed([]),
-              listProjectedToolObservationReplayFailures: (id: ProjectId) =>
-                tx.transact(listP40Rows(id)),
-            } as never,
-          );
-          return { fact, p10Row: rebuilt.rows[0], visibleRows };
-        }),
-        app,
-      ),
-    );
-    expect(result.p10Row?.sourceFactId).toBe(result.fact.attentionFactId);
-    expect(result.visibleRows).toContainEqual({
-      source: "ToolObservationReplayEvidenceFailure",
-      severity: "ActionRequired",
-      targetWorkspaceId: workspaceId,
-      dedupKey: result.fact.attentionFactId,
-      summary:
-        "A terminal tool outcome could not be replayed from durable observation evidence; recovery is paused.",
-      occurredAt: now,
-    });
-  }, 120_000);
+            const p10After = yield* Effect.exit(
+              poll(withTxFault(tx, "after", { value: true })),
+            );
+            expect(Exit.isFailure(p10After)).toBe(true);
+            const afterP10Commit = yield* tx.transact(
+              Effect.gen(function* () {
+                return {
+                  rows: yield* listP40Rows(projectId as never),
+                  offset: yield* offsets.read(consumerId, projectId as never),
+                };
+              }),
+            );
+            expect(afterP10Commit.rows).toHaveLength(1);
+            expect(afterP10Commit.rows[0]).toMatchObject({
+              source: "ToolObservationReplayEvidenceFailure",
+              severity: "ActionRequired",
+              targetWorkspaceId: workspaceId,
+              dedupKey: fact.attentionFactId,
+              sourceFactId: fact.attentionFactId,
+              sourceEventId: fact.eventId,
+              failureCode,
+            });
+            expect(afterP10Commit.offset).toBe(1);
+
+            const rebuildCrash = yield* Effect.exit(
+              rebuildProjection(
+                consumerId,
+                projectId as never,
+                10,
+                async () => {
+                  throw new Error("stop after P10 reset/rewind commit");
+                },
+              ).pipe(Effect.provideService(ProjectionStore, p10Projection)),
+            );
+            expect(Exit.isFailure(rebuildCrash)).toBe(true);
+            const rebuildState = yield* tx.transact(
+              Effect.gen(function* () {
+                return {
+                  rows: yield* listP40Rows(projectId as never),
+                  offset: yield* offsets.read(consumerId, projectId as never),
+                };
+              }),
+            );
+            expect(rebuildState.rows).toHaveLength(0);
+            expect(rebuildState.offset).toBe(0);
+
+            const rebuildRetry = yield* rebuildProjection(
+              consumerId,
+              projectId as never,
+              10,
+            ).pipe(Effect.provideService(ProjectionStore, p10Projection));
+            expect(rebuildRetry.replayed).toBe(1);
+            const rebuilt = yield* tx.transact(
+              Effect.gen(function* () {
+                return {
+                  rows: yield* listP40Rows(projectId as never),
+                  offset: yield* offsets.read(consumerId, projectId as never),
+                };
+              }),
+            );
+            expect(rebuilt.rows).toHaveLength(1);
+            expect(rebuilt.rows[0]?.dedupKey).toBe(fact.attentionFactId);
+            expect(rebuilt.offset).toBe(1);
+            const retained = yield* tx.transact(
+              journal.readAfter(projectId as never, 0, 10),
+            );
+            expect(retained).toHaveLength(1);
+            const visibleRows = yield* deriveProjectAttention(
+              projectId as never,
+              {
+                listWorkspacesByProject: () => Effect.succeed([]),
+                listExecutionSettlementFacts: () => Effect.succeed([]),
+                listOpenVerifications: () => Effect.succeed([]),
+                listUnsatisfiedDependencies: () => Effect.succeed([]),
+                readEvents: () => Effect.succeed([]),
+                listWorksByWorkspace: () => Effect.succeed([]),
+                listProjectedToolObservationReplayFailures: (id: ProjectId) =>
+                  tx.transact(listP40Rows(id)),
+              } as never,
+            );
+            return { fact, p10Row: rebuilt.rows[0], visibleRows };
+          }),
+          app,
+        );
+        expect(result.p10Row?.sourceFactId).toBe(result.fact.attentionFactId);
+        expect(result.visibleRows).toContainEqual({
+          source: "ToolObservationReplayEvidenceFailure",
+          severity: "ActionRequired",
+          targetWorkspaceId: workspaceId,
+          dedupKey: result.fact.attentionFactId,
+          summary:
+            "A terminal tool outcome could not be replayed from durable observation evidence; recovery is paused.",
+          occurredAt: now,
+        });
+      }),
+    120_000,
+  );
 });

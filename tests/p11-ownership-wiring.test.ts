@@ -75,12 +75,14 @@ import {
   SessionRepository,
   TransactionPort,
   type TransactionPortService,
-  TransactionScope,
   WorkspaceRepository,
-  type WorktreeRecord,
   WorktreeStore,
-  type WorktreeStoreService,
 } from "../packages/ports/src/index.js";
+import {
+  regionOfAddress as regionOf,
+  WORKTREES_TEST_DDL,
+  WorktreeStoreTestLive,
+} from "./support/worktree-test-store.js";
 
 // --- fixed identities -------------------------------------------------------
 
@@ -100,39 +102,6 @@ const cmd = (suffix: string) =>
 // fake emulates that: a steady revision plus one-shot overrides so tests
 // can move the observed revision between the pre-resolve and the CAS
 // re-resolve inside OwnershipWriteService.
-
-const regionOf = (
-  address: ResourceAddress,
-): { resourceSpaceId: string; normalizedRegion: unknown } => {
-  switch (address._tag) {
-    case "FileTree":
-      return {
-        resourceSpaceId: "filesystem",
-        normalizedRegion: { kind: "FileTree", path: address.path },
-      };
-    case "GitWorktree":
-      return {
-        resourceSpaceId: "filesystem",
-        normalizedRegion: { kind: "GitWorktree", path: address.path },
-      };
-    case "DatabaseNamespace":
-      return {
-        resourceSpaceId: "database",
-        normalizedRegion: {
-          kind: "DatabaseNamespace",
-          namespace: address.namespace,
-        },
-      };
-    case "ExternalResource":
-      return {
-        resourceSpaceId: "external",
-        normalizedRegion: {
-          kind: "ExternalResource",
-          address: address.address,
-        },
-      };
-  }
-};
 
 interface ScriptedEnvironment
   extends Pick<ProjectEnvironmentPortService, "resolve"> {
@@ -164,120 +133,6 @@ const makeScriptedEnvironment = (): ScriptedEnvironment => {
     callCount: () => calls,
   };
 };
-
-// --- test-local worktrees DDL (production migration is main-session owned;
-// mirrors tests/p11-worktree.test.ts) ---------------------------------------
-
-const WORKTREES_TEST_DDL = `
-CREATE TABLE worktrees (
-  worktree_id     TEXT PRIMARY KEY,
-  project_id      TEXT NOT NULL REFERENCES projects(project_id),
-  workspace_id    TEXT NOT NULL REFERENCES workspaces(workspace_id),
-  path            TEXT NOT NULL,
-  repository_ref  TEXT,
-  branch          TEXT,
-  state           TEXT NOT NULL CHECK (state IN ('Active','Retired')),
-  created_at      TEXT NOT NULL,
-  retired_at      TEXT,
-  CHECK ((state = 'Active') = (retired_at IS NULL))
-);
-CREATE INDEX idx_worktrees_workspace ON worktrees(workspace_id);
-`;
-
-interface WorktreeRow {
-  readonly worktree_id: string;
-  readonly project_id: string;
-  readonly workspace_id: string;
-  readonly path: string;
-  readonly repository_ref: string | null;
-  readonly branch: string | null;
-  readonly state: string;
-  readonly created_at: string;
-  readonly retired_at: string | null;
-}
-
-const toRecord = (row: WorktreeRow): WorktreeRecord => ({
-  worktreeId: row.worktree_id,
-  projectId: row.project_id as ProjectId,
-  workspaceId: row.workspace_id as never,
-  address: {
-    _tag: "GitWorktree",
-    path: row.path,
-    ...(row.repository_ref === null
-      ? {}
-      : { repositoryRef: row.repository_ref }),
-    ...(row.branch === null ? {} : { branch: row.branch }),
-  },
-  state: row.state as "Active" | "Retired",
-  createdAt: row.created_at,
-  ...(row.retired_at === null ? {} : { retiredAt: row.retired_at }),
-});
-
-const WorktreeStoreTestLive: Layer.Layer<WorktreeStore, never, SqlClient> =
-  Layer.effect(
-    WorktreeStore,
-    Effect.gen(function* () {
-      const sql = yield* SqlClient;
-      const selectById = (worktreeId: string) =>
-        sql.unsafe<WorktreeRow>(
-          "SELECT * FROM worktrees WHERE worktree_id = ?",
-          [worktreeId],
-        );
-      const service = {
-        insert: (record: WorktreeRecord) =>
-          Effect.gen(function* () {
-            yield* TransactionScope;
-            yield* sql.unsafe(
-              "INSERT INTO worktrees (worktree_id, project_id, workspace_id, path, repository_ref, branch, state, created_at, retired_at) VALUES (?,?,?,?,?,?,?,?,NULL)",
-              [
-                record.worktreeId,
-                record.projectId,
-                record.workspaceId,
-                record.address.path,
-                record.address.repositoryRef ?? null,
-                record.address.branch ?? null,
-                record.state,
-                record.createdAt,
-              ],
-            );
-          }),
-        findById: (worktreeId: string) =>
-          Effect.gen(function* () {
-            yield* TransactionScope;
-            const rows = yield* selectById(worktreeId);
-            return rows.length === 0
-              ? Option.none()
-              : Option.some(toRecord(rows[0] as WorktreeRow));
-          }),
-        findByWorkspace: (workspaceId: WorkspaceId) =>
-          Effect.gen(function* () {
-            yield* TransactionScope;
-            const rows = yield* sql.unsafe<WorktreeRow>(
-              "SELECT * FROM worktrees WHERE workspace_id = ? ORDER BY worktree_id",
-              [workspaceId],
-            );
-            return rows.map(toRecord);
-          }),
-        retireIfActive: (worktreeId: string, retiredAt: string) =>
-          Effect.gen(function* () {
-            yield* TransactionScope;
-            yield* sql.unsafe(
-              "UPDATE worktrees SET state = 'Retired', retired_at = ? WHERE worktree_id = ? AND state = 'Active'",
-              [retiredAt, worktreeId],
-            );
-            const rows = yield* selectById(worktreeId);
-            if (rows.length === 0) {
-              return Option.none();
-            }
-            const row = rows[0] as WorktreeRow;
-            return row.state === "Retired"
-              ? Option.some(toRecord(row))
-              : Option.none();
-          }),
-      };
-      return WorktreeStore.of(service as unknown as WorktreeStoreService);
-    }),
-  );
 
 // --- app assembly -----------------------------------------------------------
 

@@ -18,8 +18,9 @@ import {
   resolveModelBinding,
   secretRef,
 } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import { compileTurn, type ModelContextPlan } from "../src/compiler.js";
 import {
   DEFAULT_MODEL_CATALOG,
@@ -113,22 +114,20 @@ const resolveCapability = (
   bindingFingerprint?: string,
   providerSupportsContinuation = true,
 ) =>
-  Effect.runPromise(
-    Effect.gen(function* () {
-      const capabilityPort = yield* ModelCapabilityPort;
-      return yield* capabilityPort.resolve({
-        binding: executionBound("AH19 capability qualification"),
-        cognitiveMode: "work",
-        requiredCapabilities: [],
-      });
-    }).pipe(
-      Effect.provide(
-        ModelCapabilityPortLive(
-          nativeCatalog,
-          "model-ah19",
-          bindingFingerprint,
-          providerSupportsContinuation,
-        ),
+  Effect.gen(function* () {
+    const capabilityPort = yield* ModelCapabilityPort;
+    return yield* capabilityPort.resolve({
+      binding: executionBound("AH19 capability qualification"),
+      cognitiveMode: "work",
+      requiredCapabilities: [],
+    });
+  }).pipe(
+    Effect.provide(
+      ModelCapabilityPortLive(
+        nativeCatalog,
+        "model-ah19",
+        bindingFingerprint,
+        providerSupportsContinuation,
       ),
     ),
   );
@@ -191,74 +190,93 @@ describe("AH19 full binding fingerprint propagation", () => {
     ).toBe(fingerprint);
   });
 
-  it("propagates a complete deployment fingerprint and strips Native when the binding is absent", async () => {
-    const resolved = resolveBinding();
-    const fingerprint = resolvedModelBindingFingerprint(resolved);
-    const bound = await resolveCapability(fingerprint);
-    expect(bound.bindingFingerprint).toBe(fingerprint);
-    expect(bound.portableRequestCompatibility?.operationKinds).toContain(
-      "CompactionNative",
-    );
+  it.effect(
+    "propagates a complete deployment fingerprint and strips Native when the binding is absent",
+    () =>
+      Effect.gen(function* () {
+        const resolved = resolveBinding();
+        const fingerprint = resolvedModelBindingFingerprint(resolved);
+        const bound = yield* resolveCapability(fingerprint);
+        expect(bound.bindingFingerprint).toBe(fingerprint);
+        expect(bound.portableRequestCompatibility?.operationKinds).toContain(
+          "CompactionNative",
+        );
 
-    const unbound = await resolveCapability();
-    expect(unbound.bindingFingerprint).toBeUndefined();
-    expect(unbound.portableRequestCompatibility?.operationKinds).not.toContain(
-      "CompactionNative",
-    );
+        const unbound = yield* resolveCapability();
+        expect(unbound.bindingFingerprint).toBeUndefined();
+        expect(
+          unbound.portableRequestCompatibility?.operationKinds,
+        ).not.toContain("CompactionNative");
 
-    const incomplete = await resolveCapability(
-      "legacy:provider-ah19:model-ah19",
-    );
-    expect(incomplete.bindingFingerprint).toBeUndefined();
-    expect(
-      incomplete.portableRequestCompatibility?.operationKinds,
-    ).not.toContain("CompactionNative");
+        const incomplete = yield* resolveCapability(
+          "legacy:provider-ah19:model-ah19",
+        );
+        expect(incomplete.bindingFingerprint).toBeUndefined();
+        expect(
+          incomplete.portableRequestCompatibility?.operationKinds,
+        ).not.toContain("CompactionNative");
 
-    const providerIncompatible = await resolveCapability(fingerprint, false);
-    expect(providerIncompatible.bindingFingerprint).toBe(fingerprint);
-    expect(
-      providerIncompatible.portableRequestCompatibility?.operationKinds,
-    ).not.toContain("CompactionNative");
-  });
+        const providerIncompatible = yield* resolveCapability(
+          fingerprint,
+          false,
+        );
+        expect(providerIncompatible.bindingFingerprint).toBe(fingerprint);
+        expect(
+          providerIncompatible.portableRequestCompatibility?.operationKinds,
+        ).not.toContain("CompactionNative");
+      }),
+  );
 
-  it("does not place secret references or material in capability metadata", async () => {
-    const fingerprint = resolvedModelBindingFingerprint(resolveBinding());
-    const capability = await resolveCapability(fingerprint);
-    const serialized = JSON.stringify({ capability, fingerprint });
-    expect(serialized).not.toContain("AH19_SECRET_REF_SENTINEL");
-    expect(serialized).not.toContain("AH19_SECRET_MATERIAL_SENTINEL");
-    expect(serialized).not.toContain("secretRef");
-  });
+  it.effect(
+    "does not place secret references or material in capability metadata",
+    () =>
+      Effect.gen(function* () {
+        const fingerprint = resolvedModelBindingFingerprint(resolveBinding());
+        const capability = yield* resolveCapability(fingerprint);
+        const serialized = JSON.stringify({ capability, fingerprint });
+        expect(serialized).not.toContain("AH19_SECRET_REF_SENTINEL");
+        expect(serialized).not.toContain("AH19_SECRET_MATERIAL_SENTINEL");
+        expect(serialized).not.toContain("secretRef");
+      }),
+  );
 
-  it("writes the capability fingerprint into the ModelContext Manifest without secret fields", async () => {
-    const fingerprint = resolvedModelBindingFingerprint(resolveBinding());
-    const capability = await resolveCapability(fingerprint);
-    const prepared = compileTurn({
-      plan,
-      capability,
-      providerTurnId: parse(ProviderTurnId)(
-        "ptn_018f2b3c-4d5e-7abc-8def-0123456789a1",
-      ),
-      executionId: parse(ExecutionId)(
-        "exe_018f2b3c-4d5e-7abc-8def-0123456789a1",
-      ),
-      sessionId: parse(SessionId)("ses_018f2b3c-4d5e-7abc-8def-0123456789a1"),
-      contextEpoch: parse(ContextEpochNumber)(0),
-      maxOutputTokens: 256,
-      stepContext: {
-        logicalStepNo: 0,
-        repairAttempt: 0,
-        inputFrontier: { firstSequence: null, lastSequence: null },
-        fingerprint: "ah19-step-context-fingerprint",
-        bindingFingerprint: capability.bindingFingerprint ?? "",
-      },
-    });
-    const manifestJson = JSON.stringify(prepared.manifest);
-    expect(prepared.manifest.resolvedModelBindingFingerprint).toBe(fingerprint);
-    expect(manifestJson).not.toContain("AH19_SECRET_REF_SENTINEL");
-    expect(manifestJson).not.toContain("AH19_SECRET_MATERIAL_SENTINEL");
-    expect(manifestJson).not.toContain("secretRef");
-  });
+  it.effect(
+    "writes the capability fingerprint into the ModelContext Manifest without secret fields",
+    () =>
+      Effect.gen(function* () {
+        const fingerprint = resolvedModelBindingFingerprint(resolveBinding());
+        const capability = yield* resolveCapability(fingerprint);
+        const prepared = compileTurn({
+          plan,
+          capability,
+          providerTurnId: parse(ProviderTurnId)(
+            "ptn_018f2b3c-4d5e-7abc-8def-0123456789a1",
+          ),
+          executionId: parse(ExecutionId)(
+            "exe_018f2b3c-4d5e-7abc-8def-0123456789a1",
+          ),
+          sessionId: parse(SessionId)(
+            "ses_018f2b3c-4d5e-7abc-8def-0123456789a1",
+          ),
+          contextEpoch: parse(ContextEpochNumber)(0),
+          maxOutputTokens: 256,
+          stepContext: {
+            logicalStepNo: 0,
+            repairAttempt: 0,
+            inputFrontier: { firstSequence: null, lastSequence: null },
+            fingerprint: "ah19-step-context-fingerprint",
+            bindingFingerprint: capability.bindingFingerprint ?? "",
+          },
+        });
+        const manifestJson = JSON.stringify(prepared.manifest);
+        expect(prepared.manifest.resolvedModelBindingFingerprint).toBe(
+          fingerprint,
+        );
+        expect(manifestJson).not.toContain("AH19_SECRET_REF_SENTINEL");
+        expect(manifestJson).not.toContain("AH19_SECRET_MATERIAL_SENTINEL");
+        expect(manifestJson).not.toContain("secretRef");
+      }),
+  );
 
   it("does not declare ProviderNative for the current stock model catalog", () => {
     for (const profile of DEFAULT_MODEL_CATALOG.entries) {

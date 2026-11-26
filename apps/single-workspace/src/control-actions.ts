@@ -37,7 +37,6 @@ import {
   WorkWaitStore,
 } from "@arbor/ports";
 import { Context, Effect, Layer, Option } from "effect";
-import { SqlClient } from "effect/unstable/sql/SqlClient";
 import {
   type AnyProducerEvidenceRequest,
   hasAnyProducerEvidence,
@@ -392,7 +391,6 @@ const makeSingleWorkspaceControlActionHandlersLayer = (
       const workspaces = yield* WorkspaceRepository;
       const proposals = yield* FormationProposalStore;
       const projects = yield* Effect.serviceOption(ProjectRepository);
-      const sql = yield* Effect.serviceOption(SqlClient);
       const fulfillments = yield* Effect.serviceOption(
         FormationFulfillmentStore,
       );
@@ -441,9 +439,7 @@ const makeSingleWorkspaceControlActionHandlersLayer = (
           ...(Option.isSome(fulfillments)
             ? { fulfillments: fulfillments.value }
             : {}),
-          ...(Option.isSome(projects) &&
-          Option.isSome(fulfillments) &&
-          Option.isSome(sql)
+          ...(Option.isSome(projects) && Option.isSome(fulfillments)
             ? {
                 anyProducerEvidence: (request: AnyProducerEvidenceRequest) =>
                   hasAnyProducerEvidence(
@@ -451,13 +447,8 @@ const makeSingleWorkspaceControlActionHandlersLayer = (
                       projects: projects.value,
                       workspaces,
                       listWorkspaceIdsByProject: (projectId) =>
-                        Effect.map(
-                          sql.value.unsafe<{ workspace_id: string }>(
-                            "SELECT workspace_id FROM workspaces WHERE project_id = ? ORDER BY workspace_id",
-                            [projectId],
-                          ),
-                          (rows) =>
-                            rows.map((row) => row.workspace_id as never),
+                        tx.transact(
+                          workspaces.listWorkspaceIdsByProject(projectId),
                         ),
                       works,
                       proposals,

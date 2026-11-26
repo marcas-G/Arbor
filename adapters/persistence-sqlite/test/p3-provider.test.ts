@@ -12,9 +12,10 @@ import {
   ProviderTurnStore,
   TransactionPort,
 } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import { ProviderRuntimeLive } from "../../../packages/provider-runtime/src/index.js";
 import { FixedSecretStoreLive } from "../../../packages/testkit/src/index.js";
 import { FakeProviderLive } from "../../provider-fake/src/index.js";
@@ -196,185 +197,222 @@ const events = [
 ];
 
 describe("P3 ProviderRuntime + fake provider", () => {
-  it("atomically refuses a new ProviderTurn after the Execution stop fence commits", async () => {
-    const app = makeApp({ events });
-    const program = Effect.gen(function* () {
-      yield* runMigrations(P17_MIGRATIONS);
-      yield* seed;
-      const sql = yield* SqlClient;
-      yield* sql.unsafe(
-        "UPDATE executions SET stop_requested_at = ? WHERE execution_id = ?",
-        ["2026-10-28T21:05:50.189Z", executionId],
-      );
-      const outcome = yield* Effect.flip(
-        runTurn("ptn_018f2b3c-4d5e-7abc-8def-0123456789a1"),
-      );
-      const turns = yield* sql.unsafe<{ count: number }>(
-        "SELECT COUNT(*) AS count FROM provider_turns WHERE execution_id = ?",
-        [executionId],
-      );
-      const manifests = yield* sql.unsafe<{ count: number }>(
-        "SELECT COUNT(*) AS count FROM model_context_manifests WHERE execution_id = ?",
-        [executionId],
-      );
-      return {
-        outcome,
-        turns: turns[0]?.count,
-        manifests: manifests[0]?.count,
-      };
-    });
+  it.effect(
+    "atomically refuses a new ProviderTurn after the Execution stop fence commits",
+    () =>
+      Effect.gen(function* () {
+        const app = makeApp({ events });
+        const program = Effect.gen(function* () {
+          yield* runMigrations(P17_MIGRATIONS);
+          yield* seed;
+          const sql = yield* SqlClient;
+          yield* sql.unsafe(
+            "UPDATE executions SET stop_requested_at = ? WHERE execution_id = ?",
+            ["2026-10-28T21:05:50.189Z", executionId],
+          );
+          const outcome = yield* Effect.flip(
+            runTurn("ptn_018f2b3c-4d5e-7abc-8def-0123456789a1"),
+          );
+          const turns = yield* sql.unsafe<{ count: number }>(
+            "SELECT COUNT(*) AS count FROM provider_turns WHERE execution_id = ?",
+            [executionId],
+          );
+          const manifests = yield* sql.unsafe<{ count: number }>(
+            "SELECT COUNT(*) AS count FROM model_context_manifests WHERE execution_id = ?",
+            [executionId],
+          );
+          return {
+            outcome,
+            turns: turns[0]?.count,
+            manifests: manifests[0]?.count,
+          };
+        });
 
-    const result = await Effect.runPromise(
-      Effect.provide(program, app) as Effect.Effect<unknown, unknown, never>,
-    );
-    expect(result).toMatchObject({
-      outcome: {
-        _tag: "ProviderFailure",
-        safeDiagnostic: PROVIDER_TURN_ADMISSION_EXECUTION_STOPPING,
-      },
-      turns: 0,
-      manifests: 0,
-    });
-  });
+        const result = yield* Effect.provide(program, app) as Effect.Effect<
+          unknown,
+          unknown,
+          never
+        >;
+        expect(result).toMatchObject({
+          outcome: {
+            _tag: "ProviderFailure",
+            safeDiagnostic: PROVIDER_TURN_ADMISSION_EXECUTION_STOPPING,
+          },
+          turns: 0,
+          manifests: 0,
+        });
+      }),
+  );
 
-  it("atomically settles success and replays the validated durable result", async () => {
-    const app = makeApp({ events });
-    const program = Effect.gen(function* () {
-      yield* runMigrations(P17_MIGRATIONS);
-      yield* seed;
-      const result = yield* runTurn("ptn_018f2b3c-4d5e-7abc-8def-0123456789a1");
-      const tx = yield* TransactionPort;
-      const store = yield* ProviderTurnStore;
-      const replay = yield* tx.transact(
-        store.findSettledResult(providerTurnId),
-      );
-      const sql = yield* SqlClient;
-      const rows = yield* sql.unsafe<{
-        attempt_outcome: string;
-        turn_settled_at: string | null;
-        success_evidence_version: string | null;
-      }>(
-        "SELECT pa.outcome AS attempt_outcome, pt.settled_at AS turn_settled_at, pa.success_evidence_version AS success_evidence_version FROM provider_attempts pa JOIN provider_turns pt ON pt.provider_turn_id = pa.provider_turn_id WHERE pa.provider_turn_id = ?",
-        [providerTurnId],
-      );
-      return { result, replay, row: rows[0] };
-    });
+  it.effect(
+    "atomically settles success and replays the validated durable result",
+    () =>
+      Effect.gen(function* () {
+        const app = makeApp({ events });
+        const program = Effect.gen(function* () {
+          yield* runMigrations(P17_MIGRATIONS);
+          yield* seed;
+          const result = yield* runTurn(
+            "ptn_018f2b3c-4d5e-7abc-8def-0123456789a1",
+          );
+          const tx = yield* TransactionPort;
+          const store = yield* ProviderTurnStore;
+          const replay = yield* tx.transact(
+            store.findSettledResult(providerTurnId),
+          );
+          const sql = yield* SqlClient;
+          const rows = yield* sql.unsafe<{
+            attempt_outcome: string;
+            turn_settled_at: string | null;
+            success_evidence_version: string | null;
+          }>(
+            "SELECT pa.outcome AS attempt_outcome, pt.settled_at AS turn_settled_at, pa.success_evidence_version AS success_evidence_version FROM provider_attempts pa JOIN provider_turns pt ON pt.provider_turn_id = pa.provider_turn_id WHERE pa.provider_turn_id = ?",
+            [providerTurnId],
+          );
+          return { result, replay, row: rows[0] };
+        });
 
-    const output = await Effect.runPromise(
-      Effect.provide(program, app) as Effect.Effect<unknown, unknown, never>,
-    );
-    const typed = output as {
-      result: { events: ReadonlyArray<unknown> };
-      replay: {
-        _tag: string;
-        canonicalEvents?: ReadonlyArray<unknown>;
-        evidenceVersion?: string;
-      };
-      row: {
-        attempt_outcome: string;
-        turn_settled_at: string | null;
-        success_evidence_version: string | null;
-      };
-    };
-    expect(typed.replay._tag).toBe("SettledSuccess");
-    expect(typed.replay.canonicalEvents).toEqual(typed.result.events);
-    expect(typed.replay.evidenceVersion).toBe("provider-success-v1");
-    expect(typed.row.attempt_outcome).toBe("Success");
-    expect(typed.row.turn_settled_at).not.toBeNull();
-    expect(typed.row.success_evidence_version).toBe("provider-success-v1");
-  });
+        const output = yield* Effect.provide(program, app) as Effect.Effect<
+          unknown,
+          unknown,
+          never
+        >;
+        const typed = output as {
+          result: { events: ReadonlyArray<unknown> };
+          replay: {
+            _tag: string;
+            canonicalEvents?: ReadonlyArray<unknown>;
+            evidenceVersion?: string;
+          };
+          row: {
+            attempt_outcome: string;
+            turn_settled_at: string | null;
+            success_evidence_version: string | null;
+          };
+        };
+        expect(typed.replay._tag).toBe("SettledSuccess");
+        expect(typed.replay.canonicalEvents).toEqual(typed.result.events);
+        expect(typed.replay.evidenceVersion).toBe("provider-success-v1");
+        expect(typed.row.attempt_outcome).toBe("Success");
+        expect(typed.row.turn_settled_at).not.toBeNull();
+        expect(typed.row.success_evidence_version).toBe("provider-success-v1");
+      }),
+  );
 
-  it("keeps the first terminal ProviderTurn result when a stale worker settles later", async () => {
-    const app = makeApp({ events });
-    const program = Effect.gen(function* () {
-      yield* runMigrations(P17_MIGRATIONS);
-      yield* seed;
-      yield* runTurn("ptn_018f2b3c-4d5e-7abc-8def-0123456789a1");
-      const tx = yield* TransactionPort;
-      const store = yield* ProviderTurnStore;
-      const staleSettlement = yield* Effect.flip(
-        tx.transact(
-          store.settleTurn(
-            providerTurnId,
-            "Cancelled",
-            "{}",
-            "2999-01-01T00:00:00.000Z",
-          ),
+  it.effect(
+    "keeps the first terminal ProviderTurn result when a stale worker settles later",
+    () =>
+      Effect.gen(function* () {
+        const app = makeApp({ events });
+        const program = Effect.gen(function* () {
+          yield* runMigrations(P17_MIGRATIONS);
+          yield* seed;
+          yield* runTurn("ptn_018f2b3c-4d5e-7abc-8def-0123456789a1");
+          const tx = yield* TransactionPort;
+          const store = yield* ProviderTurnStore;
+          const staleSettlement = yield* Effect.flip(
+            tx.transact(
+              store.settleTurn(
+                providerTurnId,
+                "Cancelled",
+                "{}",
+                "2999-01-01T00:00:00.000Z",
+              ),
+            ),
+          );
+          const staleFailureMark = yield* Effect.flip(
+            tx.transact(
+              store.failTurn(providerTurnId, "2999-01-01T00:00:01.000Z"),
+            ),
+          );
+          const replay = yield* tx.transact(
+            store.findSettledResult(providerTurnId),
+          );
+          const sql = yield* SqlClient;
+          const rows = yield* sql.unsafe<{
+            finish_reason: string | null;
+            usage_json: string | null;
+          }>(
+            "SELECT finish_reason, usage_json FROM provider_turns WHERE provider_turn_id = ?",
+            [providerTurnId],
+          );
+          return { staleSettlement, staleFailureMark, replay, row: rows[0] };
+        });
+
+        const result = yield* Effect.provide(program, app) as Effect.Effect<
+          unknown,
+          unknown,
+          never
+        >;
+        expect(result).toMatchObject({
+          staleSettlement: {
+            _tag: "ProviderFailure",
+            safeDiagnostic: "provider-turn-settlement-cas-rejected",
+          },
+          staleFailureMark: {
+            _tag: "ProviderFailure",
+            safeDiagnostic: "provider-turn-failure-cas-rejected",
+          },
+          replay: { _tag: "SettledSuccess" },
+          row: { finish_reason: "Stop" },
+        });
+      }),
+  );
+
+  it.effect("streams the frozen ADT and records the turn/attempt", () =>
+    Effect.gen(function* () {
+      const app = makeApp({ events });
+      const program = Effect.gen(function* () {
+        yield* runMigrations(P15_MIGRATIONS);
+        yield* seed;
+        const result = yield* runTurn(
+          "ptn_018f2b3c-4d5e-7abc-8def-0123456789a1",
+        );
+        const sql = yield* SqlClient;
+        const turns = yield* sql.unsafe<{ finish_reason: string | null }>(
+          "SELECT finish_reason FROM provider_turns",
+        );
+        const attempts = yield* sql.unsafe<{ outcome: string }>(
+          "SELECT outcome FROM provider_attempts",
+        );
+        const manifests = yield* sql.unsafe<{
+          manifest_id: string;
+          compiled_request_hash: string;
+          manifest_json: string;
+        }>(
+          "SELECT manifest_id, compiled_request_hash, manifest_json FROM model_context_manifests",
+        );
+        return { result, turns, attempts, manifests };
+      });
+      const r = yield* Effect.provide(program, app) as Effect.Effect<
+        unknown,
+        unknown,
+        never
+      >;
+      expect(
+        (r as { result: { events: ReadonlyArray<unknown> } }).result.events,
+      ).toHaveLength(4);
+      expect(
+        (r as { turns: ReadonlyArray<{ finish_reason: string | null }> })
+          .turns[0]?.finish_reason,
+      ).toBe("Stop");
+      expect(
+        (r as { attempts: ReadonlyArray<{ outcome: string }> }).attempts.map(
+          (a) => a.outcome,
         ),
-      );
-      const staleFailureMark = yield* Effect.flip(
-        tx.transact(store.failTurn(providerTurnId, "2999-01-01T00:00:01.000Z")),
-      );
-      const replay = yield* tx.transact(
-        store.findSettledResult(providerTurnId),
-      );
-      const sql = yield* SqlClient;
-      const rows = yield* sql.unsafe<{
-        finish_reason: string | null;
-        usage_json: string | null;
-      }>(
-        "SELECT finish_reason, usage_json FROM provider_turns WHERE provider_turn_id = ?",
-        [providerTurnId],
-      );
-      return { staleSettlement, staleFailureMark, replay, row: rows[0] };
-    });
-
-    const result = await Effect.runPromise(
-      Effect.provide(program, app) as Effect.Effect<unknown, unknown, never>,
-    );
-    expect(result).toMatchObject({
-      staleSettlement: {
-        _tag: "ProviderFailure",
-        safeDiagnostic: "provider-turn-settlement-cas-rejected",
-      },
-      staleFailureMark: {
-        _tag: "ProviderFailure",
-        safeDiagnostic: "provider-turn-failure-cas-rejected",
-      },
-      replay: { _tag: "SettledSuccess" },
-      row: { finish_reason: "Stop" },
-    });
-  });
-
-  it("streams the frozen ADT and records the turn/attempt", async () => {
-    const app = makeApp({ events });
-    const program = Effect.gen(function* () {
-      yield* runMigrations(P15_MIGRATIONS);
-      yield* seed;
-      const result = yield* runTurn("ptn_018f2b3c-4d5e-7abc-8def-0123456789a1");
-      const sql = yield* SqlClient;
-      const turns = yield* sql.unsafe<{ finish_reason: string | null }>(
-        "SELECT finish_reason FROM provider_turns",
-      );
-      const attempts = yield* sql.unsafe<{ outcome: string }>(
-        "SELECT outcome FROM provider_attempts",
-      );
-      const manifests = yield* sql.unsafe<{
-        manifest_id: string;
-        compiled_request_hash: string;
-        manifest_json: string;
-      }>(
-        "SELECT manifest_id, compiled_request_hash, manifest_json FROM model_context_manifests",
-      );
-      return { result, turns, attempts, manifests };
-    });
-    const r = await Effect.runPromise(
-      Effect.provide(program, app) as Effect.Effect<unknown, unknown, never>,
-    );
-    expect(
-      (r as { result: { events: ReadonlyArray<unknown> } }).result.events,
-    ).toHaveLength(4);
-    expect(
-      (r as { turns: ReadonlyArray<{ finish_reason: string | null }> }).turns[0]
-        ?.finish_reason,
-    ).toBe("Stop");
-    expect(
-      (r as { attempts: ReadonlyArray<{ outcome: string }> }).attempts.map(
-        (a) => a.outcome,
-      ),
-    ).toEqual(["Success"]);
-    expect(
-      (
+      ).toEqual(["Success"]);
+      expect(
+        (
+          r as {
+            manifests: ReadonlyArray<{
+              manifest_id: string;
+              compiled_request_hash: string;
+              manifest_json: string;
+            }>;
+          }
+        ).manifests,
+      ).toHaveLength(1);
+      const persistedManifest = (
         r as {
           manifests: ReadonlyArray<{
             manifest_id: string;
@@ -382,113 +420,116 @@ describe("P3 ProviderRuntime + fake provider", () => {
             manifest_json: string;
           }>;
         }
-      ).manifests,
-    ).toHaveLength(1);
-    const persistedManifest = (
-      r as {
-        manifests: ReadonlyArray<{
-          manifest_id: string;
-          compiled_request_hash: string;
-          manifest_json: string;
-        }>;
-      }
-    ).manifests[0];
-    expect(persistedManifest?.manifest_id).toMatch(/^mft_/u);
-    expect(persistedManifest?.manifest_id).not.toBe(
-      persistedManifest?.compiled_request_hash,
-    );
-    expect(JSON.parse(persistedManifest?.manifest_json ?? "{}")).toMatchObject({
-      providerTurnId: "ptn_018f2b3c-4d5e-7abc-8def-0123456789a1",
-      compiledRequestHash: "compiled-hash-only-content-identity",
-    });
-  });
+      ).manifests[0];
+      expect(persistedManifest?.manifest_id).toMatch(/^mft_/u);
+      expect(persistedManifest?.manifest_id).not.toBe(
+        persistedManifest?.compiled_request_hash,
+      );
+      expect(
+        JSON.parse(persistedManifest?.manifest_json ?? "{}"),
+      ).toMatchObject({
+        providerTurnId: "ptn_018f2b3c-4d5e-7abc-8def-0123456789a1",
+        compiledRequestHash: "compiled-hash-only-content-identity",
+      });
+    }),
+  );
 
-  it("retries a retryable failure and records both attempts", async () => {
-    const app = makeApp({ events, failures: ["ProviderUnavailable"] });
-    const program = Effect.gen(function* () {
-      yield* runMigrations(P15_MIGRATIONS);
-      yield* seed;
-      yield* runTurn("ptn_018f2b3c-4d5e-7abc-8def-0123456789a1");
-      const sql = yield* SqlClient;
-      const attempts = yield* sql.unsafe<{ outcome: string }>(
-        "SELECT outcome FROM provider_attempts ORDER BY attempt_no",
-      );
-      return attempts.map((a) => a.outcome);
-    });
-    const attempts = await Effect.runPromise(
-      Effect.provide(program, app) as Effect.Effect<unknown, unknown, never>,
-    );
-    expect(attempts).toEqual(["RetryableFailure", "Success"]);
-    void Clock;
-    void ProviderTurnStore;
-    void TransactionPort;
-  });
+  it.live("retries a retryable failure and records both attempts", () =>
+    Effect.gen(function* () {
+      const app = makeApp({ events, failures: ["ProviderUnavailable"] });
+      const program = Effect.gen(function* () {
+        yield* runMigrations(P15_MIGRATIONS);
+        yield* seed;
+        yield* runTurn("ptn_018f2b3c-4d5e-7abc-8def-0123456789a1");
+        const sql = yield* SqlClient;
+        const attempts = yield* sql.unsafe<{ outcome: string }>(
+          "SELECT outcome FROM provider_attempts ORDER BY attempt_no",
+        );
+        return attempts.map((a) => a.outcome);
+      });
+      const attempts = yield* Effect.provide(program, app) as Effect.Effect<
+        unknown,
+        unknown,
+        never
+      >;
+      expect(attempts).toEqual(["RetryableFailure", "Success"]);
+      void Clock;
+      void ProviderTurnStore;
+      void TransactionPort;
+    }),
+  );
 
-  it("preserves historical failure labels as legacy-v1 without reclassifying old rows", async () => {
-    const app = makeApp({});
-    const historicalTurnId = parse(ProviderTurnId)(
-      "ptn_018f2b3c-4d5e-7abc-8def-0123456789a2",
-    );
-    const program = Effect.gen(function* () {
-      yield* runMigrations(P14_MIGRATIONS);
-      yield* seed;
-      const tx = yield* TransactionPort;
-      const store = yield* ProviderTurnStore;
-      yield* tx.transact(
-        store.startTurn(
-          {
-            providerTurnId: historicalTurnId,
-            executionId,
-            sessionId,
-            contextEpoch: parse(ContextEpochNumber)(0),
-            modelRef: "model-a",
-            outputContractRef: "agent-directive-v1",
-            manifestId: "legacy-manifest-id",
-          },
-          "2026-09-28T00:00:00.000Z",
-        ),
-      );
-      const sql = yield* SqlClient;
-      yield* sql.unsafe(
-        "INSERT INTO provider_attempts (provider_turn_id, attempt_no, started_at, settled_at, outcome, provider_error_kind, transport_metadata_json) VALUES (?,?,?,?,?,?,NULL)",
-        [
-          historicalTurnId,
-          0,
-          "2026-09-28T00:00:01.000Z",
-          "2026-09-28T00:00:02.000Z",
-          "TerminalFailure",
-          "ProtocolViolation",
-        ],
-      );
-      yield* runMigrations(P15_MIGRATIONS);
-      const rows = yield* sql.unsafe<{
-        outcome: string;
-        provider_error_kind: string | null;
-        failure_taxonomy_version: string;
-        observation_json: string;
-      }>(
-        "SELECT outcome, provider_error_kind, failure_taxonomy_version, observation_json FROM provider_attempts WHERE provider_turn_id = ?",
-        [historicalTurnId],
-      );
-      return rows[0];
-    });
-    const row = await Effect.runPromise(
-      Effect.provide(program, app) as Effect.Effect<unknown, unknown, never>,
-    );
-    expect(row).toMatchObject({
-      outcome: "TerminalFailure",
-      provider_error_kind: "ProtocolViolation",
-      failure_taxonomy_version: "legacy-v1",
-    });
-    expect(
-      JSON.parse((row as { observation_json: string }).observation_json),
-    ).toEqual({
-      responseStarted: null,
-      canonicalEventEmitted: null,
-      consumerVisibleOutput: null,
-      toolCallProposed: null,
-      continuationAvailable: null,
-      externalEffectPossible: null,
-    });
-  });
+  it.effect(
+    "preserves historical failure labels as legacy-v1 without reclassifying old rows",
+    () =>
+      Effect.gen(function* () {
+        const app = makeApp({});
+        const historicalTurnId = parse(ProviderTurnId)(
+          "ptn_018f2b3c-4d5e-7abc-8def-0123456789a2",
+        );
+        const program = Effect.gen(function* () {
+          yield* runMigrations(P14_MIGRATIONS);
+          yield* seed;
+          const tx = yield* TransactionPort;
+          const store = yield* ProviderTurnStore;
+          yield* tx.transact(
+            store.startTurn(
+              {
+                providerTurnId: historicalTurnId,
+                executionId,
+                sessionId,
+                contextEpoch: parse(ContextEpochNumber)(0),
+                modelRef: "model-a",
+                outputContractRef: "agent-directive-v1",
+                manifestId: "legacy-manifest-id",
+              },
+              "2026-09-28T00:00:00.000Z",
+            ),
+          );
+          const sql = yield* SqlClient;
+          yield* sql.unsafe(
+            "INSERT INTO provider_attempts (provider_turn_id, attempt_no, started_at, settled_at, outcome, provider_error_kind, transport_metadata_json) VALUES (?,?,?,?,?,?,NULL)",
+            [
+              historicalTurnId,
+              0,
+              "2026-09-28T00:00:01.000Z",
+              "2026-09-28T00:00:02.000Z",
+              "TerminalFailure",
+              "ProtocolViolation",
+            ],
+          );
+          yield* runMigrations(P15_MIGRATIONS);
+          const rows = yield* sql.unsafe<{
+            outcome: string;
+            provider_error_kind: string | null;
+            failure_taxonomy_version: string;
+            observation_json: string;
+          }>(
+            "SELECT outcome, provider_error_kind, failure_taxonomy_version, observation_json FROM provider_attempts WHERE provider_turn_id = ?",
+            [historicalTurnId],
+          );
+          return rows[0];
+        });
+        const row = yield* Effect.provide(program, app) as Effect.Effect<
+          unknown,
+          unknown,
+          never
+        >;
+        expect(row).toMatchObject({
+          outcome: "TerminalFailure",
+          provider_error_kind: "ProtocolViolation",
+          failure_taxonomy_version: "legacy-v1",
+        });
+        expect(
+          JSON.parse((row as { observation_json: string }).observation_json),
+        ).toEqual({
+          responseStarted: null,
+          canonicalEventEmitted: null,
+          consumerVisibleOutput: null,
+          toolCallProposed: null,
+          continuationAvailable: null,
+          externalEffectPossible: null,
+        });
+      }),
+  );
 });

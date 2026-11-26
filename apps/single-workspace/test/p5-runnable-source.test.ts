@@ -17,7 +17,9 @@ import {
 import {
   AcceptanceRepositoryLive,
   ClockLive,
+  CompletionHoldReadLive,
   DependencyRepositoryLive,
+  ExecutionRepositoryLive,
   IdGeneratorLive,
   layer,
   P12_MIGRATIONS,
@@ -76,6 +78,7 @@ const buildClassifyApp = (databaseFile: string) => {
     Layer.provide(TransactionPortLive, base),
     Layer.provide(WorkspaceRepositoryLive, base),
     Layer.provide(WorkRepositoryLive, base),
+    Layer.provide(ExecutionRepositoryLive, base),
     Layer.provide(VerificationRepositoryLive, base),
     Layer.provide(AcceptanceRepositoryLive, base),
     Layer.provide(WorkWaitStoreLive, base),
@@ -84,7 +87,10 @@ const buildClassifyApp = (databaseFile: string) => {
   );
   return Layer.mergeAll(
     stores,
-    Layer.provide(DependencyAwareRunnableWorkSourceLive, stores),
+    Layer.provide(
+      DependencyAwareRunnableWorkSourceLive,
+      Layer.mergeAll(stores, Layer.provide(CompletionHoldReadLive, base)),
+    ),
   );
 };
 

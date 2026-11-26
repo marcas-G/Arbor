@@ -8,10 +8,13 @@ import type {
   ProjectId,
   SessionId,
   WorkId,
+  WorkRevision,
   WorkspaceId,
 } from "@arbor/domain";
+import type { CompletionClaimRecord } from "@arbor/ports";
 import {
   Clock,
+  CompletionHoldRead,
   ExecutionRepository,
   type LeaseRecord,
   TransactionScope,
@@ -48,6 +51,13 @@ interface LeaseRow {
   readonly generation: number;
   readonly expires_at: string;
   readonly updated_at: string;
+}
+
+/** One settled completion-claim row (P7 scheduler classification read). */
+interface ClaimRow {
+  readonly work_id: string;
+  readonly binding_work_revision: number | null;
+  readonly settlement_json: string;
 }
 
 const toExecution = (row: ExecutionRow): Execution => {
@@ -521,6 +531,75 @@ export const ExecutionRepositoryLive: Layer.Layer<
           );
           return rows.map(toExecution);
         }),
+      listCompletionClaims: (projectId, workspaceId) =>
+        Effect.gen(function* () {
+          yield* TransactionScope;
+          // Binding generation probe: the 0024 episode columns replaced the
+          // legacy `focus_*` columns; decode per generation below so callers
+          // never touch SQLite schema details.
+          const columns = yield* run(
+            sql.unsafe<{ name: string }>("PRAGMA table_info(executions)"),
+          );
+          const usesEpisodeBinding =
+            columns.some((column) => column.name === "episode_kind") &&
+            columns.some((column) => column.name === "episode_ref") &&
+            columns.some((column) => column.name === "episode_revision");
+          const revisionSelect = usesEpisodeBinding
+            ? "episode_ref AS work_id, episode_revision AS binding_work_revision"
+            : "focus_work_id AS work_id, NULL AS binding_work_revision";
+          const workBinding = usesEpisodeBinding
+            ? "episode_kind = 'WorkEpisode'"
+            : "focus_kind = 'work'";
+          const rows = yield* run(
+            sql.unsafe<ClaimRow>(
+              `SELECT ${revisionSelect}, settlement_json
+                 FROM executions
+                WHERE project_id = ?
+                  AND workspace_id = ?
+                  AND binding_kind = 'workspace'
+                  AND ${workBinding}
+                  AND settlement_kind = 'Completed'
+                  AND settlement_json IS NOT NULL`,
+              [projectId, workspaceId],
+            ),
+          );
+          return rows.map(
+            (row): CompletionClaimRecord => ({
+              workId: row.work_id as WorkId,
+              bindingWorkRevision:
+                row.binding_work_revision === null
+                  ? null
+                  : (Number(row.binding_work_revision) as WorkRevision),
+              settlementJson: row.settlement_json,
+            }),
+          );
+        }),
+    });
+  }),
+);
+
+/**
+ * Completion-hold face availability (P7 scheduler classification guard).
+ * The hold reads target the P8 verification/acceptance tables; a database
+ * migrated only to a pre-P8 baseline must skip the hold classification.
+ * Schema presence is a persistence fact, so the existence probe stays here.
+ */
+export const CompletionHoldReadLive: Layer.Layer<
+  CompletionHoldRead,
+  never,
+  SqlClient
+> = Layer.effect(
+  CompletionHoldRead,
+  Effect.gen(function* () {
+    const sql = yield* SqlClient;
+    const probe = sql.unsafe<{ readonly name: string }>(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('verifications', 'work_acceptances')",
+    );
+    return CompletionHoldRead.of({
+      available: Effect.match(probe, {
+        onFailure: () => false,
+        onSuccess: (rows) => rows.length === 2,
+      }),
     });
   }),
 );

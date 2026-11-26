@@ -12,8 +12,9 @@ import {
   WorkspaceId,
 } from "@arbor/domain";
 import { TransactionScope } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect, Option } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import { makeRecordDecisionHandler } from "../src/commands/record-decision.js";
 
 const actor = parse(Actor)("user:formation-test");
@@ -48,9 +49,7 @@ const proposal = {
 const pending = (): FormationProposalRecord =>
   admitFormationProposal({ proposalId, parentWorkspaceId, proposal });
 
-const invoke = async (
-  claims: ReadonlyArray<{ readonly claimRevision: number }>,
-) => {
+const invoke = (claims: ReadonlyArray<{ readonly claimRevision: number }>) => {
   let decided: FormationProposalRecord | undefined;
   const handler = makeRecordDecisionHandler({
     proposals: {
@@ -84,66 +83,75 @@ const invoke = async (
     } as never,
     originatingWorkspaceOf: () => parentWorkspaceId,
   });
-  return Effect.runPromise(
-    Effect.provideService(
-      handler.execute(
-        {
-          commandType: "RecordDecision",
-          commandId,
-          projectId,
-          actor,
-          issuedAt: "2026-10-26T00:00:00.000Z",
-          payload: {
-            proposalId,
-            expectedProposalRevision: 1,
-            outcome: { _tag: "Approve" },
-          },
-        } as never,
-        { _tag: "External", principal },
-      ),
-      TransactionScope,
-      { session: { id: "formation-delegation-test" } },
+  return Effect.provideService(
+    handler.execute(
+      {
+        commandType: "RecordDecision",
+        commandId,
+        projectId,
+        actor,
+        issuedAt: "2026-10-26T00:00:00.000Z",
+        payload: {
+          proposalId,
+          expectedProposalRevision: 1,
+          outcome: { _tag: "Approve" },
+        },
+      } as never,
+      { _tag: "External", principal },
     ),
+    TransactionScope,
+    { session: { id: "formation-delegation-test" } },
   );
 };
 
 describe("RecordDecision formation ownership delegation provenance", () => {
-  it("persists exact human decision and frozen Parent/Child revisions", async () => {
-    const result = await invoke([{ claimRevision: 13 }]);
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    const event = result.value.events.find(
-      (candidate) => candidate.eventType === "DecisionRecorded",
-    );
-    expect(event?.payload).toMatchObject({
-      proposalId,
-      proposalRevision: 1,
-      decision: "Approve",
-      decidedBy: actor,
-      delegationApproval: {
-        delegationSourceId: `formation:${proposalId}:1`,
-        formationProposalId: proposalId,
-        formationProposalRevision: 1,
-        addresses: [address],
-        approvedBy: actor,
-        causedByCommandId: commandId,
-        parentWorkspaceId,
-        expectedParentWorkspaceRevision: 7,
-        expectedChildWorkspaceRevision: 0,
-        expectedParentBoundaryRevision: 9,
-        expectedParentOwnershipRevision: 13,
-        expectedChildOwnershipRevision: 0,
-      },
-    });
-  });
+  it.effect(
+    "persists exact human decision and frozen Parent/Child revisions",
+    () =>
+      Effect.gen(function* () {
+        const result = yield* invoke([{ claimRevision: 13 }]);
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        const event = result.value.events.find(
+          (candidate) => candidate.eventType === "DecisionRecorded",
+        );
+        expect(event?.payload).toMatchObject({
+          proposalId,
+          proposalRevision: 1,
+          decision: "Approve",
+          decidedBy: actor,
+          delegationApproval: {
+            delegationSourceId: `formation:${proposalId}:1`,
+            formationProposalId: proposalId,
+            formationProposalRevision: 1,
+            addresses: [address],
+            approvedBy: actor,
+            causedByCommandId: commandId,
+            parentWorkspaceId,
+            expectedParentWorkspaceRevision: 7,
+            expectedChildWorkspaceRevision: 0,
+            expectedParentBoundaryRevision: 9,
+            expectedParentOwnershipRevision: 13,
+            expectedChildOwnershipRevision: 0,
+          },
+        });
+      }),
+  );
 
-  it("fails closed when Parent ownership cannot be bound to one exact claim", async () => {
-    const result = await invoke([{ claimRevision: 13 }, { claimRevision: 14 }]);
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error).toMatchObject({
-      _tag: "AuthorityDenied",
-      reason: expect.stringContaining("exactly one active Parent claim"),
-    });
-  });
+  it.effect(
+    "fails closed when Parent ownership cannot be bound to one exact claim",
+    () =>
+      Effect.gen(function* () {
+        const result = yield* invoke([
+          { claimRevision: 13 },
+          { claimRevision: 14 },
+        ]);
+        expect(result.ok).toBe(false);
+        if (result.ok) return;
+        expect(result.error).toMatchObject({
+          _tag: "AuthorityDenied",
+          reason: expect.stringContaining("exactly one active Parent claim"),
+        });
+      }),
+  );
 });

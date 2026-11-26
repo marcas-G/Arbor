@@ -1,7 +1,9 @@
-import type { WorkId, WorkspaceId } from "@arbor/domain";
+import type { ProjectId, WorkId, WorkspaceId } from "@arbor/domain";
 import {
   AcceptanceRepository,
+  CompletionHoldRead,
   DependencyRepository,
+  ExecutionRepository,
   RunnableWorkSource,
   type RunnableWorkSourceError,
   TransactionPort,
@@ -14,11 +16,6 @@ import {
   WorkWaitStore,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
-import { SqlClient } from "effect/unstable/sql/SqlClient";
-
-interface CompletionSettlementRow {
-  readonly settlement_json: string;
-}
 
 const isCompletionClaimedSettlement = (
   settlementJson: string,
@@ -65,22 +62,26 @@ export const DependencyAwareRunnableWorkSourceLive: Layer.Layer<
   never,
   | WorkspaceRepository
   | WorkRepository
+  | ExecutionRepository
   | DependencyRepository
   | WorkWaitStore
+  | WorkReadmissionGateStore
   | TransactionPort
 > = Layer.effect(
   RunnableWorkSource,
   Effect.gen(function* () {
     const workspaces = yield* WorkspaceRepository;
     const works = yield* WorkRepository;
+    const executions = yield* ExecutionRepository;
     const dependencies = yield* DependencyRepository;
     const verifications = yield* Effect.serviceOption(VerificationRepository);
     const acceptances = yield* Effect.serviceOption(AcceptanceRepository);
-    const sql = yield* Effect.serviceOption(SqlClient);
+    const completionHoldRead = yield* Effect.serviceOption(CompletionHoldRead);
     const waits = yield* WorkWaitStore;
-    const readmissionGate = yield* Effect.serviceOption(
-      WorkReadmissionGateStore,
-    );
+    // E06: the durable environment-blocking fact source is a required
+    // classifier input on every tick path (AGENTS.md: a Work blocked by an
+    // unavailable environment stays blocked across ticks and restarts).
+    const readmissionGate = yield* WorkReadmissionGateStore;
     const tx = yield* TransactionPort;
 
     const waitReferencesDependency = (
@@ -108,58 +109,51 @@ export const DependencyAwareRunnableWorkSourceLive: Layer.Layer<
           const open = yield* works.listByWorkspace(workspaceId, "Open");
           const openIds = open.map((work) => work.workId);
           const held = new Set<WorkId>();
-          if (Option.isSome(sql)) {
-            const executionColumns = new Set(
-              yield* sql.value
-                .unsafe<{ readonly name: string }>(
-                  "PRAGMA table_info(executions)",
-                )
-                .pipe(Effect.map((rows) => rows.map((row) => row.name))),
+          // The completion-hold faces are persistence-optional: whether the
+          // backing tables exist is probed by the adapter
+          // (`CompletionHoldRead`), so a database below the P8 baseline skips
+          // both hold classifications instead of failing them.
+          const holdPersistenceAvailable = Option.isSome(completionHoldRead)
+            ? yield* completionHoldRead.value.available
+            : false;
+          if (holdPersistenceAvailable) {
+            // Completion claims come from the persistence adapter: it owns
+            // the row shape, the binding-generation columns and the claim
+            // filter. `bindingWorkRevision === null` marks a pre-0024 legacy
+            // binding row (revision only inside the settlement JSON); those
+            // claims are evaluated against the Work's current revision,
+            // matching the legacy classification rule (`revision !== 0` is
+            // skipped because a legacy claim cannot hold a refined Work).
+            const projectId = Option.isSome(workspace)
+              ? workspace.value.projectId
+              : ("" as ProjectId);
+            const allClaims = yield* executions.listCompletionClaims(
+              projectId,
+              workspaceId,
             );
-            const usesEpisodeBinding =
-              executionColumns.has("episode_kind") &&
-              executionColumns.has("episode_ref") &&
-              executionColumns.has("episode_revision");
-            const episodeBinding = usesEpisodeBinding
-              ? "episode_kind = 'WorkEpisode' AND episode_ref = ? AND episode_revision = ?"
-              : "focus_kind = 'work' AND focus_work_id = ?";
+            const usesEpisodeBinding = allClaims.some(
+              (claim) => claim.bindingWorkRevision !== null,
+            );
             for (const work of open) {
               if (!usesEpisodeBinding && work.revision !== 0) continue;
-              const completionClaims =
-                yield* sql.value.unsafe<CompletionSettlementRow>(
-                  `SELECT settlement_json
-                   FROM executions
-                  WHERE project_id = ?
-                    AND workspace_id = ?
-                    AND binding_kind = 'workspace'
-                    AND ${episodeBinding}
-                    AND settlement_kind = 'Completed'
-                    AND settlement_json IS NOT NULL`,
-                  usesEpisodeBinding
-                    ? [
-                        Option.isSome(workspace)
-                          ? workspace.value.projectId
-                          : "",
-                        workspaceId,
-                        work.workId,
-                        work.revision,
-                      ]
-                    : [
-                        Option.isSome(workspace)
-                          ? workspace.value.projectId
-                          : "",
-                        workspaceId,
-                        work.workId,
-                      ],
-                );
-              if (
-                completionClaims.some((row) =>
+              const claimsForWork = allClaims.filter(
+                (claim) => claim.workId === work.workId,
+              );
+              const holdsCurrentRevision = claimsForWork.some(
+                (claim) =>
+                  // Episode rows carry the binding revision; the original
+                  // classification matched `episode_revision = work.revision`
+                  // in SQL, so only claims bound to the exact current revision
+                  // count. Legacy rows carry no binding revision and are
+                  // judged against the Work's current revision directly.
+                  (claim.bindingWorkRevision === null ||
+                    claim.bindingWorkRevision === work.revision) &&
                   isCompletionClaimedSettlement(
-                    row.settlement_json,
-                    work.revision,
+                    claim.settlementJson,
+                    claim.bindingWorkRevision ?? work.revision,
                   ),
-                )
-              ) {
+              );
+              if (holdsCurrentRevision) {
                 held.add(work.workId);
               }
             }
@@ -173,13 +167,8 @@ export const DependencyAwareRunnableWorkSourceLive: Layer.Layer<
           // An already committed Acceptance is held for the same reason: the
           // completion consumer may be between its event and CompleteWork
           // transaction.
-          const completionTables =
-            Option.isSome(sql) &&
-            (yield* sql.value.unsafe<{ readonly name: string }>(
-              "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('verifications', 'work_acceptances')",
-            )).length === 2;
           if (
-            completionTables &&
+            holdPersistenceAvailable &&
             Option.isSome(verifications) &&
             Option.isSome(acceptances)
           ) {
@@ -214,16 +203,6 @@ export const DependencyAwareRunnableWorkSourceLive: Layer.Layer<
             }
           }
           if (Option.isSome(workspace) && open.length > 0) {
-            if (Option.isNone(readmissionGate)) {
-              return yield* Effect.fail({
-                _tag: "PersistenceUnavailable" as const,
-                repository: "WorkReadmissionGateStore" as const,
-                operation: "RunnableWorkSource.classify",
-                retryDisposition: "non-retryable" as const,
-                sourceTag: "ReadmissionGateUnavailable",
-                cause: "readmission gate service is not registered",
-              });
-            }
             for (const work of open) {
               // A terminal provider record can be intentionally held by the
               // readmission gate when its failure evidence is incomplete.
@@ -231,7 +210,7 @@ export const DependencyAwareRunnableWorkSourceLive: Layer.Layer<
               // inspect the Work and submit a new revision; turning that
               // durable hold into a scheduler error makes recovery
               // impossible after a restart.
-              const source = yield* readmissionGate.value
+              const source = yield* readmissionGate
                 .hasBlockingSource({
                   projectId: workspace.value.projectId,
                   workspaceId,

@@ -52,7 +52,8 @@
         "apps/single-workspace/test/i0-send-message.test.ts",
         "apps/single-workspace/test/i0-send-message-durable.test.ts",
         "tests/p6-send-message.test.ts",
-        "tests/p6-acceptance.test.ts"
+        "tests/p6/story-a.test.ts",
+        "tests/p6/story-e.test.ts"
       ],
       "l2ProviderMode": "FAKE",
       "l3": {
@@ -88,7 +89,8 @@
       "l1Suites": ["packages/domain/test/work.test.ts"],
       "l2Suites": [
         "tests/p6-steer.test.ts",
-        "tests/p6-critical-steer.test.ts",
+        "tests/p6-critical-steer/gateway-receipts.test.ts",
+        "tests/p6-critical-steer/submit-transaction.test.ts",
         "tests/p10-humanintervention.test.ts"
       ],
       "l3": {
@@ -127,7 +129,8 @@
       "title": "Responsibility Delegation",
       "l1Suites": ["packages/domain/test/workspace.test.ts"],
       "l2Suites": [
-        "tests/p6-acceptance.test.ts",
+        "tests/p6/story-a.test.ts",
+        "tests/p6/story-b.test.ts",
         "tests/p6-formation-consumer.test.ts",
         "tests/p6-formation-governance.test.ts"
       ],
@@ -168,7 +171,7 @@
       "l2Suites": [
         "tests/p7-produce-deliverable.test.ts",
         "tests/p7-satisfy-dependency.test.ts",
-        "tests/p7-acceptance.test.ts"
+        "tests/p7/p7-acceptance.test.ts"
       ],
       "l3": {
         "caseId": "B09-L3-REAL",
@@ -208,7 +211,8 @@
       "title": "Completion / Acceptance",
       "l1Suites": ["packages/domain/test/work.test.ts"],
       "l2Suites": [
-        "tests/p8-acceptance.test.ts",
+        "tests/p8/story-a.test.ts",
+        "tests/p8/story-d.test.ts",
         "tests/p8-acceptance-commands.test.ts"
       ],
       "l3": {
@@ -228,8 +232,10 @@
       "l1Suites": ["packages/domain/test/execution.test.ts"],
       "l2Suites": [
         "apps/single-workspace/test/p5-restart-continuity.test.ts",
-        "tests/p9-provider-disconnect.test.ts",
-        "tests/p9-worker-crash.test.ts",
+        "tests/p9-provider-disconnect/p9-provider-disconnect-turns.test.ts",
+        "tests/p9-provider-disconnect/p9-provider-disconnect-recovery.test.ts",
+        "tests/p9-worker-crash/p9-worker-crash-w.test.ts",
+        "tests/p9-worker-crash/p9-resurrection.test.ts",
         "tests/p9-tool-outcome-unknown.test.ts"
       ],
       "l3": {
@@ -248,10 +254,18 @@
       "title": "Failure Recovery",
       "l1Suites": ["packages/model-context/test/p3-decode.test.ts"],
       "l2Suites": [
-        "tests/p9-acceptance.test.ts",
-        "tests/p9-provider-disconnect.test.ts",
+        "tests/p9/p9-story-a.test.ts",
+        "tests/p9/p9-story-b.test.ts",
+        "tests/p9/p9-story-c.test.ts",
+        "tests/p9/p9-story-d.test.ts",
+        "tests/p9/p9-story-e.test.ts",
+        "tests/p9/p9-story-f.test.ts",
+        "tests/p9/p9-story-g.test.ts",
+        "tests/p9-provider-disconnect/p9-provider-disconnect-turns.test.ts",
+        "tests/p9-provider-disconnect/p9-provider-disconnect-recovery.test.ts",
         "tests/p9-tool-outcome-unknown.test.ts",
-        "tests/p9-worker-crash.test.ts"
+        "tests/p9-worker-crash/p9-worker-crash-w.test.ts",
+        "tests/p9-worker-crash/p9-resurrection.test.ts"
       ],
       "l3": {
         "caseId": "B13-L3-REAL",

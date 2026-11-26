@@ -3,8 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ArtifactId, parse } from "@arbor/domain";
 import { ArtifactService, TransactionPort } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect } from "vitest";
 import { ArtifactServiceLive } from "../../../packages/tool-runtime/src/index.js";
 import { makeBlobStorePortLive } from "../../blob-local/src/index.js";
 import {
@@ -34,50 +35,54 @@ const makeApp = () => {
 };
 
 describe("P4 artifact service", () => {
-  it("stores bytes as an artifact and loads them back", async () => {
-    const app = makeApp();
-    const program = Effect.gen(function* () {
-      yield* runMigrations(P36_MIGRATIONS);
-      const artifacts = yield* ArtifactService;
-      const tx = yield* TransactionPort;
-      const bytes = new TextEncoder().encode("hello artifact");
-      const artifact = yield* tx.transact(
-        artifacts.store(bytes, "tool-result", {}, "t"),
+  it.effect("stores bytes as an artifact and loads them back", () =>
+    Effect.gen(function* () {
+      const app = makeApp();
+      const program = Effect.gen(function* () {
+        yield* runMigrations(P36_MIGRATIONS);
+        const artifacts = yield* ArtifactService;
+        const tx = yield* TransactionPort;
+        const bytes = new TextEncoder().encode("hello artifact");
+        const artifact = yield* tx.transact(
+          artifacts.store(bytes, "tool-result", {}, "t"),
+        );
+        const loaded = yield* tx.transact(artifacts.load(artifact.artifactId));
+        const replay = yield* tx.transact(
+          artifacts.store(bytes, "tool-result", {}, "later"),
+        );
+        const missing = yield* tx.transact(
+          artifacts.load("art_missing" as never),
+        );
+        return { artifact, loaded, missing, replay };
+      });
+      const r = yield* Effect.provide(program, app) as Effect.Effect<
+        unknown,
+        unknown,
+        never
+      >;
+      const artifact = (
+        r as {
+          artifact: {
+            artifactId: string;
+            byteSize: number;
+            contentHash: string;
+          };
+        }
+      ).artifact;
+      expect(artifact.byteSize).toBe(14);
+      expect(artifact.contentHash).toHaveLength(64);
+      expect(() => parse(ArtifactId)(artifact.artifactId)).not.toThrow();
+      expect((r as { replay: { artifactId: string } }).replay.artifactId).toBe(
+        (r as { artifact: { artifactId: string } }).artifact.artifactId,
       );
-      const loaded = yield* tx.transact(artifacts.load(artifact.artifactId));
-      const replay = yield* tx.transact(
-        artifacts.store(bytes, "tool-result", {}, "later"),
-      );
-      const missing = yield* tx.transact(
-        artifacts.load("art_missing" as never),
-      );
-      return { artifact, loaded, missing, replay };
-    });
-    const r = await Effect.runPromise(
-      Effect.provide(program, app) as Effect.Effect<unknown, unknown, never>,
-    );
-    const artifact = (
-      r as {
-        artifact: {
-          artifactId: string;
-          byteSize: number;
-          contentHash: string;
-        };
+      const loaded = (r as { loaded: Option.Option<Uint8Array> }).loaded;
+      expect(Option.isSome(loaded)).toBe(true);
+      if (Option.isSome(loaded)) {
+        expect(new TextDecoder().decode(loaded.value)).toBe("hello artifact");
       }
-    ).artifact;
-    expect(artifact.byteSize).toBe(14);
-    expect(artifact.contentHash).toHaveLength(64);
-    expect(() => parse(ArtifactId)(artifact.artifactId)).not.toThrow();
-    expect((r as { replay: { artifactId: string } }).replay.artifactId).toBe(
-      (r as { artifact: { artifactId: string } }).artifact.artifactId,
-    );
-    const loaded = (r as { loaded: Option.Option<Uint8Array> }).loaded;
-    expect(Option.isSome(loaded)).toBe(true);
-    if (Option.isSome(loaded)) {
-      expect(new TextDecoder().decode(loaded.value)).toBe("hello artifact");
-    }
-    expect(
-      Option.isNone((r as { missing: Option.Option<Uint8Array> }).missing),
-    ).toBe(true);
-  });
+      expect(
+        Option.isNone((r as { missing: Option.Option<Uint8Array> }).missing),
+      ).toBe(true);
+    }),
+  );
 });

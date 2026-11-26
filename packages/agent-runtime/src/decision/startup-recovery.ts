@@ -20,6 +20,7 @@ import {
   type SummaryCompactionInput,
 } from "../compaction-coordinator.js";
 import type { ModelDecisionDependencies } from "./contract.js";
+import type { StartupRecoveryError } from "./errors.js";
 
 type StartupDependencies = Pick<
   ModelDecisionDependencies,
@@ -31,7 +32,6 @@ type StartupDependencies = Pick<
   | "providerTurns"
   | "sessions"
   | "options"
-  | "failure"
 >;
 
 export interface DecisionCursor {
@@ -45,7 +45,9 @@ export type StartupRecoveryResult =
 
 /** Recover the exact durable checkpoint owner before creating a new Prepared
  * step. The decision driver owns the process-local cursor; this phase returns
- * its resolved value or an existing terminal outcome. */
+ * its resolved value or an existing terminal outcome. E09: store, transaction
+ * and compaction failures propagate as their narrow union; the decision
+ * driver folds once at its ExecutionDriverError boundary. */
 export const recoverStartupDecision = (
   dependencies: StartupDependencies,
   phase: {
@@ -64,7 +66,7 @@ export const recoverStartupDecision = (
       ExecutionDriverError
     >;
   },
-): Effect.Effect<StartupRecoveryResult, ExecutionDriverError> => {
+): Effect.Effect<StartupRecoveryResult, StartupRecoveryError> => {
   const {
     input,
     capability,
@@ -74,7 +76,6 @@ export const recoverStartupDecision = (
     providerTurns,
     sessions,
     options,
-    failure,
   } = dependencies;
   const {
     currentBindingFingerprint,
@@ -93,18 +94,16 @@ export const recoverStartupDecision = (
       providerTurns !== undefined &&
       loopSteps !== undefined
     ) {
-      const startupTimeline = yield* tx
-        .transact(readExecutionTimeline())
-        .pipe(Effect.mapError(failure));
+      const startupTimeline = yield* tx.transact(readExecutionTimeline());
       const startupProjection = projectSessionTimeline(
         startupTimeline,
         currentBindingFingerprint,
         providerNativeSupported,
       );
       const startupCheckpoint = startupProjection.nativeCheckpoint;
-      const startupSession = yield* tx
-        .transact(sessions.findById(input.execution.sessionId))
-        .pipe(Effect.mapError(failure));
+      const startupSession = yield* tx.transact(
+        sessions.findById(input.execution.sessionId),
+      );
       let startupCheckpointInherited = false;
       if (
         startupCheckpoint?.providerTurnId !== undefined &&
@@ -114,9 +113,9 @@ export const recoverStartupDecision = (
           startupCheckpoint.providerTurnId,
         );
         if (startupNativeTurnId !== null) {
-          const startupManifest = yield* tx
-            .transact(providerTurns.findManifestByTurn(startupNativeTurnId))
-            .pipe(Effect.mapError(failure));
+          const startupManifest = yield* tx.transact(
+            providerTurns.findManifestByTurn(startupNativeTurnId),
+          );
           const ownerExecutionId =
             startupManifest === null
               ? undefined
@@ -132,14 +131,12 @@ export const recoverStartupDecision = (
         Option.isSome(startupSession) &&
         loopStepFence !== undefined
       ) {
-        const pendingNative = yield* tx
-          .transact(
-            providerTurns.findNativeCompactionsBySessionEpoch({
-              sessionId: input.execution.sessionId,
-              contextEpoch: startupSession.value.contextEpoch,
-            }),
-          )
-          .pipe(Effect.mapError(failure));
+        const pendingNative = yield* tx.transact(
+          providerTurns.findNativeCompactionsBySessionEpoch({
+            sessionId: input.execution.sessionId,
+            contextEpoch: startupSession.value.contextEpoch,
+          }),
+        );
         if (pendingNative.length > 1) {
           if (options.qualificationProbe !== undefined) {
             yield* Effect.promise(
@@ -152,28 +149,26 @@ export const recoverStartupDecision = (
                 }) ?? Promise.resolve(),
             );
           }
-          return yield* Effect.fail(
-            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-          );
+          return yield* Effect.fail<StartupRecoveryError>({
+            _tag: "AgentLoopStepReplayBindingMismatch",
+          });
         }
         const candidate = pendingNative[0];
         const candidateSourceLinkOption =
           candidate === undefined
             ? Option.none()
-            : yield* tx
-                .transact(
-                  loopSteps.findProviderTurnLinkByProviderTurnId(
-                    candidate.providerTurnId,
-                  ),
-                )
-                .pipe(Effect.mapError(failure));
+            : yield* tx.transact(
+                loopSteps.findProviderTurnLinkByProviderTurnId(
+                  candidate.providerTurnId,
+                ),
+              );
         if (
           Option.isSome(candidateSourceLinkOption) &&
           candidateSourceLinkOption.value.role !== "OverflowCompaction"
         ) {
-          return yield* Effect.fail(
-            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-          );
+          return yield* Effect.fail<StartupRecoveryError>({
+            _tag: "AgentLoopStepReplayBindingMismatch",
+          });
         }
         // P20 owns every Native ProviderTurn with an OverflowCompaction link.
         // Only unlinked ordinary compactions may use this Session/epoch scan.
@@ -194,9 +189,9 @@ export const recoverStartupDecision = (
             sourceValue === null ||
             Array.isArray(sourceValue)
           ) {
-            return yield* Effect.fail(
-              failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-            );
+            return yield* Effect.fail<StartupRecoveryError>({
+              _tag: "AgentLoopStepReplayBindingMismatch",
+            });
           }
           const sourceRecord = sourceValue as Record<string, unknown>;
           if (
@@ -220,26 +215,26 @@ export const recoverStartupDecision = (
             manifest.compiledRequestHash !==
               sha256Hex(candidate.portableRequestJson)
           ) {
-            return yield* Effect.fail(
-              failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-            );
+            return yield* Effect.fail<StartupRecoveryError>({
+              _tag: "AgentLoopStepReplayBindingMismatch",
+            });
           }
           const sourceIdentity = {
             executionId: input.execution.executionId,
             logicalStepNo: Number(sourceRecord.logicalStepNo),
             repairAttempt: Number(sourceRecord.repairAttempt),
           };
-          const sourceStepOption = yield* tx
-            .transact(loopSteps.find(sourceIdentity))
-            .pipe(Effect.mapError(failure));
+          const sourceStepOption = yield* tx.transact(
+            loopSteps.find(sourceIdentity),
+          );
           if (
             !Option.isSome(sourceStepOption) ||
             sourceStepOption.value.providerTurnId !==
               sourceRecord.providerTurnId
           ) {
-            return yield* Effect.fail(
-              failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-            );
+            return yield* Effect.fail<StartupRecoveryError>({
+              _tag: "AgentLoopStepReplayBindingMismatch",
+            });
           }
           const sourceStep = sourceStepOption.value;
           if (
@@ -259,13 +254,13 @@ export const recoverStartupDecision = (
             turn = sourceStep.successor.logicalStepNo;
             repairAttempt = sourceStep.successor.repairAttempt;
           } else {
-            return yield* Effect.fail(
-              failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-            );
+            return yield* Effect.fail<StartupRecoveryError>({
+              _tag: "AgentLoopStepReplayBindingMismatch",
+            });
           }
-          const priorReceipt = yield* tx
-            .transact(providerTurns.findSettledResult(candidate.providerTurnId))
-            .pipe(Effect.mapError(failure));
+          const priorReceipt = yield* tx.transact(
+            providerTurns.findSettledResult(candidate.providerTurnId),
+          );
           const sourceAgentLoopStep = {
             executionId: String(sourceIdentity.executionId),
             logicalStepNo: sourceIdentity.logicalStepNo,
@@ -296,9 +291,9 @@ export const recoverStartupDecision = (
               continuationEvents[0]?._tag !== "ContinuationState" ||
               continuationEvents[0].stateRef.length === 0
             ) {
-              return yield* Effect.fail(
-                failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-              );
+              return yield* Effect.fail<StartupRecoveryError>({
+                _tag: "AgentLoopStepReplayBindingMismatch",
+              });
             }
             yield* commitRecoveredNativeCompaction(
               {
@@ -310,7 +305,7 @@ export const recoverStartupDecision = (
                 fence: loopStepFence,
               },
               { sessions, tx },
-            ).pipe(Effect.mapError(failure));
+            );
           } else if (
             manifest.resolvedModelBindingFingerprint ===
               currentBindingFingerprint &&
@@ -339,7 +334,7 @@ export const recoverStartupDecision = (
                 },
               },
               compactionDependencies,
-            ).pipe(Effect.mapError(failure));
+            );
             if ("_tag" in startupCompaction) {
               return {
                 _tag: "Complete" as const,
@@ -371,7 +366,7 @@ export const recoverStartupDecision = (
                 fence: loopStepFence,
               },
               compactionDependencies,
-            ).pipe(Effect.mapError(failure));
+            );
             if ("_tag" in startupCompaction) {
               return {
                 _tag: "Complete" as const,
@@ -382,9 +377,9 @@ export const recoverStartupDecision = (
               };
             }
           } else {
-            return yield* Effect.fail(
-              failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-            );
+            return yield* Effect.fail<StartupRecoveryError>({
+              _tag: "AgentLoopStepReplayBindingMismatch",
+            });
           }
         }
       }
@@ -399,17 +394,17 @@ export const recoverStartupDecision = (
           startupCheckpoint.providerTurnId,
         );
         if (startupNativeTurnId === null) {
-          return yield* Effect.fail(
-            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-          );
+          return yield* Effect.fail<StartupRecoveryError>({
+            _tag: "AgentLoopStepReplayBindingMismatch",
+          });
         }
-        const startupManifest = yield* tx
-          .transact(providerTurns.findManifestByTurn(startupNativeTurnId))
-          .pipe(Effect.mapError(failure));
+        const startupManifest = yield* tx.transact(
+          providerTurns.findManifestByTurn(startupNativeTurnId),
+        );
         if (startupManifest === null) {
-          return yield* Effect.fail(
-            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-          );
+          return yield* Effect.fail<StartupRecoveryError>({
+            _tag: "AgentLoopStepReplayBindingMismatch",
+          });
         }
         let startupManifestValue: Record<string, unknown>;
         try {
@@ -419,15 +414,15 @@ export const recoverStartupDecision = (
             parsed === null ||
             Array.isArray(parsed)
           ) {
-            return yield* Effect.fail(
-              failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-            );
+            return yield* Effect.fail<StartupRecoveryError>({
+              _tag: "AgentLoopStepReplayBindingMismatch",
+            });
           }
           startupManifestValue = parsed as Record<string, unknown>;
         } catch {
-          return yield* Effect.fail(
-            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-          );
+          return yield* Effect.fail<StartupRecoveryError>({
+            _tag: "AgentLoopStepReplayBindingMismatch",
+          });
         }
         const startupSource = startupManifestValue.sourceAgentLoopStep;
         if (
@@ -435,9 +430,9 @@ export const recoverStartupDecision = (
           startupSource === null ||
           Array.isArray(startupSource)
         ) {
-          return yield* Effect.fail(
-            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-          );
+          return yield* Effect.fail<StartupRecoveryError>({
+            _tag: "AgentLoopStepReplayBindingMismatch",
+          });
         }
         const startupSourceRecord = startupSource as Record<string, unknown>;
         if (options.qualificationProbe !== undefined) {
@@ -449,29 +444,23 @@ export const recoverStartupDecision = (
             Number(startupSourceRecord.repairAttempt) >= 0 &&
             typeof startupSourceRecord.providerTurnId === "string";
           const sourceStepOption = sourceIdentityValid
-            ? yield* tx
-                .transact(
-                  loopSteps.find({
-                    executionId: input.execution.executionId,
-                    logicalStepNo: Number(startupSourceRecord.logicalStepNo),
-                    repairAttempt: Number(startupSourceRecord.repairAttempt),
-                  }),
-                )
-                .pipe(Effect.mapError(failure))
+            ? yield* tx.transact(
+                loopSteps.find({
+                  executionId: input.execution.executionId,
+                  logicalStepNo: Number(startupSourceRecord.logicalStepNo),
+                  repairAttempt: Number(startupSourceRecord.repairAttempt),
+                }),
+              )
             : Option.none();
           const sourceStep = Option.isSome(sourceStepOption)
             ? sourceStepOption.value
             : undefined;
-          const sourceLinkOption = yield* tx
-            .transact(
-              loopSteps.findProviderTurnLinkByProviderTurnId(
-                startupNativeTurnId,
-              ),
-            )
-            .pipe(Effect.mapError(failure));
-          const startupReceipt = yield* tx
-            .transact(providerTurns.findSettledResult(startupNativeTurnId))
-            .pipe(Effect.mapError(failure));
+          const sourceLinkOption = yield* tx.transact(
+            loopSteps.findProviderTurnLinkByProviderTurnId(startupNativeTurnId),
+          );
+          const startupReceipt = yield* tx.transact(
+            providerTurns.findSettledResult(startupNativeTurnId),
+          );
           let startupRequestValue: Record<string, unknown> | undefined;
           try {
             const parsed = JSON.parse(
@@ -608,36 +597,36 @@ export const recoverStartupDecision = (
           startupManifestValue.compiledRequestHash !==
             sha256Hex(startupManifest.portableRequestJson)
         ) {
-          return yield* Effect.fail(
-            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-          );
+          return yield* Effect.fail<StartupRecoveryError>({
+            _tag: "AgentLoopStepReplayBindingMismatch",
+          });
         }
         const startupIdentity = {
           executionId: input.execution.executionId,
           logicalStepNo: Number(startupSourceRecord.logicalStepNo),
           repairAttempt: Number(startupSourceRecord.repairAttempt),
         };
-        const startupStepOption = yield* tx
-          .transact(loopSteps.find(startupIdentity))
-          .pipe(Effect.mapError(failure));
+        const startupStepOption = yield* tx.transact(
+          loopSteps.find(startupIdentity),
+        );
         if (!Option.isSome(startupStepOption)) {
-          return yield* Effect.fail(
-            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-          );
+          return yield* Effect.fail<StartupRecoveryError>({
+            _tag: "AgentLoopStepReplayBindingMismatch",
+          });
         }
         const startupStep = startupStepOption.value;
         if (startupStep.providerTurnId !== startupSourceRecord.providerTurnId) {
-          return yield* Effect.fail(
-            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-          );
+          return yield* Effect.fail<StartupRecoveryError>({
+            _tag: "AgentLoopStepReplayBindingMismatch",
+          });
         }
         if (
           startupStep.state === "NextStepReady" &&
           startupStep.successor === undefined
         ) {
-          return yield* Effect.fail(
-            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-          );
+          return yield* Effect.fail<StartupRecoveryError>({
+            _tag: "AgentLoopStepReplayBindingMismatch",
+          });
         }
         if (
           startupStep.state === "Prepared" ||

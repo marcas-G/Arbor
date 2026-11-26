@@ -50,6 +50,7 @@ import {
   SessionRepository,
   TransactionPort,
 } from "../packages/ports/src/index.js";
+import { NoHoldWorkReadmissionGateStoreLive } from "../packages/testkit/src/index.js";
 import { ReconciliationSourceLive } from "../packages/tool-runtime/src/index.js";
 import { yieldedSettlement } from "./support/execution-episode-fixtures.js";
 import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-project-resource-source.js";
@@ -103,6 +104,7 @@ const makeApp = () => {
     execRepo,
     Layer.provide(LeaseServiceLive, Layer.merge(infra, execRepo)),
     Layer.provide(FenceStopCheckLive, Layer.merge(infra, execRepo)),
+    NoHoldWorkReadmissionGateStoreLive,
   );
   const all = Layer.mergeAll(
     infra,

@@ -150,6 +150,17 @@ export interface WorkspaceRepositoryService {
   readonly hasOpenWork: (
     workspaceId: WorkspaceId,
   ) => Effect.Effect<boolean, WorkspaceRepositoryError, TransactionScope>;
+  /** All workspace ids of one project, ordered by workspace id. Read face
+   * for project-scoped evidence scans (e.g. AnyProducer evidence); callers
+   * verify each returned workspace belongs to the project through
+   * `findById`. */
+  readonly listWorkspaceIdsByProject: (
+    projectId: ProjectId,
+  ) => Effect.Effect<
+    ReadonlyArray<WorkspaceId>,
+    WorkspaceRepositoryError,
+    TransactionScope
+  >;
 }
 
 export class WorkspaceRepository extends Context.Service<

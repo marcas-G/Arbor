@@ -74,7 +74,7 @@ const P12_BLOCKERS: ReadonlyArray<BlockerEvidence> = [
   {
     id: "B3",
     blocker: "full §8.16A Runtime Safety closure",
-    file: "tests/p12-runtime-safety.test.ts",
+    file: "tests/p12/runtime-safety-e2e.test.ts",
     marker:
       "a violation interrupts with RuntimeSafetyStop and Work remains Open",
   },
@@ -128,9 +128,11 @@ const EC_TEST_FILES: ReadonlyArray<[string, string]> = [
   ["EC-6", "tests/p12-storage.test.ts"],
   ["EC-7", "tests/p12-remote-worker.test.ts"],
   ["EC-8", "tests/p12-toolcatalog.test.ts"],
-  ["EC-9", "tests/p12-runtime-safety.test.ts"],
+  ["EC-9", "tests/p12/runtime-safety-e2e.test.ts"],
   ["EC-10", "tests/p12-region-encoding.test.ts"],
-  ["EC-11", "tests/p12-transport.test.ts"],
+  ["EC-11", "tests/p12/transport-commands.test.ts"],
+  ["EC-11", "tests/p12/transport-shells.test.ts"],
+  ["EC-11", "tests/p12/transport-daemons.test.ts"],
   ["EC-12", "tests/p12-providers-tools.test.ts"],
   ["EC-13", "tests/p12-security-performance.test.ts"],
 ];
@@ -268,7 +270,7 @@ describe("p12-closure", () => {
     expect(sourceOf("tests/p12-secret-store.test.ts")).toContain(
       "never appears in any SQLite table row",
     );
-    expect(sourceOf("tests/p12-acceptance.test.ts")).toContain(
+    expect(sourceOf("tests/p12/secret-store.test.ts")).toContain(
       "never reaches any durable/observable surface",
     );
   });
@@ -317,7 +319,9 @@ describe("p12-closure", () => {
     }
 
     // tests: D1–D6 each drive Interrupted(RuntimeSafetyStop)
-    const tests = sourceOf("tests/p12-runtime-safety.test.ts");
+    const tests =
+      sourceOf("tests/p12/runtime-safety-gate.test.ts") +
+      sourceOf("tests/p12/runtime-safety-e2e.test.ts");
     for (const dim of ["D1", "D2", "D3", "D4", "D5", "D6"]) {
       expect(tests.includes(dim), dim).toBe(true);
     }

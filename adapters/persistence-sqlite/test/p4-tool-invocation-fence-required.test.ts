@@ -5,9 +5,10 @@ import {
   WorkspaceId,
 } from "@arbor/domain";
 import { ToolInvocationStore, TransactionPort } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import {
   layer,
   P36_MIGRATIONS,
@@ -28,108 +29,123 @@ const invocationId = parse(ToolInvocationId)(
 const incompleteFence = { executionId } as never;
 
 describe("P4 SQLite ToolInvocationStore fence requirement", () => {
-  it("rejects every durable write before SQL when the holder tuple is incomplete", async () => {
-    const base = layer({ filename: ":memory:" });
-    const app = Layer.mergeAll(
-      base,
-      Layer.provide(TransactionPortLive, base),
-      Layer.provide(ToolInvocationStoreLive, base),
-    );
-    const program = Effect.gen(function* () {
-      yield* runMigrations(P36_MIGRATIONS);
-      const store = yield* ToolInvocationStore;
-      const tx = yield* TransactionPort;
-      const capture = (effect: Parameters<typeof tx.transact>[0]) =>
-        tx.transact(
-          Effect.match(effect as never, {
-            onFailure: (error) => ({ _tag: "Rejected" as const, error }),
-            onSuccess: (value) => ({ _tag: "Applied" as const, value }),
-          }),
+  it.effect(
+    "rejects every durable write before SQL when the holder tuple is incomplete",
+    () =>
+      Effect.gen(function* () {
+        const base = layer({ filename: ":memory:" });
+        const app = Layer.mergeAll(
+          base,
+          Layer.provide(TransactionPortLive, base),
+          Layer.provide(ToolInvocationStoreLive, base),
         );
-      const invocation = {
-        invocationId,
-        executionId,
-        workspaceId,
-        toolName: "shell",
-        toolVersion: "1",
-        sideEffectSemantics: "Idempotent" as const,
-        argumentsJson: "{}",
-        resolvedRegions: [],
-        approvalId: null,
-        intentAt: "2026-01-01T00:00:00.000Z",
-      };
-      const outcomes = yield* Effect.all([
-        capture(store.recordIntent(invocation, incompleteFence)),
-        capture(
-          store.settle(
+        const program = Effect.gen(function* () {
+          yield* runMigrations(P36_MIGRATIONS);
+          const store = yield* ToolInvocationStore;
+          const tx = yield* TransactionPort;
+          const capture = (effect: Parameters<typeof tx.transact>[0]) =>
+            tx.transact(
+              Effect.match(effect as never, {
+                onFailure: (error) => ({ _tag: "Rejected" as const, error }),
+                onSuccess: (value) => ({ _tag: "Applied" as const, value }),
+              }),
+            );
+          const invocation = {
             invocationId,
-            { _tag: "Success" },
-            null,
-            "2026-01-01T00:00:00.000Z",
-            incompleteFence,
-          ),
-        ),
-        capture(
-          store.consumeApproval("approval-1", invocationId, incompleteFence),
-        ),
-        capture(
-          store.recordNoEffectDenial(
-            invocation,
-            "InvocationAuthorityDenied",
-            "2026-01-01T00:00:00.000Z",
-            incompleteFence,
-          ),
-        ),
-        capture(
-          store.recordNoEffectInterruption(
-            invocationId,
-            "2026-01-01T00:00:00.000Z",
-            incompleteFence,
-          ),
-        ),
-        capture(
-          store.admitEffect(
-            invocationId,
-            {
-              principal: "worker:test" as never,
-              workspaceId,
-              executionId,
-              toolName: "shell",
-              toolVersion: "1",
-              resourceSpaceIds: [],
-              allowedCapabilities: [],
-              controlBasisDigest: "digest",
-              expiresAt: "2027-01-01T00:00:00.000Z",
-              delegationDepth: 0,
-            },
-            "2026-01-01T00:00:00.000Z",
-            incompleteFence,
-          ),
-        ),
-      ]);
-      const sql = yield* SqlClient;
-      const rows = yield* sql.unsafe<{ count: number }>(
-        "SELECT COUNT(*) AS count FROM tool_invocations",
-      );
-      return { outcomes, count: Number(rows[0]?.count ?? 0) };
-    });
+            executionId,
+            workspaceId,
+            toolName: "shell",
+            toolVersion: "1",
+            sideEffectSemantics: "Idempotent" as const,
+            argumentsJson: "{}",
+            resolvedRegions: [],
+            approvalId: null,
+            intentAt: "2026-01-01T00:00:00.000Z",
+          };
+          const outcomes = yield* Effect.all([
+            capture(store.recordIntent(invocation, incompleteFence)),
+            capture(
+              store.settle(
+                invocationId,
+                { _tag: "Success" },
+                null,
+                "2026-01-01T00:00:00.000Z",
+                incompleteFence,
+              ),
+            ),
+            capture(
+              store.consumeApproval(
+                "approval-1",
+                invocationId,
+                incompleteFence,
+              ),
+            ),
+            capture(
+              store.recordNoEffectDenial(
+                invocation,
+                "InvocationAuthorityDenied",
+                "2026-01-01T00:00:00.000Z",
+                incompleteFence,
+              ),
+            ),
+            capture(
+              store.recordNoEffectInterruption(
+                invocationId,
+                "2026-01-01T00:00:00.000Z",
+                incompleteFence,
+              ),
+            ),
+            capture(
+              store.admitEffect(
+                invocationId,
+                {
+                  principal: "worker:test" as never,
+                  workspaceId,
+                  executionId,
+                  toolName: "shell",
+                  toolVersion: "1",
+                  resourceSpaceIds: [],
+                  allowedCapabilities: [],
+                  controlBasisDigest: "digest",
+                  expiresAt: "2027-01-01T00:00:00.000Z",
+                  delegationDepth: 0,
+                },
+                "2026-01-01T00:00:00.000Z",
+                incompleteFence,
+              ),
+            ),
+          ]);
+          const sql = yield* SqlClient;
+          const rows = yield* sql.unsafe<{ count: number }>(
+            "SELECT COUNT(*) AS count FROM tool_invocations",
+          );
+          return { outcomes, count: Number(rows[0]?.count ?? 0) };
+        });
 
-    const result = await Effect.runPromise(
-      Effect.provide(program, app) as Effect.Effect<unknown, unknown, never>,
-    );
-    const actual = result as {
-      readonly outcomes: ReadonlyArray<{
-        readonly _tag: string;
-        readonly error?: { readonly _tag: string; readonly reason?: string };
-      }>;
-      readonly count: number;
-    };
-    expect(actual.outcomes).toHaveLength(6);
-    for (const outcome of actual.outcomes) {
-      expect(outcome._tag).toBe("Rejected");
-      expect(outcome.error?._tag).toBe("PersistenceCorruption");
-      expect(outcome.error?.reason).toContain("fence is missing or incomplete");
-    }
-    expect(actual.count).toBe(0);
-  });
+        const result = yield* Effect.provide(program, app) as Effect.Effect<
+          unknown,
+          unknown,
+          never
+        >;
+        const actual = result as {
+          readonly outcomes: ReadonlyArray<{
+            readonly _tag: string;
+            readonly error?: {
+              readonly _tag: string;
+              readonly reason?: string;
+            };
+          }>;
+          readonly count: number;
+        };
+        expect(actual.outcomes).toHaveLength(6);
+        for (const outcome of actual.outcomes) {
+          expect(outcome._tag).toBe("Rejected");
+          expect(outcome.error?._tag).toBe("PersistenceCorruption");
+          expect(outcome.error?.reason).toContain(
+            "fence is missing or incomplete",
+          );
+        }
+        expect(actual.count).toBe(0);
+      }),
+  );
 });

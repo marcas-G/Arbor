@@ -125,11 +125,18 @@ describe("p10-boundaries", () => {
         // infrastructure, not production transport.
         normalized.includes("/tests/capability/") ||
         normalized.includes("/tests/functional/") ||
+        // Provider-runtime integration tests drive a real local HTTP
+        // server to exercise transport failure modes (429/5xx/timeout);
+        // same external-test-infrastructure character as the two above
+        // (B5 split: the former phase1 monolith moved here and gained
+        // scenario-named files like http-failure).
+        normalized.includes("/tests/provider-runtime/") ||
         // This adapter test creates one real Unix-domain socket solely to
         // validate the broker binding contract. It does not own production
-        // transport; the exception is intentionally exact and file-scoped.
+        // transport; the exception is intentionally exact and file-scoped
+        // (B5 split: the suite moved into native-posix-policy/).
         normalized.endsWith(
-          "/adapters/sandbox-native-posix/test/native-posix-policy.test.ts",
+          "/adapters/sandbox-native-posix/test/native-posix-policy/verification-broker.test.ts",
         )
       );
     };

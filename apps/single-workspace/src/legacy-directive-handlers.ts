@@ -25,7 +25,6 @@ import {
 } from "@arbor/domain";
 import {
   AgentExecutionStateStore,
-  type BoundedObservation,
   type CanonicalToolObservation,
   Clock,
   type ExecutionDriverError,

@@ -5,9 +5,11 @@ import type {
   ExecutionId,
   ExecutionSettlement,
   LeaseGeneration,
+  ProjectId,
   WaitSpec,
   WakeReason,
   WorkId,
+  WorkRevision,
   WorkspaceId,
 } from "@arbor/domain";
 import { Context, type Effect, type Option } from "effect";
@@ -132,7 +134,58 @@ export interface ExecutionRepositoryService {
     ExecutionRepositoryError,
     TransactionScope
   >;
+  /**
+   * Completed-settlement completion claims of one workspace's executions.
+   *
+   * The scheduler classification (P7) holds an Open Work while a settled
+   * workspace execution claims its completion. This face returns the raw
+   * claim rows (work binding + settlement JSON) for the workspace; whether a
+   * claim holds a specific Work revision remains business semantics on the
+   * caller side. The persistence adapter resolves both binding generations
+   * (the 0024 episode columns and the pre-0024 `focus_*` columns) into
+   * `workId` + `bindingWorkRevision`, so no caller needs to know which
+   * generation is stored: `bindingWorkRevision` is `null` exactly for
+   * pre-0024 rows, where the revision is only inside the settlement JSON.
+   */
+  readonly listCompletionClaims: (
+    projectId: ProjectId,
+    workspaceId: WorkspaceId,
+  ) => Effect.Effect<
+    ReadonlyArray<CompletionClaimRecord>,
+    ExecutionRepositoryError,
+    TransactionScope
+  >;
 }
+
+/** One durable completion claim: a settled workspace execution asserting
+ * `Completed` for a Work binding. `bindingWorkRevision` is `null` for
+ * pre-0024 rows (legacy `focus_*` binding carries no revision column). */
+export interface CompletionClaimRecord {
+  readonly workId: WorkId;
+  readonly bindingWorkRevision: WorkRevision | null;
+  /** Raw settlement JSON. Callers re-check the settlement payload against
+   * the exact Work revision. */
+  readonly settlementJson: string;
+}
+
+/**
+ * Deployment readiness of the completion-hold persistence faces (the
+ * verification and acceptance reads the scheduler classification consults).
+ *
+ * A deployment whose persisted schema predates those faces must skip the
+ * hold classification instead of failing it. Whether the backing tables
+ * exist is a persistence fact, so the probe lives on the adapter; the
+ * classification rule (which revision a PASS hold freezes) stays on the
+ * caller. `E = never`: unavailability is a `false`, not a failure.
+ */
+export interface CompletionHoldReadService {
+  readonly available: Effect.Effect<boolean, never>;
+}
+
+export class CompletionHoldRead extends Context.Service<
+  CompletionHoldRead,
+  CompletionHoldReadService
+>()("arbor/CompletionHoldRead") {}
 
 export class ExecutionRepository extends Context.Service<
   ExecutionRepository,

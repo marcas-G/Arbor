@@ -37,6 +37,10 @@ import { resolveInvocationAuthority } from "./runtime/invocation-authority.js";
 import { prepareInvocation } from "./runtime/invocation-setup.js";
 import { makeNoEffectSettlement } from "./runtime/no-effect-settlement.js";
 import { makeProcessRunner } from "./runtime/process-runner.js";
+import {
+  foldAdmittedReconciliationError,
+  foldPriorSettlementError,
+} from "./runtime/recovery/errors.js";
 import { finishPriorInvocation } from "./runtime/recovery/finish-prior-invocation.js";
 import { makeObservationReplay } from "./runtime/recovery/observation-replay.js";
 import { inspectPriorInvocation } from "./runtime/recovery/prior-invocation.js";
@@ -459,6 +463,12 @@ export const ToolRuntimeLive = (
                 executableApprovals,
                 options,
                 probeReconciliation,
+              ).pipe(
+                // E09: the phase's still-typed recovery failures fold into
+                // the public ToolRuntimeError contract exactly once, here.
+                Effect.mapError(
+                  foldAdmittedReconciliationError(String(intent.invocationId)),
+                ),
               );
               if (recovery._tag === "Terminal") return recovery.observation;
               recoveredToolOutcome = recovery.recoveredToolOutcome;
@@ -479,6 +489,12 @@ export const ToolRuntimeLive = (
               artifactService,
               decodeRecordedEvidence,
               resolveReplaySandboxPolicy,
+            ).pipe(
+              // E09: fold the phase's still-typed failures once, here; a
+              // fencing rejection already in final form passes through.
+              Effect.mapError(
+                foldPriorSettlementError(String(intent.invocationId)),
+              ),
             );
             if (terminalReplay !== undefined) return terminalReplay;
           } else {

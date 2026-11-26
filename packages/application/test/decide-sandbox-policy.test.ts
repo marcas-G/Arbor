@@ -19,8 +19,9 @@ import {
   type WorkspaceSandboxAuthorization,
 } from "@arbor/domain";
 import { TransactionScope } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect, Option } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import type { CommandAuthorityFact } from "../src/authority.js";
 import {
   AuthorityResolverPort,
@@ -256,85 +257,56 @@ describe("DecideSandboxPolicy command", () => {
     expect(handler.priorReceiptSchemaVersions).toEqual(["1"]);
   });
 
-  it("commits a full internal result and minimal event only after exact CAS checks", async () => {
-    const { handler, inserted } = makeHandler();
-    const result = await Effect.runPromise(
-      Effect.provideService(
-        handler.execute(
-          {
-            commandType: "DecideSandboxPolicy",
-            commandId,
-            projectId,
-            actor: parse(Actor)(String(subject)),
-            issuedAt: "1999-01-01T00:00:00.000Z",
-            payload,
-            resolvedAuthority: authority,
+  it.effect(
+    "commits a full internal result and minimal event only after exact CAS checks",
+    () =>
+      Effect.gen(function* () {
+        const { handler, inserted } = makeHandler();
+        const result = yield* Effect.provideService(
+          handler.execute(
+            {
+              commandType: "DecideSandboxPolicy",
+              commandId,
+              projectId,
+              actor: parse(Actor)(String(subject)),
+              issuedAt: "1999-01-01T00:00:00.000Z",
+              payload,
+              resolvedAuthority: authority,
+            },
+            { _tag: "External", principal: subject },
+            { _tag: "Ready", summary: snapshot },
+          ),
+          TransactionScope,
+          { session: { id: "sandbox-decision-test" } },
+        );
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(inserted).toHaveLength(1);
+        expect(result.value.result).toMatchObject({
+          version: 1,
+          commandId,
+          projectId,
+          workspaceId,
+          executionId,
+          policyRevision: 1,
+          effectivePolicySnapshot: {
+            kind: "OsEnforced",
+            qualificationEvidenceRef: snapshot.qualificationEvidenceRef,
           },
-          { _tag: "External", principal: subject },
-          { _tag: "Ready", summary: snapshot },
-        ),
-        TransactionScope,
-        { session: { id: "sandbox-decision-test" } },
-      ),
-    );
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(inserted).toHaveLength(1);
-    expect(result.value.result).toMatchObject({
-      version: 1,
-      commandId,
-      projectId,
-      workspaceId,
-      executionId,
-      policyRevision: 1,
-      effectivePolicySnapshot: {
-        kind: "OsEnforced",
-        qualificationEvidenceRef: snapshot.qualificationEvidenceRef,
-      },
-    });
-    expect(result.value.events).toHaveLength(1);
-    expect(result.value.events[0]?.eventType).toBe(
-      "SandboxPolicyDecisionRecorded",
-    );
-  });
+        });
+        expect(result.value.events).toHaveLength(1);
+        expect(result.value.events[0]?.eventType).toBe(
+          "SandboxPolicyDecisionRecorded",
+        );
+      }),
+  );
 
-  it("durably rejects stale CAS without a decision insert or event", async () => {
-    const { handler, inserted } = makeHandler("workspaceRevision");
-    const result = await Effect.runPromise(
-      Effect.provideService(
-        handler.execute(
-          {
-            commandType: "DecideSandboxPolicy",
-            commandId,
-            projectId,
-            actor: parse(Actor)(String(subject)),
-            issuedAt: now,
-            payload,
-            resolvedAuthority: authority,
-          },
-          { _tag: "External", principal: subject },
-          { _tag: "Ready", summary: snapshot },
-        ),
-        TransactionScope,
-        { session: { id: "sandbox-decision-test" } },
-      ),
-    );
-    expect(result).toMatchObject({
-      ok: false,
-      error: {
-        _tag: "StaleSandboxPolicyInputs",
-        safeDetails: { field: "WorkspaceRevision" },
-      },
-    });
-    expect(inserted).toHaveLength(0);
-  });
-
-  it.each(["ActionRevision", "ExecutableApprovalRevision"] as const)(
-    "returns the safe pre-intent source stale field %s without a decision",
-    async (sourceField) => {
-      const { handler, inserted } = makeHandler(undefined, sourceField);
-      const result = await Effect.runPromise(
-        Effect.provideService(
+  it.effect(
+    "durably rejects stale CAS without a decision insert or event",
+    () =>
+      Effect.gen(function* () {
+        const { handler, inserted } = makeHandler("workspaceRevision");
+        const result = yield* Effect.provideService(
           handler.execute(
             {
               commandType: "DecideSandboxPolicy",
@@ -350,17 +322,49 @@ describe("DecideSandboxPolicy command", () => {
           ),
           TransactionScope,
           { session: { id: "sandbox-decision-test" } },
-        ),
-      );
-      expect(result).toMatchObject({
-        ok: false,
-        error: {
-          _tag: "StaleSandboxPolicyInputs",
-          safeDetails: { field: sourceField },
-        },
-      });
-      expect(inserted).toHaveLength(0);
-    },
+        );
+        expect(result).toMatchObject({
+          ok: false,
+          error: {
+            _tag: "StaleSandboxPolicyInputs",
+            safeDetails: { field: "WorkspaceRevision" },
+          },
+        });
+        expect(inserted).toHaveLength(0);
+      }),
+  );
+
+  it.effect.each(["ActionRevision", "ExecutableApprovalRevision"] as const)(
+    "returns the safe pre-intent source stale field %s without a decision",
+    (sourceField) =>
+      Effect.gen(function* () {
+        const { handler, inserted } = makeHandler(undefined, sourceField);
+        const result = yield* Effect.provideService(
+          handler.execute(
+            {
+              commandType: "DecideSandboxPolicy",
+              commandId,
+              projectId,
+              actor: parse(Actor)(String(subject)),
+              issuedAt: now,
+              payload,
+              resolvedAuthority: authority,
+            },
+            { _tag: "External", principal: subject },
+            { _tag: "Ready", summary: snapshot },
+          ),
+          TransactionScope,
+          { session: { id: "sandbox-decision-test" } },
+        );
+        expect(result).toMatchObject({
+          ok: false,
+          error: {
+            _tag: "StaleSandboxPolicyInputs",
+            safeDetails: { field: sourceField },
+          },
+        });
+        expect(inserted).toHaveLength(0);
+      }),
   );
 });
 
@@ -531,169 +535,167 @@ describe("Workspace sandbox policy binding", () => {
     };
   };
   const run = <A, E>(effect: Effect.Effect<A, E, TransactionScope>) =>
-    Effect.runPromise(
-      Effect.provideService(effect, TransactionScope, {
-        session: { id: "workspace-policy-test" },
-      }),
-    );
+    Effect.provideService(effect, TransactionScope, {
+      session: { id: "workspace-policy-test" },
+    });
 
-  it("resolves only exact internal System requests using live Workspace authority", async () => {
-    const input = {
-      principal: system,
-      submissionContext: context,
-      envelope,
-      semanticRequestFingerprint: bindingAuthority.semanticRequestFingerprint,
-      canonicalFacts: {
-        projectId,
-        workspace: currentWorkspace,
-        execution: {
-          executionId,
-          projectId,
-          workspaceId,
-          status: "Active" as const,
-          episodeRevision: 2,
-          episodeBinding,
-        },
-      },
-      grants: [],
-      governance: { authenticatedHumans: [subject], directParentOf: [] },
-      policy: makeProjectPolicy(),
-      workspaceSandboxAuthorizationSnapshot: {
-        heads: [authorization],
-        workspaces: [currentWorkspace],
-      },
-      workspaceSandboxAuthorizationNow: now,
-      workspaceSandboxPolicyHostSnapshot: host,
-    };
-    const resolve = (requestInput: typeof input) =>
-      Effect.runPromise(
-        Effect.provide(
+  it.effect(
+    "resolves only exact internal System requests using live Workspace authority",
+    () =>
+      Effect.gen(function* () {
+        const input = {
+          principal: system,
+          submissionContext: context,
+          envelope,
+          semanticRequestFingerprint:
+            bindingAuthority.semanticRequestFingerprint,
+          canonicalFacts: {
+            projectId,
+            workspace: currentWorkspace,
+            execution: {
+              executionId,
+              projectId,
+              workspaceId,
+              status: "Active" as const,
+              episodeRevision: 2,
+              episodeBinding,
+            },
+          },
+          grants: [],
+          governance: { authenticatedHumans: [subject], directParentOf: [] },
+          policy: makeProjectPolicy(),
+          workspaceSandboxAuthorizationSnapshot: {
+            heads: [authorization],
+            workspaces: [currentWorkspace],
+          },
+          workspaceSandboxAuthorizationNow: now,
+          workspaceSandboxPolicyHostSnapshot: host,
+        };
+        const resolve = (requestInput: typeof input) =>
           Effect.flatMap(AuthorityResolverPort, (resolver) =>
             Effect.result(resolver.resolve(requestInput)),
-          ),
-          AuthorityResolverPortLive,
-        ),
-      );
-    const accepted = await resolve(input);
-    expect(accepted._tag).toBe("Success");
-    if (accepted._tag === "Success")
-      expect(accepted.success).toEqual(bindingAuthority);
-    for (const patch of [
-      { submissionContext: { _tag: "External", principal: system } },
-      { workspaceSandboxPolicyHostSnapshot: undefined },
-      {
-        workspaceSandboxAuthorizationSnapshot: {
-          heads: [],
-          workspaces: [currentWorkspace],
-        },
-      },
-      {
-        envelope: {
-          ...envelope,
-          payload: { ...request, expectedAuthorizationRevision: 2 },
-        },
-      },
-    ])
-      expect((await resolve({ ...input, ...patch } as typeof input))._tag).toBe(
-        "Failure",
-      );
-  });
+          ).pipe(Effect.provide(AuthorityResolverPortLive));
+        const accepted = yield* resolve(input);
+        expect(accepted._tag).toBe("Success");
+        if (accepted._tag === "Success")
+          expect(accepted.success).toEqual(bindingAuthority);
+        for (const patch of [
+          { submissionContext: { _tag: "External", principal: system } },
+          { workspaceSandboxPolicyHostSnapshot: undefined },
+          {
+            workspaceSandboxAuthorizationSnapshot: {
+              heads: [],
+              workspaces: [currentWorkspace],
+            },
+          },
+          {
+            envelope: {
+              ...envelope,
+              payload: { ...request, expectedAuthorizationRevision: 2 },
+            },
+          },
+        ])
+          expect(
+            (yield* resolve({ ...input, ...patch } as typeof input))._tag,
+          ).toBe("Failure");
+      }),
+  );
 
-  it("commits real Workspace provenance and a V2 event without legacy grant fields", async () => {
-    const { handler, inserted } = harness();
-    const prepare = handler.prepare;
-    if (prepare === undefined)
-      throw new Error("binding must preserve its preparation hook");
-    const prepared = await Effect.runPromise(
-      prepare(envelope, context, bindingAuthority),
-    );
-    const outcome = await run(handler.execute(envelope, context, prepared));
-    expect(outcome.ok).toBe(true);
-    if (!outcome.ok) return;
-    expect(inserted).toHaveLength(1);
-    expect(inserted[0]).toMatchObject({
-      authorityKind: "WorkspaceAuthorization",
-      workspaceAuthorizationRevision: 1,
-      actorPrincipal: system,
-    });
-    expect(inserted[0]).not.toHaveProperty("permissionGrantId");
-    expect(outcome.value.events[0]).toMatchObject({
-      eventType: "SandboxPolicyDecisionRecorded",
-      eventVersion: 2,
-      payload: { workspaceAuthorizationRevision: 1 },
-    });
-    expect(outcome.value.events[0]?.payload).not.toHaveProperty(
-      "permissionGrantId",
-    );
-    const result = outcome.value.result;
-    // Gateway JSON serialization must itself retain exact canonical bytes.
-    expect(JSON.stringify(result)).toBe(
-      encodeSandboxPolicyDecisionCommittedInternalV3(result),
-    );
-    const stored = {
-      commandId,
-      projectId,
-      semanticRequestFingerprint: bindingAuthority.semanticRequestFingerprint,
-      schemaVersion: "1",
-      fingerprintAlgorithmVersion: 1,
-      resolution: "Committed" as const,
-      resultJson: JSON.stringify(result),
-      terminalErrorJson: null,
-      createdAt: now,
-      settledAt: now,
-    };
-    expect(
-      (
-        await Effect.runPromise(
-          Effect.result(
+  it.effect(
+    "commits real Workspace provenance and a V2 event without legacy grant fields",
+    () =>
+      Effect.gen(function* () {
+        const { handler, inserted } = harness();
+        const prepare = handler.prepare;
+        if (prepare === undefined)
+          throw new Error("binding must preserve its preparation hook");
+        const prepared = yield* prepare(envelope, context, bindingAuthority);
+        const outcome = yield* run(
+          handler.execute(envelope, context, prepared),
+        );
+        expect(outcome.ok).toBe(true);
+        if (!outcome.ok) return;
+        expect(inserted).toHaveLength(1);
+        expect(inserted[0]).toMatchObject({
+          authorityKind: "WorkspaceAuthorization",
+          workspaceAuthorizationRevision: 1,
+          actorPrincipal: system,
+        });
+        expect(inserted[0]).not.toHaveProperty("permissionGrantId");
+        expect(outcome.value.events[0]).toMatchObject({
+          eventType: "SandboxPolicyDecisionRecorded",
+          eventVersion: 2,
+          payload: { workspaceAuthorizationRevision: 1 },
+        });
+        expect(outcome.value.events[0]?.payload).not.toHaveProperty(
+          "permissionGrantId",
+        );
+        const result = outcome.value.result;
+        // Gateway JSON serialization must itself retain exact canonical bytes.
+        expect(JSON.stringify(result)).toBe(
+          encodeSandboxPolicyDecisionCommittedInternalV3(result),
+        );
+        const stored = {
+          commandId,
+          projectId,
+          semanticRequestFingerprint:
+            bindingAuthority.semanticRequestFingerprint,
+          schemaVersion: "1",
+          fingerprintAlgorithmVersion: 1,
+          resolution: "Committed" as const,
+          resultJson: JSON.stringify(result),
+          terminalErrorJson: null,
+          createdAt: now,
+          settledAt: now,
+        };
+        expect(
+          (yield* Effect.result(
             decodeRegisteredCommandReceipt(
               stored,
               "BindWorkspaceSandboxPolicy",
               "1",
             ),
-          ),
-        )
-      )._tag,
-    ).toBe("Success");
-    expect(
-      (
-        await Effect.runPromise(
-          Effect.result(
+          ))._tag,
+        ).toBe("Success");
+        expect(
+          (yield* Effect.result(
             decodeRegisteredCommandReceipt(
               { ...stored, schemaVersion: "2" },
               "DecideSandboxPolicy",
               "2",
             ),
-          ),
-        )
-      )._tag,
-    ).toBe("Failure");
-  });
+          ))._tag,
+        ).toBe("Failure");
+      }),
+  );
 
-  it("rereads revocation after host preparation before writing any decision", async () => {
-    const { handler, inserted, revoke } = harness();
-    const prepare = handler.prepare;
-    if (prepare === undefined)
-      throw new Error("binding must preserve its preparation hook");
-    const prepared = await Effect.runPromise(
-      prepare(envelope, context, bindingAuthority),
-    );
-    revoke();
-    const outcome = await run(handler.execute(envelope, context, prepared));
-    expect(outcome.ok).toBe(false);
-    if (!outcome.ok) expect(outcome.error._tag).toBe("AuthorityDenied");
-    expect(inserted).toEqual([]);
-  });
+  it.effect(
+    "rereads revocation after host preparation before writing any decision",
+    () =>
+      Effect.gen(function* () {
+        const { handler, inserted, revoke } = harness();
+        const prepare = handler.prepare;
+        if (prepare === undefined)
+          throw new Error("binding must preserve its preparation hook");
+        const prepared = yield* prepare(envelope, context, bindingAuthority);
+        revoke();
+        const outcome = yield* run(
+          handler.execute(envelope, context, prepared),
+        );
+        expect(outcome.ok).toBe(false);
+        if (!outcome.ok) expect(outcome.error._tag).toBe("AuthorityDenied");
+        expect(inserted).toEqual([]);
+      }),
+  );
 
-  it.each([
+  it.effect.each([
     [{ staleHost: true }, "StaleSandboxPolicyInputs"],
     [{ staleExecution: true }, "StaleSandboxPolicyInputs"],
     [{ finiteExpiry: true }, "DecisionExpiryInvalid"],
-  ] as const)(
-    "rejects stale or outliving bindings %s",
-    async (options, tag) => {
+  ] as const)("rejects stale or outliving bindings %s", ([options, tag]) =>
+    Effect.gen(function* () {
       const { handler, inserted } = harness(options);
-      const outcome = await run(
+      const outcome = yield* run(
         handler.execute(envelope, context, {
           _tag: "Ready",
           summary: linuxSnapshot,
@@ -702,33 +704,35 @@ describe("Workspace sandbox policy binding", () => {
       expect(outcome.ok).toBe(false);
       if (!outcome.ok) expect(outcome.error._tag).toBe(tag);
       expect(inserted).toEqual([]);
-    },
+    }),
   );
 
-  it("cannot enlarge the authorized profile or network selection", async () => {
-    const { handler, inserted } = harness();
-    for (const patch of [
-      { profile: "WorkspaceWrite" as const },
-      {
-        networkPolicy: {
-          kind: "OsEnforced" as const,
-          policy: {
-            version: 1 as const,
-            mode: "Enabled" as const,
-            destinations: [],
+  it.effect("cannot enlarge the authorized profile or network selection", () =>
+    Effect.gen(function* () {
+      const { handler, inserted } = harness();
+      for (const patch of [
+        { profile: "WorkspaceWrite" as const },
+        {
+          networkPolicy: {
+            kind: "OsEnforced" as const,
+            policy: {
+              version: 1 as const,
+              mode: "Enabled" as const,
+              destinations: [],
+            },
           },
         },
-      },
-    ]) {
-      const outcome = await run(
-        handler.execute(
-          { ...envelope, payload: { ...request, ...patch } },
-          context,
-          { _tag: "Ready", summary: linuxSnapshot },
-        ),
-      );
-      expect(outcome.ok).toBe(false);
-    }
-    expect(inserted).toEqual([]);
-  });
+      ]) {
+        const outcome = yield* run(
+          handler.execute(
+            { ...envelope, payload: { ...request, ...patch } },
+            context,
+            { _tag: "Ready", summary: linuxSnapshot },
+          ),
+        );
+        expect(outcome.ok).toBe(false);
+      }
+      expect(inserted).toEqual([]);
+    }),
+  );
 });

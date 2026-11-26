@@ -632,14 +632,7 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
           yield* seedSchema50AndGrant;
           const sql = yield* SqlClient;
           const gateway = yield* CommandGateway;
-          const fingerprint = semanticRequestFingerprint({
-            commandType: "DecideSandboxPolicy",
-            projectId,
-            actor,
-            schemaVersion: "2",
-            payload,
-          });
-          const auth = makeAuthority(fingerprint);
+          const auth = makeAuthority(decisionFingerprint());
           const first = yield* gateway.execute(
             envelope(),
             { _tag: "External", principal },
@@ -654,17 +647,10 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
             ...payload,
             providerVersion: "0.9.0",
           };
-          const changedTupleFingerprint = semanticRequestFingerprint({
-            commandType: "DecideSandboxPolicy",
-            projectId,
-            actor,
-            schemaVersion: "2",
-            payload: changedTuplePayload,
-          });
           const changedTuple = yield* gateway.execute(
             envelope(commandId, changedTuplePayload),
             { _tag: "External", principal },
-            makeAuthority(changedTupleFingerprint),
+            makeAuthority(decisionFingerprint(changedTuplePayload)),
           );
           const rows = yield* sql.unsafe<{
             decisions: number;
@@ -722,18 +708,11 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
               committedResultJson(),
             ),
           );
-          const currentFingerprint = semanticRequestFingerprint({
-            commandType: "DecideSandboxPolicy",
-            projectId,
-            actor,
-            schemaVersion: "2",
-            payload: legacyPayload,
-          });
           const gateway = yield* CommandGateway;
           return yield* gateway.execute(
             envelope(commandId, legacyPayload),
             { _tag: "External", principal },
-            makeAuthority(currentFingerprint),
+            makeAuthority(decisionFingerprint(legacyPayload)),
           );
         }),
         stack.app,
@@ -756,18 +735,11 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
         Effect.gen(function* () {
           yield* seedSchema50AndGrant;
           const sql = yield* SqlClient;
-          const fingerprint = semanticRequestFingerprint({
-            commandType: "DecideSandboxPolicy",
-            projectId,
-            actor,
-            schemaVersion: "2",
-            payload: legacyPayload,
-          });
           const gateway = yield* CommandGateway;
           const receipt = yield* gateway.execute(
             envelope(commandId, legacyPayload),
             { _tag: "External", principal },
-            makeAuthority(fingerprint),
+            makeAuthority(decisionFingerprint(legacyPayload)),
           );
           const rows = yield* sql.unsafe<{
             schemaVersion: string;
@@ -815,14 +787,7 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
           yield* seedSchema50AndGrant;
           const sql = yield* SqlClient;
           const gateway = yield* CommandGateway;
-          const fingerprint = semanticRequestFingerprint({
-            commandType: "DecideSandboxPolicy",
-            projectId,
-            actor,
-            schemaVersion: "2",
-            payload,
-          });
-          const auth = makeAuthority(fingerprint);
+          const auth = makeAuthority(decisionFingerprint());
           const first = yield* Effect.match(
             gateway.execute(envelope(), { _tag: "External", principal }, auth),
             {
@@ -830,33 +795,13 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
               onSuccess: (receipt) => ({ _tag: "Receipt" as const, receipt }),
             },
           );
-          const afterFailure = yield* sql.unsafe<{
-            decisions: number;
-            receipts: number;
-            events: number;
-          }>(
-            `SELECT
-              (SELECT COUNT(*) FROM sandbox_policy_decisions WHERE decision_command_id = ?) AS decisions,
-              (SELECT COUNT(*) FROM commands WHERE command_id = ?) AS receipts,
-              (SELECT COUNT(*) FROM domain_events WHERE event_type = 'SandboxPolicyDecisionRecorded') AS events`,
-            [commandId, commandId],
-          );
+          const afterFailure = yield* executionCounts(sql, commandId);
           const retry = yield* gateway.execute(
             envelope(),
             { _tag: "External", principal },
             auth,
           );
-          const afterRetry = yield* sql.unsafe<{
-            decisions: number;
-            receipts: number;
-            events: number;
-          }>(
-            `SELECT
-              (SELECT COUNT(*) FROM sandbox_policy_decisions WHERE decision_command_id = ?) AS decisions,
-              (SELECT COUNT(*) FROM commands WHERE command_id = ?) AS receipts,
-              (SELECT COUNT(*) FROM domain_events WHERE event_type = 'SandboxPolicyDecisionRecorded') AS events`,
-            [commandId, commandId],
-          );
+          const afterRetry = yield* executionCounts(sql, commandId);
           return {
             first,
             afterFailure: afterFailure[0],
@@ -878,97 +823,50 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
     expect(stack.preparationCalls()).toBe(2);
   });
 
-  it("persists only the safe stale-CAS receipt, with no decision or event", async () => {
-    const stack = makeTestStack({ staleWorkspaceRevision: true });
-    const result = await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          yield* seedSchema50AndGrant;
-          const sql = yield* SqlClient;
-          const gateway = yield* CommandGateway;
-          const fingerprint = semanticRequestFingerprint({
-            commandType: "DecideSandboxPolicy",
-            projectId,
-            actor,
-            schemaVersion: "2",
-            payload,
-          });
-          const receipt = yield* gateway.execute(
-            envelope(),
-            { _tag: "External", principal },
-            makeAuthority(fingerprint),
-          );
-          const rows = yield* sql.unsafe<{
-            decisions: number;
-            receipts: number;
-            events: number;
-          }>(
-            `SELECT
-              (SELECT COUNT(*) FROM sandbox_policy_decisions WHERE decision_command_id = ?) AS decisions,
-              (SELECT COUNT(*) FROM commands WHERE command_id = ?) AS receipts,
-              (SELECT COUNT(*) FROM domain_events WHERE event_type = 'SandboxPolicyDecisionRecorded') AS events`,
-            [commandId, commandId],
-          );
-          return { receipt, counts: rows[0] };
-        }),
-        stack.app,
-      ),
-    );
-    expect(result.receipt.resolution).toMatchObject({
-      _tag: "TerminalRejected",
-      error: {
-        _tag: "StaleSandboxPolicyInputs",
-        safeDetails: { field: "WorkspaceRevision" },
-      },
-    });
-    expect(result.counts).toEqual({ decisions: 0, receipts: 1, events: 0 });
-  });
-
-  it("persists stale handle-binding CAS as a stable receipt with no decision or event", async () => {
-    const stack = makeTestStack({ staleHandleBindingDigest: true });
-    const result = await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          yield* seedSchema50AndGrant;
-          const sql = yield* SqlClient;
-          const gateway = yield* CommandGateway;
-          const fingerprint = semanticRequestFingerprint({
-            commandType: "DecideSandboxPolicy",
-            projectId,
-            actor,
-            schemaVersion: "2",
-            payload,
-          });
-          const receipt = yield* gateway.execute(
-            envelope(),
-            { _tag: "External", principal },
-            makeAuthority(fingerprint),
-          );
-          const rows = yield* sql.unsafe<{
-            decisions: number;
-            receipts: number;
-            events: number;
-          }>(
-            `SELECT
-              (SELECT COUNT(*) FROM sandbox_policy_decisions WHERE decision_command_id = ?) AS decisions,
-              (SELECT COUNT(*) FROM commands WHERE command_id = ?) AS receipts,
-              (SELECT COUNT(*) FROM domain_events WHERE event_type = 'SandboxPolicyDecisionRecorded') AS events`,
-            [commandId, commandId],
-          );
-          return { receipt, counts: rows[0] };
-        }),
-        stack.app,
-      ),
-    );
-    expect(result.receipt.resolution).toMatchObject({
-      _tag: "TerminalRejected",
-      error: {
-        _tag: "StaleSandboxPolicyInputs",
-        safeDetails: { field: "SandboxHandleBindingDigest" },
-      },
-    });
-    expect(result.counts).toEqual({ decisions: 0, receipts: 1, events: 0 });
-  });
+  it.each([
+    [
+      "workspace revision",
+      { staleWorkspaceRevision: true } as const,
+      { field: "WorkspaceRevision" },
+    ],
+    [
+      "handle-binding digest",
+      { staleHandleBindingDigest: true } as const,
+      { field: "SandboxHandleBindingDigest" },
+    ],
+  ])(
+    "persists only the safe stale-CAS receipt for a stale %s, with no decision or event",
+    async (_label, options, safeDetails) => {
+      const stack = makeTestStack(options);
+      const result = await Effect.runPromise(
+        Effect.provide(
+          Effect.gen(function* () {
+            yield* seedSchema50AndGrant;
+            const sql = yield* SqlClient;
+            const gateway = yield* CommandGateway;
+            const receipt = yield* gateway.execute(
+              envelope(),
+              { _tag: "External", principal },
+              makeAuthority(decisionFingerprint()),
+            );
+            return {
+              receipt,
+              counts: (yield* executionCounts(sql, commandId))[0],
+            };
+          }),
+          stack.app,
+        ),
+      );
+      expect(result.receipt.resolution).toMatchObject({
+        _tag: "TerminalRejected",
+        error: {
+          _tag: "StaleSandboxPolicyInputs",
+          safeDetails,
+        },
+      });
+      expect(result.counts).toEqual({ decisions: 0, receipts: 1, events: 0 });
+    },
+  );
 
   it("commits and replays a pre-intent source stale receipt without a decision or event", async () => {
     const stack = makeTestStack({
@@ -980,14 +878,7 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
           yield* seedSchema50AndGrant;
           const sql = yield* SqlClient;
           const gateway = yield* CommandGateway;
-          const fingerprint = semanticRequestFingerprint({
-            commandType: "DecideSandboxPolicy",
-            projectId,
-            actor,
-            schemaVersion: "2",
-            payload,
-          });
-          const auth = makeAuthority(fingerprint);
+          const auth = makeAuthority(decisionFingerprint());
           const first = yield* gateway.execute(
             envelope(),
             { _tag: "External", principal },
@@ -998,18 +889,11 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
             { _tag: "External", principal },
             auth,
           );
-          const rows = yield* sql.unsafe<{
-            decisions: number;
-            receipts: number;
-            events: number;
-          }>(
-            `SELECT
-              (SELECT COUNT(*) FROM sandbox_policy_decisions WHERE decision_command_id = ?) AS decisions,
-              (SELECT COUNT(*) FROM commands WHERE command_id = ?) AS receipts,
-              (SELECT COUNT(*) FROM domain_events WHERE event_type = 'SandboxPolicyDecisionRecorded') AS events`,
-            [commandId, commandId],
-          );
-          return { first, replay, counts: rows[0] };
+          return {
+            first,
+            replay,
+            counts: (yield* executionCounts(sql, commandId))[0],
+          };
         }),
         stack.app,
       ),
@@ -1036,13 +920,7 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
         Effect.gen(function* () {
           yield* seedSchema50AndGrant;
           const gateway = yield* CommandGateway;
-          const fingerprint = semanticRequestFingerprint({
-            commandType: "DecideSandboxPolicy",
-            projectId,
-            actor,
-            schemaVersion: "2",
-            payload,
-          });
+          const fingerprint = decisionFingerprint();
           const committed = yield* gateway.execute(
             envelope(),
             { _tag: "External", principal },
@@ -1150,6 +1028,44 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
     const staleEpisodeCommandId = parse(CommandId)(
       "cmd_018f2b3c-4d5e-7abc-8def-0123456789ac",
     );
+    const authorityFor = (
+      id: CommandId,
+      candidate: DecideSandboxPolicyPayload,
+    ) => ({
+      ...makeAuthority(decisionFingerprint(candidate), id),
+      permissionGrant: v2Grant,
+      issuerProvenance: v2Provenance,
+      authorityBundleRevision: trusted.bundle.bundleRevision,
+      authorityBundleDigest: trusted.bundleDigest,
+      providerRegistryRevision: trusted.bundle.providerRegistryRevision,
+      providerRegistryDigest: trusted.bundle.providerRegistryDigest,
+      operatorConfigRevision: trusted.bundle.operatorConfigRevision,
+      operatorConfigDigest: trusted.bundle.operatorConfigDigest,
+    });
+    const reusedIssuerDigestPayload: DecideSandboxPolicyPayload = {
+      ...trustedPayload,
+      expectedOperatorConfigDigest: trusted.bundle.issuerConfigDigest,
+    };
+    const staleBundlePayload: DecideSandboxPolicyPayload = {
+      ...trustedPayload,
+      expectedAuthorityBundleDigest: "0".repeat(64),
+    };
+    const staleEpisodePayload: DecideSandboxPolicyPayload = {
+      ...trustedPayload,
+      expectedEpisodeRevision: 1,
+    };
+    const executeTrusted = (
+      id: CommandId,
+      candidate: DecideSandboxPolicyPayload,
+    ) =>
+      Effect.gen(function* () {
+        const gateway = yield* CommandGateway;
+        return yield* gateway.execute(
+          envelope(id, candidate),
+          { _tag: "External", principal },
+          authorityFor(id, candidate),
+        );
+      });
     const result = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
@@ -1178,80 +1094,25 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
               );
             }),
           );
-          const gateway = yield* CommandGateway;
-          const authorityFor = (
-            id: CommandId,
-            candidate: DecideSandboxPolicyPayload = trustedPayload,
-          ) => ({
-            ...makeAuthority(
-              semanticRequestFingerprint({
-                commandType: "DecideSandboxPolicy",
-                projectId,
-                actor,
-                schemaVersion: "2",
-                payload: candidate,
-              }),
-              id,
-            ),
-            permissionGrant: v2Grant,
-            issuerProvenance: v2Provenance,
-            authorityBundleRevision: trusted.bundle.bundleRevision,
-            authorityBundleDigest: trusted.bundleDigest,
-            providerRegistryRevision: trusted.bundle.providerRegistryRevision,
-            providerRegistryDigest: trusted.bundle.providerRegistryDigest,
-            operatorConfigRevision: trusted.bundle.operatorConfigRevision,
-            operatorConfigDigest: trusted.bundle.operatorConfigDigest,
-          });
-          const reusedIssuerDigestPayload: DecideSandboxPolicyPayload = {
-            ...trustedPayload,
-            expectedOperatorConfigDigest: trusted.bundle.issuerConfigDigest,
-          };
-          const staleBundlePayload: DecideSandboxPolicyPayload = {
-            ...trustedPayload,
-            expectedAuthorityBundleDigest: "0".repeat(64),
-          };
-          const staleEpisodePayload: DecideSandboxPolicyPayload = {
-            ...trustedPayload,
-            expectedEpisodeRevision: 1,
-          };
-          const reusedIssuerDigest = yield* gateway.execute(
-            envelope(reusedIssuerDigestCommandId, reusedIssuerDigestPayload),
-            { _tag: "External", principal },
-            authorityFor(
-              reusedIssuerDigestCommandId,
-              reusedIssuerDigestPayload,
-            ),
+          const reusedIssuerDigest = yield* executeTrusted(
+            reusedIssuerDigestCommandId,
+            reusedIssuerDigestPayload,
           );
-          const staleBundle = yield* gateway.execute(
-            envelope(staleBundleCommandId, staleBundlePayload),
-            { _tag: "External", principal },
-            authorityFor(staleBundleCommandId, staleBundlePayload),
+          const staleBundle = yield* executeTrusted(
+            staleBundleCommandId,
+            staleBundlePayload,
           );
-          const staleEpisode = yield* gateway.execute(
-            envelope(staleEpisodeCommandId, staleEpisodePayload),
-            { _tag: "External", principal },
-            authorityFor(staleEpisodeCommandId, staleEpisodePayload),
+          const staleEpisode = yield* executeTrusted(
+            staleEpisodeCommandId,
+            staleEpisodePayload,
           );
-          const staleEpisodeReplay = yield* gateway.execute(
-            envelope(staleEpisodeCommandId, staleEpisodePayload),
-            { _tag: "External", principal },
-            authorityFor(staleEpisodeCommandId, staleEpisodePayload),
+          const staleEpisodeReplay = yield* executeTrusted(
+            staleEpisodeCommandId,
+            staleEpisodePayload,
           );
-          const first = yield* gateway.execute(
-            envelope(commandId, trustedPayload),
-            { _tag: "External", principal },
-            authorityFor(commandId),
-          );
-          const replay = yield* gateway.execute(
-            envelope(commandId, trustedPayload),
-            { _tag: "External", principal },
-            authorityFor(commandId),
-          );
-          const stale = yield* gateway.execute(
-            envelope(retryCommandId, trustedPayload),
-            { _tag: "External", principal },
-            authorityFor(retryCommandId),
-          );
+          const first = yield* executeTrusted(commandId, trustedPayload);
+          const replay = yield* executeTrusted(commandId, trustedPayload);
+          const stale = yield* executeTrusted(retryCommandId, trustedPayload);
           const rows = yield* sql.unsafe<{
             decisions: number;
             receipts: number;
@@ -1407,32 +1268,28 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
         expect([null, 137]).toContain(result.status);
       }
     };
+    const crashCommandId = parse(CommandId)(
+      "cmd_018f2b3c-4d5e-7abc-8def-0123456789a3",
+    );
     const readCounts = Effect.gen(function* () {
       const sql = yield* SqlClient;
-      return yield* sql.unsafe<{
-        decisions: number;
-        receipts: number;
-        events: number;
-      }>(
-        `SELECT
-          (SELECT COUNT(*) FROM sandbox_policy_decisions WHERE decision_command_id = 'cmd_018f2b3c-4d5e-7abc-8def-0123456789a3') AS decisions,
-          (SELECT COUNT(*) FROM commands WHERE command_id = 'cmd_018f2b3c-4d5e-7abc-8def-0123456789a3') AS receipts,
-          (SELECT COUNT(*) FROM domain_events WHERE event_type = 'SandboxPolicyDecisionRecorded') AS events`,
-      );
+      return yield* executionCounts(sql, crashCommandId);
     });
-    try {
-      const beforeDb = join(folder, "before.db");
-      const beforeStack = makeTestStack({}, beforeDb);
-      await Effect.runPromise(
+    const seedDatabase = (stack: ReturnType<typeof makeTestStack>) =>
+      Effect.runPromise(
         Effect.provide(
           Effect.gen(function* () {
             yield* seedSchema50AndGrant;
             const sql = yield* SqlClient;
             yield* seedManagedWorktree(sql, worktreePath);
           }),
-          beforeStack.app,
+          stack.app,
         ),
       );
+    try {
+      const beforeDb = join(folder, "before.db");
+      const beforeStack = makeTestStack({}, beforeDb);
+      await seedDatabase(beforeStack);
       const beforeNonce = randomUUID();
       const before = launch(beforeDb, "before-commit", beforeNonce);
       expectChildHandshake(before, beforeNonce, "before-commit");
@@ -1443,16 +1300,7 @@ describe("schema-50 SQLite DecideSandboxPolicy Gateway atomicity", () => {
 
       const afterDb = join(folder, "after.db");
       const afterStack = makeTestStack({}, afterDb);
-      await Effect.runPromise(
-        Effect.provide(
-          Effect.gen(function* () {
-            yield* seedSchema50AndGrant;
-            const sql = yield* SqlClient;
-            yield* seedManagedWorktree(sql, worktreePath);
-          }),
-          afterStack.app,
-        ),
-      );
+      await seedDatabase(afterStack);
       const afterNonce = randomUUID();
       const after = launch(afterDb, "after-commit", afterNonce);
       expectChildHandshake(after, afterNonce, "after-commit");
@@ -1566,4 +1414,29 @@ const seedManagedWorktree = (sql: SqlClient, path: string) =>
       ) VALUES (?, ?, ?, ?, NULL, NULL, 'Active', ?, NULL)`,
       ["wt_sandbox_policy", projectId, workspaceId, path, now],
     );
+  });
+
+// Shared atomicity oracle: decision, receipt and event counts for one command.
+const executionCounts = (sql: SqlClient, commandId: CommandId) =>
+  sql.unsafe<{
+    decisions: number;
+    receipts: number;
+    events: number;
+  }>(
+    `SELECT
+      (SELECT COUNT(*) FROM sandbox_policy_decisions WHERE decision_command_id = ?) AS decisions,
+      (SELECT COUNT(*) FROM commands WHERE command_id = ?) AS receipts,
+      (SELECT COUNT(*) FROM domain_events WHERE event_type = 'SandboxPolicyDecisionRecorded') AS events`,
+    [commandId, commandId],
+  );
+
+const decisionFingerprint = (
+  commandPayload: DecideSandboxPolicyPayload = payload,
+) =>
+  semanticRequestFingerprint({
+    commandType: "DecideSandboxPolicy",
+    projectId,
+    actor,
+    schemaVersion: "2",
+    payload: commandPayload,
   });

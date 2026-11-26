@@ -2,16 +2,9 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SecretStorePort, secretRef, ToolCatalogPort } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect, type Layer } from "effect";
-import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, vi } from "vitest";
 import { createCurrentSchemaTestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import { buildSingleWorkspaceLayer } from "../src/composition.js";
 import { main } from "../src/main.js";
@@ -93,42 +86,45 @@ describe("arbor.config.json — standard provider configuration", () => {
     expect(startup.processExecutionMode).toBe("Disabled");
   });
 
-  it("does not let an untyped production override expose TrustedLocal shell", async () => {
-    expect(productionConfigHasNoTrustedLocalSwitch).toBe(true);
-    const database = schema44Factory.create();
-    // This test is about the production composition boundary, not the
-    // developer's real user configuration. An explicit missing path prevents
-    // the test from inheriting ~/.config/arbor/arbor.config.json and turning
-    // a valid NativeOsSupportedOnly shell into a false TrustedLocal failure.
-    const { dir } = withConfig(
-      JSON.stringify({
-        provider: { deploymentId: "test-only", modelRef: "test-only" },
-      }),
-    );
-    const priorConfig = process.env.ARBOR_CONFIG;
-    process.env.ARBOR_CONFIG = join(dir, "fresh-install.json");
-    const forgedConfig = {
-      databaseFile: database.databaseFilename,
-      processExecutionMode: "Disabled",
-      testOnlyAllowTrustedLocalProcessExecution: true,
-    } as unknown as import("../src/composition.js").SingleWorkspaceConfig;
-    try {
-      const visible = await Effect.runPromise(
-        Effect.provide(
-          Effect.gen(function* () {
-            const catalog = yield* ToolCatalogPort;
-            return yield* catalog.visibleRefs();
+  it.effect(
+    "does not let an untyped production override expose TrustedLocal shell",
+    () =>
+      Effect.gen(function* () {
+        expect(productionConfigHasNoTrustedLocalSwitch).toBe(true);
+        const database = schema44Factory.create();
+        // This test is about the production composition boundary, not the
+        // developer's real user configuration. An explicit missing path prevents
+        // the test from inheriting ~/.config/arbor/arbor.config.json and turning
+        // a valid NativeOsSupportedOnly shell into a false TrustedLocal failure.
+        const { dir } = withConfig(
+          JSON.stringify({
+            provider: { deploymentId: "test-only", modelRef: "test-only" },
           }),
-          main(forgedConfig),
-        ),
-      );
-      expect(visible.some((ref) => ref.name === "shell")).toBe(false);
-    } finally {
-      if (priorConfig === undefined) delete process.env.ARBOR_CONFIG;
-      else process.env.ARBOR_CONFIG = priorConfig;
-      database.cleanup();
-    }
-  }, 120_000);
+        );
+        const priorConfig = process.env.ARBOR_CONFIG;
+        process.env.ARBOR_CONFIG = join(dir, "fresh-install.json");
+        const forgedConfig = {
+          databaseFile: database.databaseFilename,
+          processExecutionMode: "Disabled",
+          testOnlyAllowTrustedLocalProcessExecution: true,
+        } as unknown as import("../src/composition.js").SingleWorkspaceConfig;
+        try {
+          const visible = yield* Effect.provide(
+            Effect.gen(function* () {
+              const catalog = yield* ToolCatalogPort;
+              return yield* catalog.visibleRefs();
+            }),
+            main(forgedConfig),
+          );
+          expect(visible.some((ref) => ref.name === "shell")).toBe(false);
+        } finally {
+          if (priorConfig === undefined) delete process.env.ARBOR_CONFIG;
+          else process.env.ARBOR_CONFIG = priorConfig;
+          database.cleanup();
+        }
+      }),
+    120_000,
+  );
 
   it("defaults the closed process mode to Disabled and accepts only its v1 shape", () => {
     expect(processExecutionModeOfConfig(undefined)).toBe("Disabled");
@@ -266,37 +262,40 @@ describe("arbor.config.json — standard provider configuration", () => {
     });
   });
 
-  it("the inline secret store rejects every ref except its sentinel", async () => {
-    const database = schema44Factory.create();
-    const app = buildSingleWorkspaceLayer({
-      databaseFile: database.databaseFilename,
-      secretRef: secretRef("arbor:inline-secret"),
-      secretStore: {
-        _tag: "Inline",
-        material: "sk-test-inline-123",
-      },
-    }) as unknown as Layer.Layer<SecretStorePort>;
-    try {
-      const failure = await Effect.runPromise(
-        Effect.provide(
-          Effect.gen(function* () {
-            const secrets = yield* SecretStorePort;
-            return yield* Effect.flip(
-              secrets.resolve(secretRef("another-provider-secret")),
-            );
-          }),
-          app,
-        ),
-      );
+  it.effect(
+    "the inline secret store rejects every ref except its sentinel",
+    () =>
+      Effect.gen(function* () {
+        const database = schema44Factory.create();
+        const app = buildSingleWorkspaceLayer({
+          databaseFile: database.databaseFilename,
+          secretRef: secretRef("arbor:inline-secret"),
+          secretStore: {
+            _tag: "Inline",
+            material: "sk-test-inline-123",
+          },
+        }) as unknown as Layer.Layer<SecretStorePort>;
+        try {
+          const failure = yield* Effect.provide(
+            Effect.gen(function* () {
+              const secrets = yield* SecretStorePort;
+              return yield* Effect.flip(
+                secrets.resolve(secretRef("another-provider-secret")),
+              );
+            }),
+            app,
+          );
 
-      expect(failure).toEqual({
-        _tag: "SecretNotFound",
-        secretRef: "another-provider-secret",
-      });
-    } finally {
-      database.cleanup();
-    }
-  }, 120_000);
+          expect(failure).toEqual({
+            _tag: "SecretNotFound",
+            secretRef: "another-provider-secret",
+          });
+        } finally {
+          database.cleanup();
+        }
+      }),
+    120_000,
+  );
 
   it("missing required fields produce a typed validation error", () => {
     const { path } = withConfig(

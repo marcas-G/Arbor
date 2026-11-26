@@ -15,9 +15,10 @@ import {
   RuntimeSafetyGate,
   TransactionPort,
 } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect } from "vitest";
 import { ensureLegacyProjectResourceSourceFixture } from "../../../tests/support/legacy-project-resource-source.js";
 import {
   createCurrentSchemaTestDatabaseFactory,
@@ -160,67 +161,74 @@ const context: CommandSubmissionContext = {
 };
 
 describe("OBSOLETE_CONTRACT_TEST — DirectiveUnsupported universal envelope", () => {
-  it("fails closed on an unregistered legacy control envelope", async () => {
-    const fixture = createSchema44Case();
-    schema44Cleanups.push(fixture.cleanup);
-    const app = buildSingleWorkspaceLayer({
-      databaseFile: fixture.databaseFilename,
-      providerTurns: turns,
-    });
-    const result = await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          yield* seed;
-          yield* ensureLegacyProjectResourceSourceFixture();
-          const tx = yield* TransactionPort;
-          const leases = yield* LeaseService;
-          yield* tx.transact(leases.acquire(executionId, "worker:a", "inc-a"));
-          const driver = yield* ExecutionDriverPort;
-          const gate = yield* RuntimeSafetyGate;
-          const settlement = yield* driver.drive({
-            execution,
-            agentExecutionState: {
-              executionId,
-              focus: { _tag: "Coordination" },
+  it.effect(
+    "fails closed on an unregistered legacy control envelope",
+    () =>
+      Effect.gen(function* () {
+        const fixture = createSchema44Case();
+        schema44Cleanups.push(fixture.cleanup);
+        const app = buildSingleWorkspaceLayer({
+          databaseFile: fixture.databaseFilename,
+          providerTurns: turns,
+        });
+        const result = yield* Effect.provide(
+          Effect.gen(function* () {
+            yield* seed;
+            yield* ensureLegacyProjectResourceSourceFixture();
+            const tx = yield* TransactionPort;
+            const leases = yield* LeaseService;
+            yield* tx.transact(
+              leases.acquire(executionId, "worker:a", "inc-a"),
+            );
+            const driver = yield* ExecutionDriverPort;
+            const gate = yield* RuntimeSafetyGate;
+            const settlement = yield* driver.drive({
+              execution,
+              agentExecutionState: {
+                executionId,
+                focus: { _tag: "Coordination" },
+                wakeReason: { _tag: "WorkSelected" },
+                currentMode: "execute",
+                activeSkillRefs: [],
+                turnNo: 0,
+                recentDirectiveRefs: [],
+                recentActionFingerprints: [],
+                updatedAt: "t",
+              },
               wakeReason: { _tag: "WorkSelected" },
-              currentMode: "execute",
-              activeSkillRefs: [],
-              turnNo: 0,
-              recentDirectiveRefs: [],
-              recentActionFingerprints: [],
-              updatedAt: "t",
-            },
-            wakeReason: { _tag: "WorkSelected" },
-            context,
-            safetyGate: gate,
-          });
-          const sql = yield* SqlClient;
-          const entries = yield* sql.unsafe<{ payload_json: string }>(
-            "SELECT payload_json FROM session_entries WHERE session_id = ?",
-            [sessionId],
-          );
-          return { settlement, entries: entries.map((e) => e.payload_json) };
-        }),
-        app,
-      ) as unknown as Effect.Effect<
-        {
-          settlement: { _tag: string; result?: { _tag: string } };
-          entries: ReadonlyArray<string>;
-        },
-        unknown,
-        never
-      >,
-    );
-    expect(result.settlement).toMatchObject({
-      _tag: "Interrupted",
-      result: {
-        _tag: "ControlledInterruption",
-        reason: "UnknownTool",
-      },
-    });
-    expect(
-      result.entries.some((entry) => entry.includes("DirectiveUnsupported")),
-    ).toBe(false);
-    void actor;
-  }, 120_000);
+              context,
+              safetyGate: gate,
+            });
+            const sql = yield* SqlClient;
+            const entries = yield* sql.unsafe<{ payload_json: string }>(
+              "SELECT payload_json FROM session_entries WHERE session_id = ?",
+              [sessionId],
+            );
+            return { settlement, entries: entries.map((e) => e.payload_json) };
+          }),
+          app,
+        ) as unknown as Effect.Effect<
+          {
+            settlement: { _tag: string; result?: { _tag: string } };
+            entries: ReadonlyArray<string>;
+          },
+          unknown,
+          never
+        >;
+        expect(result.settlement).toMatchObject({
+          _tag: "Interrupted",
+          result: {
+            _tag: "ControlledInterruption",
+            reason: "UnknownTool",
+          },
+        });
+        expect(
+          result.entries.some((entry) =>
+            entry.includes("DirectiveUnsupported"),
+          ),
+        ).toBe(false);
+        void actor;
+      }),
+    120_000,
+  );
 });

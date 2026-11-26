@@ -7,7 +7,8 @@ import {
   parse,
 } from "@arbor/domain";
 import { SandboxPort } from "@arbor/ports";
-import { Effect } from "effect";
+import { it as itEffect } from "@effect/vitest";
+import { Context, Effect, Layer } from "effect";
 import { describe, expect, it } from "vitest";
 import { SandboxPortLive } from "../src/index.js";
 
@@ -22,41 +23,56 @@ const regions: ReadonlyArray<CanonicalResourceRegion> = [
 ];
 
 describe("P4 local sandbox", () => {
-  it("binds the admitted workspace root and never deletes it on close", async () => {
-    const root = mkdtempSync(join(tmpdir(), "arbor-local-bind-"));
-    const result = await Effect.runPromise(
-      Effect.provide(
+  itEffect.effect(
+    "binds the admitted workspace root and never deletes it on close",
+    () =>
+      Effect.gen(function* () {
+        const root = mkdtempSync(join(tmpdir(), "arbor-local-bind-"));
+        const sandbox = yield* SandboxPort;
+        const handle = yield* sandbox.open({
+          executionId,
+          workspaceId: "ws_x" as never,
+          mounts: [
+            {
+              ref: "workspace",
+              address: { _tag: "GitWorktree", path: root },
+              region: regions[0] as CanonicalResourceRegion,
+              access: "ReadWrite",
+            },
+          ],
+        });
+        const existed = existsSync(handle.rootPath);
+        yield* sandbox.close(handle);
+        expect(existed).toBe(true);
+        expect(existsSync(handle.rootPath)).toBe(true);
+        expect(handle.rootPath).toBe(root);
+        expect(handle.mounts?.map((mount) => mount.ref)).toEqual(["workspace"]);
+        expect(handle.writableRegions).toHaveLength(1);
+      }).pipe(Effect.provide(SandboxPortLive)),
+  );
+
+  it("removes a legacy region root left open when the Layer scope closes", async () => {
+    let rootPath: string | undefined;
+    // Build and tear the Layer down manually: the release obligation is the
+    // Layer's (E07), so scope close must remove an open legacy root.
+    await Effect.runPromise(
+      Effect.scoped(
         Effect.gen(function* () {
-          const sandbox = yield* SandboxPort;
+          const context = yield* Layer.build(SandboxPortLive);
+          const sandbox = Context.get(context, SandboxPort);
           const handle = yield* sandbox.open({
             executionId,
             workspaceId: "ws_x" as never,
-            mounts: [
-              {
-                ref: "workspace",
-                address: { _tag: "GitWorktree", path: root },
-                region: regions[0] as CanonicalResourceRegion,
-                access: "ReadWrite",
-              },
-            ],
+            // No mounts: the legacy pre-EWB path owns a temporary root.
           });
-          const existed = existsSync(handle.rootPath);
-          yield* sandbox.close(handle);
-          return {
-            existed,
-            after: existsSync(handle.rootPath),
-            rootPath: handle.rootPath,
-            mounts: handle.mounts,
-            regions: handle.writableRegions,
-          };
+          expect(handle.rootPath).toContain("arbor-sbx-");
+          expect(existsSync(handle.rootPath)).toBe(true);
+          rootPath = handle.rootPath;
+          // The handle is deliberately never closed here.
         }),
-        SandboxPortLive,
       ),
     );
-    expect(result.existed).toBe(true);
-    expect(result.after).toBe(true);
-    expect(result.rootPath).toBe(root);
-    expect(result.mounts?.map((mount) => mount.ref)).toEqual(["workspace"]);
-    expect(result.regions).toHaveLength(1);
+    expect(rootPath).toBeDefined();
+    expect(existsSync(rootPath as string)).toBe(false);
   });
 });

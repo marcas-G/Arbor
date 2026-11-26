@@ -52,6 +52,7 @@ import {
   SessionRepository,
   VerificationRepository,
   WorkContractRevisionRepository,
+  WorkReadmissionGateStore,
   WorkRepository,
   WorkspaceRepository,
   WorkspaceSandboxAuthorizationStore,
@@ -244,6 +245,9 @@ describe("external command codec registry parity", () => {
         Layer.succeed(WorkContractRevisionRepository, {} as never),
         Layer.succeed(ExecutionRepository, {} as never),
         Layer.succeed(WorkWaitStore, {} as never),
+        Layer.succeed(WorkReadmissionGateStore, {
+          hasBlockingSource: () => Effect.succeed(Option.none()),
+        }),
         Layer.succeed(FormationProposalStore, {} as never),
         Layer.succeed(InboxProjectionStore, {} as never),
         Layer.succeed(MessageStore, {} as never),
