@@ -9,13 +9,13 @@ import type {
   AgentLoopStepFence,
   AgentLoopStepRecord,
   BoundedObservation,
-  ExecutionDriverError,
   LeaseFencingRejected,
   sessionCausalBindingForWork,
 } from "@arbor/ports";
 import { sha256Hex } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { classifyToolRoute } from "../control.js";
+import type { ActionLedgerError } from "./errors.js";
 import type { AgentLoopActionDependencies } from "./types.js";
 
 /** The orchestrator owns the cursor; ledger operations update the same cursor. */
@@ -181,7 +181,7 @@ export const makeActionLedger = (
     readonly artifactRefs?: ReadonlyArray<string>;
     readonly invocationId?: ToolInvocationId;
     readonly reconciliationFactRef?: string;
-  }): Effect.Effect<void, ExecutionDriverError> =>
+  }): Effect.Effect<void, ActionLedgerError> =>
     Effect.gen(function* () {
       if (
         cursor.loopAction === undefined ||
@@ -229,84 +229,27 @@ export const makeActionLedger = (
             }) ?? Promise.resolve(),
         );
       }
-      cursor.currentLoopStep = yield* tx
-        .transact(
-          Effect.gen(function* () {
-            if (terminal.durableSettlementEffect !== undefined) {
-              const persistedActions = yield* loopSteps.listActions(
-                pendingAction.identity,
-              );
-              const persistedAction = persistedActions.find(
-                (candidate) =>
-                  candidate.actionIndex === pendingAction.actionIndex &&
-                  candidate.logicalActionId === pendingAction.logicalActionId &&
-                  candidate.callRef === pendingAction.callRef,
-              );
-              if (
-                persistedAction === undefined ||
-                persistedAction.state !== "Pending"
-              ) {
-                if (dependencies.qualificationProbe !== undefined) {
-                  yield* Effect.promise(
-                    () =>
-                      dependencies.qualificationProbe?.({
-                        boundary: "AH7StaleDirectControlEffectSuppressed",
-                        providerTurnId: preparedTurn.manifest.providerTurnId,
-                        executionId: input.execution.executionId,
-                        logicalActionId: pendingAction.logicalActionId,
-                        actionKind: invocation.toolName,
-                        routeKind: "Control",
-                        callRef: invocation.callRef,
-                        actionIndex,
-                        stage:
-                          persistedAction === undefined
-                            ? "P9ActionMissing"
-                            : `P9Action${persistedAction.state}`,
-                      }) ?? Promise.resolve(),
-                  );
-                }
-                return yield* Effect.fail<LeaseFencingRejected>({
-                  _tag: "LeaseFencingRejected",
-                  executionId: loopStepFence.executionId,
-                  generation: loopStepFence.fencingGeneration,
-                });
-              }
-            }
-            const terminalResult = yield* appendTerminalResult(
-              invocation,
-              route,
-              {
-                status: terminal.status,
-                disposition: terminal.disposition,
-                outputText: terminal.outputText,
-                ...(terminal.truncated === undefined
-                  ? {}
-                  : { truncated: terminal.truncated }),
-                canonicalRefs: [settlementRef],
-                ...(terminal.modelOutputRef === undefined
-                  ? {}
-                  : { modelOutputRef: terminal.modelOutputRef }),
-                ...(terminal.artifactRefs === undefined
-                  ? {}
-                  : { artifactRefs: terminal.artifactRefs }),
-                ...(terminal.invocationId === undefined
-                  ? {}
-                  : { invocationId: terminal.invocationId }),
-                ...(terminal.reconciliationFactRef === undefined
-                  ? {}
-                  : {
-                      reconciliationFactRef: terminal.reconciliationFactRef,
-                    }),
-              },
-              loopStepFence,
+      cursor.currentLoopStep = yield* tx.transact(
+        Effect.gen(function* () {
+          if (terminal.durableSettlementEffect !== undefined) {
+            const persistedActions = yield* loopSteps.listActions(
+              pendingAction.identity,
             );
-            if (terminal.durableSettlementEffect !== undefined) {
-              yield* terminal.durableSettlementEffect;
+            const persistedAction = persistedActions.find(
+              (candidate) =>
+                candidate.actionIndex === pendingAction.actionIndex &&
+                candidate.logicalActionId === pendingAction.logicalActionId &&
+                candidate.callRef === pendingAction.callRef,
+            );
+            if (
+              persistedAction === undefined ||
+              persistedAction.state !== "Pending"
+            ) {
               if (dependencies.qualificationProbe !== undefined) {
                 yield* Effect.promise(
                   () =>
                     dependencies.qualificationProbe?.({
-                      boundary: "AH7BeforeActionResultCommit",
+                      boundary: "AH7StaleDirectControlEffectSuppressed",
                       providerTurnId: preparedTurn.manifest.providerTurnId,
                       executionId: input.execution.executionId,
                       logicalActionId: pendingAction.logicalActionId,
@@ -314,126 +257,183 @@ export const makeActionLedger = (
                       routeKind: "Control",
                       callRef: invocation.callRef,
                       actionIndex,
+                      stage:
+                        persistedAction === undefined
+                          ? "P9ActionMissing"
+                          : `P9Action${persistedAction.state}`,
                     }) ?? Promise.resolve(),
                 );
               }
+              return yield* Effect.fail<LeaseFencingRejected>({
+                _tag: "LeaseFencingRejected",
+                executionId: loopStepFence.executionId,
+                generation: loopStepFence.fencingGeneration,
+              });
             }
-            yield* loopSteps.transitionAction(
-              {
-                identity: pendingAction.identity,
-                actionIndex: pendingAction.actionIndex,
-                expectedRevision: pendingAction.revision,
-                expectedState: "Pending",
-                next: {
-                  ...pendingAction,
-                  state: terminal.actionState,
-                  resultRef: terminalResult.resultRef,
-                  settlementRef,
-                  disposition: {
-                    _tag: terminal.disposition,
-                    status: terminal.status,
-                    ...(terminal.terminalDenial === undefined
-                      ? {}
-                      : { terminalDenial: terminal.terminalDenial }),
-                  },
-                  observationSourceRef: terminalResult.observationSourceRef,
-                  revision: pendingAction.revision + 1,
-                  updatedAt: yield* now(),
-                },
-              },
-              loopStepFence,
+          }
+          const terminalResult = yield* appendTerminalResult(
+            invocation,
+            route,
+            {
+              status: terminal.status,
+              disposition: terminal.disposition,
+              outputText: terminal.outputText,
+              ...(terminal.truncated === undefined
+                ? {}
+                : { truncated: terminal.truncated }),
+              canonicalRefs: [settlementRef],
+              ...(terminal.modelOutputRef === undefined
+                ? {}
+                : { modelOutputRef: terminal.modelOutputRef }),
+              ...(terminal.artifactRefs === undefined
+                ? {}
+                : { artifactRefs: terminal.artifactRefs }),
+              ...(terminal.invocationId === undefined
+                ? {}
+                : { invocationId: terminal.invocationId }),
+              ...(terminal.reconciliationFactRef === undefined
+                ? {}
+                : {
+                    reconciliationFactRef: terminal.reconciliationFactRef,
+                  }),
+            },
+            loopStepFence,
+          );
+          if (terminal.durableSettlementEffect !== undefined) {
+            yield* terminal.durableSettlementEffect.pipe(
+              Effect.mapError(failure),
             );
-            for (
-              let skippedIndex = actionIndex + 1;
-              skippedIndex < decodedOutput.toolInvocations.length;
-              skippedIndex += 1
-            ) {
-              const skippedInvocation =
-                decodedOutput.toolInvocations[skippedIndex];
-              if (skippedInvocation === undefined) continue;
-              const skippedClassification = classifyToolRoute(
-                preparedTurn.toolRoutes,
-                controlRegistry,
-                skippedInvocation.toolName,
-              );
-              if (skippedClassification._tag === "Invalid") continue;
-              const skippedRoute =
-                skippedClassification._tag === "Stale"
-                  ? ({ _tag: skippedClassification.route } as const)
-                  : skippedClassification;
-              const pending = yield* loopSteps.createAction(
-                {
-                  identity: actionsStep.identity,
-                  actionIndex: skippedIndex,
-                  logicalActionId: `lac_${sha256Hex(
-                    JSON.stringify({
-                      executionId: input.execution.executionId,
-                      providerTurnId: preparedTurn.manifest.providerTurnId,
-                      callRef: skippedInvocation.callRef,
-                      routeKind: skippedRoute._tag,
-                      actionKind: skippedInvocation.toolName,
-                    }),
-                  )}`,
-                  callRef: skippedInvocation.callRef,
-                  routeKind: skippedRoute._tag,
-                  actionKind: skippedInvocation.toolName,
-                  inputHash: sha256Hex(skippedInvocation.argumentsJson),
-                  state: "Pending",
-                  revision: 0,
-                  updatedAt: yield* now(),
-                },
-                loopStepFence,
-              );
-              const skippedResult = yield* appendTerminalResult(
-                skippedInvocation,
-                skippedRoute,
-                {
-                  status: "Interrupted",
-                  disposition: "SkippedEarlySettlement",
-                  outputText: `${skippedInvocation.toolName} skipped because an earlier action settled the execution`,
-                  canonicalRefs: [settlementRef],
-                },
-                loopStepFence,
-              );
-              yield* loopSteps.transitionAction(
-                {
-                  identity: pending.identity,
-                  actionIndex: pending.actionIndex,
-                  expectedRevision: pending.revision,
-                  expectedState: "Pending",
-                  next: {
-                    ...pending,
-                    state: "SkippedEarlySettlement",
-                    resultRef: skippedResult.resultRef,
-                    settlementRef,
-                    disposition: { _tag: "SkippedEarlySettlement" },
-                    observationSourceRef: skippedResult.observationSourceRef,
-                    revision: pending.revision + 1,
-                    updatedAt: yield* now(),
-                  },
-                },
-                loopStepFence,
+            if (dependencies.qualificationProbe !== undefined) {
+              yield* Effect.promise(
+                () =>
+                  dependencies.qualificationProbe?.({
+                    boundary: "AH7BeforeActionResultCommit",
+                    providerTurnId: preparedTurn.manifest.providerTurnId,
+                    executionId: input.execution.executionId,
+                    logicalActionId: pendingAction.logicalActionId,
+                    actionKind: invocation.toolName,
+                    routeKind: "Control",
+                    callRef: invocation.callRef,
+                    actionIndex,
+                  }) ?? Promise.resolve(),
               );
             }
-            return yield* loopSteps.transition(
+          }
+          yield* loopSteps.transitionAction(
+            {
+              identity: pendingAction.identity,
+              actionIndex: pendingAction.actionIndex,
+              expectedRevision: pendingAction.revision,
+              expectedState: "Pending",
+              next: {
+                ...pendingAction,
+                state: terminal.actionState,
+                resultRef: terminalResult.resultRef,
+                settlementRef,
+                disposition: {
+                  _tag: terminal.disposition,
+                  status: terminal.status,
+                  ...(terminal.terminalDenial === undefined
+                    ? {}
+                    : { terminalDenial: terminal.terminalDenial }),
+                },
+                observationSourceRef: terminalResult.observationSourceRef,
+                revision: pendingAction.revision + 1,
+                updatedAt: yield* now(),
+              },
+            },
+            loopStepFence,
+          );
+          for (
+            let skippedIndex = actionIndex + 1;
+            skippedIndex < decodedOutput.toolInvocations.length;
+            skippedIndex += 1
+          ) {
+            const skippedInvocation =
+              decodedOutput.toolInvocations[skippedIndex];
+            if (skippedInvocation === undefined) continue;
+            const skippedClassification = classifyToolRoute(
+              preparedTurn.toolRoutes,
+              controlRegistry,
+              skippedInvocation.toolName,
+            );
+            if (skippedClassification._tag === "Invalid") continue;
+            const skippedRoute =
+              skippedClassification._tag === "Stale"
+                ? ({ _tag: skippedClassification.route } as const)
+                : skippedClassification;
+            const pending = yield* loopSteps.createAction(
               {
                 identity: actionsStep.identity,
-                expectedRevision: actionsStep.revision,
-                expectedState: "ActionsInProgress",
+                actionIndex: skippedIndex,
+                logicalActionId: `lac_${sha256Hex(
+                  JSON.stringify({
+                    executionId: input.execution.executionId,
+                    providerTurnId: preparedTurn.manifest.providerTurnId,
+                    callRef: skippedInvocation.callRef,
+                    routeKind: skippedRoute._tag,
+                    actionKind: skippedInvocation.toolName,
+                  }),
+                )}`,
+                callRef: skippedInvocation.callRef,
+                routeKind: skippedRoute._tag,
+                actionKind: skippedInvocation.toolName,
+                inputHash: sha256Hex(skippedInvocation.argumentsJson),
+                state: "Pending",
+                revision: 0,
+                updatedAt: yield* now(),
+              },
+              loopStepFence,
+            );
+            const skippedResult = yield* appendTerminalResult(
+              skippedInvocation,
+              skippedRoute,
+              {
+                status: "Interrupted",
+                disposition: "SkippedEarlySettlement",
+                outputText: `${skippedInvocation.toolName} skipped because an earlier action settled the execution`,
+                canonicalRefs: [settlementRef],
+              },
+              loopStepFence,
+            );
+            yield* loopSteps.transitionAction(
+              {
+                identity: pending.identity,
+                actionIndex: pending.actionIndex,
+                expectedRevision: pending.revision,
+                expectedState: "Pending",
                 next: {
-                  ...actionsStep,
-                  state: "SettlementProposed",
-                  nextActionIndex: decodedOutput.toolInvocations.length,
-                  settlement: terminal.settlement,
-                  revision: actionsStep.revision + 1,
+                  ...pending,
+                  state: "SkippedEarlySettlement",
+                  resultRef: skippedResult.resultRef,
+                  settlementRef,
+                  disposition: { _tag: "SkippedEarlySettlement" },
+                  observationSourceRef: skippedResult.observationSourceRef,
+                  revision: pending.revision + 1,
                   updatedAt: yield* now(),
                 },
               },
               loopStepFence,
             );
-          }),
-        )
-        .pipe(Effect.mapError(failure));
+          }
+          return yield* loopSteps.transition(
+            {
+              identity: actionsStep.identity,
+              expectedRevision: actionsStep.revision,
+              expectedState: "ActionsInProgress",
+              next: {
+                ...actionsStep,
+                state: "SettlementProposed",
+                nextActionIndex: decodedOutput.toolInvocations.length,
+                settlement: terminal.settlement,
+                revision: actionsStep.revision + 1,
+                updatedAt: yield* now(),
+              },
+            },
+            loopStepFence,
+          );
+        }),
+      );
       if (
         terminal.actionState === "ReconciliationPending" &&
         terminal.status === "OutcomeUnknown" &&
@@ -475,21 +475,19 @@ export const makeActionLedger = (
       unknown,
       import("@arbor/ports").TransactionScope
     >,
-  ): Effect.Effect<void, ExecutionDriverError> =>
+  ): Effect.Effect<void, ActionLedgerError> =>
     Effect.gen(function* () {
       if (
         settlement._tag === "OutcomeUnknown" &&
         loopStepFence !== undefined &&
         dependencies.recordReconciliationEscalation !== undefined
       ) {
-        yield* dependencies
-          .recordReconciliationEscalation({
-            execution: input.execution,
-            fence: loopStepFence,
-            principal: input.context.principal,
-            invocationRefs: settlement.reconciliation.invocationRefs,
-          })
-          .pipe(Effect.mapError(failure));
+        yield* dependencies.recordReconciliationEscalation({
+          execution: input.execution,
+          fence: loopStepFence,
+          principal: input.context.principal,
+          invocationRefs: settlement.reconciliation.invocationRefs,
+        });
       }
       yield* persistTerminalAction({
         settlement,
@@ -518,7 +516,7 @@ export const makeActionLedger = (
     disposition: string,
     status: import("@arbor/ports").PortableToolResultStatus = "Denied",
     terminalDenial?: TerminalActionDenial,
-  ): Effect.Effect<void, ExecutionDriverError> =>
+  ): Effect.Effect<void, ActionLedgerError> =>
     persistTerminalAction({
       settlement,
       actionState: "TerminalRejected",
@@ -540,7 +538,7 @@ export const makeActionLedger = (
       readonly terminalDenial?: TerminalActionDenial;
       readonly reconciliationFactRef?: string;
     } = {},
-  ): Effect.Effect<boolean, ExecutionDriverError> =>
+  ): Effect.Effect<boolean, ActionLedgerError> =>
     Effect.gen(function* () {
       // Recovery can settle the P4 invocation before this P3 process has
       // observed the corresponding fenced step transition. Refresh the
@@ -552,14 +550,14 @@ export const makeActionLedger = (
         loopStepFence !== undefined &&
         cursor.currentLoopStep !== undefined
       ) {
-        const freshStep = yield* tx
-          .transact(loopSteps.find(cursor.currentLoopStep.identity))
-          .pipe(Effect.mapError(failure));
+        const freshStep = yield* tx.transact(
+          loopSteps.find(cursor.currentLoopStep.identity),
+        );
         if (Option.isSome(freshStep)) {
           cursor.currentLoopStep = freshStep.value;
-          const freshActions = yield* tx
-            .transact(loopSteps.listActions(cursor.currentLoopStep.identity))
-            .pipe(Effect.mapError(failure));
+          const freshActions = yield* tx.transact(
+            loopSteps.listActions(cursor.currentLoopStep.identity),
+          );
           cursor.loopAction = freshActions.find(
             (candidate) => candidate.actionIndex === actionIndex,
           );
@@ -621,146 +619,143 @@ export const makeActionLedger = (
           resultRef,
         }),
       )}`;
-      cursor.currentLoopStep = yield* tx
-        .transact(
-          Effect.gen(function* () {
-            if (yield* sessions.supportsTypedTimeline()) {
-              const item =
-                route._tag === "Executable"
-                  ? {
-                      _tag: "ToolResult" as const,
-                      callRef: invocation.callRef,
-                      toolName: invocation.toolName,
-                      ...(resultMetadata.invocationId === undefined
-                        ? {}
-                        : { invocationId: resultMetadata.invocationId }),
-                      ...(resultMetadata.reconciliationFactRef === undefined
-                        ? {}
-                        : {
-                            reconciliationFactRef:
-                              resultMetadata.reconciliationFactRef,
-                          }),
-                      ...(resultMetadata.reconciliationFactRef === undefined
-                        ? {}
-                        : { disposition }),
-                      status,
-                      observationRef: observationSourceRef,
-                      modelOutputRef: resultMetadata.resultRef ?? resultRef,
-                      outputText: observation.text,
-                      truncated: observation.truncated,
-                      artifactRefs: resultMetadata.artifactRefs ?? [],
-                    }
-                  : {
-                      _tag: "ControlResult" as const,
-                      callRef: invocation.callRef,
-                      actionKind: invocation.toolName,
-                      status,
-                      disposition,
-                      outputText: observation.text,
-                      truncated: observation.truncated,
-                      canonicalRefs: [],
-                      observationRef: observationSourceRef,
-                    };
-              yield* sessions.appendItemIdempotent(
-                input.execution.sessionId,
-                {
-                  item,
-                  contextEpoch: preparedTurn.manifest.contextEpoch,
-                  source: {
-                    kind: "AgentLoopAction",
-                    ref: observationSourceRef,
-                  },
-                  contentHash: sha256Hex(JSON.stringify(item)),
-                  ...(causalBinding === undefined ? {} : { causalBinding }),
-                },
-                loopStepFence,
-              );
-            } else {
-              const durablePayload = {
-                ...payload,
-                ...(resultMetadata.reconciliationFactRef === undefined
-                  ? {}
-                  : {
-                      reconciliationFactRef:
-                        resultMetadata.reconciliationFactRef,
-                    }),
-              };
-              yield* sessions.appendEntryIdempotent(
-                input.execution.sessionId,
-                { kind: "AgentLoopAction", ref: observationSourceRef },
-                { entryKind: "Observation", payload: durablePayload },
-                sha256Hex(JSON.stringify(durablePayload)),
-                loopStepFence,
-                causalBinding,
-              );
-            }
-            yield* loopSteps.transitionAction(
-              {
-                identity: pendingAction.identity,
-                actionIndex: pendingAction.actionIndex,
-                expectedRevision: pendingAction.revision,
-                expectedState: pendingAction.state,
-                next: {
-                  ...pendingAction,
-                  state:
-                    route._tag === "Executable" && status === "Denied"
-                      ? "TerminalRejected"
-                      : "Applied",
-                  resultRef,
-                  ...(denialSettlementRef === undefined
-                    ? {}
-                    : { settlementRef: denialSettlementRef }),
-                  disposition: {
-                    _tag: disposition,
-                    status,
-                    ...(resultMetadata.terminalDenial === undefined
-                      ? {}
-                      : { terminalDenial: resultMetadata.terminalDenial }),
-                  },
-                  observationSourceRef,
-                  revision: pendingAction.revision + 1,
-                  updatedAt: yield* now(),
-                },
-              },
-              loopStepFence,
-            );
-            if (actionsStep.state === "NextStepReady") {
-              return actionsStep;
-            }
-            const advancedStep = yield* loopSteps.transition(
-              {
-                identity: actionsStep.identity,
-                expectedRevision: actionsStep.revision,
-                expectedState: "ActionsInProgress",
-                next: {
-                  ...actionsStep,
-                  nextActionIndex: Math.max(
-                    actionsStep.nextActionIndex,
-                    actionIndex + 1,
-                  ),
-                  revision: actionsStep.revision + 1,
-                  updatedAt: yield* now(),
-                },
-              },
-              loopStepFence,
-            );
-            if (dependencies.qualificationProbe !== undefined) {
-              yield* Effect.promise(
-                () =>
-                  dependencies.qualificationProbe?.({
-                    boundary: "AH7BeforeActionResultCommit",
-                    providerTurnId: preparedTurn.manifest.providerTurnId,
-                    executionId: input.execution.executionId,
-                    logicalActionId: pendingAction.logicalActionId,
+      cursor.currentLoopStep = yield* tx.transact(
+        Effect.gen(function* () {
+          if (yield* sessions.supportsTypedTimeline()) {
+            const item =
+              route._tag === "Executable"
+                ? {
+                    _tag: "ToolResult" as const,
                     callRef: invocation.callRef,
-                    actionIndex,
-                  }) ?? Promise.resolve(),
-              );
-            }
-            return advancedStep;
-          }),
-        )
-        .pipe(Effect.mapError(failure));
+                    toolName: invocation.toolName,
+                    ...(resultMetadata.invocationId === undefined
+                      ? {}
+                      : { invocationId: resultMetadata.invocationId }),
+                    ...(resultMetadata.reconciliationFactRef === undefined
+                      ? {}
+                      : {
+                          reconciliationFactRef:
+                            resultMetadata.reconciliationFactRef,
+                        }),
+                    ...(resultMetadata.reconciliationFactRef === undefined
+                      ? {}
+                      : { disposition }),
+                    status,
+                    observationRef: observationSourceRef,
+                    modelOutputRef: resultMetadata.resultRef ?? resultRef,
+                    outputText: observation.text,
+                    truncated: observation.truncated,
+                    artifactRefs: resultMetadata.artifactRefs ?? [],
+                  }
+                : {
+                    _tag: "ControlResult" as const,
+                    callRef: invocation.callRef,
+                    actionKind: invocation.toolName,
+                    status,
+                    disposition,
+                    outputText: observation.text,
+                    truncated: observation.truncated,
+                    canonicalRefs: [],
+                    observationRef: observationSourceRef,
+                  };
+            yield* sessions.appendItemIdempotent(
+              input.execution.sessionId,
+              {
+                item,
+                contextEpoch: preparedTurn.manifest.contextEpoch,
+                source: {
+                  kind: "AgentLoopAction",
+                  ref: observationSourceRef,
+                },
+                contentHash: sha256Hex(JSON.stringify(item)),
+                ...(causalBinding === undefined ? {} : { causalBinding }),
+              },
+              loopStepFence,
+            );
+          } else {
+            const durablePayload = {
+              ...payload,
+              ...(resultMetadata.reconciliationFactRef === undefined
+                ? {}
+                : {
+                    reconciliationFactRef: resultMetadata.reconciliationFactRef,
+                  }),
+            };
+            yield* sessions.appendEntryIdempotent(
+              input.execution.sessionId,
+              { kind: "AgentLoopAction", ref: observationSourceRef },
+              { entryKind: "Observation", payload: durablePayload },
+              sha256Hex(JSON.stringify(durablePayload)),
+              loopStepFence,
+              causalBinding,
+            );
+          }
+          yield* loopSteps.transitionAction(
+            {
+              identity: pendingAction.identity,
+              actionIndex: pendingAction.actionIndex,
+              expectedRevision: pendingAction.revision,
+              expectedState: pendingAction.state,
+              next: {
+                ...pendingAction,
+                state:
+                  route._tag === "Executable" && status === "Denied"
+                    ? "TerminalRejected"
+                    : "Applied",
+                resultRef,
+                ...(denialSettlementRef === undefined
+                  ? {}
+                  : { settlementRef: denialSettlementRef }),
+                disposition: {
+                  _tag: disposition,
+                  status,
+                  ...(resultMetadata.terminalDenial === undefined
+                    ? {}
+                    : { terminalDenial: resultMetadata.terminalDenial }),
+                },
+                observationSourceRef,
+                revision: pendingAction.revision + 1,
+                updatedAt: yield* now(),
+              },
+            },
+            loopStepFence,
+          );
+          if (actionsStep.state === "NextStepReady") {
+            return actionsStep;
+          }
+          const advancedStep = yield* loopSteps.transition(
+            {
+              identity: actionsStep.identity,
+              expectedRevision: actionsStep.revision,
+              expectedState: "ActionsInProgress",
+              next: {
+                ...actionsStep,
+                nextActionIndex: Math.max(
+                  actionsStep.nextActionIndex,
+                  actionIndex + 1,
+                ),
+                revision: actionsStep.revision + 1,
+                updatedAt: yield* now(),
+              },
+            },
+            loopStepFence,
+          );
+          if (dependencies.qualificationProbe !== undefined) {
+            yield* Effect.promise(
+              () =>
+                dependencies.qualificationProbe?.({
+                  boundary: "AH7BeforeActionResultCommit",
+                  providerTurnId: preparedTurn.manifest.providerTurnId,
+                  executionId: input.execution.executionId,
+                  logicalActionId: pendingAction.logicalActionId,
+                  callRef: invocation.callRef,
+                  actionIndex,
+                }) ?? Promise.resolve(),
+            );
+          }
+          return advancedStep;
+        }),
+      );
       if (dependencies.qualificationProbe !== undefined) {
         yield* Effect.promise(
           () =>

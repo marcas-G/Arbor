@@ -23,6 +23,7 @@ import {
   TransactionPort,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
+import { foldAgentLoopActionPhaseError } from "./agent-loop-actions/errors.js";
 import type { ReconciliationEscalationRecorderError } from "./agent-loop-actions/types.js";
 import { executeAgentLoopActions } from "./agent-loop-actions.js";
 import { recoverAgentLoopFrontier } from "./agent-loop-driver/recovery.js";
@@ -364,7 +365,7 @@ export const AgentLoopDriverLive = (
               ...(options.qualificationProbe === undefined
                 ? {}
                 : { qualificationProbe: options.qualificationProbe }),
-            });
+            }).pipe(Effect.mapError(foldAgentLoopActionPhaseError));
             if (actionProgression._tag === "Settle") {
               return commitSettlementProposal(actionProgression.settlement);
             }

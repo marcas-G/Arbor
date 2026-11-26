@@ -12,9 +12,9 @@ import { workEpisode as exactWorkEpisode } from "@arbor/domain";
 import type {
   AgentLoopStepActionRecord,
   AgentLoopStepRecord,
-  ExecutionDriverError,
 } from "@arbor/ports";
 import { Effect, type Option } from "effect";
+import type { BlockedSettlementError } from "./errors.js";
 import type { AgentLoopActionDependencies } from "./types.js";
 
 const terminalDenialOf = (
@@ -63,7 +63,7 @@ export const makeBlockedSettlement = (
   dependencies: AgentLoopActionDependencies,
   request: string,
   currentLoopStep: AgentLoopStepRecord | undefined,
-): Effect.Effect<ExecutionSettlement | null, ExecutionDriverError> =>
+): Effect.Effect<ExecutionSettlement | null, BlockedSettlementError> =>
   Effect.gen(function* () {
     const execution = dependencies.input.execution;
     const episode = exactWorkEpisode(execution);
@@ -87,9 +87,7 @@ export const makeBlockedSettlement = (
       chain.push(step);
       if (step.predecessor === undefined) break;
       const previous: Option.Option<AgentLoopStepRecord> =
-        yield* dependencies.tx
-          .transact(steps.find(step.predecessor))
-          .pipe(Effect.mapError(dependencies.failure));
+        yield* dependencies.tx.transact(steps.find(step.predecessor));
       if (previous._tag === "None") return null;
       step = previous.value;
     }
@@ -103,9 +101,9 @@ export const makeBlockedSettlement = (
       readonly action: AgentLoopStepActionRecord;
     }> = [];
     for (const candidate of chain) {
-      const records = yield* dependencies.tx
-        .transact(steps.listActions(candidate.identity))
-        .pipe(Effect.mapError(dependencies.failure));
+      const records = yield* dependencies.tx.transact(
+        steps.listActions(candidate.identity),
+      );
       for (const action of records) actions.push({ step: candidate, action });
     }
     actions.sort(
@@ -205,7 +203,7 @@ export const makeBlockedSettlement = (
       ) {
         return null;
       }
-      return yield* Effect.fail(dependencies.failure(verification.cause));
+      return yield* Effect.fail(verification.cause);
     }
     const verified = verification.value;
     const failureFingerprint = blockedFailureFingerprint(verified);
@@ -215,9 +213,9 @@ export const makeBlockedSettlement = (
       targetWorkRevision: episode.targetWorkRevision,
       failureFingerprint,
     });
-    const observedSequence = yield* dependencies.tx
-      .transact(inbox.currentSequence(execution.workspaceId))
-      .pipe(Effect.mapError(dependencies.failure));
+    const observedSequence = yield* dependencies.tx.transact(
+      inbox.currentSequence(execution.workspaceId),
+    );
     return {
       _tag: "Completed",
       result: {
