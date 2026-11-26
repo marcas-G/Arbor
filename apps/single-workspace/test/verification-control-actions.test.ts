@@ -507,6 +507,86 @@ const input = (
   context: { ...context, fencingGeneration: generation as LeaseGeneration },
 });
 
+// Shared P8 replay fixture: the exact registered record-verification-evidence
+// handler backed by real SQLite tables, used by the gen1 replay tests below.
+const makeP8ReplayFixture = () => {
+  const occurrence = `${verificationTurnId}:1`;
+  const replayEvidenceId = parse(EvidenceId)(
+    `evd_${newUuid7("verification-evidence", occurrence)}`,
+  );
+  const replayRecordedAt = "2026-10-02T00:00:00.000Z";
+  const verificationRows = {
+    findById: (id: VerificationId) =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient;
+        const rows = yield* sql.unsafe<{ verification_id: string }>(
+          "SELECT verification_id FROM p8_replay_verifications WHERE verification_id = ?",
+          [id],
+        );
+        return rows.length === 1 ? Option.some(verification) : Option.none();
+      }),
+  };
+  const evidenceRows = {
+    append: () => Effect.void,
+    listByVerification: (id: VerificationId) =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient;
+        const rows = yield* sql.unsafe<{ evidence_id: string }>(
+          "SELECT evidence_id FROM p8_replay_evidence WHERE verification_id = ?",
+          [id],
+        );
+        return rows.map(() => ({
+          evidenceId: replayEvidenceId,
+          verificationId: id,
+          criterionId: "focused-test",
+          kind: "ToolObservation" as const,
+          artifactRef: null,
+          observedEnvironmentRevision: null,
+          recordedByExecutionId: executionId,
+          recordedAt: replayRecordedAt,
+          toolInvocationId,
+          observationRef: "observation:1",
+          callRef: "tool-call-1",
+        }));
+      }),
+  };
+  const registeredHandler = makeRecordVerificationEvidenceHandler({
+    verifications: verificationRows as never,
+    evidence: evidenceRows as never,
+  });
+  const registryLayer = CommandHandlerRegistryLive([
+    registeredHandler as never,
+  ]);
+  const createReplayTables = Effect.gen(function* () {
+    const sql = yield* SqlClient;
+    yield* sql.unsafe(
+      "CREATE TABLE p8_replay_verifications (verification_id TEXT PRIMARY KEY)",
+    );
+    yield* sql.unsafe(
+      "CREATE TABLE p8_replay_evidence (evidence_id TEXT PRIMARY KEY, verification_id TEXT NOT NULL)",
+    );
+  });
+  const seedReplayRows = Effect.gen(function* () {
+    const sql = yield* SqlClient;
+    yield* sql.unsafe(
+      "INSERT INTO p8_replay_verifications (verification_id) VALUES (?)",
+      [verificationId],
+    );
+    yield* sql.unsafe(
+      "INSERT INTO p8_replay_evidence (evidence_id, verification_id) VALUES (?, ?)",
+      [replayEvidenceId, verificationId],
+    );
+  });
+  return {
+    replayEvidenceId,
+    replayRecordedAt,
+    registeredHandler,
+    registryLayer,
+    createReplayTables,
+    seedReplayRows,
+  };
+};
+
 describe("verification control actions", () => {
   const evidenceAction = {
     _tag: "RecordVerificationEvidence" as const,
@@ -724,73 +804,14 @@ describe("verification control actions", () => {
   });
 
   it("returns from gen1 Evidence replay with a real SQLite transaction and the registered P8 validator", async () => {
-    const occurrence = `${verificationTurnId}:1`;
-    const replayEvidenceId = parse(EvidenceId)(
-      `evd_${newUuid7("verification-evidence", occurrence)}`,
-    );
-    const replayRecordedAt = "2026-10-02T00:00:00.000Z";
-    const verificationRows = {
-      findById: (id: VerificationId) =>
-        Effect.gen(function* () {
-          const sql = yield* SqlClient;
-          const rows = yield* sql.unsafe<{ verification_id: string }>(
-            "SELECT verification_id FROM p8_replay_verifications WHERE verification_id = ?",
-            [id],
-          );
-          return rows.length === 1 ? Option.some(verification) : Option.none();
-        }),
-    };
-    const evidenceRows = {
-      append: () => Effect.void,
-      listByVerification: (id: VerificationId) =>
-        Effect.gen(function* () {
-          const sql = yield* SqlClient;
-          const rows = yield* sql.unsafe<{ evidence_id: string }>(
-            "SELECT evidence_id FROM p8_replay_evidence WHERE verification_id = ?",
-            [id],
-          );
-          return rows.map(() => ({
-            evidenceId: replayEvidenceId,
-            verificationId: id,
-            criterionId: "focused-test",
-            kind: "ToolObservation" as const,
-            artifactRef: null,
-            observedEnvironmentRevision: null,
-            recordedByExecutionId: executionId,
-            recordedAt: replayRecordedAt,
-            toolInvocationId,
-            observationRef: "observation:1",
-            callRef: "tool-call-1",
-          }));
-        }),
-    };
-    const registeredHandler = makeRecordVerificationEvidenceHandler({
-      verifications: verificationRows as never,
-      evidence: evidenceRows as never,
-    });
-    const registryLayer = CommandHandlerRegistryLive([
-      registeredHandler as never,
-    ]);
+    const p8 = makeP8ReplayFixture();
     const app = Layer.provideMerge(
       TransactionPortLive,
       sqliteLayer({ filename: ":memory:" }),
     );
     const program = Effect.gen(function* () {
-      const sql = yield* SqlClient;
-      yield* sql.unsafe(
-        "CREATE TABLE p8_replay_verifications (verification_id TEXT PRIMARY KEY)",
-      );
-      yield* sql.unsafe(
-        "CREATE TABLE p8_replay_evidence (evidence_id TEXT PRIMARY KEY, verification_id TEXT NOT NULL)",
-      );
-      yield* sql.unsafe(
-        "INSERT INTO p8_replay_verifications (verification_id) VALUES (?)",
-        [verificationId],
-      );
-      yield* sql.unsafe(
-        "INSERT INTO p8_replay_evidence (evidence_id, verification_id) VALUES (?, ?)",
-        [replayEvidenceId, verificationId],
-      );
+      yield* p8.createReplayTables;
+      yield* p8.seedReplayRows;
       const registry = yield* CommandHandlerRegistry;
       const tx = yield* TransactionPort;
       const state = setup({
@@ -805,64 +826,19 @@ describe("verification control actions", () => {
         input(evidenceAction, 1, 1),
       ) as Effect.Effect<unknown>;
       return { result, submitted: state.submitted };
-    }).pipe(Effect.provide(registryLayer));
+    }).pipe(Effect.provide(p8.registryLayer));
     const observed = await Effect.runPromise(Effect.provide(program, app));
     expect(observed.result).toMatchObject({ _tag: "Observation" });
     expect(observed.submitted).toHaveLength(0);
   });
 
   it("resumes step 1 Pending Control through the real SQLite P9 store, registry, authorizer, and receipt validator", async () => {
-    const occurrence = `${verificationTurnId}:1`;
+    const p8 = makeP8ReplayFixture();
     const invocationArgumentsJson = JSON.stringify({
       criterionId: "focused-test",
       sourceCallRef: "tool-call-1",
     });
-    const replayEvidenceId = parse(EvidenceId)(
-      `evd_${newUuid7("verification-evidence", occurrence)}`,
-    );
-    const replayRecordedAt = "2026-10-02T00:00:00.000Z";
-    const verificationRows = {
-      findById: (id: VerificationId) =>
-        Effect.gen(function* () {
-          const sql = yield* SqlClient;
-          const rows = yield* sql.unsafe<{ verification_id: string }>(
-            "SELECT verification_id FROM p8_replay_verifications WHERE verification_id = ?",
-            [id],
-          );
-          return rows.length === 1 ? Option.some(verification) : Option.none();
-        }),
-    };
-    const evidenceRows = {
-      append: () => Effect.void,
-      listByVerification: (id: VerificationId) =>
-        Effect.gen(function* () {
-          const sql = yield* SqlClient;
-          const rows = yield* sql.unsafe<{ evidence_id: string }>(
-            "SELECT evidence_id FROM p8_replay_evidence WHERE verification_id = ?",
-            [id],
-          );
-          return rows.map(() => ({
-            evidenceId: replayEvidenceId,
-            verificationId: id,
-            criterionId: "focused-test",
-            kind: "ToolObservation" as const,
-            artifactRef: null,
-            observedEnvironmentRevision: null,
-            recordedByExecutionId: executionId,
-            recordedAt: replayRecordedAt,
-            toolInvocationId,
-            observationRef: "observation:1",
-            callRef: "tool-call-1",
-          }));
-        }),
-    };
-    const registeredHandler = makeRecordVerificationEvidenceHandler({
-      verifications: verificationRows as never,
-      evidence: evidenceRows as never,
-    });
-    const commandRegistryLayer = CommandHandlerRegistryLive([
-      registeredHandler as never,
-    ]);
+    const commandRegistryLayer = p8.registryLayer;
     const sqlite = sqliteLayer({ filename: ":memory:" });
     const txLayer = Layer.provide(TransactionPortLive, sqlite);
     const clockLayer = Layer.succeed(Clock, {
@@ -915,12 +891,7 @@ describe("verification control actions", () => {
       const tx = yield* TransactionPort;
       const loopSteps = yield* AgentLoopStepStore;
       const authorizer = yield* ControlActionAuthorizer;
-      yield* sql.unsafe(
-        "CREATE TABLE p8_replay_verifications (verification_id TEXT PRIMARY KEY)",
-      );
-      yield* sql.unsafe(
-        "CREATE TABLE p8_replay_evidence (evidence_id TEXT PRIMARY KEY, verification_id TEXT NOT NULL)",
-      );
+      yield* p8.createReplayTables;
       yield* sql.unsafe(
         "CREATE TABLE executions (execution_id TEXT PRIMARY KEY, settled_at TEXT)",
       );
@@ -936,14 +907,7 @@ describe("verification control actions", () => {
       yield* sql.unsafe(
         "CREATE TABLE session_observations (source_ref TEXT PRIMARY KEY, payload_json TEXT NOT NULL)",
       );
-      yield* sql.unsafe(
-        "INSERT INTO p8_replay_verifications (verification_id) VALUES (?)",
-        [verificationId],
-      );
-      yield* sql.unsafe(
-        "INSERT INTO p8_replay_evidence (evidence_id, verification_id) VALUES (?, ?)",
-        [replayEvidenceId, verificationId],
-      );
+      yield* p8.seedReplayRows;
       yield* sql.unsafe(
         "INSERT INTO executions (execution_id, settled_at) VALUES (?, NULL)",
         [executionId],
@@ -1080,7 +1044,7 @@ describe("verification control actions", () => {
                   observationRef: "observation:1",
                   status: "Succeeded",
                 },
-                createdAt: replayRecordedAt,
+                createdAt: p8.replayRecordedAt,
               },
             ]),
           supportsTypedTimeline: () => Effect.succeed(false),
@@ -1102,7 +1066,7 @@ describe("verification control actions", () => {
         currentControlBasis: () => Effect.succeed(basis as never),
         admit: () => Effect.succeed("Continue"),
         failure: (cause: unknown) => cause as never,
-        now: () => Effect.succeed(replayRecordedAt),
+        now: () => Effect.succeed(p8.replayRecordedAt),
       } as never);
       const actions = yield* tx.transact(
         loopSteps.listActions({
