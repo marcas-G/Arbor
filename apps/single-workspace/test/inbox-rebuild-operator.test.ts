@@ -34,18 +34,18 @@ import {
 import {
   canonicalP6InboxJson,
   deriveTrustedSchema48Signature,
-  p6InboxManifestEnvelope,
-  p6InboxRebuildUsage,
-  parseP6InboxRebuildArguments,
+  inboxManifestEnvelope,
+  inboxRebuildUsage,
+  parseInboxRebuildArguments,
   validateP6InboxManifestText,
-} from "../src/p6-inbox-rebuild.js";
+} from "../src/inbox-rebuild-operator.js";
 import { rejectSqliteArtifactAliases } from "../src/schema-upgrade.js";
 import {
   descriptorHashesThrough,
   logicalSqliteDigest,
 } from "../src/schema-upgrade-manifest.js";
 import { viewQueryFaceWithRetryAvailability } from "../src/transport/composition.js";
-import { seedP6InboxRebuildFixture } from "./support/p6-inbox-rebuild-fixture.js";
+import { seedInboxRebuildFixture } from "./support/inbox-rebuild-fixture.js";
 
 let schema48Factory: Schema48TestDatabaseFactory | undefined;
 
@@ -201,7 +201,7 @@ const runTaskkillHelperWithTimeout = async (
   };
 };
 
-describe("P6 operator subprocess timeout cleanup", () => {
+describe("operator subprocess timeout cleanup", () => {
   it("bounds repeated taskkill failures by one total deadline", async () => {
     let fakeNow = 0;
     let attempts = 0;
@@ -295,11 +295,11 @@ describe("P6 operator subprocess timeout cleanup", () => {
   });
 });
 
-describe("P6 Inbox operator rebuild CLI contract", () => {
+describe("Inbox operator rebuild CLI contract", () => {
   it("requires explicit absolute database, P39 sidecar and JSONL manifest paths", () => {
-    expect(() => parseP6InboxRebuildArguments([])).toThrow(/required/u);
+    expect(() => parseInboxRebuildArguments([])).toThrow(/required/u);
     expect(() =>
-      parseP6InboxRebuildArguments([
+      parseInboxRebuildArguments([
         "--database",
         "relative.sqlite",
         "--p39-sidecar",
@@ -309,7 +309,7 @@ describe("P6 Inbox operator rebuild CLI contract", () => {
       ]),
     ).toThrow(/absolute/u);
     expect(
-      parseP6InboxRebuildArguments([
+      parseInboxRebuildArguments([
         "--database",
         resolve("p6-cli-contract", "primary.sqlite"),
         "--p39-sidecar",
@@ -322,7 +322,7 @@ describe("P6 Inbox operator rebuild CLI contract", () => {
 
   it("rejects unknown/repeated options and documents the isolated operator-only flags", () => {
     expect(() =>
-      parseP6InboxRebuildArguments([
+      parseInboxRebuildArguments([
         "--database",
         "C:\\tmp\\primary.sqlite",
         "--database",
@@ -333,8 +333,8 @@ describe("P6 Inbox operator rebuild CLI contract", () => {
         "C:\\tmp\\manifest.jsonl",
       ]),
     ).toThrow(/unsupported/u);
-    expect(p6InboxRebuildUsage()).toContain("--p39-sidecar");
-    expect(p6InboxRebuildUsage()).toContain("--manifest");
+    expect(inboxRebuildUsage()).toContain("--p39-sidecar");
+    expect(inboxRebuildUsage()).toContain("--manifest");
   });
 
   it("derives the exact version-48 schema signature from trusted descriptors", async () => {
@@ -342,7 +342,7 @@ describe("P6 Inbox operator rebuild CLI contract", () => {
   }, 120_000);
 
   it("validates the canonical manifest hash-chain and rejects tamper/torn records", () => {
-    const created = p6InboxManifestEnvelope(0, null, {
+    const created = inboxManifestEnvelope(0, null, {
       kind: "Created",
       schema: "arbor-p6-unbound-legacy-inbox-rebuild-manifest/v1",
       nonce: "a".repeat(64),
@@ -352,7 +352,7 @@ describe("P6 Inbox operator rebuild CLI contract", () => {
       descriptors: descriptorHashesThrough(48),
       initialDatabaseDigest: "c".repeat(64),
     });
-    const prepared = p6InboxManifestEnvelope(1, created.hash, {
+    const prepared = inboxManifestEnvelope(1, created.hash, {
       kind: "Prepared",
       nonce: "a".repeat(64),
       schemaVersion: 48,
@@ -403,26 +403,26 @@ describe("P6 Inbox operator rebuild CLI contract", () => {
   );
   const productionCli = resolve(
     repositoryRoot,
-    "apps/single-workspace/dist/p6-inbox-rebuild.js",
+    "apps/single-workspace/dist/inbox-rebuild-operator.js",
   );
   const processCli = resolve(
     repositoryRoot,
-    "apps/single-workspace/test/p6-inbox-rebuild-process-child.mjs",
+    "apps/single-workspace/test/inbox-rebuild-process-child.mjs",
   );
   const caseTimeoutMs = 105_000;
 
-  interface P6FixtureContext {
+  interface InboxRebuildFixtureContext {
     readonly fixture: Schema48TestDatabase;
     readonly manifest: string;
   }
 
   const withP6Fixture = async (
-    run: (context: P6FixtureContext) => Promise<void>,
+    run: (context: InboxRebuildFixtureContext) => Promise<void>,
   ): Promise<void> => {
     if (schema48Factory === undefined)
       throw new Error("P6 schema-48 template was not initialized");
     const fixture = schema48Factory.create();
-    seedP6InboxRebuildFixture(fixture.databaseFilename);
+    seedInboxRebuildFixture(fixture.databaseFilename);
     let qualificationFailure: unknown;
     try {
       await run({
@@ -452,7 +452,7 @@ describe("P6 Inbox operator rebuild CLI contract", () => {
   const commitInitialProjection = async ({
     fixture,
     manifest,
-  }: P6FixtureContext): Promise<string> => {
+  }: InboxRebuildFixtureContext): Promise<string> => {
     const committed = await runOperatorCli(
       processCli,
       fixture.databaseFilename,
@@ -755,7 +755,7 @@ describe("P6 Inbox operator rebuild CLI contract", () => {
         const created = validateP6InboxManifestText(
           readFileSync(manifest, "utf8"),
         )[0];
-        const changed = p6InboxManifestEnvelope(0, null, {
+        const changed = inboxManifestEnvelope(0, null, {
           ...created?.record,
           descriptors: descriptorHashesThrough(48).slice(0, -1),
         });
@@ -1087,7 +1087,7 @@ describe("P6 Inbox operator rebuild CLI contract", () => {
           [
             join(
               repositoryRoot,
-              "apps/single-workspace/test/p6-writer-lock-holder.mjs",
+              "apps/single-workspace/test/writer-lock-holder.mjs",
             ),
             lock,
           ],
@@ -1368,7 +1368,7 @@ const stopOperatorCliAtBoundary = async (
   try {
     await waitForOutput(
       child,
-      `P6_REBUILD_TEST_BOUNDARY:${boundary}\n`,
+      `INBOX_REBUILD_TEST_BOUNDARY:${boundary}\n`,
       120_000,
     );
   } catch (cause) {
@@ -1435,7 +1435,7 @@ const startOperatorCliPausedAtP39 = async (
   try {
     await waitForOutput(
       child,
-      "P6_REBUILD_TEST_BOUNDARY:before-p39\n",
+      "INBOX_REBUILD_TEST_BOUNDARY:before-p39\n",
       120_000,
     );
   } catch (cause) {

@@ -3,7 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 /** Seed only the P6-owned historical facts into a closed trusted schema-48
  * clone.  Schema construction/P39 qualification belongs to the shared factory
  * and is deliberately not repeated per process case. */
-export const seedP6InboxRebuildFixture = (
+export const seedInboxRebuildFixture = (
   databaseFilename: string,
   options: {
     readonly route?: "DirectParent" | "Root";

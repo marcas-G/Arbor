@@ -45,7 +45,7 @@ import {
   sameIdentity,
 } from "./schema-upgrade-manifest.js";
 
-export interface P6InboxRebuildArguments {
+export interface InboxRebuildArguments {
   readonly database: string;
   readonly p39Sidecar: string;
   readonly manifest: string;
@@ -56,26 +56,26 @@ export interface P6InboxRebuildArguments {
  * fail-closed P39 implementations below; process qualification may substitute
  * an already-qualified SQLite permit harness so crash/replay cases do not
  * repeatedly re-qualify the unrelated Windows ACL boundary. */
-export interface P6InboxRebuildDependencies {
+export interface InboxRebuildDependencies {
   readonly writerLockFilename: typeof p39WriterLockFilename;
   readonly runMaintenanceWithPermit: typeof runP39SqliteMaintenanceWithPermit;
 }
 
-const productionP6InboxRebuildDependencies: P6InboxRebuildDependencies = {
+const productionInboxRebuildDependencies: InboxRebuildDependencies = {
   writerLockFilename: p39WriterLockFilename,
   runMaintenanceWithPermit: runP39SqliteMaintenanceWithPermit,
 };
 
-export class P6InboxRebuildRefusal extends Error {
-  readonly _tag = "P6InboxRebuildRefusal";
-  readonly code = "P6_REBUILD_REFUSED";
+export class InboxRebuildRefusal extends Error {
+  readonly _tag = "InboxRebuildRefusal";
+  readonly code = "INBOX_REBUILD_REFUSED";
 }
 
 const refuse = (message: string): never => {
-  throw new P6InboxRebuildRefusal(message);
+  throw new InboxRebuildRefusal(message);
 };
 const safeCauseCode = (cause: unknown): string => {
-  if (cause instanceof P6InboxRebuildRefusal) return "P6_REBUILD_REFUSED";
+  if (cause instanceof InboxRebuildRefusal) return "INBOX_REBUILD_REFUSED";
   if (typeof cause === "object" && cause !== null && "_tag" in cause) {
     const tag = String((cause as { _tag?: unknown })._tag);
     if (tag === "TransactionOperationalFailure") return "P6_TRANSACTION_FAILED";
@@ -88,7 +88,7 @@ const safeCauseCode = (cause: unknown): string => {
 
 const findSafeFailureCode = (cause: unknown, depth = 0): string => {
   if (depth > 8 || typeof cause !== "object" || cause === null)
-    return "P6_REBUILD_FAILED";
+    return "INBOX_REBUILD_FAILED";
   if ("code" in cause) {
     const code = String((cause as { code?: unknown }).code);
     if (/^P39_[A-Z0-9_]+$/u.test(code)) return code;
@@ -100,9 +100,9 @@ const findSafeFailureCode = (cause: unknown, depth = 0): string => {
   }
   for (const value of Object.values(cause)) {
     const nested = findSafeFailureCode(value, depth + 1);
-    if (nested !== "P6_REBUILD_FAILED") return nested;
+    if (nested !== "INBOX_REBUILD_FAILED") return nested;
   }
-  return "P6_REBUILD_FAILED";
+  return "INBOX_REBUILD_FAILED";
 };
 
 const waitAtTestBoundary = (
@@ -113,18 +113,18 @@ const waitAtTestBoundary = (
     process.env.ARBOR_P6_TEST_HOLD_BOUNDARY !== boundary
   )
     return Promise.resolve();
-  process.stdout.write(`P6_REBUILD_TEST_BOUNDARY:${boundary}\n`);
+  process.stdout.write(`INBOX_REBUILD_TEST_BOUNDARY:${boundary}\n`);
   return new Promise<void>((resolveBoundary) =>
     process.stdin.once("data", () => resolveBoundary()),
   );
 };
 
-export const p6InboxRebuildUsage = (): string =>
-  "Usage: pnpm --filter @arbor/single-workspace p6:inbox-rebuild --database <absolute-path> --p39-sidecar <absolute-new-or-existing-path> --manifest <absolute-path> [--resume]";
+export const inboxRebuildUsage = (): string =>
+  "Usage: pnpm --filter @arbor/single-workspace inbox:rebuild --database <absolute-path> --p39-sidecar <absolute-new-or-existing-path> --manifest <absolute-path> [--resume]";
 
-export const parseP6InboxRebuildArguments = (
+export const parseInboxRebuildArguments = (
   argv: ReadonlyArray<string>,
-): P6InboxRebuildArguments => {
+): InboxRebuildArguments => {
   const values = new Map<string, string>();
   let resume = false;
   for (let index = 0; index < argv.length; index += 1) {
@@ -204,7 +204,7 @@ export const canonicalP6InboxJson = (value: unknown): string => {
 };
 const sha256 = (value: string): string =>
   createHash("sha256").update(value).digest("hex");
-export const p6InboxManifestEnvelope = (
+export const inboxManifestEnvelope = (
   sequence: number,
   previousHash: string | null,
   record: Readonly<Record<string, unknown>>,
@@ -232,7 +232,7 @@ export const validateP6InboxManifestText = (text: string): Envelope[] => {
       parsed.sequence !== sequence ||
       parsed.previousHash !== previous ||
       parsed.hash !==
-        p6InboxManifestEnvelope(sequence, previous, parsed.record).hash
+        inboxManifestEnvelope(sequence, previous, parsed.record).hash
     )
       refuse("manifest hash chain is invalid");
     records.push(parsed);
@@ -326,7 +326,7 @@ const appendRecord = (
   )
     refuse("manifest head changed before append");
   const identity = existingPathIdentity(filename);
-  const entry = p6InboxManifestEnvelope(
+  const entry = inboxManifestEnvelope(
     records.length,
     records.at(-1)?.hash ?? null,
     record,
@@ -571,7 +571,7 @@ const inboxProjectionSnapshot = (
       );
       if (found.length > 1 || (requireComplete && found.length !== 1))
         return yield* Effect.fail(
-          new P6InboxRebuildRefusal(
+          new InboxRebuildRefusal(
             "disposition does not have exactly one stable-key Inbox projection",
           ),
         );
@@ -610,7 +610,7 @@ const verifyRebuiltProjection = (
     const postFk = yield* primary.unsafe("PRAGMA foreign_key_check");
     if (postFk.length > 0)
       return yield* Effect.fail(
-        new P6InboxRebuildRefusal("post-rebuild foreign_key_check failed"),
+        new InboxRebuildRefusal("post-rebuild foreign_key_check failed"),
       );
     const inboxAfter = yield* inboxProjectionSnapshot(primary, true);
     let inserted = 0;
@@ -630,7 +630,7 @@ const verifyRebuiltProjection = (
         after.admitted_at !== dispositionRows[0]?.created_at
       )
         return yield* Effect.fail(
-          new P6InboxRebuildRefusal(
+          new InboxRebuildRefusal(
             "Inbox projection does not match its immutable disposition",
           ),
         );
@@ -639,7 +639,7 @@ const verifyRebuiltProjection = (
         inserted += 1;
         if (Number(after.revision) !== 1)
           return yield* Effect.fail(
-            new P6InboxRebuildRefusal(
+            new InboxRebuildRefusal(
               "inserted Inbox projection has an invalid initial revision",
             ),
           );
@@ -650,7 +650,7 @@ const verifyRebuiltProjection = (
           Number(after.revision) !== Number(before.revision) + 1
         )
           return yield* Effect.fail(
-            new P6InboxRebuildRefusal(
+            new InboxRebuildRefusal(
               "moved Inbox projection did not preserve admission and increment once",
             ),
           );
@@ -661,13 +661,13 @@ const verifyRebuiltProjection = (
           Number(after.revision) !== Number(before.revision)
         )
           return yield* Effect.fail(
-            new P6InboxRebuildRefusal("exact Inbox projection was not a no-op"),
+            new InboxRebuildRefusal("exact Inbox projection was not a no-op"),
           );
       }
     }
     if (inboxAfter.size !== projectionBefore.size + inserted)
       return yield* Effect.fail(
-        new P6InboxRebuildRefusal(
+        new InboxRebuildRefusal(
           "projection key cardinality changed unexpectedly",
         ),
       );
@@ -677,7 +677,7 @@ const verifyRebuiltProjection = (
     );
     if (canonicalAfter !== canonicalInputDigest)
       return yield* Effect.fail(
-        new P6InboxRebuildRefusal(
+        new InboxRebuildRefusal(
           "canonical F23 facts changed during projection rebuild",
         ),
       );
@@ -732,9 +732,9 @@ export const deriveTrustedSchema48Signature = (): Promise<string> => {
   return trustedSchema48Signature;
 };
 
-export const runP6InboxRebuild = async (
-  args: P6InboxRebuildArguments,
-  dependencies: P6InboxRebuildDependencies = productionP6InboxRebuildDependencies,
+export const runInboxRebuild = async (
+  args: InboxRebuildArguments,
+  dependencies: InboxRebuildDependencies = productionInboxRebuildDependencies,
 ): Promise<void> => {
   if (
     !existsSync(args.database) ||
@@ -835,7 +835,7 @@ export const runP6InboxRebuild = async (
                 committed?.finalDatabaseDigest !== currentDatabaseDigest
               )
                 return yield* Effect.fail(
-                  new P6InboxRebuildRefusal(
+                  new InboxRebuildRefusal(
                     "committed manifest is superseded by current database state",
                   ),
                 );
@@ -843,7 +843,7 @@ export const runP6InboxRebuild = async (
             }
             if (activeRecords.length === 0)
               return yield* Effect.fail(
-                new P6InboxRebuildRefusal(
+                new InboxRebuildRefusal(
                   "Prepared manifest was not durably created under permit",
                 ),
               );
@@ -885,11 +885,11 @@ export const runP6InboxRebuild = async (
               committedProjectionDigest !== outcome.projectionDigest
             )
               return yield* Effect.fail(
-                new P6InboxRebuildRefusal(
+                new InboxRebuildRefusal(
                   "SQLite COMMIT did not preserve the observed projection state",
                 ),
               );
-            process.stdout.write("P6_REBUILD_DATABASE_COMMITTED\n");
+            process.stdout.write("INBOX_REBUILD_DATABASE_COMMITTED\n");
             yield* Effect.promise(() =>
               waitAtTestBoundary("database-committed"),
             );
@@ -914,7 +914,7 @@ export const runP6InboxRebuild = async (
                   _tag: "P39MaintenanceFailure",
                   code: "P39_MIGRATION_PREFIX_INVALID",
                   cause: {
-                    _tag: "P6OperatorDiagnostic",
+                    _tag: "InboxRebuildOperatorDiagnostic",
                     code: safeCauseCode(cause),
                   },
                 }) as P39MaintenanceFailure,
@@ -1058,7 +1058,7 @@ export const runP6InboxRebuild = async (
                 activeRecords = [...activeRecords, prepared];
                 preparedDatabaseDigest = currentDatabaseDigest;
                 preparedProjectionBefore = snapshotRows;
-                process.stdout.write("P6_REBUILD_PREPARED\n");
+                process.stdout.write("INBOX_REBUILD_PREPARED\n");
                 yield* Effect.promise(() => waitAtTestBoundary("prepared"));
               } else {
                 const prepared = activeRecords.at(-1)?.record;
@@ -1099,7 +1099,7 @@ export const runP6InboxRebuild = async (
                     _tag: "P39MaintenanceFailure",
                     code: "P39_MIGRATION_PREFIX_INVALID",
                     cause: {
-                      _tag: "P6OperatorDiagnostic",
+                      _tag: "InboxRebuildOperatorDiagnostic",
                       code: safeCauseCode(cause),
                     },
                   }) as P39MaintenanceFailure,
@@ -1109,8 +1109,8 @@ export const runP6InboxRebuild = async (
       ),
     );
   } catch (cause) {
-    if (cause instanceof P6InboxRebuildRefusal) throw cause;
-    throw new P6InboxRebuildRefusal(
+    if (cause instanceof InboxRebuildRefusal) throw cause;
+    throw new InboxRebuildRefusal(
       `P6 rebuild failed at ${currentPhase} (${findSafeFailureCode(cause)})`,
     );
   }
@@ -1118,16 +1118,14 @@ export const runP6InboxRebuild = async (
 
 const main = async (): Promise<void> => {
   if (process.argv.slice(2).some((arg) => arg === "--help" || arg === "-h")) {
-    process.stdout.write(`${p6InboxRebuildUsage()}\n`);
+    process.stdout.write(`${inboxRebuildUsage()}\n`);
     return;
   }
   try {
-    await runP6InboxRebuild(
-      parseP6InboxRebuildArguments(process.argv.slice(2)),
-    );
+    await runInboxRebuild(parseInboxRebuildArguments(process.argv.slice(2)));
     process.stdout.write("P6 Inbox projection rebuild committed.\n");
   } catch (cause) {
-    if (cause instanceof P6InboxRebuildRefusal) {
+    if (cause instanceof InboxRebuildRefusal) {
       process.stderr.write(`${cause.message}\n`);
       process.exitCode = 1;
       return;
@@ -1135,7 +1133,7 @@ const main = async (): Promise<void> => {
     const outerCode =
       typeof cause === "object" && cause !== null && "code" in cause
         ? String((cause as { code?: unknown }).code)
-        : "P6_REBUILD_FAILED";
+        : "INBOX_REBUILD_FAILED";
     const nestedCause =
       typeof cause === "object" && cause !== null && "cause" in cause
         ? (cause as { cause?: unknown }).cause
@@ -1145,7 +1143,7 @@ const main = async (): Promise<void> => {
       nestedCause !== null &&
       "code" in nestedCause
         ? String((nestedCause as { code?: unknown }).code)
-        : "P6_REBUILD_FAILED";
+        : "INBOX_REBUILD_FAILED";
     const reasonCode =
       typeof nestedCause === "object" &&
       nestedCause !== null &&

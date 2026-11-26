@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -58,6 +58,7 @@ const diffPaths = baseline
     : [];
 const changedSourcePaths = [...new Set(diffPaths)]
   .filter((path) => isSourcePath(path) && !isOutOfScope(path))
+  .filter((path) => fullScan || existsSync(join(root, path)))
   .sort();
 
 // Legacy inventory exempted from the path category (never the line categories:
@@ -119,12 +120,8 @@ for (const path of changedSourcePaths) {
           .flatMap((header) => {
             const plus = header.slice(header.indexOf("+") + 1);
             const start = Number(plus.split(",")[0].split(" ")[0]);
-            const count =
-              Number((plus.split(",")[1] ?? "").split(" ")[0]) || 1;
-            return Array.from(
-              { length: count },
-              (_, index) => start + index,
-            );
+            const count = Number((plus.split(",")[1] ?? "").split(" ")[0]) || 1;
+            return Array.from({ length: count }, (_, index) => start + index);
           }),
       );
     }

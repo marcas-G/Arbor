@@ -11,10 +11,10 @@ import {
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import {
-  P6InboxRebuildRefusal,
-  parseP6InboxRebuildArguments,
-  runP6InboxRebuild,
-} from "../dist/p6-inbox-rebuild.js";
+  InboxRebuildRefusal,
+  parseInboxRebuildArguments,
+  runInboxRebuild,
+} from "../dist/inbox-rebuild-operator.js";
 
 const sha256 = (text) =>
   createHash("sha256").update(text, "utf8").digest("hex");
@@ -136,13 +136,13 @@ const runWithHardDeadline = async (args) => {
   }, 90_000);
   hardDeadline.unref();
   try {
-    await runP6InboxRebuild(parseP6InboxRebuildArguments(args), dependencies);
+    await runInboxRebuild(parseInboxRebuildArguments(args), dependencies);
     return { code: 0, output: "P6 Inbox projection rebuild committed." };
   } catch (cause) {
     return {
       code: 1,
       output:
-        cause instanceof P6InboxRebuildRefusal
+        cause instanceof InboxRebuildRefusal
           ? cause.message
           : `P6 test child failed (${String(cause)}).`,
     };

@@ -33,7 +33,7 @@ The complete recursive Git tree was fetched at the inventory base (not truncated
 | packages/execution-runtime/src/execution-runtime.ts | 1296 | decomposed |
 | adapters/persistence-sqlite/src/tool-invocations.ts | 1200 | pending |
 | packages/execution-runtime/src/recovery.ts | 1177 | decomposed |
-| apps/single-workspace/src/p6-inbox-rebuild.ts | 1166 | pending |
+| apps/single-workspace/src/inbox-rebuild-operator.ts | 1166 | pending |
 | packages/application/src/verification-signal-reconciliation.ts | 1154 | pending |
 | packages/application/src/workflow-signal-consumer.ts | 1135 | pending |
 | apps/single-workspace/src/sandbox-policy-decision-preparation.ts | 1126 | pending |

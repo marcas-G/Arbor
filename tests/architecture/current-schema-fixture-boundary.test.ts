@@ -22,10 +22,10 @@ const historicalSchemaFixtureOwners = [
   "adapters/persistence-sqlite/test/verification-signal-reconciliation-store.test.ts",
   "adapters/persistence-sqlite/test/schema42-database-fixture.test.ts",
   "adapters/persistence-sqlite/test/schema44-database-fixture.test.ts",
-  "apps/single-workspace/test/p6-inbox-rebuild-fixture-child.test.ts",
+  "apps/single-workspace/test/inbox-rebuild-fixture-child.test.ts",
   // P6 is an exact historical schema-48 operator; its shared template is not
   // an ordinary current-runtime fixture.
-  "apps/single-workspace/test/p6-inbox-rebuild.test.ts",
+  "apps/single-workspace/test/inbox-rebuild-operator.test.ts",
   "apps/single-workspace/test/retry-verification-origin-backfill.test.ts",
   "apps/single-workspace/test/schema-upgrade-operator.test.ts",
   "tests/functional/process/ah10-child/support-legacy-image.ts",

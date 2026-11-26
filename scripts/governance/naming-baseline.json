@@ -405,10 +405,6 @@
         "evidence": "adapters/sandbox-local/test/p4-sandbox.test.ts"
       },
       {
-        "path": "apps/single-workspace/src/p6-inbox-rebuild.ts",
-        "evidence": "apps/single-workspace/src/p6-inbox-rebuild.ts"
-      },
-      {
         "path": "apps/single-workspace/test/ah10-assign-work-legacy-raw-id-replay.test.ts",
         "evidence": "apps/single-workspace/test/ah10-assign-work-legacy-raw-id-replay.test.ts"
       },
@@ -527,26 +523,6 @@
       {
         "path": "apps/single-workspace/test/p5-yield-wake.test.ts",
         "evidence": "apps/single-workspace/test/p5-yield-wake.test.ts"
-      },
-      {
-        "path": "apps/single-workspace/test/p6-inbox-rebuild-fixture-child.test.ts",
-        "evidence": "apps/single-workspace/test/p6-inbox-rebuild-fixture-child.test.ts"
-      },
-      {
-        "path": "apps/single-workspace/test/p6-inbox-rebuild-process-child.mjs",
-        "evidence": "apps/single-workspace/test/p6-inbox-rebuild-process-child.mjs"
-      },
-      {
-        "path": "apps/single-workspace/test/p6-inbox-rebuild.test.ts",
-        "evidence": "apps/single-workspace/test/p6-inbox-rebuild.test.ts"
-      },
-      {
-        "path": "apps/single-workspace/test/p6-writer-lock-holder.mjs",
-        "evidence": "apps/single-workspace/test/p6-writer-lock-holder.mjs"
-      },
-      {
-        "path": "apps/single-workspace/test/support/p6-inbox-rebuild-fixture.ts",
-        "evidence": "apps/single-workspace/test/support/p6-inbox-rebuild-fixture.ts"
       },
       {
         "path": "packages/agent-runtime/src/p12-safety-identity.ts",
@@ -2205,30 +2181,6 @@
         "symbol": "P39RecoveryEvidenceStoreLive"
       },
       {
-        "path": "apps/single-workspace/src/p6-inbox-rebuild.ts",
-        "line": 48,
-        "evidence": "export interface P6InboxRebuildArguments {",
-        "symbol": "P6InboxRebuildArguments"
-      },
-      {
-        "path": "apps/single-workspace/src/p6-inbox-rebuild.ts",
-        "line": 59,
-        "evidence": "export interface P6InboxRebuildDependencies {",
-        "symbol": "P6InboxRebuildDependencies"
-      },
-      {
-        "path": "apps/single-workspace/src/p6-inbox-rebuild.ts",
-        "line": 69,
-        "evidence": "export class P6InboxRebuildRefusal extends Error {",
-        "symbol": "P6InboxRebuildRefusal"
-      },
-      {
-        "path": "apps/single-workspace/test/p6-inbox-rebuild.test.ts",
-        "line": 414,
-        "evidence": "interface P6FixtureContext {",
-        "symbol": "P6FixtureContext"
-      },
-      {
         "path": "packages/agent-runtime/src/agent-loop-step-recovery.ts",
         "line": 148,
         "evidence": "export interface P20OverflowReplacementChain {",
@@ -2824,11 +2776,6 @@
         "path": "apps/single-workspace/test/p5-slice-registry.test.ts",
         "line": 11,
         "evidence": "describe(\"P5 slice command handler registry\", () => {"
-      },
-      {
-        "path": "apps/single-workspace/test/p6-inbox-rebuild.test.ts",
-        "line": 204,
-        "evidence": "describe(\"P6 operator subprocess timeout cleanup\", () => {"
       },
       {
         "path": "apps/single-workspace/test/retry-verification-origin-backfill.test.ts",
@@ -4430,10 +4377,6 @@
         "evidence": "adapters/sandbox-local/test/p4-sandbox.test.ts"
       },
       {
-        "path": "apps/single-workspace/src/p6-inbox-rebuild.ts",
-        "evidence": "apps/single-workspace/src/p6-inbox-rebuild.ts"
-      },
-      {
         "path": "apps/single-workspace/test/ah10-assign-work-legacy-raw-id-replay.test.ts",
         "evidence": "apps/single-workspace/test/ah10-assign-work-legacy-raw-id-replay.test.ts"
       },
@@ -4552,26 +4495,6 @@
       {
         "path": "apps/single-workspace/test/p5-yield-wake.test.ts",
         "evidence": "apps/single-workspace/test/p5-yield-wake.test.ts"
-      },
-      {
-        "path": "apps/single-workspace/test/p6-inbox-rebuild-fixture-child.test.ts",
-        "evidence": "apps/single-workspace/test/p6-inbox-rebuild-fixture-child.test.ts"
-      },
-      {
-        "path": "apps/single-workspace/test/p6-inbox-rebuild-process-child.mjs",
-        "evidence": "apps/single-workspace/test/p6-inbox-rebuild-process-child.mjs"
-      },
-      {
-        "path": "apps/single-workspace/test/p6-inbox-rebuild.test.ts",
-        "evidence": "apps/single-workspace/test/p6-inbox-rebuild.test.ts"
-      },
-      {
-        "path": "apps/single-workspace/test/p6-writer-lock-holder.mjs",
-        "evidence": "apps/single-workspace/test/p6-writer-lock-holder.mjs"
-      },
-      {
-        "path": "apps/single-workspace/test/support/p6-inbox-rebuild-fixture.ts",
-        "evidence": "apps/single-workspace/test/support/p6-inbox-rebuild-fixture.ts"
       },
       {
         "path": "packages/agent-runtime/src/p12-safety-identity.ts",

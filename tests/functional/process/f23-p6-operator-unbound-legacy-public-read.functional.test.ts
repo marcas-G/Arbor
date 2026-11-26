@@ -4,7 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import { CURRENT_SCHEMA_VERSION } from "../../../adapters/persistence-sqlite/src/index.js";
-import { seedP6InboxRebuildFixture } from "../../../apps/single-workspace/test/support/p6-inbox-rebuild-fixture.js";
+import { seedInboxRebuildFixture } from "../../../apps/single-workspace/test/support/inbox-rebuild-fixture.js";
 import {
   type ProductionFixture,
   startProductionFixture,
@@ -103,7 +103,7 @@ describe("F23/P6 operator UnboundLegacy public read qualification", () => {
         const source = await replaceFunctionalFixtureWithSchema48Source(
           event.directory,
         );
-        seedP6InboxRebuildFixture(source.databaseFile, {
+        seedInboxRebuildFixture(source.databaseFile, {
           route: "Root",
           // The qualification reads a historical disposition; keeping its
           // source Work terminal prevents the production scheduler from
@@ -137,7 +137,7 @@ describe("F23/P6 operator UnboundLegacy public read qualification", () => {
           "apps",
           "single-workspace",
           "dist",
-          "p6-inbox-rebuild.js",
+          "inbox-rebuild-operator.js",
         );
         await execFileAsync(
           process.execPath,
