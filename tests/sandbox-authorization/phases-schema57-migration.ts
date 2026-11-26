@@ -7,7 +7,7 @@ import {
   SandboxPolicyDecisionStoreLive,
   TransactionPortLive,
 } from "../../adapters/persistence-sqlite/src/index.js";
-import { P57_WORKSPACE_SANDBOX_AUTHORIZATION_MIGRATION } from "../../adapters/persistence-sqlite/src/p57-workspace-sandbox-authorization-migration.js";
+import { P57_WORKSPACE_SANDBOX_AUTHORIZATION_MIGRATION } from "../../adapters/persistence-sqlite/src/workspace-sandbox-authorization-migration.js";
 import {
   SandboxPolicyDecisionStore,
   TransactionPort,

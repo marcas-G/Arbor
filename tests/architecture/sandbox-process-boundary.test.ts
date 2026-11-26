@@ -28,15 +28,15 @@ const skippedDirectories = new Set([
   "__tests__",
 ]);
 const p39SpawnModule =
-  "adapters/persistence-sqlite/src/p39-windows-security.ts";
+  "adapters/persistence-sqlite/src/windows-security.ts";
 const trustedLocalSpawnModule =
   "adapters/sandbox-local/src/trusted-local-process.ts";
 const nativePosixSpawnModule = "adapters/sandbox-native-posix/src/index.ts";
 const windowsNativeBuildModule =
   "adapters/sandbox-windows/scripts/build-native-host.mjs";
 const p39QueryCallers = new Set([
-  "adapters/persistence-sqlite/src/p39-report-database.ts",
-  "adapters/persistence-sqlite/src/p39-windows-security.ts",
+  "adapters/persistence-sqlite/src/report-database.ts",
+  "adapters/persistence-sqlite/src/windows-security.ts",
 ]);
 const p39ValidationCallers = new Set([
   "adapters/persistence-sqlite/src/database-writer-lock.ts",
@@ -612,7 +612,7 @@ describe("SandboxProcessPort architecture boundary", () => {
         readFileSync(
           join(
             repoRoot,
-            "adapters/persistence-sqlite/src/p39-report-database.ts",
+            "adapters/persistence-sqlite/src/report-database.ts",
           ),
           "utf8",
         ),
@@ -624,7 +624,7 @@ describe("SandboxProcessPort architecture boundary", () => {
         const source = readFileSync(file, "utf8");
         return (
           source.includes("validateWindowsProtectedPaths") &&
-          source.includes('from "./p39-windows-security.js"')
+          source.includes('from "./windows-security.js"')
         );
       })
       .map(normalized)
@@ -735,7 +735,7 @@ describe("SandboxProcessPort architecture boundary", () => {
       .map(normalized)
       .sort();
     expect(moveCallers).toEqual([
-      "adapters/persistence-sqlite/src/p39-windows-security.ts",
+      "adapters/persistence-sqlite/src/windows-security.ts",
       "apps/single-workspace/src/sandbox-authority-provisioning-file-store.ts",
     ]);
     const source = readFileSync(join(repoRoot, p39SpawnModule), "utf8");

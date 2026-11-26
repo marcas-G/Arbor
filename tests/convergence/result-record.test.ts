@@ -62,7 +62,7 @@ const tableCriteria = (result: string) => {
     .map((m) => Number.parseInt(m[1] ?? "0", 10));
 };
 
-describe("P6–P12 result records", () => {
+describe("–P12 result records", () => {
   const expected: ReadonlyArray<[string, number]> = [
     ["P6", 11],
     ["P7", 11],
@@ -120,7 +120,7 @@ const numberedCriteria = (result: string) => {
     .map((m) => Number.parseInt(m[1] ?? "0", 10));
 };
 
-describe("P1–P4 result records", () => {
+describe("–P4 result records", () => {
   const expected: ReadonlyArray<[string, number, (r: string) => number[]]> = [
     ["P1", 8, listCriteria],
     ["P2", 9, listCriteria],

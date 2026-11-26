@@ -128,7 +128,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("P13-007 LoginCard", () => {
+describe("LoginCard", () => {
   function SessionProbe() {
     const session = useSession();
     return (
@@ -181,7 +181,7 @@ describe("P13-007 LoginCard", () => {
   });
 });
 
-describe("P13-007 memory-only session (frozen contract 01 §4)", () => {
+describe("memory-only session (frozen contract 01 §4)", () => {
   it("App.tsx + session/** sources never touch web storage or cookies", () => {
     const srcRoot = join(process.cwd(), "src");
     const targets: string[] = [join(srcRoot, "App.tsx")];

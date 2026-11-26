@@ -19,7 +19,7 @@ import { sqliteAdapterError } from "./errors.js";
 import {
   type WindowsProtectedPath,
   validateWindowsProtectedPaths,
-} from "./p39-windows-security.js";
+} from "./windows-security.js";
 
 export const P39_WRITER_LOCK_DDL = `
 CREATE TABLE IF NOT EXISTS p39_writer_lock (

@@ -38,7 +38,7 @@ import type { ControlActionAuthorizerService } from "./control-authorization.js"
 import { foldAgentLoopStepCompletionError } from "./decision/errors.js";
 import { toExecutionDriverError } from "./execution-driver-failure.js";
 import { ModelDecisionService } from "./model-decision-service.js";
-import { providerTurnSafetyFingerprint } from "./p12-safety-identity.js";
+import { providerTurnSafetyFingerprint } from "./safety-identity.js";
 import type { AgentLoopQualificationProbe } from "./qualification-probe.js";
 import { selectPendingInputPromotions } from "./safe-input-drain.js";
 import { settlementProposal } from "./settlement-proposal.js";

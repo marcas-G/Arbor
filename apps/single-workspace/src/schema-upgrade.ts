@@ -1350,7 +1350,7 @@ const validateDescriptorPin = (version: number): void => {
   if (version === 46) {
     const sourcePath = resolve(
       process.cwd(),
-      "adapters/persistence-sqlite/src/p46-verification-evidence-snapshot-migration.ts",
+      "adapters/persistence-sqlite/src/verification-evidence-snapshot-migration.ts",
     );
     const sourceHash = sha256Hex(readFileSync(sourcePath, "utf8"));
     if (sourceHash !== PINNED_P46_PREFLIGHT_SOURCE_SHA256)
@@ -1362,7 +1362,7 @@ const validateDescriptorPin = (version: number): void => {
   if (version === 51) {
     const sourcePath = resolve(
       process.cwd(),
-      "adapters/persistence-sqlite/src/p51-verification-v2-consumer-reconciliation-migration.ts",
+      "adapters/persistence-sqlite/src/verification-v2-consumer-reconciliation-migration.ts",
     );
     const sourceHash = sha256Hex(
       readFileSync(sourcePath, "utf8").replace(/\r\n/gu, "\n"),
@@ -1376,7 +1376,7 @@ const validateDescriptorPin = (version: number): void => {
   if (version === 52) {
     const sourcePath = resolve(
       process.cwd(),
-      "adapters/persistence-sqlite/src/p52-work-contract-revision-migration.ts",
+      "adapters/persistence-sqlite/src/work-contract-revision-migration.ts",
     );
     const sourceHash = sha256Hex(
       readFileSync(sourcePath, "utf8").replace(/\r\n/gu, "\n"),

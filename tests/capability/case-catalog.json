@@ -21,12 +21,12 @@
       "capabilityId": "B02",
       "title": "Executable Tool Use",
       "l1Suites": [
-        "packages/model-context/test/p3-decode.test.ts",
-        "packages/tool-runtime/test/p4-read.test.ts"
+        "packages/model-context/test/decode.test.ts",
+        "packages/tool-runtime/test/read.test.ts"
       ],
       "l2Suites": [
-        "tests/p4-integration.test.ts",
-        "tests/p12-providers-tools.test.ts"
+        "tests/tool-integration.test.ts",
+        "tests/providers-tools.test.ts"
       ],
       "l3": {
         "caseId": "B02-L3-REAL",
@@ -47,13 +47,13 @@
         "packages/agent-runtime/test/i0-control-registry.test.ts"
       ],
       "l2Suites": [
-        "apps/single-workspace/test/p5-slice-acceptance.test.ts",
-        "apps/single-workspace/test/p5-yield-wake.test.ts",
+        "apps/single-workspace/test/slice-acceptance.test.ts",
+        "apps/single-workspace/test/yield-wake.test.ts",
         "apps/single-workspace/test/i0-send-message.test.ts",
         "apps/single-workspace/test/i0-send-message-durable.test.ts",
-        "tests/p6-send-message.test.ts",
-        "tests/p6/story-a.test.ts",
-        "tests/p6/story-e.test.ts"
+        "tests/send-message.test.ts",
+        "tests/scenario-6/story-a.test.ts",
+        "tests/scenario-6/story-e.test.ts"
       ],
       "l2ProviderMode": "FAKE",
       "l3": {
@@ -70,8 +70,8 @@
     {
       "capabilityId": "B04",
       "title": "Multi-turn Memory / Cognitive Continuity",
-      "l1Suites": ["packages/model-context/test/p3-context.test.ts"],
-      "l2Suites": ["apps/single-workspace/test/p5-session-continuity.test.ts"],
+      "l1Suites": ["packages/model-context/test/context.test.ts"],
+      "l2Suites": ["apps/single-workspace/test/session-continuity.test.ts"],
       "l3": {
         "caseId": "B04-L3-REAL",
         "evidenceLevel": "L3",
@@ -88,10 +88,10 @@
       "title": "Human Steer",
       "l1Suites": ["packages/domain/test/work.test.ts"],
       "l2Suites": [
-        "tests/p6-steer.test.ts",
-        "tests/p6-critical-steer/gateway-receipts.test.ts",
-        "tests/p6-critical-steer/submit-transaction.test.ts",
-        "tests/p10-humanintervention.test.ts"
+        "tests/steer.test.ts",
+        "tests/critical-steer/gateway-receipts.test.ts",
+        "tests/critical-steer/submit-transaction.test.ts",
+        "tests/humanintervention.test.ts"
       ],
       "l3": {
         "caseId": "B05-L3-REAL",
@@ -110,8 +110,8 @@
       "l1Suites": ["packages/domain/test/events.test.ts"],
       "l2Suites": [
         "tests/capability/gray-box/b06-blob-message-inbox.test.ts",
-        "tests/p6-send-message.test.ts",
-        "tests/p6-inbox-promotion.test.ts"
+        "tests/send-message.test.ts",
+        "tests/inbox-promotion.test.ts"
       ],
       "l3": {
         "caseId": "B06-L3-REAL",
@@ -129,10 +129,10 @@
       "title": "Responsibility Delegation",
       "l1Suites": ["packages/domain/test/workspace.test.ts"],
       "l2Suites": [
-        "tests/p6/story-a.test.ts",
-        "tests/p6/story-b.test.ts",
-        "tests/p6-formation-consumer.test.ts",
-        "tests/p6-formation-governance.test.ts"
+        "tests/scenario-6/story-a.test.ts",
+        "tests/scenario-6/story-b.test.ts",
+        "tests/formation-consumer.test.ts",
+        "tests/formation-governance.test.ts"
       ],
       "l3": {
         "caseId": "B07-L3-REAL",
@@ -150,8 +150,8 @@
       "title": "Optional Subagent Isolation",
       "l1Suites": ["packages/domain/test/execution.test.ts"],
       "l2Suites": [
-        "tests/p6-specialist-spawn.test.ts",
-        "tests/p6-specialist-settlement.test.ts"
+        "tests/specialist-spawn.test.ts",
+        "tests/specialist-settlement.test.ts"
       ],
       "l3": {
         "caseId": "B08-L3-REAL",
@@ -169,9 +169,9 @@
       "title": "Dependency / Deliverable",
       "l1Suites": ["packages/domain/test/dependency.test.ts"],
       "l2Suites": [
-        "tests/p7-produce-deliverable.test.ts",
-        "tests/p7-satisfy-dependency.test.ts",
-        "tests/p7/p7-acceptance.test.ts"
+        "tests/produce-deliverable.test.ts",
+        "tests/satisfy-dependency.test.ts",
+        "tests/scenario-7/acceptance.test.ts"
       ],
       "l3": {
         "caseId": "B09-L3-REAL",
@@ -189,9 +189,9 @@
       "title": "Verification",
       "l1Suites": ["packages/domain/test/verification.test.ts"],
       "l2Suites": [
-        "tests/p8-start-verification.test.ts",
-        "tests/p8-conclude.test.ts",
-        "tests/p8-acceptance-commands.test.ts",
+        "tests/start-verification.test.ts",
+        "tests/conclude.test.ts",
+        "tests/acceptance-commands.test.ts",
         "tests/capability/black-box/s1-s4-public-api.test.ts"
       ],
       "l2ProviderMode": "RECORDING",
@@ -211,9 +211,9 @@
       "title": "Completion / Acceptance",
       "l1Suites": ["packages/domain/test/work.test.ts"],
       "l2Suites": [
-        "tests/p8/story-a.test.ts",
-        "tests/p8/story-d.test.ts",
-        "tests/p8-acceptance-commands.test.ts"
+        "tests/scenario-8/story-a.test.ts",
+        "tests/scenario-8/story-d.test.ts",
+        "tests/acceptance-commands.test.ts"
       ],
       "l3": {
         "caseId": "B11-L3-REAL",
@@ -231,12 +231,12 @@
       "title": "Restart / Continuation",
       "l1Suites": ["packages/domain/test/execution.test.ts"],
       "l2Suites": [
-        "apps/single-workspace/test/p5-restart-continuity.test.ts",
-        "tests/p9-provider-disconnect/p9-provider-disconnect-turns.test.ts",
-        "tests/p9-provider-disconnect/p9-provider-disconnect-recovery.test.ts",
-        "tests/p9-worker-crash/p9-worker-crash-w.test.ts",
-        "tests/p9-worker-crash/p9-resurrection.test.ts",
-        "tests/p9-tool-outcome-unknown.test.ts"
+        "apps/single-workspace/test/restart-continuity.test.ts",
+        "tests/provider-disconnect/provider-disconnect-turns.test.ts",
+        "tests/provider-disconnect/provider-disconnect-recovery.test.ts",
+        "tests/worker-crash/worker-crash-w.test.ts",
+        "tests/worker-crash/resurrection.test.ts",
+        "tests/tool-outcome-unknown.test.ts"
       ],
       "l3": {
         "caseId": "B12-L3-REAL",
@@ -252,20 +252,20 @@
     {
       "capabilityId": "B13",
       "title": "Failure Recovery",
-      "l1Suites": ["packages/model-context/test/p3-decode.test.ts"],
+      "l1Suites": ["packages/model-context/test/decode.test.ts"],
       "l2Suites": [
-        "tests/p9/p9-story-a.test.ts",
-        "tests/p9/p9-story-b.test.ts",
-        "tests/p9/p9-story-c.test.ts",
-        "tests/p9/p9-story-d.test.ts",
-        "tests/p9/p9-story-e.test.ts",
-        "tests/p9/p9-story-f.test.ts",
-        "tests/p9/p9-story-g.test.ts",
-        "tests/p9-provider-disconnect/p9-provider-disconnect-turns.test.ts",
-        "tests/p9-provider-disconnect/p9-provider-disconnect-recovery.test.ts",
-        "tests/p9-tool-outcome-unknown.test.ts",
-        "tests/p9-worker-crash/p9-worker-crash-w.test.ts",
-        "tests/p9-worker-crash/p9-resurrection.test.ts"
+        "tests/scenario-9/story-a.test.ts",
+        "tests/scenario-9/story-b.test.ts",
+        "tests/scenario-9/story-c.test.ts",
+        "tests/scenario-9/story-d.test.ts",
+        "tests/scenario-9/story-e.test.ts",
+        "tests/scenario-9/story-f.test.ts",
+        "tests/scenario-9/story-g.test.ts",
+        "tests/provider-disconnect/provider-disconnect-turns.test.ts",
+        "tests/provider-disconnect/provider-disconnect-recovery.test.ts",
+        "tests/tool-outcome-unknown.test.ts",
+        "tests/worker-crash/worker-crash-w.test.ts",
+        "tests/worker-crash/resurrection.test.ts"
       ],
       "l3": {
         "caseId": "B13-L3-REAL",
@@ -286,8 +286,8 @@
         "apps/web/test/views-render.test.tsx"
       ],
       "l2Suites": [
-        "apps/single-workspace/test/p14-conversation-history-pagination.test.ts",
-        "tests/p14-transcript.test.ts"
+        "apps/single-workspace/test/conversation-history-pagination.test.ts",
+        "tests/transcript.test.ts"
       ],
       "l3": {
         "caseId": "B14-L3-REAL",

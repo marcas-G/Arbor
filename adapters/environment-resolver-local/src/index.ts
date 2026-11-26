@@ -30,7 +30,7 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
  *    observation needs none; the store port's `current` is not used because
  *    it drags a transaction requirement along);
  *  - this file reaches NO environment write seam of any kind (asserted
- *    mechanically in tests/p11-resolver.test.ts).
+ *    mechanically in tests/resolver.test.ts).
  *
  * Sibling of the fake `ProjectEnvironmentPortLive` in
  * adapters/environment-local (kept; not replaced).

@@ -11,18 +11,18 @@ const outputFile = resolve(
 );
 
 const mixedFiles = new Set([
-  "apps/single-workspace/test/p14-real-provider-conversation.test.ts",
+  "apps/single-workspace/test/real-provider-conversation.test.ts",
   "apps/web/test/session.test.tsx",
-  "tests/p7/p7-acceptance.test.ts",
+  "tests/scenario-7/acceptance.test.ts",
   "tests/p10-acceptance.test.ts",
-  "tests/p11-acceptance.test.ts",
-  "tests/p12-region-encoding.test.ts",
-  "tests/p12-security-performance.test.ts",
+  "tests/acceptance.test.ts",
+  "tests/region-encoding.test.ts",
+  "tests/security-performance.test.ts",
 ]);
 
 const mixedReasons = new Map([
   [
-    "apps/single-workspace/test/p14-real-provider-conversation.test.ts",
+    "apps/single-workspace/test/real-provider-conversation.test.ts",
     "The suite has a scripted-fetch context/persistence case plus a live-provider branch guarded by ARBOR_WAVE1_LIVE_HUMAN_INPUT; both seed input directly and neither is full B01 L3.",
   ],
   [
@@ -33,7 +33,7 @@ const mixedReasons = new Map([
     "SQLite formation/governance stories share the file with direct model-contract/program probes.",
   ],
   [
-    "tests/p7/p7-acceptance.test.ts",
+    "tests/scenario-7/acceptance.test.ts",
     "Database-backed deliverable/dependency stories share the file with direct matcher and replay probes.",
   ],
   [
@@ -44,23 +44,23 @@ const mixedReasons = new Map([
     "Application/read-model integration stories share the file with mechanical source/contract assertions.",
   ],
   [
-    "tests/p11-acceptance.test.ts",
+    "tests/acceptance.test.ts",
     "SQLite worktree/revision integration stories share the file with static boundary and closure assertions.",
   ],
   [
-    "tests/p12-region-encoding.test.ts",
+    "tests/region-encoding.test.ts",
     "Direct region algebra cases share the file with persistence/runtime encoding integration checks.",
   ],
   [
-    "tests/p12-security-performance.test.ts",
+    "tests/security-performance.test.ts",
     "Direct trust/performance assertions share the file with source-tree architecture checks.",
   ],
 ]);
 
 const unknownFiles = new Set([
   "tests/convergence/result-record.test.ts",
-  "tests/p9-harness.test.ts",
-  "tests/p12-closure.test.ts",
+  "tests/harness.test.ts",
+  "tests/closure.test.ts",
   ...[
     "d0-contract-guardrails.test.ts",
     "dependency-pins.test.ts",
@@ -74,15 +74,15 @@ const unknownFiles = new Set([
 
 const l1Exceptions = new Set([
   "tests/capability/harness.test.ts",
-  "tests/p2-domain-evolution.test.ts",
-  "tests/p2-ports.test.ts",
-  "tests/p3-ports.test.ts",
-  "tests/p4-ports.test.ts",
-  "tests/p6-ceiling.test.ts",
-  "tests/p7-domain.test.ts",
-  "tests/p8-domain.test.ts",
-  "tests/p10-domain-events.test.ts",
-  "tests/p11-snapshot-fingerprint.test.ts",
+  "tests/domain-evolution.test.ts",
+  "tests/execution-ports.test.ts",
+  "tests/agent-ports.test.ts",
+  "tests/tool-ports.test.ts",
+  "tests/ceiling.test.ts",
+  "tests/deliverable-domain.test.ts",
+  "tests/verification-domain.test.ts",
+  "tests/domain-events.test.ts",
+  "tests/snapshot-fingerprint.test.ts",
 ]);
 
 const l1AdapterFiles = new Set([
@@ -92,7 +92,7 @@ const l1AdapterFiles = new Set([
 
 const l1SingleWorkspaceFiles = new Set([
   "apps/single-workspace/test/conversation-progress.test.ts",
-  "apps/single-workspace/test/p13-invalidation.test.ts",
+  "apps/single-workspace/test/invalidation.test.ts",
 ]);
 
 const l2WebFiles = new Set([
@@ -101,7 +101,7 @@ const l2WebFiles = new Set([
 ]);
 
 const exactL3Files = new Set([
-  "apps/single-workspace/test/p13-web-e2e.test.ts",
+  "apps/single-workspace/test/web-e2e.test.ts",
 ]);
 
 const normalize = (path) => path.split(sep).join("/");

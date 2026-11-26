@@ -44,7 +44,7 @@ import {
 
 export const fixtures: ProductionFixture[] = [];
 export const p37Child = resolve(
-  "tests/functional/support/p37-deliver-process-child.mjs",
+  "tests/functional/support/deliver-process-child.mjs",
 );
 export const manualWait = (reason: string) => ({
   _tag: "ToolCall" as const,
@@ -847,7 +847,7 @@ export const seedDeliverableWaitingForDelivery = async (
       }
       if (!deliverArmed && options.startDeliverImmediately !== true) {
         seedWaitIssued = true;
-        return manualWait(`P37 seed waits before Deliver ${marker}`);
+        return manualWait(`seed waits before Deliver ${marker}`);
       }
       if (!context.includes("DeliverableDelivered(")) {
         deliverDecisionCalls += 1;
@@ -860,7 +860,7 @@ export const seedDeliverableWaitingForDelivery = async (
           },
         };
       }
-      return manualWait(`P37 delivery settled ${marker}`);
+      return manualWait(`delivery settled ${marker}`);
     }
     return { _tag: "HttpError", status: 422 };
   };

@@ -679,7 +679,7 @@ const seedForeignKeys = Effect.gen(function* () {
 // A9 observation-persistence (ProviderRuntime fixture, every target)
 // ---------------------------------------------------------------------------
 
-describe("P16 E3 conformance — A9 observation-persistence", () => {
+describe("E3 conformance — A9 observation-persistence", () => {
   it.each(TARGETS)(
     "A9 $name: a completed turn persists provider_turns and provider_attempts rows",
     { timeout: 20_000 },
@@ -784,7 +784,7 @@ const qualificationModule = await import(
   "../../packages/ports/dist/provider-extension.js"
 );
 
-describe("P16 E4a/E5 — dep-openai-compat-echo qualification", () => {
+describe("E4a/E5 — dep-openai-compat-echo qualification", () => {
   it("resolves through the unchanged registry/catalog and binds the exact fingerprint", async () => {
     const { readFileSync } = await import("node:fs");
     const { resolveModelBinding, resolvedModelBindingFingerprint } =
@@ -842,7 +842,7 @@ function makeRegistryForQualification() {
 // P16 E5 — production deployment qualification (dep-env / DeepSeek)
 // ---------------------------------------------------------------------------
 
-describe("P16 E5 — dep-env qualification", () => {
+describe("E5 — dep-env qualification", () => {
   it("the production deployment record binds the exact ResolvedModelBinding fingerprint", async () => {
     const { readFileSync } = await import("node:fs");
     const {

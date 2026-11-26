@@ -1,7 +1,7 @@
 // Shared scenario fixtures for the model-decision tests: the persisted rows
 // (sessions/projects/workspaces/executions) and the in-memory execution
 // state that `ModelDecisionService.forExecution` binds against. Extracted
-// from tests/p11-controlbasis.test.ts when the assembly moved to the
+// from tests/controlbasis.test.ts when the assembly moved to the
 // TestKit model-decision harness (test-effectiveness B3).
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";

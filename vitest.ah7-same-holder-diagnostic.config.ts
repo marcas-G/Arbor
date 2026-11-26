@@ -9,9 +9,9 @@ export default defineConfig({
   test: {
     testTimeout: 30_000,
     include: [
-      "packages/tool-runtime/test/p4-ah7-concurrent-invocation.diagnostic.ts",
-      "adapters/persistence-sqlite/test/p4-ah7-concurrent-invocation.diagnostic.ts",
-      "adapters/persistence-sqlite/test/p4-ah7-cross-connection-concurrency.diagnostic.ts",
+      "packages/tool-runtime/test/concurrent-invocation.diagnostic.ts",
+      "adapters/persistence-sqlite/test/concurrent-invocation.diagnostic.ts",
+      "adapters/persistence-sqlite/test/cross-connection-concurrency.diagnostic.ts",
     ],
   },
 });

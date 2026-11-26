@@ -12,7 +12,7 @@ import {
   withDatabase,
 } from "./support.js";
 
-test("P12 keeps a missing persisted path Pending across two real restarts, then activates the same restored path", async () => {
+test("keeps a missing persisted path Pending across two real restarts, then activates the same restored path", async () => {
   const { fixture, markerDirectory, markerFile } = await startProbedFixture(
     "GatewayCommittedBeforeP11Activation",
   );

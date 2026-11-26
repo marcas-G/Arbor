@@ -6,7 +6,7 @@ import { expect, test } from "vitest";
 import { startProductionFixture } from "../../support/production-fixture.js";
 import { makeEnvelope } from "./support.js";
 
-test("P12 startup restores Pending Attention below retention floor and clears it after exact replay", async () => {
+test("startup restores Pending Attention below retention floor and clears it after exact replay", async () => {
   const fixture = await startProductionFixture({
     admitWorkspaceDirectory: true,
     reply: () => ({ _tag: "Text", text: "No model call expected" }),

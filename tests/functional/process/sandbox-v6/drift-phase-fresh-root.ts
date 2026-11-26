@@ -16,7 +16,7 @@ import {
   isP9SandboxUnavailableTerminal,
   type OutcomeProbe,
   readP9OutcomeSourceForProbe,
-} from "./p9-oracle.js";
+} from "./oracle.js";
 import {
   child,
   decodeToolObservation,

@@ -15,10 +15,10 @@ test("path rule matches the historical p/ah planning-code shapes", () => {
   for (const path of [
     "tests/ah99-fake.test.ts",
     "tests/p3-driver.test.ts",
-    "tests/p10/actions.test.ts",
-    "packages/agent-runtime/src/p12-safety-identity.ts",
-    "adapters/persistence-sqlite/src/p39-maintenance.ts",
-    "tests/functional/support/ah19-conversation-native-owner-fixture.ts",
+    "tests/scenario-10/actions.test.ts",
+    "packages/agent-runtime/src/safety-identity.ts",
+    "adapters/persistence-sqlite/src/maintenance.ts",
+    "tests/functional/support/conversation-native-owner-fixture.ts",
   ])
     assert.equal(PATH_PATTERN.test(path), true, path);
   for (const path of [
@@ -89,7 +89,7 @@ test("number exemption accepts protocol, algorithm and version numerals", () => 
     true,
   );
   assert.equal(NUMBER_EXEMPT_PATTERN.test("WriterLockClient"), false);
-  assert.equal(NUMBER_EXEMPT_PATTERN.test("AH7RecoveryProbe"), false);
+  assert.equal(NUMBER_EXEMPT_PATTERN.test("RecoveryProbe"), false);
   // The planning code wins over a trailing version suffix.
   const versioned = [
     "export type ",

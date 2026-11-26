@@ -25,7 +25,7 @@ import { removeFunctionalFixtureDirectory } from "../../support/schema44-bootstr
 import type {
   OutcomeProbe,
   readP9OutcomeSourceForProbe,
-} from "./p9-oracle.js";
+} from "./oracle.js";
 
 export interface SandboxCandidate {
   readonly kind: string;

@@ -49,7 +49,7 @@ import { Context, Effect, Option } from "effect";
  * `OwnershipWriteService` CAS sequence is consumed as published, and P4
  * admission remains validate-only (ownership changes are governance
  * commands, v1.8 G4). The scope fence (`10` §2 verbatim OUT list) is
- * mechanically asserted by tests/p11-ownership-wiring.test.ts. */
+ * mechanically asserted by tests/ownership-wiring.test.ts. */
 
 export type OwnershipWiringOperationalError =
   | EnvironmentError
