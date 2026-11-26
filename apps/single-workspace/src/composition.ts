@@ -67,6 +67,7 @@ import {
   acquireP39RuntimeWriterPermit,
   ClockLive,
   CommandStoreLive,
+  CompletionHoldReadLive,
   ConsumerDeadLetterStoreLive,
   ConsumerOffsetStoreLive,
   ControlApprovalStoreLive,
@@ -1305,9 +1306,10 @@ const buildSingleWorkspaceLayerInternal = (
       infra,
     ),
   );
+  const holdRead = Layer.provide(CompletionHoldReadLive, base);
   const runnableSource = Layer.provide(
     DependencyAwareRunnableWorkSourceLive,
-    Layer.mergeAll(repos, infra, transactionPortLayer),
+    Layer.mergeAll(repos, infra, transactionPortLayer, holdRead),
   );
   const reconciliation = Layer.provide(ReconciliationSourceLive, repos);
   const scheduler = Layer.provide(
@@ -1500,12 +1502,10 @@ const buildSingleWorkspaceLayerInternal = (
           // Test-only startup diagnostics are non-authoritative.
         }
         if (preparedDatabase !== undefined) {
-          const currentLockPath = p39WriterLockFilename(
-            primaryDatabaseFilename,
-          );
+          const lock = p39WriterLockFilename(primaryDatabaseFilename);
           if (
-            typeof currentLockPath !== "string" ||
-            currentLockPath !== preparedDatabase.writerLockFilename
+            typeof lock !== "string" ||
+            lock !== preparedDatabase.writerLockFilename
           ) {
             return yield* Effect.die({
               _tag: "P39MaintenanceFailure",
