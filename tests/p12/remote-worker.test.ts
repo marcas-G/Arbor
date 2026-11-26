@@ -48,6 +48,7 @@ import {
   TransactionPort,
   TransactionScope,
 } from "../../packages/ports/src/index.js";
+import { NoHoldWorkReadmissionGateStoreLive } from "../../packages/testkit/src/index.js";
 import { ensureLegacyProjectResourceSourceFixture } from "../support/legacy-project-resource-source.js";
 import { ISSUED_AT, readRepoFile } from "./support.js";
 
@@ -157,7 +158,14 @@ const rwBuildApp = (dbFile: string, counter: { count: number }) => {
   const workspaces = Layer.provide(WorkspaceRepositoryLive, infra);
   const registry = Layer.provide(
     P2CommandHandlerRegistryLive,
-    Layer.mergeAll(projects, workspaces, sessions, repo, workWaits),
+    Layer.mergeAll(
+      projects,
+      workspaces,
+      sessions,
+      repo,
+      workWaits,
+      NoHoldWorkReadmissionGateStoreLive,
+    ),
   );
   const gateway = Layer.provide(
     CommandGatewayLive,

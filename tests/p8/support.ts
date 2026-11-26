@@ -74,6 +74,7 @@ import {
   WorkspaceRepository,
   WorkWaitStore,
 } from "../../packages/ports/src/index.js";
+import { NoHoldWorkReadmissionGateStoreService } from "../../packages/testkit/src/index.js";
 import {
   p7Project,
   p7RootWorkspace,
@@ -310,6 +311,7 @@ export const StoryRegistryLive: Layer.Layer<
         workspaces,
         sessions,
         executions,
+        readmissionGate: NoHoldWorkReadmissionGateStoreService,
         workWaits,
       }),
       makeStartVerificationHandler({

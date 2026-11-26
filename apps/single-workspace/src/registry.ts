@@ -137,6 +137,7 @@ export const makeSingleWorkspaceCommandHandlerRegistryLive = (
   | EvidenceRepository
   | ExecutionRepository
   | WorkWaitStore
+  | WorkReadmissionGateStore
   | WorkContractRevisionRepository
   | FormationProposalStore
   | InboxProjectionStore
@@ -175,12 +176,12 @@ export const makeSingleWorkspaceCommandHandlerRegistryLive = (
         () => executableApprovalStoreUnavailable,
       );
       const workWaits = yield* WorkWaitStore;
+      // E06: the durable environment-blocking fact source is required for
+      // Work-bound admission recheck, not an optional lookup.
+      const readmissionGate = yield* WorkReadmissionGateStore;
       const blockers = yield* Effect.serviceOption(WorkBlockerStore);
       const loopSteps = yield* Effect.serviceOption(AgentLoopStepStore);
       const providerTurns = yield* Effect.serviceOption(ProviderTurnStore);
-      const readmissionGate = yield* Effect.serviceOption(
-        WorkReadmissionGateStore,
-      );
       const proposals = yield* FormationProposalStore;
       const fulfillments = yield* Effect.serviceOption(
         FormationFulfillmentStore,
@@ -282,9 +283,7 @@ export const makeSingleWorkspaceCommandHandlerRegistryLive = (
               },
             }
           : {}),
-        ...(Option.isSome(readmissionGate)
-          ? { readmissionGate: readmissionGate.value }
-          : {}),
+        readmissionGate,
         executableApprovals,
         ...(Option.isSome(conversationAttempts)
           ? {

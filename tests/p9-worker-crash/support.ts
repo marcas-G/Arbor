@@ -64,6 +64,7 @@ import {
   WorkspaceRepository,
   WorkWaitStore,
 } from "../../packages/ports/src/index.js";
+import { NoHoldWorkReadmissionGateStoreService } from "../../packages/testkit/src/index.js";
 import { ReconciliationSourceLive } from "../../packages/tool-runtime/src/index.js";
 import { yieldedSettlement } from "../support/execution-episode-fixtures.js";
 import { ensureLegacyProjectResourceSourceFixture } from "../support/legacy-project-resource-source.js";
@@ -125,6 +126,7 @@ export const P9CommandHandlerRegistryLive: Layer.Layer<
         workspaces: yield* WorkspaceRepository,
         sessions: yield* SessionRepository,
         executions: yield* ExecutionRepository,
+        readmissionGate: NoHoldWorkReadmissionGateStoreService,
         workWaits: yield* WorkWaitStore,
       }),
       makeSelectCurrentWorkHandler({

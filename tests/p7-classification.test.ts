@@ -61,7 +61,6 @@ const otherWorkspace = parse(WorkspaceId)(
 
 const makeClassificationApp = (
   heldWorkIds: ReadonlySet<WorkId> = new Set(),
-  includeReadmissionGate = true,
 ) => {
   const base = makeP7App();
   const waits = Layer.provide(WorkWaitStoreLive, base);
@@ -76,16 +75,11 @@ const makeClassificationApp = (
           : Option.none(),
       ),
   });
-  const dependencies = includeReadmissionGate
-    ? Layer.mergeAll(base, waits, readmissionGate)
-    : Layer.mergeAll(base, waits);
   const classifier = Layer.provide(
     DependencyAwareRunnableWorkSourceLive,
-    dependencies,
+    Layer.mergeAll(base, waits, readmissionGate),
   );
-  return includeReadmissionGate
-    ? Layer.mergeAll(base, waits, readmissionGate, classifier)
-    : Layer.mergeAll(base, waits, classifier);
+  return Layer.mergeAll(base, waits, readmissionGate, classifier);
 };
 
 const seedWork = (workId: WorkId, commandId: CommandId) =>
@@ -294,19 +288,35 @@ describe("P7-008 dependency-aware classification (03 §2/§3)", () => {
     );
   });
 
-  it("fails closed when an Open Work exists but the readmission gate port is missing", async () => {
-    await runP7(
-      Effect.gen(function* () {
-        yield* seedWorks([[WORK_CLEAN, CMD_CLEAN]]);
-        const exit = yield* Effect.exit(classifyRoot);
-        expect(exit._tag).toBe("Failure");
-        if (exit._tag === "Failure") {
-          expect(JSON.stringify(exit.cause)).toContain(
-            '"_tag":"PersistenceUnavailable"',
-          );
-        }
-      }),
-      makeClassificationApp(new Set(), false),
+  it("fails closed at layer construction when the readmission gate port is missing (E06)", async () => {
+    // The gate is a required R-channel dependency of the classifier: a
+    // composition without it can no longer be built, so the missing-port
+    // failure moved from classify time to layer build time.
+    const base = makeP7App();
+    const waits = Layer.provide(WorkWaitStoreLive, base);
+    const classifier = Layer.provide(
+      DependencyAwareRunnableWorkSourceLive,
+      Layer.mergeAll(base, waits),
     );
+    const program: Effect.Effect<unknown, unknown, RunnableWorkSource> =
+      Effect.gen(function* () {
+        yield* runMigrations(P7_MIGRATIONS);
+        yield* p7SeedProject;
+        yield* seedWork(WORK_CLEAN, CMD_CLEAN);
+        const source = yield* RunnableWorkSource;
+        return yield* source.classify(p7RootWorkspace);
+      }) as Effect.Effect<unknown, unknown, RunnableWorkSource>;
+    // The classifier layer cannot resolve its required gate service, so
+    // providing the program fails the fiber with a defect; the seeded Work
+    // is never classified and the daemon surfaces the composition error.
+    await expect(async () =>
+      Effect.runPromise(
+        Effect.provide(program, classifier) as Effect.Effect<
+          unknown,
+          unknown,
+          never
+        >,
+      ),
+    ).rejects.toThrow("Service not found: arbor/WorkReadmissionGateStore");
   });
 });

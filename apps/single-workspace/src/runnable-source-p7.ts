@@ -67,6 +67,7 @@ export const DependencyAwareRunnableWorkSourceLive: Layer.Layer<
   | WorkRepository
   | DependencyRepository
   | WorkWaitStore
+  | WorkReadmissionGateStore
   | TransactionPort
 > = Layer.effect(
   RunnableWorkSource,
@@ -78,9 +79,10 @@ export const DependencyAwareRunnableWorkSourceLive: Layer.Layer<
     const acceptances = yield* Effect.serviceOption(AcceptanceRepository);
     const sql = yield* Effect.serviceOption(SqlClient);
     const waits = yield* WorkWaitStore;
-    const readmissionGate = yield* Effect.serviceOption(
-      WorkReadmissionGateStore,
-    );
+    // E06: the durable environment-blocking fact source is a required
+    // classifier input on every tick path (AGENTS.md: a Work blocked by an
+    // unavailable environment stays blocked across ticks and restarts).
+    const readmissionGate = yield* WorkReadmissionGateStore;
     const tx = yield* TransactionPort;
 
     const waitReferencesDependency = (
@@ -214,16 +216,6 @@ export const DependencyAwareRunnableWorkSourceLive: Layer.Layer<
             }
           }
           if (Option.isSome(workspace) && open.length > 0) {
-            if (Option.isNone(readmissionGate)) {
-              return yield* Effect.fail({
-                _tag: "PersistenceUnavailable" as const,
-                repository: "WorkReadmissionGateStore" as const,
-                operation: "RunnableWorkSource.classify",
-                retryDisposition: "non-retryable" as const,
-                sourceTag: "ReadmissionGateUnavailable",
-                cause: "readmission gate service is not registered",
-              });
-            }
             for (const work of open) {
               // A terminal provider record can be intentionally held by the
               // readmission gate when its failure evidence is incomplete.
@@ -231,7 +223,7 @@ export const DependencyAwareRunnableWorkSourceLive: Layer.Layer<
               // inspect the Work and submit a new revision; turning that
               // durable hold into a scheduler error makes recovery
               // impossible after a restart.
-              const source = yield* readmissionGate.value
+              const source = yield* readmissionGate
                 .hasBlockingSource({
                   projectId: workspace.value.projectId,
                   workspaceId,
