@@ -116,7 +116,7 @@ CREATE TABLE tool_invocation_effect_attempts (
   binding_sha256 TEXT,
   admitted_at TEXT,
   admission_source TEXT NOT NULL CHECK (admission_source IN
-    ('P36Backfill','Claim','Admission')),
+    ('P36Backfill','P39Claim','P39Admission')),
   admission_time_precision TEXT NOT NULL CHECK (admission_time_precision IN
     ('NotAdmitted','TransactionTimestamp','UnknownLegacy')),
   PRIMARY KEY (invocation_id, attempt_no),
@@ -125,11 +125,11 @@ CREATE TABLE tool_invocation_effect_attempts (
   CHECK (
     (admission_state = 'NotAdmitted' AND admitted_at IS NULL
       AND admission_time_precision = 'NotAdmitted'
-      AND admission_source IN ('P36Backfill','Claim'))
+      AND admission_source IN ('P36Backfill','P39Claim'))
     OR
     (admission_state = 'MayHaveStarted' AND admitted_at IS NOT NULL
       AND admission_time_precision = 'TransactionTimestamp'
-      AND admission_source = 'Admission')
+      AND admission_source = 'P39Admission')
     OR
     (admission_state IN ('MayHaveStarted','LegacyUnknown') AND admitted_at IS NULL
       AND admission_time_precision = 'UnknownLegacy'
