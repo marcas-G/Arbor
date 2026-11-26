@@ -1,5 +1,4 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Effect } from "effect";
 import { expect } from "vitest";
@@ -21,7 +20,6 @@ import {
   waitForPublic,
 } from "../../support/public-client.js";
 import {
-  commitSandboxPolicyV3HighWater,
   installSandboxPolicyV3SyntheticArtifacts,
   sandboxPolicyV3TestPair,
   writeSandboxPolicyV3TestPair,
@@ -32,10 +30,8 @@ import {
   durableSandboxRead,
   fixtureDiagnostics,
   fixtures,
-  freshWorkspacePurpose,
   insertProductionPrimaryWorktree,
   operatorCommand,
-  p1OwnedDomainSnapshot,
   policyPayload,
   safeInitialShellCommand,
   shellCommandForWorkspacePurpose,

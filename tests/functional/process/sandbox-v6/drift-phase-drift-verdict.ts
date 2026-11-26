@@ -1,6 +1,4 @@
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { Effect } from "effect";
 import { expect } from "vitest";
 import { loadSandboxAuthorityBundleSnapshotCurrent } from "../../../../apps/single-workspace/src/sandbox-authority-bundle.js";

@@ -1,71 +1,16 @@
-import { readFileSync } from "node:fs";
-import { Effect, Layer, Option } from "effect";
-import { SqlClient } from "effect/unstable/sql/SqlClient";
+import { Effect } from "effect";
 import { expect } from "vitest";
-import {
-  AcceptanceRepositoryLive,
-  ClockLive,
-  CommandStoreLive,
-  DeliverableRepositoryLive,
-  DomainEventJournalLive,
-  EnvironmentRevisionStoreLive,
-  EvidenceRepositoryLive,
-  ExecutionRepositoryLive,
-  IdGeneratorLive,
-  layer,
-  P8_MIGRATIONS,
-  ProjectRepositoryLive,
-  runMigrations,
-  SessionRepositoryLive,
-  TransactionPortLive,
-  VerificationRepositoryLive,
-  WorkRepositoryLive,
-  WorkspaceRepositoryLive,
-  WorkWaitStoreLive,
-} from "../../adapters/persistence-sqlite/src/index.js";
-import {
-  assertProgramGate,
-  evalAllPrograms,
-  evaluateProgramContent,
-  PROGRAM_REGISTRY,
-  type ProgramRegistryEntry,
-  programFilePath,
-  sha256Hex,
-} from "../../packages/agent-runtime/src/prompt-programs.js";
-import {
-  type AcceptWorkOutcomePayload,
-  makeAcceptWorkOutcomeHandler,
-  makeCompleteWorkHandler,
-} from "../../packages/application/src/commands/accept-complete.js";
-import {
-  type ConcludeVerificationPayload,
-  type CriterionResultInput,
-  makeConcludeVerificationHandler,
-  makeRecordVerificationEvidenceHandler,
-  type RecordVerificationEvidencePayload,
+import type { AcceptWorkOutcomePayload } from "../../packages/application/src/commands/accept-complete.js";
+import type {
+  ConcludeVerificationPayload,
+  RecordVerificationEvidencePayload,
 } from "../../packages/application/src/commands/conclude-verification.js";
-import {
-  makeStartVerificationHandler,
-  type StartVerificationPayload,
-} from "../../packages/application/src/commands/start-verification.js";
-import {
-  completionCommandId,
-  runCompletionConsumer,
-} from "../../packages/application/src/completion-consumer.js";
+import type { StartVerificationPayload } from "../../packages/application/src/commands/start-verification.js";
 import {
   CommandGateway,
-  CommandGatewayLive,
-  type CommandHandler,
-  CommandHandlerRegistry,
-  FenceStopCheckInertLive,
   type GatewayEnvelope,
-  makeP1CommandHandlers,
   semanticRequestFingerprint,
 } from "../../packages/application/src/index.js";
-import {
-  runVerificationConsumer,
-  verificationSpawnIds,
-} from "../../packages/application/src/verification-consumer.js";
 import {
   deliverVerificationWake,
   type VerificationWakeDependencies,
@@ -75,36 +20,25 @@ import {
   type VerifierSpawnDependencies,
 } from "../../packages/application/src/verifier-spawn.js";
 import {
-  AcceptanceId,
-  ArtifactId,
-  CommandId,
+  type CommandId,
   type CommandSubmissionContext,
-  DeliverableId,
-  EvidenceId,
-  ExecutionId,
+  type DeliverableId,
+  type EvidenceId,
+  type ExecutionId,
   LeaseGeneration,
-  Principal,
   parse,
   type Verification,
-  VerificationId,
+  type VerificationId,
   type VerificationMission,
   type VerificationVerdict,
-  WorkId,
-  WorkRevision,
+  type WorkId,
   type WorkspaceId,
 } from "../../packages/domain/dist/index.js";
-import { makeP2CommandHandlers } from "../../packages/execution-runtime/src/index.js";
 import {
   AcceptanceRepository,
   Clock,
-  DeliverableRepository,
-  EnvironmentRevisionStore,
-  EvidenceRepository,
   ExecutionRepository,
   ExecutionScheduler,
-  ProjectRepository,
-  type SchedulerDecision,
-  SessionRepository,
   TransactionPort,
   VerificationRepository,
   WorkRepository,
@@ -114,16 +48,10 @@ import {
 import {
   p7Project,
   p7RootWorkspace,
-  p7SeedProject,
-  p7SeedWork,
   p7TestActor,
   p7TestPrincipal,
 } from "../support/p7-app.js";
-import {
-  VERIFIER_PRINCIPAL,
-  WREV,
-  missionDigestOf,
-} from "./support.js";
+import { missionDigestOf, VERIFIER_PRINCIPAL, WREV } from "./support.js";
 
 export const fingerprintOf = (commandType: string, payload: unknown) =>
   semanticRequestFingerprint({

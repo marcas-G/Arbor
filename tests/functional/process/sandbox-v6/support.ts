@@ -15,10 +15,7 @@ import {
   WorktreeStore,
 } from "../../../../packages/ports/src/index.js";
 import { archiveProductionFixtureFailure } from "../../support/fixture-failure-evidence.js";
-import {
-  type ProductionFixture,
-  startProductionFixture,
-} from "../../support/production-fixture.js";
+import type { ProductionFixture } from "../../support/production-fixture.js";
 import {
   type FunctionalProject,
   functionalId,

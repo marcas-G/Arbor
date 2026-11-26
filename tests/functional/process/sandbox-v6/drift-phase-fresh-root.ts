@@ -24,7 +24,6 @@ import {
   freshExecutionDiagnosticSnapshot,
   freshWorkspacePurpose,
   insertProductionPrimaryWorktree,
-  p1OwnedDomainSnapshot,
   policyPayload,
   type V6eScenarioState,
   type WorkspaceDetailForSandbox,
@@ -140,7 +139,7 @@ export const v6ePhaseFreshRootPreDrift = async (
   const { marker, probeLines, scriptedProviderTrace, diagnosticState } = s;
   const fixture = s.fixture!;
   const client = s.client!;
-  const project = s.project!;
+  const _project = s.project!;
   const executionId = s.executionId;
   const firstSettled = s.firstSettled!;
   const firstStepState = s.firstStepState!;

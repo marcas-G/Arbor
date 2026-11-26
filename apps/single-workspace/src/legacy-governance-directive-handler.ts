@@ -16,7 +16,6 @@ import {
   parse,
 } from "@arbor/domain";
 import type {
-  BoundedObservation,
   ClockService,
   ExecutionDriverError,
   FormationProposalStoreService,

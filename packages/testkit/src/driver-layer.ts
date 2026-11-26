@@ -2,10 +2,7 @@
 // A-channels stay concrete while E/R channels are intentionally loose so
 // Layer.mergeAll infers the member union instead of widening every member
 // (docs/engineering/test-effectiveness.md, B1).
-import {
-  AgentLoopDriverLive,
-  ControlBasisResolverLive,
-} from "@arbor/agent-runtime";
+import { ControlBasisResolverLive } from "@arbor/agent-runtime";
 import { InputPromotionServiceLive } from "@arbor/application";
 import { BlobStorePortLive } from "@arbor/blob-local";
 import {
@@ -24,7 +21,6 @@ import {
   P39RecoveryEvidenceStoreLive,
   ProjectRepositoryLive,
   RecoveryAttentionFactStoreLive,
-  SessionRepositoryLive,
   ToolInvocationStoreLive,
   TransactionPortLive,
   VerificationRepositoryLive,

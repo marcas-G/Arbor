@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -22,7 +21,6 @@ import {
 import type { TrustedHostConfigurationSourceService } from "@arbor/ports";
 import {
   BlobStorePort,
-  type BoundedObservation,
   type CanonicalToolObservation,
   Clock,
   CurrentSandboxAuthoritySnapshotPort,
