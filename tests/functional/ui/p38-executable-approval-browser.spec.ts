@@ -110,7 +110,7 @@ test.afterEach(async ({ page: _page }, testInfo) => {
   }
 });
 
-interface P38BrowserDiagnosticContext {
+interface BrowserDiagnosticContext {
   readonly marker: string;
   readonly secretCanary: string;
   readonly projectId: string;
@@ -128,7 +128,7 @@ interface P38BrowserDiagnosticContext {
 const readP38BrowserFailureSnapshot = (
   databaseFile: string,
   workspaceDirectory: string,
-  context: P38BrowserDiagnosticContext,
+  context: BrowserDiagnosticContext,
 ): Record<string, unknown> => {
   let db: DatabaseSync | undefined;
   const redactCanary = (value: unknown): unknown => {
@@ -560,7 +560,7 @@ test("P38 browser approval resumes the same action under explicitly configured T
     markShellActionRequested = resolveRequest;
   });
   let diagnosticPhase = "fixture-started";
-  let diagnosticContext: P38BrowserDiagnosticContext | undefined;
+  let diagnosticContext: BrowserDiagnosticContext | undefined;
   let approveCommandEvidence: Readonly<Record<string, unknown>> | undefined;
   fixture = await startProductionFixture({
     admitWorkspaceDirectory: true,

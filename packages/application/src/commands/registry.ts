@@ -41,7 +41,7 @@ import { makeRegisterProjectToolHandler } from "./register-project-tool.js";
 import { makeRevokePermissionHandler } from "./revoke-permission.js";
 import { makeUpdateResourceBoundaryHandler } from "./update-resource-boundary.js";
 
-export interface P1CommandDependencies {
+export interface CommandExecutionDependencies {
   readonly clock?: Pick<ClockService, "now">;
   readonly projects: ProjectRepositoryService;
   readonly workspaces: WorkspaceRepositoryService;
@@ -72,7 +72,7 @@ export interface P1CommandDependencies {
 }
 
 export const makeP1CommandHandlers = (
-  dependencies: P1CommandDependencies,
+  dependencies: CommandExecutionDependencies,
 ): ReadonlyArray<CommandHandler<unknown, unknown>> => [
   makeCreateProjectHandler(dependencies) as unknown as CommandHandler<
     unknown,
@@ -98,7 +98,7 @@ export const makeP1CommandHandlers = (
       ]),
 ];
 
-export interface P15CommandDependencies {
+export interface GovernanceCommandDependencies {
   readonly projects: ProjectRepositoryService;
   readonly executions: ExecutionRepositoryService;
   readonly responseJobs: Pick<
@@ -113,7 +113,7 @@ export interface P15CommandDependencies {
 }
 
 export const makeP15CommandHandlers = (
-  dependencies: P15CommandDependencies,
+  dependencies: GovernanceCommandDependencies,
 ): ReadonlyArray<CommandHandler<unknown, unknown>> => [
   makeRenameProjectHandler({
     projects: dependencies.projects,
@@ -177,7 +177,7 @@ export const P1CommandHandlerRegistryLive: Layer.Layer<
  * governance commands. Kept as a separate factory so the frozen P1 registry
  * dependency set is unchanged (registration is wired where the P12 plane
  * composes). */
-export interface P12CommandDependencies {
+export interface ExternalCommandDependencies {
   readonly projectToolRegistry: ProjectToolRegistryService;
   readonly clock?: Pick<ClockService, "now">;
   readonly workspaces?: Pick<WorkspaceRepositoryService, "findById">;
@@ -188,7 +188,7 @@ export interface P12CommandDependencies {
 }
 
 export const makeP12CommandHandlers = (
-  dependencies: P12CommandDependencies,
+  dependencies: ExternalCommandDependencies,
 ): ReadonlyArray<CommandHandler<unknown, unknown>> => {
   const handlers: Array<CommandHandler<unknown, unknown>> = [
     makeRegisterProjectToolHandler({

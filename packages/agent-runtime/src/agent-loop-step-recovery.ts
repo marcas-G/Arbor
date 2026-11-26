@@ -145,7 +145,7 @@ export const hasValidCompiledInferenceRequestHash = (
   }
 };
 
-export interface P20OverflowReplacementChain {
+export interface OverflowReplacementChain {
   readonly inference: AgentLoopStepProviderTurnLink;
   readonly compaction: AgentLoopStepProviderTurnLink;
   readonly replacement: AgentLoopStepProviderTurnLink;
@@ -154,11 +154,11 @@ export interface P20OverflowReplacementChain {
 /** Resolve the one complete P20 overflow chain for an exact AgentLoopStep.
  * P9's primary ProviderTurn remains the step identity while the replacement
  * turn may own the step's accepted output manifest. */
-export const resolveP20OverflowReplacementChain = (
+export const resolveOverflowReplacementChain = (
   links: ReadonlyArray<AgentLoopStepProviderTurnLink>,
   identity: AgentLoopStepIdentity,
   primaryProviderTurnId: string,
-): P20OverflowReplacementChain | undefined => {
+): OverflowReplacementChain | undefined => {
   if (links.length !== 3) return undefined;
   const inferenceLinks = links.filter((link) => link.role === "Inference");
   const compactionLinks = links.filter(
@@ -204,7 +204,7 @@ export const resolveP20OverflowReplacementChain = (
 export const isP20OverflowReplacementManifestBound = (input: {
   readonly step: AgentLoopStepRecord;
   readonly sessionId: string;
-  readonly chain: P20OverflowReplacementChain;
+  readonly chain: OverflowReplacementChain;
   readonly manifest: {
     readonly manifestId: string;
     readonly manifestJson: string;
@@ -217,7 +217,7 @@ export const isP20OverflowReplacementManifestBound = (input: {
 export const p20OverflowReplacementManifestBindingFailures = (input: {
   readonly step: AgentLoopStepRecord;
   readonly sessionId: string;
-  readonly chain: P20OverflowReplacementChain;
+  readonly chain: OverflowReplacementChain;
   readonly manifest: {
     readonly manifestId: string;
     readonly manifestJson: string;

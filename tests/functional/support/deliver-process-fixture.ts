@@ -67,7 +67,7 @@ export const expectedDeliverCommandId = (
 export const expectedDeliverMessageId = (providerTurnId: string) =>
   `msg_${newUuid7("deliver-message", deliverOccurrence(providerTurnId))}`;
 
-export interface P37Probe {
+export interface ProcessProbe {
   readonly tag: "P37_DELIVER_PROBE";
   readonly role: "old" | "new";
   readonly boundary: string;
@@ -110,7 +110,7 @@ const p37LoggedBoundaries = new Set([
   "P10AfterDeliverAttentionConsumerCommit",
 ]);
 
-export const recordP37Probe = (probes: P37Probe[], probe: P37Probe) => {
+export const recordProcessProbe = (probes: ProcessProbe[], probe: ProcessProbe) => {
   probes.push(probe);
   if (
     !p37LoggedBoundaries.has(probe.boundary) &&
@@ -179,7 +179,7 @@ const startP37Fixture = (input: {
     call: CapturedProviderCall,
     index: number,
   ) => ScriptedProviderResponse;
-  readonly onProbe: (probe: P37Probe) => void;
+  readonly onProbe: (probe: ProcessProbe) => void;
   readonly stdoutLines?: string[];
   /** These knobs exist only in the P37 child and keep the original Work
    * revision under test; production daemon configuration is untouched. */
@@ -213,7 +213,7 @@ const startP37Fixture = (input: {
         appendSafeDaemonStdout(input.stdoutLines, line);
       }
       try {
-        const probe = JSON.parse(line) as P37Probe;
+        const probe = JSON.parse(line) as ProcessProbe;
         if (probe.tag === "P37_DELIVER_PROBE") input.onProbe(probe);
       } catch {
         // The fixture retains stderr; unrelated stdout is not a P37 signal.
@@ -233,9 +233,9 @@ export const releaseP37Gate = (
   );
 };
 
-export const awaitP37Probe = (
-  probes: ReadonlyArray<P37Probe>,
-  predicate: (probe: P37Probe) => boolean,
+export const awaitProcessProbe = (
+  probes: ReadonlyArray<ProcessProbe>,
+  predicate: (probe: ProcessProbe) => boolean,
 ) =>
   waitForPublic(
     async () => probes.find(predicate),
@@ -456,7 +456,7 @@ export const readRaiBoundaryDiagnostic = async (input: {
   readonly workRevision: number;
   readonly executionId: string;
   readonly logicalActionId: string;
-  readonly probes: ReadonlyArray<P37Probe>;
+  readonly probes: ReadonlyArray<ProcessProbe>;
   readonly providerRequestCount: number;
   readonly providerRequestBaselineCount: number;
   readonly maxNoProgressTurns: number;
@@ -758,7 +758,7 @@ export const seedDeliverableWaitingForDelivery = async (
     readonly maxNoProgressTurns?: number;
   } = {},
 ) => {
-  const probes: P37Probe[] = [];
+  const probes: ProcessProbe[] = [];
   const daemonStdoutLines: string[] = [];
   let seedWaitIssued = false;
   let deliverArmed = false;
@@ -866,7 +866,7 @@ export const seedDeliverableWaitingForDelivery = async (
   };
   const fixture = await startP37Fixture({
     reply,
-    onProbe: (probe) => recordP37Probe(probes, probe),
+    onProbe: (probe) => recordProcessProbe(probes, probe),
     stdoutLines: daemonStdoutLines,
     ...(options.startDeliverImmediately === true
       ? { startDeliverImmediately: true }
@@ -978,7 +978,7 @@ export const deliverAndHoldCommittedReceipt = async (marker: string) => {
     },
     provenance: { source: "HumanInput" },
   });
-  const intent = await awaitP37Probe(
+  const intent = await awaitProcessProbe(
     seed.probes,
     (probe) =>
       probe.role === "old" &&
@@ -1002,7 +1002,7 @@ export const deliverAndHoldCommittedReceipt = async (marker: string) => {
       `P37 Deliver intent was not bound to its seeded Work for ${marker}`,
     );
   }
-  const held = await awaitP37Probe(
+  const held = await awaitProcessProbe(
     seed.probes,
     (probe) =>
       probe.role === "old" &&
@@ -1136,7 +1136,7 @@ const leaseOwnerAnchorControllers = new WeakMap<
 
 export const captureP37LeaseOwnerProcessAnchor = (input: {
   readonly executionId: string;
-  readonly probes: ReadonlyArray<P37Probe>;
+  readonly probes: ReadonlyArray<ProcessProbe>;
   readonly daemon: QualificationDaemonController;
 }): LeaseOwnerProcessAnchor => {
   const snapshot = input.daemon.snapshot();
@@ -1195,7 +1195,7 @@ export const captureP37LeaseOwnerProcessAnchor = (input: {
 
 const p37LeaseOwnerEvidenceAfterOwnerExit = async (input: {
   readonly databaseFile: string;
-  readonly probes: ReadonlyArray<P37Probe>;
+  readonly probes: ReadonlyArray<ProcessProbe>;
   readonly executionId: string;
   readonly daemon: QualificationDaemonController;
   readonly ownerAnchor: LeaseOwnerProcessAnchor;
@@ -1285,7 +1285,7 @@ const p37LeaseOwnerEvidenceAfterOwnerExit = async (input: {
     actual.worker_incarnation_id === expected.worker_incarnation_id &&
     Number(actual.generation) === Number(expected.generation) &&
     actual.expires_at === expected.expires_at;
-  const probeGeneration = (probe: P37Probe) => {
+  const probeGeneration = (probe: ProcessProbe) => {
     const generation = probe.fencingGeneration;
     return generation !== undefined &&
       Number.isSafeInteger(generation) &&
@@ -1294,7 +1294,7 @@ const p37LeaseOwnerEvidenceAfterOwnerExit = async (input: {
       : undefined;
   };
   const probeMatchesTuple = (
-    probe: P37Probe,
+    probe: ProcessProbe,
     lease: LeaseQualificationTuple,
     processId: number,
   ) =>
@@ -1302,7 +1302,7 @@ const p37LeaseOwnerEvidenceAfterOwnerExit = async (input: {
     probe.workerId === lease.worker_id &&
     probe.workerIncarnationId === lease.worker_incarnation_id &&
     probeGeneration(probe) === Number(lease.generation);
-  const probeMatchesAnchor = (probe: P37Probe) =>
+  const probeMatchesAnchor = (probe: ProcessProbe) =>
     probe.executionId === input.ownerAnchor.executionId &&
     probe.processId === input.ownerAnchor.processId &&
     probe.workerId === input.ownerAnchor.workerId &&
@@ -1457,7 +1457,7 @@ export const expireP37LeaseForQualification = async (input: {
   readonly executionId: string;
   readonly daemon: QualificationDaemonController;
   readonly ownerAnchor: LeaseOwnerProcessAnchor;
-  readonly probes: ReadonlyArray<P37Probe>;
+  readonly probes: ReadonlyArray<ProcessProbe>;
   readonly daemonErrors?: ReadonlyArray<string>;
   readonly timeoutMs?: number;
   readonly pollIntervalMs?: number;
@@ -1522,7 +1522,7 @@ export const expireP37LeaseForQualification = async (input: {
 export const startP37RecoveryDaemon = (
   fixture: ProductionFixture,
   role: "new",
-  probes: P37Probe[],
+  probes: ProcessProbe[],
   boundaries?: string,
   maxNoProgressTurns?: number,
   diagnostics = false,
@@ -1554,7 +1554,7 @@ export const startP37RecoveryDaemon = (
         appendSafeDaemonStdout(daemonStdoutLines, line);
       }
       try {
-        const probe = JSON.parse(line) as P37Probe;
+        const probe = JSON.parse(line) as ProcessProbe;
         if (probe.tag === "P37_DELIVER_PROBE") {
           const diagnosticBoundary =
             probe.boundary === "SchedulerTickEnter" ||
@@ -1614,7 +1614,7 @@ export const startP37RecoveryDaemon = (
             ).length;
             if (count >= 256 && oldest >= 0) probes.splice(oldest, 1);
           }
-          recordP37Probe(probes, probe);
+          recordProcessProbe(probes, probe);
         }
       } catch {
         // The fixture retains stderr; unrelated stdout is not a P37 signal.

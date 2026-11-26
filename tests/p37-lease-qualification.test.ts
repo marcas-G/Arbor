@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   captureP37LeaseOwnerProcessAnchor,
   expireP37LeaseForQualification,
-  type P37Probe,
+  type ProcessProbe,
 } from "./functional/support/deliver-process-fixture.js";
 
 const directories: string[] = [];
@@ -105,7 +105,7 @@ const acquiredProbe = (input: {
   readonly generation?: number;
   readonly workerId?: string;
   readonly workerIncarnationId?: string;
-}): P37Probe => ({
+}): ProcessProbe => ({
   tag: "P37_DELIVER_PROBE",
   role: "old",
   boundary: "AH10AfterLeaseAcquired",
@@ -117,7 +117,7 @@ const acquiredProbe = (input: {
 });
 
 const anchorAndExitOwner = async (input: {
-  readonly probes: P37Probe[];
+  readonly probes: ProcessProbe[];
   readonly owner: ReturnType<typeof ownerController>;
 }) => {
   const ownerAnchor = captureP37LeaseOwnerProcessAnchor({
@@ -132,7 +132,7 @@ const anchorAndExitOwner = async (input: {
 describe("P37 exited-owner lease qualification", () => {
   it("waits past a stale generation probe until exact durable-owner stdout arrives", async () => {
     const databaseFile = seedLease();
-    const probes: P37Probe[] = [acquiredProbe({ generation: 3 })];
+    const probes: ProcessProbe[] = [acquiredProbe({ generation: 3 })];
     const owner = ownerController();
     const ownerAnchor = await anchorAndExitOwner({ probes, owner });
     const stdoutTimer = setTimeout(() => {
@@ -197,7 +197,7 @@ describe("P37 exited-owner lease qualification", () => {
   it("fails immediately if the authoritative tuple drifts while waiting", async () => {
     const databaseFile = seedLease();
     const owner = ownerController();
-    const probes: P37Probe[] = [acquiredProbe({ generation: 3 })];
+    const probes: ProcessProbe[] = [acquiredProbe({ generation: 3 })];
     const ownerAnchor = await anchorAndExitOwner({ probes, owner });
     const driftTimer = setTimeout(() => {
       const db = new DatabaseSync(databaseFile);
@@ -233,7 +233,7 @@ describe("P37 exited-owner lease qualification", () => {
   it("does not accept an exact tuple probe from a different PID", async () => {
     const databaseFile = seedLease();
     const owner = ownerController({ pid: 321 });
-    const probes: P37Probe[] = [acquiredProbe({ generation: 3 })];
+    const probes: ProcessProbe[] = [acquiredProbe({ generation: 3 })];
     const ownerAnchor = await anchorAndExitOwner({ probes, owner });
     probes.push(acquiredProbe({ processId: 654, generation: 4 }));
     await expect(
@@ -264,7 +264,7 @@ describe("P37 exited-owner lease qualification", () => {
     async (_name, conflict) => {
       const databaseFile = seedLease();
       const owner = ownerController();
-      const probes: P37Probe[] = [acquiredProbe({ generation: 3 })];
+      const probes: ProcessProbe[] = [acquiredProbe({ generation: 3 })];
       const ownerAnchor = await anchorAndExitOwner({ probes, owner });
       probes.push(conflict);
       await expect(
@@ -322,7 +322,7 @@ describe("P37 exited-owner lease qualification", () => {
       workerId: "worker:p37-old",
       workerIncarnationId: "inc-p37-old",
     });
-    const probes: P37Probe[] = [acquiredProbe({ generation: 3 })];
+    const probes: ProcessProbe[] = [acquiredProbe({ generation: 3 })];
     const ownerA = ownerController({ pid: 321 });
     const ownerAnchor = await anchorAndExitOwner({ probes, owner: ownerA });
     const controllerB = {
@@ -365,7 +365,7 @@ describe("P37 exited-owner lease qualification", () => {
       workerIncarnationId: "inc-p37-owner-b",
     });
     const owner = ownerController({ pid: 321 });
-    const probes: P37Probe[] = [
+    const probes: ProcessProbe[] = [
       acquiredProbe({ generation: 3, workerIncarnationId: "inc-p37-owner-a" }),
     ];
     const ownerAnchor = await anchorAndExitOwner({ probes, owner });
@@ -400,7 +400,7 @@ describe("P37 exited-owner lease qualification", () => {
       workerIncarnationId: "inc-p37-owner-b",
     });
     const owner = ownerController({ pid: 321 });
-    const probes: P37Probe[] = [
+    const probes: ProcessProbe[] = [
       acquiredProbe({ generation: 3, workerIncarnationId: "inc-p37-owner-a" }),
     ];
     const ownerAnchor = await anchorAndExitOwner({ probes, owner });
@@ -438,7 +438,7 @@ describe("P37 exited-owner lease qualification", () => {
     async (_name, invalidProbe) => {
       const databaseFile = seedLease();
       const owner = ownerController();
-      const probes: P37Probe[] = [acquiredProbe({ generation: 3 })];
+      const probes: ProcessProbe[] = [acquiredProbe({ generation: 3 })];
       const ownerAnchor = await anchorAndExitOwner({ probes, owner });
       probes.splice(0, probes.length, invalidProbe);
 

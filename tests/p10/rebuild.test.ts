@@ -66,7 +66,7 @@ import {
   insertWorkspaceRow,
   makeP10Deps,
   migrate,
-  type P10FixtureDeps,
+  type FixtureDependencies,
   p10Child,
   p10Project,
   p10Root,
@@ -303,7 +303,7 @@ describe("p10-acceptance (P10 07 Stories A–G)", () => {
     }
 
     const captureViews = (
-      fixture: P10FixtureDeps,
+      fixture: FixtureDependencies,
     ): Effect.Effect<ViewStates, unknown, SqlClient> =>
       Effect.gen(function* () {
         return {

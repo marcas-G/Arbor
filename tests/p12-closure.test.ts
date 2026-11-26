@@ -19,7 +19,7 @@ import { P12_MIGRATION_BASELINE } from "../packages/ports/src/index.js";
  *    `P12_MIGRATIONS`.
  *
  * This suite is the authoritative binding:
- *  - `P11B_BASELINE` / `P12_BASELINE` are DERIVED from the migration arrays
+ *  - `ClosureMigrationBaseline` / `P12_BASELINE` are DERIVED from the migration arrays
  *    (never an independent magic literal), so drift fails mechanically;
  *  - `P12_MIGRATION_BASELINE` must equal the derived `max(P12_MIGRATIONS id)`;
  *  - a real on-disk DB migrated to the P11 baseline is reopened (fresh
@@ -31,7 +31,7 @@ import { P12_MIGRATION_BASELINE } from "../packages/ports/src/index.js";
 const maxId = (migrations: ReadonlyArray<{ readonly id: number }>): number =>
   migrations.reduce((max, migration) => Math.max(max, migration.id), 0);
 
-const P11B_BASELINE = maxId(P11B_MIGRATIONS);
+const ClosureMigrationBaseline = maxId(P11B_MIGRATIONS);
 const P12_BASELINE = maxId(P12_MIGRATIONS);
 
 const suiteTmp = mkdtempSync(join(tmpdir(), "arbor-p12-closure-"));
@@ -59,7 +59,7 @@ describe("p12-closure migration/version baseline binding (B-11)", () => {
     expect(P12_MIGRATION_BASELINE).toBe(P12_BASELINE);
     // Frozen baselines: the derivation is the source of truth; these pins
     // catch a missing/corrupted migration in either ordered array.
-    expect(P11B_BASELINE).toBe(10);
+    expect(ClosureMigrationBaseline).toBe(10);
     expect(P12_BASELINE).toBe(13);
   });
 });
@@ -75,13 +75,13 @@ describe("p12-closure P11(10) -> P12(13) persisted upgrade path (B-11)", () => {
         Effect.provide(
           Effect.gen(function* () {
             const applied = yield* runMigrations(P11B_MIGRATIONS);
-            expect(applied).toBe(P11B_BASELINE);
+            expect(applied).toBe(ClosureMigrationBaseline);
 
             const sql = yield* SqlClient;
             const version = yield* sql.unsafe<{ user_version: number }>(
               "PRAGMA user_version",
             );
-            expect(Number(version[0]?.user_version)).toBe(P11B_BASELINE);
+            expect(Number(version[0]?.user_version)).toBe(ClosureMigrationBaseline);
 
             expect(yield* columnNames(sql, "execution_leases")).not.toContain(
               "worker_incarnation_id",
@@ -108,10 +108,10 @@ describe("p12-closure P11(10) -> P12(13) persisted upgrade path (B-11)", () => {
             const before = yield* sql.unsafe<{ user_version: number }>(
               "PRAGMA user_version",
             );
-            expect(Number(before[0]?.user_version)).toBe(P11B_BASELINE);
+            expect(Number(before[0]?.user_version)).toBe(ClosureMigrationBaseline);
 
             const applied = yield* runMigrations(P12_MIGRATIONS);
-            expect(applied).toBe(P12_BASELINE - P11B_BASELINE);
+            expect(applied).toBe(P12_BASELINE - ClosureMigrationBaseline);
 
             const after = yield* sql.unsafe<{ user_version: number }>(
               "PRAGMA user_version",

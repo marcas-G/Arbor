@@ -82,7 +82,7 @@ import { ensureLegacyProjectResourceSourceFixture } from "./legacy-project-resou
  * repositories the loop dependencies read, and the recovery-drive faces
  * (sweep/scheduler/leases) — consumer-harness / p8-consumer mini-app precedents. */
 
-export type P9ConsumerAppServices =
+export type ConsumerAppServices =
   | CommandGateway
   | SqlClient
   | TransactionPort
@@ -177,7 +177,7 @@ export const gatedTransactionPort = (
 export const makeP9ConsumerApp = (options?: {
   readonly filename?: string;
   readonly transaction?: Layer.Layer<TransactionPort, never, SqlClient>;
-}): Layer.Layer<P9ConsumerAppServices> => {
+}): Layer.Layer<ConsumerAppServices> => {
   const base = layer({ filename: options?.filename ?? ":memory:" });
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
   const transactionLayer =
@@ -316,12 +316,12 @@ export const makeP9ConsumerApp = (options?: {
   return Layer.mergeAll(
     gatewayDeps,
     Layer.provide(CommandGatewayLive, gatewayDeps),
-  ) as Layer.Layer<P9ConsumerAppServices>;
+  ) as Layer.Layer<ConsumerAppServices>;
 };
 
 export const runP9Consumer = <A>(
-  program: Effect.Effect<A, unknown, P9ConsumerAppServices>,
-  app: Layer.Layer<P9ConsumerAppServices>,
+  program: Effect.Effect<A, unknown, ConsumerAppServices>,
+  app: Layer.Layer<ConsumerAppServices>,
 ): Promise<A> => Effect.runPromise(Effect.scoped(Effect.provide(program, app)));
 
 export const p9Boot = Effect.gen(function* () {

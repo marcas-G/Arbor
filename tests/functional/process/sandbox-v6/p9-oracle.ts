@@ -2,7 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { sha256Hex } from "../../../../packages/ports/src/index.js";
 import { decodeToolObservation, isRecord } from "./support.js";
 
-export interface P4OutcomeProbe {
+export interface OutcomeProbe {
   readonly boundary?: string;
   readonly executionId: string;
   readonly invocationId: string;
@@ -28,7 +28,7 @@ export const postDecisionExpectedFailureProbeForInvocation = (input: {
   readonly startIndex: number;
   readonly executionId: string;
   readonly invocationId: string;
-}): P4OutcomeProbe | undefined =>
+}): OutcomeProbe | undefined =>
   input.probes
     .slice(input.startIndex)
     .find(
@@ -37,9 +37,9 @@ export const postDecisionExpectedFailureProbeForInvocation = (input: {
         probe.executionId === input.executionId &&
         probe.invocationId === input.invocationId &&
         probe.outcomeTag === "ExpectedFailure",
-    ) as unknown as P4OutcomeProbe | undefined;
+    ) as unknown as OutcomeProbe | undefined;
 
-export interface P9ActionRow {
+export interface ActionRow {
   readonly execution_id: string;
   readonly logical_step_no: number;
   readonly repair_attempt: number;
@@ -50,7 +50,7 @@ export interface P9ActionRow {
   readonly result_ref: string | null;
 }
 
-export interface P9StepRow {
+export interface StepRow {
   readonly execution_id: string;
   readonly logical_step_no: number;
   readonly repair_attempt: number;
@@ -58,7 +58,7 @@ export interface P9StepRow {
   readonly state: string;
 }
 
-export interface P9InvocationRow {
+export interface InvocationRow {
   readonly execution_id: string;
   readonly invocation_id: string;
   readonly settled_at: string | null;
@@ -70,7 +70,7 @@ export interface P9InvocationRow {
   readonly observation_json: unknown;
 }
 
-export interface P9UnavailableFactRow {
+export interface UnavailableFactRow {
   readonly execution_id: string;
   readonly policy_revision: number;
   readonly policy_digest: string;
@@ -82,7 +82,7 @@ export interface P9UnavailableFactRow {
   readonly attention_fact_id: string;
 }
 
-export interface P9EffectAttemptRow {
+export interface EffectAttemptRow {
   readonly invocation_id: string;
   readonly attempt_no: number;
   readonly admission_state: string;
@@ -90,16 +90,16 @@ export interface P9EffectAttemptRow {
   readonly binding_sha256: string | null;
 }
 
-export interface P9ArtifactRow {
+export interface ArtifactRow {
   readonly artifact_id: string;
   readonly invocation_id: string;
 }
 
 export const p9ActionStepForProbe = (input: {
-  readonly probe: P4OutcomeProbe;
-  readonly invocation: P9InvocationRow | undefined;
-  readonly actions: ReadonlyArray<P9ActionRow>;
-  readonly steps: ReadonlyArray<P9StepRow>;
+  readonly probe: OutcomeProbe;
+  readonly invocation: InvocationRow | undefined;
+  readonly actions: ReadonlyArray<ActionRow>;
+  readonly steps: ReadonlyArray<StepRow>;
 }) => {
   const { probe, invocation } = input;
   const source = probe.recoveryBindingIdentity;
@@ -139,13 +139,13 @@ export const p9ActionStepForProbe = (input: {
 };
 
 export const isP9SandboxUnavailableTerminal = (input: {
-  readonly probe: P4OutcomeProbe;
-  readonly invocation: P9InvocationRow | undefined;
-  readonly action: P9ActionRow | undefined;
-  readonly step: P9StepRow | undefined;
-  readonly unavailableFact: P9UnavailableFactRow | undefined;
-  readonly effectAttempts: ReadonlyArray<P9EffectAttemptRow>;
-  readonly artifacts: ReadonlyArray<P9ArtifactRow>;
+  readonly probe: OutcomeProbe;
+  readonly invocation: InvocationRow | undefined;
+  readonly action: ActionRow | undefined;
+  readonly step: StepRow | undefined;
+  readonly unavailableFact: UnavailableFactRow | undefined;
+  readonly effectAttempts: ReadonlyArray<EffectAttemptRow>;
+  readonly artifacts: ReadonlyArray<ArtifactRow>;
 }): boolean => {
   const {
     probe,
@@ -226,7 +226,7 @@ export const isP9SandboxUnavailableTerminal = (input: {
   );
 };
 
-export const p9NoEffectEvidenceForProbe = (probe: P4OutcomeProbe) => {
+export const p9NoEffectEvidenceForProbe = (probe: OutcomeProbe) => {
   const bindingSha256 = "b".repeat(64);
   const attentionFactId = `att_${sha256Hex(
     JSON.stringify({
@@ -265,7 +265,7 @@ export const p9NoEffectEvidenceForProbe = (probe: P4OutcomeProbe) => {
         },
         sandboxProviderUnavailable: unavailable,
       }),
-    } satisfies P9InvocationRow,
+    } satisfies InvocationRow,
     action: {
       execution_id: probe.executionId,
       logical_step_no: probe.recoveryBindingIdentity?.logicalStepNo ?? 0,
@@ -275,14 +275,14 @@ export const p9NoEffectEvidenceForProbe = (probe: P4OutcomeProbe) => {
       call_ref: probe.callRef,
       state: "TerminalRejected",
       result_ref: attentionFactId,
-    } satisfies P9ActionRow,
+    } satisfies ActionRow,
     step: {
       execution_id: probe.executionId,
       logical_step_no: probe.recoveryBindingIdentity?.logicalStepNo ?? 0,
       repair_attempt: probe.recoveryBindingIdentity?.repairAttempt ?? 0,
       provider_turn_id: probe.providerTurnId ?? "ptn_v6-oracle",
       state: "NextStepReady",
-    } satisfies P9StepRow,
+    } satisfies StepRow,
     unavailableFact: {
       execution_id: probe.executionId,
       policy_revision: 1,
@@ -293,7 +293,7 @@ export const p9NoEffectEvidenceForProbe = (probe: P4OutcomeProbe) => {
       probe_evidence_ref: unavailable.probeEvidenceRef,
       failure_code: unavailable.failureCode,
       attention_fact_id: attentionFactId,
-    } satisfies P9UnavailableFactRow,
+    } satisfies UnavailableFactRow,
     effectAttempts: [
       {
         invocation_id: probe.invocationId,
@@ -302,14 +302,14 @@ export const p9NoEffectEvidenceForProbe = (probe: P4OutcomeProbe) => {
         admission_source: "P39Admission",
         binding_sha256: bindingSha256,
       },
-    ] satisfies ReadonlyArray<P9EffectAttemptRow>,
-    artifacts: [] as ReadonlyArray<P9ArtifactRow>,
+    ] satisfies ReadonlyArray<EffectAttemptRow>,
+    artifacts: [] as ReadonlyArray<ArtifactRow>,
   };
 };
 
 export const readP9OutcomeSourceForProbe = (
   databaseFile: string,
-  probe: P4OutcomeProbe,
+  probe: OutcomeProbe,
 ) => {
   const db = new DatabaseSync(databaseFile, { readOnly: true });
   try {
@@ -323,7 +323,7 @@ export const readP9OutcomeSourceForProbe = (
           WHERE execution_id = ? AND invocation_id = ?`,
       )
       .get(probe.executionId, probe.invocationId) as
-      | P9InvocationRow
+      | InvocationRow
       | undefined;
     const actions = db
       .prepare(
@@ -332,7 +332,7 @@ export const readP9OutcomeSourceForProbe = (
            FROM agent_loop_step_actions WHERE execution_id = ?
           ORDER BY logical_step_no, repair_attempt, action_index`,
       )
-      .all(probe.executionId) as unknown as ReadonlyArray<P9ActionRow>;
+      .all(probe.executionId) as unknown as ReadonlyArray<ActionRow>;
     const steps = db
       .prepare(
         `SELECT execution_id, logical_step_no, repair_attempt,
@@ -340,7 +340,7 @@ export const readP9OutcomeSourceForProbe = (
            FROM agent_loop_steps WHERE execution_id = ?
           ORDER BY logical_step_no, repair_attempt`,
       )
-      .all(probe.executionId) as unknown as ReadonlyArray<P9StepRow>;
+      .all(probe.executionId) as unknown as ReadonlyArray<StepRow>;
     const exact = p9ActionStepForProbe({ probe, invocation, actions, steps });
     const observation =
       invocation === undefined
@@ -367,7 +367,7 @@ export const readP9OutcomeSourceForProbe = (
                 WHERE execution_id = ? AND policy_revision = ?`,
             )
             .get(probe.executionId, policyRevision) as
-            | P9UnavailableFactRow
+            | UnavailableFactRow
             | undefined);
     const effectAttempts =
       invocation === undefined
@@ -381,7 +381,7 @@ export const readP9OutcomeSourceForProbe = (
             )
             .all(
               probe.invocationId,
-            ) as unknown as ReadonlyArray<P9EffectAttemptRow>);
+            ) as unknown as ReadonlyArray<EffectAttemptRow>);
     const artifacts =
       invocation === undefined
         ? []
@@ -392,7 +392,7 @@ export const readP9OutcomeSourceForProbe = (
             )
             .all(
               probe.invocationId,
-            ) as unknown as ReadonlyArray<P9ArtifactRow>);
+            ) as unknown as ReadonlyArray<ArtifactRow>);
     db.exec("COMMIT");
     return {
       invocation,

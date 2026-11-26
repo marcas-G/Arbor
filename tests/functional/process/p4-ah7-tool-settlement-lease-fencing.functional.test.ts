@@ -24,7 +24,7 @@ import {
   initializeTrustedLocalP11Worktree,
 } from "../support/trusted-local-p11-fixture.js";
 
-interface P4FenceProbe {
+interface FenceProbe {
   readonly tag: "P4_FENCE_PROBE";
   readonly role: "old" | "new";
   readonly boundary: string;
@@ -115,9 +115,9 @@ afterEach(async () => {
   for (const fixture of fixtures.splice(0)) await fixture.stop();
 });
 
-const recordProbe = (events: P4FenceProbe[], line: string) => {
+const recordProbe = (events: FenceProbe[], line: string) => {
   try {
-    const probe = JSON.parse(line) as P4FenceProbe;
+    const probe = JSON.parse(line) as FenceProbe;
     if (probe.tag === "P4_FENCE_PROBE") events.push(probe);
   } catch {
     // Daemon diagnostics remain available from ProductionFixture on failure.
@@ -310,7 +310,7 @@ describe("P4 ToolInvocation settlement under P2 lease takeover", () => {
       process.platform === "win32"
         ? `Add-Content -LiteralPath '${effectFile}' -Value '${effectMarker}'`
         : `printf '%s\\n' '${effectMarker}' >> '${effectFile}'`;
-    const events: P4FenceProbe[] = [];
+    const events: FenceProbe[] = [];
     let manualWaitCalls = 0;
     let targetToolCalls = 0;
     const p11Fixture = createTrustedLocalP11FixtureEnvironment();

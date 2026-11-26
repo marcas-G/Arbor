@@ -1,8 +1,8 @@
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import type { P37Probe } from "../support/deliver-process-fixture.js";
+import type { ProcessProbe } from "../support/deliver-process-fixture.js";
 import {
-  awaitP37Probe,
+  awaitProcessProbe,
   captureP37LeaseOwnerProcessAnchor,
   deliverAndHoldCommittedReceipt,
   expectedDeliverCommandId,
@@ -14,7 +14,7 @@ import {
   prepareContradictoryCommittedReceipt,
   publicDeliverReplayRows,
   readP37Snapshot,
-  recordP37Probe,
+  recordProcessProbe,
   releaseP37Gate,
   restartP37Normally,
   seedDeliverableWaitingForDelivery,
@@ -73,7 +73,7 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
         provenance: { source: "HumanInput" },
       });
 
-      const oldAction = await awaitP37Probe(
+      const oldAction = await awaitProcessProbe(
         probes,
         (probe) =>
           probe.role === "old" &&
@@ -86,7 +86,7 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
       expect(oldAction.providerTurnId).toMatch(/^ptn_/u);
       expect(oldAction.logicalActionId).toMatch(/^lac_/u);
 
-      const oldRenewal = await awaitP37Probe(
+      const oldRenewal = await awaitProcessProbe(
         probes,
         (probe) =>
           probe.role === "old" &&
@@ -118,15 +118,15 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
         },
         onStdout: (line) => {
           try {
-            const probe = JSON.parse(line) as P37Probe;
+            const probe = JSON.parse(line) as ProcessProbe;
             if (probe.tag === "P37_DELIVER_PROBE")
-              recordP37Probe(probes, probe);
+              recordProcessProbe(probes, probe);
           } catch {
             // The fixture retains stderr; unrelated stdout is not a P37 signal.
           }
         },
       });
-      const newLease = await awaitP37Probe(
+      const newLease = await awaitProcessProbe(
         probes,
         (probe) =>
           probe.role === "new" &&
@@ -134,7 +134,7 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
           probe.executionId === oldAction.executionId,
       );
       expect(newLease?.fencingGeneration).toBe(1);
-      const newAction = await awaitP37Probe(
+      const newAction = await awaitProcessProbe(
         probes,
         (probe) =>
           probe.role === "new" &&
@@ -148,7 +148,7 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
       releaseP37Gate(fixture, "old", "boundary-AH7AfterActionIntentCommit");
       let oldPrecommitCommandId: string | undefined;
       if (crashSide === "before") {
-        const oldPrecommit = await awaitP37Probe(
+        const oldPrecommit = await awaitProcessProbe(
           probes,
           (probe) =>
             probe.role === "old" &&
@@ -167,7 +167,7 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
         ).toHaveLength(0);
         await fixture.crash();
       } else {
-        const afterCommit = await awaitP37Probe(
+        const afterCommit = await awaitProcessProbe(
           probes,
           (probe) =>
             probe.role === "old" &&
@@ -284,7 +284,7 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
       provenance: { source: "HumanInput" },
     });
 
-    const beforeObservation = await awaitP37Probe(
+    const beforeObservation = await awaitProcessProbe(
       probes,
       (probe) =>
         probe.role === "old" &&
@@ -343,15 +343,15 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
       daemonEnvironment: { ARBOR_P37_ROLE: "new" },
       onStdout: (line) => {
         try {
-          const probe = JSON.parse(line) as P37Probe;
-          if (probe.tag === "P37_DELIVER_PROBE") recordP37Probe(probes, probe);
+          const probe = JSON.parse(line) as ProcessProbe;
+          if (probe.tag === "P37_DELIVER_PROBE") recordProcessProbe(probes, probe);
         } catch {
           // The fixture retains stderr; unrelated stdout is not a P37 signal.
         }
       },
     });
     await fixture.crash();
-    const newLease = await awaitP37Probe(
+    const newLease = await awaitProcessProbe(
       probes,
       (probe) =>
         probe.role === "new" &&
@@ -467,7 +467,7 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
       prepared.probes,
       "AfterDeliverReplayAttentionCommit,P10AfterAttentionRowWriteBeforeConsumerCommit",
     );
-    const failure = await awaitP37Probe(
+    const failure = await awaitProcessProbe(
       prepared.probes,
       (probe) =>
         probe.role === "new" &&
@@ -492,7 +492,7 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
       "new",
       "boundary-AfterDeliverReplayAttentionCommit",
     );
-    await awaitP37Probe(
+    await awaitProcessProbe(
       prepared.probes,
       (probe) =>
         probe.role === "new" &&
@@ -674,7 +674,7 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
         crashSide === "before"
           ? "BeforeDeliverReplayAttentionCommit"
           : "AfterDeliverReplayAttentionCommit";
-      const p9Probe = await awaitP37Probe(
+      const p9Probe = await awaitProcessProbe(
         prepared.probes,
         (probe) => probe.role === "new" && probe.boundary === boundary,
       );
@@ -701,7 +701,7 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
           "new",
           "boundary-AfterDeliverReplayAttentionCommit",
         );
-        await awaitP37Probe(
+        await awaitProcessProbe(
           prepared.probes,
           (probe) =>
             probe.role === "new" &&
@@ -817,7 +817,7 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
       },
       provenance: { source: "HumanInput" },
     });
-    const oldAction = await awaitP37Probe(
+    const oldAction = await awaitProcessProbe(
       seed.probes,
       (probe) =>
         probe.role === "old" &&
@@ -873,7 +873,7 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
       seed.probes,
       "AfterDeliverReplayAttentionCommit,P10AfterAttentionRowWriteBeforeConsumerCommit",
     );
-    const failure = await awaitP37Probe(
+    const failure = await awaitProcessProbe(
       seed.probes,
       (probe) =>
         probe.role === "new" &&
@@ -896,7 +896,7 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
       "new",
       "boundary-AfterDeliverReplayAttentionCommit",
     );
-    await awaitP37Probe(
+    await awaitProcessProbe(
       seed.probes,
       (probe) =>
         probe.role === "new" &&
@@ -1001,7 +1001,7 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
         prepared.probes,
         boundary,
       );
-      const projectionProbe = await awaitP37Probe(
+      const projectionProbe = await awaitProcessProbe(
         prepared.probes,
         (probe) =>
           probe.role === "new" &&

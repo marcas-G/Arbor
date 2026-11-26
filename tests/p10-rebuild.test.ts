@@ -63,7 +63,7 @@ import {
 } from "../packages/projection-runtime/src/index.js";
 import { NoHoldWorkReadmissionGateStoreLive } from "../packages/testkit/src/index.js";
 
-import type { P10FixtureDeps } from "./support/fixture-support.js";
+import type { FixtureDependencies } from "./support/fixture-support.js";
 import {
   insertDependencyRow,
   insertEventRow,
@@ -140,7 +140,7 @@ const runRebuild = <A, R>(program: Effect.Effect<A, unknown, R>): Promise<A> =>
 
 interface RebuildHarness {
   readonly deps: RebuildOrchestrationDeps;
-  readonly fixture: P10FixtureDeps;
+  readonly fixture: FixtureDependencies;
   readonly offsetOf: (
     stage: (typeof REBUILD_STAGE_ORDER)[number],
   ) => Effect.Effect<number, unknown, never>;

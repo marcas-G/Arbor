@@ -2,17 +2,17 @@ import { describe, expect, it } from "vitest";
 import { sha256Hex } from "../../../../packages/ports/src/index.js";
 import {
   isP9SandboxUnavailableTerminal,
-  type P4OutcomeProbe,
-  type P9ActionRow,
-  type P9InvocationRow,
-  type P9StepRow,
+  type OutcomeProbe,
+  type ActionRow,
+  type InvocationRow,
+  type StepRow,
   p9ActionStepForProbe,
   p9NoEffectEvidenceForProbe,
   postDecisionExpectedFailureProbeForInvocation,
 } from "./p9-oracle.js";
 
 describe("V6 P9 action oracle tracks the exact P4 source Step", () => {
-  const probe: P4OutcomeProbe = {
+  const probe: OutcomeProbe = {
     executionId: "exe_v6-oracle",
     invocationId: "tin_v6-oracle",
     callRef: "call_v6-oracle",
@@ -41,7 +41,7 @@ describe("V6 P9 action oracle tracks the exact P4 source Step", () => {
         policyRevision: 1,
       }),
     )}`;
-    const invocation: P9InvocationRow = {
+    const invocation: InvocationRow = {
       execution_id: probe.executionId,
       invocation_id: probe.invocationId,
       settled_at: "2026-10-23T10:00:00.000Z",
@@ -69,7 +69,7 @@ describe("V6 P9 action oracle tracks the exact P4 source Step", () => {
         },
       }),
     };
-    const actions: P9ActionRow[] = [
+    const actions: ActionRow[] = [
       {
         execution_id: probe.executionId,
         logical_step_no: 0,
@@ -81,7 +81,7 @@ describe("V6 P9 action oracle tracks the exact P4 source Step", () => {
         result_ref: attentionFactId,
       },
     ];
-    const steps: P9StepRow[] = [
+    const steps: StepRow[] = [
       {
         execution_id: probe.executionId,
         logical_step_no: 0,
@@ -136,7 +136,7 @@ describe("V6 P9 action oracle tracks the exact P4 source Step", () => {
   });
 
   it("does not label a generic ExpectedFailure as the P9 unavailable terminal", () => {
-    const invocation: P9InvocationRow = {
+    const invocation: InvocationRow = {
       execution_id: probe.executionId,
       invocation_id: probe.invocationId,
       settled_at: "2026-10-23T10:00:00.000Z",

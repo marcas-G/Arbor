@@ -23,7 +23,7 @@ import {
 } from "../../support/public-client.js";
 import { removeFunctionalFixtureDirectory } from "../../support/schema44-bootstrap.js";
 import type {
-  P4OutcomeProbe,
+  OutcomeProbe,
   readP9OutcomeSourceForProbe,
 } from "./p9-oracle.js";
 
@@ -525,10 +525,10 @@ export const sandboxDecisionDebug = (
   }
 };
 
-type P9ActionRowLike = NonNullable<
+type ActionRowLike = NonNullable<
   ReturnType<typeof readP9OutcomeSourceForProbe>["action"]
 >;
-type P9StepRowLike = NonNullable<
+type StepRowLike = NonNullable<
   ReturnType<typeof readP9OutcomeSourceForProbe>["step"]
 >;
 
@@ -553,12 +553,12 @@ export interface V6eScenarioState {
   oldPayload: ReturnType<typeof policyPayload> | undefined;
   firstSettled:
     | {
-        readonly probe: P4OutcomeProbe;
+        readonly probe: OutcomeProbe;
         readonly source: ReturnType<typeof readP9OutcomeSourceForProbe>;
       }
     | undefined;
-  firstActionState: P9ActionRowLike | undefined;
-  firstStepState: P9StepRowLike | undefined;
+  firstActionState: ActionRowLike | undefined;
+  firstStepState: StepRowLike | undefined;
   p9Terminal: boolean;
   providerCallsBeforeFreshRoot: number;
   freshProjectRootDirectory: string;

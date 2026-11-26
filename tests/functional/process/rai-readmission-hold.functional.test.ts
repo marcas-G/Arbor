@@ -1,8 +1,8 @@
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import type { P37Probe } from "../support/deliver-process-fixture.js";
+import type { ProcessProbe } from "../support/deliver-process-fixture.js";
 import {
-  awaitP37Probe,
+  awaitProcessProbe,
   captureP37LeaseOwnerProcessAnchor,
   deliverAndHoldCommittedReceipt,
   expireP37LeaseForQualification,
@@ -92,9 +92,9 @@ describe("pending RAI-DG-01 Work readmission process journeys", () => {
       seed.daemonStdoutLines,
     );
     const recoveryClient = makePublicClient(recovery.baseUrl);
-    let p9Failure: P37Probe | undefined;
+    let p9Failure: ProcessProbe | undefined;
     try {
-      p9Failure = await awaitP37Probe(
+      p9Failure = await awaitProcessProbe(
         seed.probes,
         (probe) =>
           probe.role === "new" &&
@@ -534,7 +534,7 @@ describe("pending RAI-DG-01 Work readmission process journeys", () => {
     expect(
       Number(acknowledgedEventOffset?.last_sequence),
     ).toBeGreaterThanOrEqual(Number(committedP9Event.sequence));
-    const stopProbe = await awaitP37Probe(
+    const stopProbe = await awaitProcessProbe(
       seed.probes,
       (probe) =>
         probe.role === "new" &&
@@ -752,9 +752,9 @@ describe("pending RAI-DG-01 Work readmission process journeys", () => {
       },
       provenance: { source: "HumanInput" },
     });
-    let safetyStop: P37Probe | undefined;
+    let safetyStop: ProcessProbe | undefined;
     try {
-      safetyStop = await awaitP37Probe(
+      safetyStop = await awaitProcessProbe(
         seed.probes,
         (probe) =>
           probe.role === "new" && probe.boundary === "P37AfterSettlementCommit",

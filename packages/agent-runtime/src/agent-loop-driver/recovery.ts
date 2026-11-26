@@ -19,7 +19,7 @@ import { Effect, Option } from "effect";
 import {
   isP20OverflowReplacementManifestBound,
   p20OverflowReplacementManifestBindingFailures,
-  resolveP20OverflowReplacementChain,
+  resolveOverflowReplacementChain,
   submittedDecisionManifestMismatchOutcome,
 } from "../agent-loop-step-recovery.js";
 import { classifySubmittedDecisionBindingFailure } from "../model-decision.js";
@@ -185,7 +185,7 @@ export const recoverAgentLoopFrontier = (
           const providerLinks = yield* tx
             .transact(loopSteps.listProviderTurnLinks(current.identity))
             .pipe(Effect.mapError(failure));
-          const chain = resolveP20OverflowReplacementChain(
+          const chain = resolveOverflowReplacementChain(
             providerLinks,
             current.identity,
             String(current.providerTurnId),

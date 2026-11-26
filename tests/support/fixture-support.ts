@@ -172,7 +172,7 @@ export const runP10 = <A, R>(
 
 // --- read-only deps assembled from canonical faces + minimal SQL ---
 
-export interface P10FixtureDeps {
+export interface FixtureDependencies {
   readonly tree: TreeViewDeps;
   readonly attention: AttentionReadDeps;
   readonly workspaceDetail: WorkspaceDetailDeps;
@@ -194,7 +194,7 @@ export interface P10FixtureDeps {
 }
 
 export const makeP10Deps = (): Effect.Effect<
-  P10FixtureDeps,
+  FixtureDependencies,
   never,
   | SqlClient
   | TransactionPort
