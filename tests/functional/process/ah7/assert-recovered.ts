@@ -567,15 +567,17 @@ export const assertAh7Recovered = async (
         ),
       ),
     ).toEqual(crashedTarget.providerTurns);
-    // B2: the call count is not the invariant — the denial lands
-    // exactly once, no re-execution (marker count below), chatter
-    // bounded by MAX_TURNS. See PR #12 for the full diagnosis.
+    // B2: the call count is not the invariant — the replay gate decides:
+    // denied variants record the no-effect observation exactly once and
+    // never re-execute; admitted variants record no denial at all (the
+    // marker count below) and chatter stays bounded by MAX_TURNS. See
+    // PR #12 for the full diagnosis.
     const denials = recovered.toolResults.filter((row) =>
       String(row.payload_json).includes(
         "authoritative source confirmed that the effect attempt did not occur",
       ),
     );
-    expect(denials).toHaveLength(1);
+    expect(denials).toHaveLength(noEffectRetryDenied ? 1 : 0);
     expect(ctx.targetProviderCalls).toBeLessThanOrEqual(24);
     if (noEffectRetryDenied) {
       expect(contentAfter).toBeNull();
