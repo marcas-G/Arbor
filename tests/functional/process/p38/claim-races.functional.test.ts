@@ -203,7 +203,7 @@ describe("pending P38 public Executable approval qualification", () => {
         expect(recovered.recoveryBinding?.recovery_binding_state).toBe("Bound");
         expectP38ReceiptProjection(recovered, run, {
           admissionState: "MayHaveStarted",
-          admissionSource: "Admission",
+          admissionSource: "P39Admission",
         });
         expect(recovered.attempt0).toMatchObject({
           attempt_no: 0,

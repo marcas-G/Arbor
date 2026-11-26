@@ -153,7 +153,7 @@ describe("pending P38 public Executable approval qualification", () => {
       });
       expectP38ReceiptProjection(recovered, run, {
         admissionState: "MayHaveStarted",
-        admissionSource: "Admission",
+        admissionSource: "P39Admission",
       });
       expect(run.fixture.daemonErrors).toEqual([]);
       expect(peer.daemonErrors).toEqual([]);

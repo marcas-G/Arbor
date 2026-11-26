@@ -97,7 +97,7 @@ export const expectP38ReceiptProjection = (
   expectedAttempt: {
     readonly admissionState: string;
     readonly admissionSource: string;
-  } = { admissionState: "NotAdmitted", admissionSource: "Claim" },
+  } = { admissionState: "NotAdmitted", admissionSource: "P39Claim" },
 ) => {
   const approval = snapshot.approval;
   const canonicalBindingJson = snapshot.recoveryBinding?.canonical_binding_json;

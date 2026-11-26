@@ -57,8 +57,8 @@ interface SelectedRecoveryRow {
 
 const isAdmissionSource = (
   value: string | null,
-): value is "P36Backfill" | "Claim" | "Admission" =>
-  value === "P36Backfill" || value === "Claim" || value === "Admission";
+): value is "P36Backfill" | "P39Claim" | "P39Admission" =>
+  value === "P36Backfill" || value === "P39Claim" || value === "P39Admission";
 
 const isAdmissionTimePrecision = (
   value: string | null,
@@ -377,7 +377,7 @@ export const makeP39RecoveryEvidenceStoreLive = (
               const attempt0 = attempts[0];
               if (
                 attempt0?.admission_state !== "NotAdmitted" ||
-                attempt0.admission_source !== "Claim" ||
+                attempt0.admission_source !== "P39Claim" ||
                 attempt0.admission_time_precision !== "NotAdmitted" ||
                 attempt0.binding_sha256 !== bindingSha256
               ) {
@@ -496,7 +496,7 @@ export const makeP39RecoveryEvidenceStoreLive = (
                  profile_version, profile_hash, profile_protocol, effect_key,
                  binding_sha256, admitted_at, admission_source,
                  admission_time_precision
-               ) VALUES (?,0,'NotAdmitted',?,?,?,?,?,?,?, ?,NULL,'Claim','NotAdmitted')`,
+               ) VALUES (?,0,'NotAdmitted',?,?,?,?,?,?,?, ?,NULL,'P39Claim','NotAdmitted')`,
                 [
                   input.binding.invocationId,
                   input.binding.toolDefinitionHash,
@@ -652,7 +652,7 @@ export const makeP39RecoveryEvidenceStoreLive = (
               sql.unsafe<{ readonly attempt_no: number }>(
                 `UPDATE tool_invocation_effect_attempts
                     SET admission_state = 'MayHaveStarted',
-                        admitted_at = ?, admission_source = 'Admission',
+                        admitted_at = ?, admission_source = 'P39Admission',
                         admission_time_precision = 'TransactionTimestamp'
                   WHERE invocation_id = ? AND attempt_no = 0
                     AND admission_state = 'NotAdmitted'
@@ -705,7 +705,7 @@ export const makeP39RecoveryEvidenceStoreLive = (
                         a.tool_definition_hash, a.side_effect_semantics,
                         a.profile_id, a.profile_version, a.profile_hash,
                         a.profile_protocol, a.effect_key, a.binding_sha256,
-                        ?, 'Admission', 'TransactionTimestamp'
+                        ?, 'P39Admission', 'TransactionTimestamp'
                    FROM tool_invocation_effect_attempts a
                    JOIN tool_invocations i
                      ON i.invocation_id = a.invocation_id
@@ -826,7 +826,7 @@ export const makeP39RecoveryEvidenceStoreLive = (
               row.profile_protocol === null ||
               row.effect_key === null ||
               row.admitted_at === null ||
-              row.admission_source !== "Admission" ||
+              row.admission_source !== "P39Admission" ||
               row.admission_time_precision !== "TransactionTimestamp" ||
               row.fact_id !== row.selected_fact_id ||
               row.fact_invocation_id !== invocationId ||
@@ -882,7 +882,7 @@ export const makeP39RecoveryEvidenceStoreLive = (
                 profileProtocol: row.profile_protocol,
                 effectKey: row.effect_key,
                 admittedAt: row.admitted_at,
-                admissionSource: "Admission" as const,
+                admissionSource: "P39Admission" as const,
                 admissionTimePrecision: "TransactionTimestamp" as const,
               },
               fact: {

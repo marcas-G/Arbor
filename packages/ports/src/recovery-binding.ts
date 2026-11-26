@@ -383,7 +383,7 @@ export interface SelectedP39EffectAttempt {
   readonly profileProtocol: string | null;
   readonly effectKey: string | null;
   readonly admittedAt: string | null;
-  readonly admissionSource: "P36Backfill" | "Claim" | "Admission";
+  readonly admissionSource: "P36Backfill" | "P39Claim" | "P39Admission";
   readonly admissionTimePrecision:
     | "NotAdmitted"
     | "TransactionTimestamp"

@@ -165,7 +165,7 @@ const authenticatedRnoEvidence = (factId: string) => {
       profileProtocol: binding.profileProtocol,
       effectKey: binding.effectKey,
       admittedAt: now,
-      admissionSource: "Admission" as const,
+      admissionSource: "P39Admission" as const,
       admissionTimePrecision: "TransactionTimestamp" as const,
     },
     fact: {
