@@ -526,18 +526,18 @@ describe("-rebuild (RB-1..RB-5 / PR1–PR4 — generic face, GQ2)", () => {
     );
   });
 
-  it("GQ2 P10 boundary [negative assertion]: no p9 suite file imports or asserts business-projection rebuild", async () => {
+  it("GQ2 boundary [negative assertion]: no durability suite imports or asserts business-projection rebuild", async () => {
     // Character classes keep this file's own assertion text from
     // matching the surface it guards.
     const businessProjectionSurface =
       /InboxProjection[S]tore|Attention[P]rojection|Attention[V]iew|WaitGraph[V]iew|rebuild[I]nbox|rebuild[A]ttention|rebuild[W]aitGraph/;
     const dir = import.meta.dirname;
-    const p9Suites = readdirSync(dir).filter(
-      (name) => name.startsWith("p9-") && name.endsWith(".test.ts"),
+    const durabilitySuites = readdirSync(join(dir, "scenario-9")).filter(
+      (name) => name.endsWith(".test.ts"),
     );
-    expect(p9Suites.length).toBeGreaterThanOrEqual(5);
-    for (const name of p9Suites) {
-      const source = readFileSync(join(dir, name), "utf8");
+    expect(durabilitySuites.length).toBeGreaterThanOrEqual(5);
+    for (const name of durabilitySuites) {
+      const source = readFileSync(join(dir, "scenario-9", name), "utf8");
       expect(
         businessProjectionSurface.test(source),
         `${name} must not touch business-projection rebuild (P10, GQ2)`,
