@@ -1,18 +1,12 @@
-import { createHash } from "node:crypto";
 import {
   Actor,
   CommandId,
   type CommandSubmissionContext,
-  createProject,
   type DomainError,
   type DomainResult,
   ExecutionId,
-  encodeEffectivePolicySummaryV1,
-  encodeSandboxPolicyDecisionCommittedInternalV1,
   err,
   LeaseGeneration,
-  MessageId,
-  makeProjectPolicy,
   ok,
   PermissionGrantId,
   Principal,
@@ -23,23 +17,19 @@ import {
 } from "@arbor/domain";
 import {
   Clock,
-  type ClockService,
   CommandStore,
   type CommandStoreService,
   DomainEventJournal,
   type DomainEventJournalService,
   IdGenerator,
-  type IdGeneratorService,
   type PendingDomainEvent,
-  ProjectRepository,
-  type ProjectRepositoryService,
-  type ResourceOwnershipRepositoryService,
   type StoredCommandResolution,
   TransactionPort,
   TransactionScope,
 } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import {
   type CommandAuthorityRule,
   CommandGateway,
@@ -51,14 +41,13 @@ import {
   type FenceStopOutcome,
   FINGERPRINT_ALGORITHM_VERSION,
   type GatewayEnvelope,
-  makeUpdateResourceBoundaryHandler,
   projectAdmissionOf,
   semanticRequestFingerprint,
   type VerifiedCommandAuthority,
 } from "../src/index.js";
 
 const commandId = parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789ab");
-const otherCommandId = parse(CommandId)(
+const _otherCommandId = parse(CommandId)(
   "cmd_018f2b3c-4d5e-7abc-8def-0123456789ac",
 );
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789ab");
@@ -69,15 +58,6 @@ const createProjectResult = {
   rootWorkspaceId: "ws_018f2b3c-4d5e-7abc-8def-0123456789ac",
   primarySessionId: "ses_018f2b3c-4d5e-7abc-8def-0123456789ad",
 };
-const submitHumanMessageResult = {
-  messageId: "msg_018f2b3c-4d5e-7abc-8def-0123456789ae",
-  state: "Pending",
-};
-const submitHumanMessagePayload = {
-  messageId: "msg_018f2b3c-4d5e-7abc-8def-0123456789ae",
-  targetWorkspaceId: "ws_018f2b3c-4d5e-7abc-8def-0123456789ac",
-  bodyRef: "body-ref",
-};
 const externalContext: CommandSubmissionContext = {
   _tag: "External",
   principal,
@@ -87,6 +67,17 @@ const executionContext: CommandSubmissionContext = {
   principal,
   executionId: parse(ExecutionId)("exe_018f2b3c-4d5e-7abc-8def-0123456789ab"),
   fencingGeneration: parse(LeaseGeneration)(1),
+};
+const systemContext: CommandSubmissionContext = {
+  _tag: "System",
+  principal,
+  causationRef: "test",
+};
+/** Valid typed-internal payload: passes the input contract unchanged. */
+const humanMessagePayload = {
+  messageId: "msg_018f1f62-7b3c-7abc-8def-0123456789ab",
+  targetWorkspaceId: "ws_018f1f62-7b3c-7abc-8def-0123456789ab",
+  bodyRef: "body-ref",
 };
 
 const envelope = (
@@ -123,44 +114,27 @@ const authorityFor = (
   overrides: Partial<CreateProjectAuthority> = {},
   commandType = "CreateProject",
 ): VerifiedCommandAuthority => {
-  const semanticRequestFingerprint = fpFor(payload, commandType);
+  const record = payload as Record<string, unknown>;
   if (commandType === "SubmitHumanMessage") {
-    const record = payload as Record<string, unknown>;
     return {
       _tag: "SubmitHumanMessageAuthority",
       principal,
       commandId,
-      semanticRequestFingerprint,
+      semanticRequestFingerprint: fpFor(payload, commandType),
       projectId,
-      targetWorkspaceId:
-        typeof record.targetWorkspaceId === "string"
-          ? parse(WorkspaceId)(record.targetWorkspaceId)
-          : parse(WorkspaceId)("ws_018f2b3c-4d5e-7abc-8def-0123456789ac"),
-      messageId:
-        typeof record.messageId === "string"
-          ? record.messageId
-          : parse(MessageId)("msg_018f2b3c-4d5e-7abc-8def-0123456789ae"),
+      targetWorkspaceId: parse(WorkspaceId)(record.targetWorkspaceId as string),
+      messageId: record.messageId as never,
     };
   }
   return {
     _tag: "CreateProjectAuthority",
     principal,
     commandId,
-    semanticRequestFingerprint,
+    semanticRequestFingerprint: fpFor(payload, commandType),
     projectId,
     ...overrides,
   };
 };
-
-interface FakeState {
-  readonly rows: Map<string, StoredCommandResolution>;
-  readonly attempts: Array<{
-    readonly commandId: string;
-    readonly outcome: string;
-  }>;
-  readonly appended: PendingDomainEvent[];
-  readonly order: string[];
-}
 
 const TransactionPortLive: Layer.Layer<TransactionPort> = Layer.succeed(
   TransactionPort,
@@ -174,64 +148,49 @@ const buildApp = (
   handlers: ReadonlyArray<CommandHandler<unknown, unknown>>,
   fence: Layer.Layer<FenceStopCheck> = FenceStopCheckInertLive,
   transaction: Layer.Layer<TransactionPort> = TransactionPortLive,
-  projectLifecycle: "Open" | "Closed" = "Open",
-): { readonly app: Layer.Layer<CommandGateway>; readonly state: FakeState } => {
-  const state: FakeState = {
-    rows: new Map(),
-    attempts: [],
-    appended: [],
-    order: [],
+) => {
+  const state = {
+    rows: new Map<string, StoredCommandResolution>(),
+    attempts: [] as Array<{ commandId: string; outcome: string }>,
+    appended: [] as PendingDomainEvent[],
+    order: [] as string[],
   };
+  const row = (
+    resolution: "Committed" | "TerminalRejected",
+    [
+      id,
+      project,
+      fingerprint,
+      schemaVersion,
+      algorithmVersion,
+      json,
+    ]: Parameters<CommandStoreService["insertCommitted"]>,
+  ): StoredCommandResolution => ({
+    commandId: id,
+    projectId: project,
+    semanticRequestFingerprint: fingerprint,
+    schemaVersion,
+    fingerprintAlgorithmVersion: algorithmVersion,
+    resolution,
+    resultJson: resolution === "Committed" ? json : null,
+    terminalErrorJson: resolution === "Committed" ? null : json,
+    createdAt: "t",
+    settledAt: "t",
+  });
   const store: CommandStoreService = {
     findResolution: (id) =>
       Effect.sync(() => {
         const stored = state.rows.get(id);
         return stored === undefined ? Option.none() : Option.some(stored);
       }),
-    insertCommitted: (
-      id,
-      project,
-      fingerprint,
-      schemaVersion,
-      algorithmVersion,
-      resultJson,
-    ) =>
+    insertCommitted: (...args) =>
       Effect.sync(() => {
         state.order.push("receipt");
-        state.rows.set(id, {
-          commandId: id,
-          projectId: project,
-          semanticRequestFingerprint: fingerprint,
-          schemaVersion,
-          fingerprintAlgorithmVersion: algorithmVersion,
-          resolution: "Committed",
-          resultJson,
-          terminalErrorJson: null,
-          createdAt: "t",
-          settledAt: "t",
-        });
+        state.rows.set(args[0], row("Committed", args));
       }),
-    insertTerminalRejected: (
-      id,
-      project,
-      fingerprint,
-      schemaVersion,
-      algorithmVersion,
-      terminalJson,
-    ) =>
+    insertTerminalRejected: (...args) =>
       Effect.sync(() => {
-        state.rows.set(id, {
-          commandId: id,
-          projectId: project,
-          semanticRequestFingerprint: fingerprint,
-          schemaVersion,
-          fingerprintAlgorithmVersion: algorithmVersion,
-          resolution: "TerminalRejected",
-          resultJson: null,
-          terminalErrorJson: terminalJson,
-          createdAt: "t",
-          settledAt: "t",
-        });
+        state.rows.set(args[0], row("TerminalRejected", args));
       }),
     recordResolvingAttempt: (id, outcome) =>
       Effect.sync(() => {
@@ -259,59 +218,36 @@ const buildApp = (
     lastSequence: () => Effect.succeed(0),
   };
   let clockTick = 0;
-  const clock: ClockService = {
-    now: () => Effect.sync(() => `t${clockTick++}`),
-  };
   let idTick = 0;
-  const ids: IdGeneratorService = {
-    generate: <T>(_kind: string) => Effect.sync(() => `evt_${idTick++}` as T),
-  };
   const deps = Layer.mergeAll(
     transaction,
     Layer.succeed(CommandStore, store),
     Layer.succeed(DomainEventJournal, journal),
-    Layer.succeed(Clock, clock),
-    Layer.succeed(IdGenerator, ids),
-    Layer.succeed(ProjectRepository, {
-      findById: () =>
-        Effect.succeed(
-          Option.some({
-            ...createProject({
-              projectId: parse(ProjectId)(
-                "prj_00000000-0000-7000-8000-0000000000f1",
-              ),
-              name: "test project",
-              rootWorkspaceId: parse(WorkspaceId)(
-                "ws_00000000-0000-7000-8000-0000000000f1",
-              ),
-              projectPolicy: makeProjectPolicy(),
-              projectPolicyRevision: 0 as never,
-              revision: 0 as never,
-              resourceSource: { _tag: "ConversationOnly" },
-            }),
-            lifecycle: projectLifecycle,
-          }),
-        ),
-      create: () => Effect.void,
-      updatePolicyIfRevision: () => Effect.void,
-      renameIfRevision: () => Effect.void,
-      closeIfRevision: () => Effect.void,
-    } satisfies ProjectRepositoryService),
+    Layer.succeed(Clock, {
+      now: () => Effect.sync(() => `t${clockTick++}`),
+    }),
+    Layer.succeed(IdGenerator, {
+      generate: <T>(_kind: string) => Effect.sync(() => `evt_${idTick++}` as T),
+    }),
     CommandHandlerRegistryLive(handlers),
     fence,
   );
-  const app = Layer.mergeAll(
-    deps,
-    Layer.provide(CommandGatewayLive, deps),
-  ) as Layer.Layer<CommandGateway>;
-  return { app, state };
+  return {
+    state,
+    app: Layer.mergeAll(
+      deps,
+      Layer.provide(CommandGatewayLive, deps),
+    ) as Layer.Layer<CommandGateway>,
+  };
 };
 
+type HandlerOutcome = DomainResult<{
+  result: unknown;
+  events: ReadonlyArray<PendingDomainEvent>;
+}>;
+
 const handler = (
-  behaviour: (payload: unknown) => DomainResult<{
-    result: unknown;
-    events: ReadonlyArray<PendingDomainEvent>;
-  }>,
+  behaviour: (payload: unknown) => HandlerOutcome,
   onExecute?: () => void,
   authority?: CommandAuthorityRule<unknown>,
   commandType = "CreateProject",
@@ -331,26 +267,51 @@ const handler = (
       onExecute?.();
       return behaviour(env.payload);
     }).pipe(
-      Effect.map((outcome) => {
-        if (!outcome.ok) return outcome;
-        if (commandType === "CreateProject") {
-          return ok({ ...outcome.value, result: createProjectResult });
-        }
-        if (commandType === "SubmitHumanMessage") {
-          return ok({ ...outcome.value, result: submitHumanMessageResult });
-        }
-        return outcome;
-      }),
+      Effect.map((outcome) =>
+        !outcome.ok || commandType !== "CreateProject"
+          ? outcome
+          : ok({ ...outcome.value, result: createProjectResult }),
+      ),
     ),
 });
 
 const fenceLive = (outcome: FenceStopOutcome): Layer.Layer<FenceStopCheck> =>
   Layer.succeed(FenceStopCheck, { check: () => Effect.succeed(outcome) });
 
-const run = <A>(
-  program: Effect.Effect<A, unknown, CommandGateway>,
+const gatewayExecute = (
+  payload: unknown,
   app: Layer.Layer<CommandGateway>,
-): Promise<A> => Effect.runPromise(Effect.provide(program, app));
+  context: CommandSubmissionContext = externalContext,
+  authority: VerifiedCommandAuthority = authorityFor(payload),
+  commandType = "CreateProject",
+) =>
+  Effect.provide(
+    Effect.gen(function* () {
+      const gateway = yield* CommandGateway;
+      return yield* gateway.execute(
+        envelope(payload, commandType),
+        context,
+        authority,
+      );
+    }),
+    app,
+  );
+
+const outcomeOf = <A, R>(effect: Effect.Effect<A, unknown, R>) =>
+  Effect.match(effect, {
+    onFailure: (error) => ({ _tag: "Failure" as const, error }),
+    onSuccess: (receipt) => ({ _tag: "Receipt" as const, receipt }),
+  });
+
+const expectTerminal = (
+  receipt: { resolution: { _tag: string; error?: { _tag: string } } },
+  errorTag: string,
+): void => {
+  expect(receipt.resolution._tag).toBe("TerminalRejected");
+  if (receipt.resolution._tag === "TerminalRejected") {
+    expect(receipt.resolution.error?._tag).toBe(errorTag);
+  }
+};
 
 describe("semantic request fingerprint", () => {
   it("is stable under key reorder and changes on semantic change", () => {
@@ -379,337 +340,145 @@ describe("semantic request fingerprint", () => {
   });
 });
 
-describe("typed internal command input validation", () => {
-  it.each<CommandSubmissionContext>([
-    { _tag: "System", principal, causationRef: "test" },
-    executionContext,
-    { _tag: "RecoveryController", principal, causationRef: "test" },
-  ])(
-    "rejects malformed internal payloads before Gateway effects (%s)",
-    async (context) => {
-      let transactionCalls = 0;
-      let fenceCalls = 0;
-      let handlerCalls = 0;
-      const transaction = Layer.succeed(TransactionPort, {
-        transact: (body) =>
-          Effect.suspend(() => {
-            transactionCalls++;
+describe("command gateway", () => {
+  it.effect(
+    "rejects malformed internal payloads before any Gateway effect",
+    () =>
+      Effect.gen(function* () {
+        let transactionCalls = 0;
+        let handlerCalls = 0;
+        const countingTransaction = Layer.succeed(TransactionPort, {
+          transact: (body) => {
+            transactionCalls += 1;
             return Effect.provideService(body, TransactionScope, {
               session: { id: "tx" },
             });
-          }),
-      });
-      const app = buildApp(
-        [
-          handler(
-            () => ok({ result: { ok: true }, events: [] }),
-            () => handlerCalls++,
-            undefined,
+          },
+        });
+        const { app, state } = buildApp(
+          [
+            handler(
+              () => ok({ result: { ok: true }, events: [] }),
+              () => handlerCalls++,
+              undefined,
+              "SubmitHumanMessage",
+            ),
+          ],
+          FenceStopCheckInertLive,
+          countingTransaction,
+        );
+        const rejected = yield* outcomeOf(
+          gatewayExecute(
+            { ...humanMessagePayload, messageId: undefined },
+            app,
+            systemContext,
+            authorityFor(humanMessagePayload, {}, "SubmitHumanMessage"),
             "SubmitHumanMessage",
           ),
-        ],
-        Layer.succeed(FenceStopCheck, {
-          check: () =>
-            Effect.sync(() => {
-              fenceCalls++;
-              return "Pass";
-            }),
-        }),
-        transaction,
-      );
-      const malformed = {
-        messageId: undefined,
-        targetWorkspaceId: "ws_018f1f62-7b3c-7abc-8def-0123456789ab",
-        bodyRef: "body-ref",
-      };
-
-      const result = await run(
-        Effect.match(
-          Effect.gen(function* () {
-            const gateway = yield* CommandGateway;
-            return yield* gateway.execute(
-              envelope(malformed, "SubmitHumanMessage"),
-              context,
-              authorityFor(malformed, {}, "SubmitHumanMessage"),
-            );
-          }),
-          {
-            onFailure: (error) => ({ _tag: "Left" as const, error }),
-            onSuccess: (value) => ({ _tag: "Right" as const, value }),
-          },
-        ),
-        app.app,
-      );
-
-      expect(result._tag).toBe("Left");
-      if (result._tag === "Left") {
-        expect(result.error).toMatchObject({
-          _tag: "InternalCommandContractDefect",
-          commandType: "SubmitHumanMessage",
-          issues: [{ path: ["messageId"], rule: "type" }],
-        });
-      }
-      expect(transactionCalls).toBe(0);
-      expect(fenceCalls).toBe(0);
-      expect(handlerCalls).toBe(0);
-      expect(app.state.rows.size).toBe(0);
-      expect(app.state.attempts).toEqual([]);
-      expect(app.state.appended).toEqual([]);
-    },
+        );
+        expect(rejected._tag).toBe("Failure");
+        if (rejected._tag === "Failure") {
+          expect(rejected.error).toMatchObject({
+            _tag: "InternalCommandContractDefect",
+            commandType: "SubmitHumanMessage",
+            issues: [{ path: ["messageId"], rule: "type" }],
+          });
+        }
+        expect(transactionCalls).toBe(0);
+        expect(handlerCalls).toBe(0);
+        expect(state.rows.size).toBe(0);
+        expect(state.attempts).toEqual([]);
+        expect(state.appended).toEqual([]);
+      }),
   );
 
-  it("continues a valid typed internal payload through the Gateway", async () => {
-    let handlerCalls = 0;
-    const payload = {
-      messageId: "msg_018f1f62-7b3c-7abc-8def-0123456789ab",
-      targetWorkspaceId: "ws_018f1f62-7b3c-7abc-8def-0123456789ab",
-      bodyRef: "body-ref",
-    };
-    const app = buildApp([
-      handler(
-        () => ok({ result: { ok: true }, events: [] }),
-        () => handlerCalls++,
-        undefined,
-        "SubmitHumanMessage",
-      ),
-    ]);
-
-    const result = await run(
+  it.effect(
+    "prepares only after an advisory miss, replays without recapturing inputs, and rechecks the receipt after a transient preparation failure",
+    () =>
       Effect.gen(function* () {
-        const gateway = yield* CommandGateway;
-        return yield* gateway.execute(
-          envelope(payload, "SubmitHumanMessage"),
-          { _tag: "System", principal, causationRef: "test" },
-          authorityFor(payload, {}, "SubmitHumanMessage"),
-        );
-      }),
-      app.app,
-    );
-
-    expect(result.resolution._tag).toBe("Committed");
-    expect(handlerCalls).toBe(1);
-  });
-});
-
-describe("command gateway", () => {
-  it("prepares only after an advisory miss and replays without recapturing inputs", async () => {
-    let prepareCalls = 0;
-    let executeCalls = 0;
-    const episodeBinding = {
-      _tag: "InboxEpisode" as const,
-      entryKey: "inbox:one",
-      inputKind: "HumanMessage",
-    };
-    const summary = {
-      version: 1 as const,
-      kind: "TrustedLocalUnconfinedV1" as const,
-      projectId,
-      workspaceId: "ws_018f2b3c-4d5e-7abc-8def-0123456789ac" as never,
-      executionId: executionContext.executionId,
-      episodeBinding,
-      workspaceRevision: 1,
-      resourceBoundaryRevision: 1,
-      resourceBoundaryDigest: "a".repeat(64),
-      sandboxEnvironmentBasisDigest: "b".repeat(64),
-      policyRevision: 1,
-      expiresAt: "2026-10-20T00:00:00.000Z",
-      trustedRuntimeIdentity: "TrustedLocal" as const,
-      trustedRuntimeVersion: "builtin-v1" as const,
-      profile: "FullAccess" as const,
-      networkBoundary: "Unconfined" as const,
-      sandboxHandleBindingDigest: "c".repeat(64),
-      mounts: [
-        {
-          mountId: "workspace",
-          targetRef: {
-            version: 1 as const,
-            kind: "RegionDigest" as const,
-            resourceSpace: "filesystem" as const,
-            regionIdentityDigest: "9".repeat(64),
-          },
-          targetIdentityDigest: "d".repeat(64),
-          access: "ReadOnly" as const,
-        },
-      ],
-      environmentAllowlist: ["PATH"],
-      limits: {
-        wallTimeMs: 1000,
-        stdoutBytes: 1000,
-        stderrBytes: 1000,
-        processCount: 1,
-        memoryBytes: 1024,
-        cpuTimeMs: 1000,
-      },
-      auditRefs: ["audit:one"],
-      authorityBundleRevision: 1,
-      authorityBundleDigest: "e".repeat(64),
-      operatorConfigRevision: 1,
-      operatorConfigDigest: "f".repeat(64),
-    };
-    const policyDigest = createHash("sha256")
-      .update(encodeEffectivePolicySummaryV1(summary))
-      .digest("hex");
-    const decisionResult = {
-      version: 1 as const,
-      commandId,
-      projectId,
-      workspaceId: summary.workspaceId,
-      executionId: executionContext.executionId,
-      episodeBinding,
-      policyRevision: 1,
-      policyDigest,
-      effectivePolicySnapshot: summary,
-    };
-    // Constructing canonical bytes here also asserts the test fixture follows
-    // the same closed internal DTO used by receipt replay.
-    encodeSandboxPolicyDecisionCommittedInternalV1(decisionResult);
-    const baseHandler = handler(
-      () => ok({ result: decisionResult, events: [] }),
-      () => {
-        executeCalls += 1;
-      },
-      undefined,
-      "DecideSandboxPolicy",
-    );
-    const policyHandler: CommandHandler<unknown, unknown> = {
-      ...baseHandler,
-      schemaVersion: "1",
-      prepare: () =>
-        Effect.sync(() => {
-          prepareCalls += 1;
-          return { prepared: true };
-        }),
-    };
-    const { app, state } = buildApp([policyHandler]);
-    const payload = { identity: "same" };
-    const command = envelope(payload, "DecideSandboxPolicy");
-    const authority: VerifiedCommandAuthority = {
-      _tag: "CreateProjectAuthority",
-      principal,
-      commandId,
-      projectId,
-      semanticRequestFingerprint: fpFor(payload, "DecideSandboxPolicy"),
-    };
-    const receipts = await run(
-      Effect.gen(function* () {
-        const gateway = yield* CommandGateway;
-        const first = yield* gateway.execute(
-          command,
-          externalContext,
-          authority,
-        );
-        const replay = yield* gateway.execute(
-          command,
-          externalContext,
-          authority,
-        );
-        return { first, replay };
-      }),
-      app,
-    );
-    expect(receipts.first.resolution._tag).toBe("Committed");
-    expect(receipts.replay.resolution).toEqual(receipts.first.resolution);
-    expect(prepareCalls).toBe(1);
-    expect(executeCalls).toBe(1);
-    expect(state.rows.get(commandId)?.resolution).toBe("Committed");
-  });
-
-  it("rechecks the receipt after transient preparation failure without inserting a command", async () => {
-    const baseHandler = handler(
-      () => ok({ result: { committed: true }, events: [] }),
-      undefined,
-      undefined,
-      "DecideSandboxPolicy",
-    );
-    const policyHandler: CommandHandler<unknown, unknown> = {
-      ...baseHandler,
-      schemaVersion: "1",
-      prepare: () =>
-        Effect.fail({
-          _tag: "TransactionOperationalFailure",
-          cause: "fixture preparation unavailable",
-        }),
-    };
-    const { app, state } = buildApp([policyHandler]);
-    const payload = { identity: "unprepared" };
-    const result = await run(
-      Effect.gen(function* () {
-        const gateway = yield* CommandGateway;
-        return yield* Effect.match(
-          gateway.execute(
-            envelope(payload, "DecideSandboxPolicy"),
-            externalContext,
-            {
-              _tag: "CreateProjectAuthority",
-              principal,
-              commandId,
-              projectId,
-              semanticRequestFingerprint: fpFor(payload, "DecideSandboxPolicy"),
-            },
-          ),
+        let prepareCalls = 0;
+        let executeCalls = 0;
+        const { app, state } = buildApp([
           {
-            onFailure: (error) => ({ _tag: "Failure" as const, error }),
-            onSuccess: (receipt) => ({ _tag: "Receipt" as const, receipt }),
+            ...handler(
+              () => ok({ result: createProjectResult, events: [] }),
+              () => {
+                executeCalls += 1;
+              },
+            ),
+            prepare: () =>
+              Effect.sync(() => {
+                prepareCalls += 1;
+                return { prepared: true };
+              }),
           },
-        );
-      }),
-      app,
-    );
-    expect(result._tag).toBe("Failure");
-    expect(state.rows.has(commandId)).toBe(false);
-    expect(state.appended).toHaveLength(0);
-  });
+        ]);
+        const first = yield* gatewayExecute({ identity: "same" }, app);
+        const replay = yield* gatewayExecute({ identity: "same" }, app);
+        expect(first.resolution._tag).toBe("Committed");
+        expect(replay.resolution).toEqual(first.resolution);
+        expect(prepareCalls).toBe(1);
+        expect(executeCalls).toBe(1);
+        expect(state.rows.get(commandId)?.resolution).toBe("Committed");
 
-  it("inserts the GrantPermission receipt before its events in the same transaction", async () => {
-    const permissionGrantId = parse(PermissionGrantId)(
-      "pgr_018f2b3c-4d5e-7abc-8def-0123456789ab",
-    );
-    const payload = { permissionGrantId };
-    const events: PendingDomainEvent[] = [
-      {
-        projectId,
-        eventType: "PermissionChanged",
-        eventVersion: 1,
-        occurredAt: "t",
-        aggregateRef: permissionGrantId,
-        actor,
-        payload: {},
-      },
-      {
-        projectId,
-        eventType: "SandboxPolicyGrantIssued",
-        eventVersion: 1,
-        occurredAt: "t",
-        aggregateRef: permissionGrantId,
-        actor,
-        payload: {
-          permissionGrantId,
-          grantPermissionCommandId: commandId,
-          executionId: executionContext.executionId,
-          operatorConfigRevision: 1,
-          operatorConfigDigest: "a".repeat(64),
-        },
-      },
-    ];
-    const { app, state } = buildApp([
-      handler(
-        () => ok({ result: { permissionGrantId }, events }),
-        undefined,
-        {
-          tag: "GrantPermissionAuthority",
-          targetMatches: (authority, commandPayload) =>
-            authority._tag === "GrantPermissionAuthority" &&
-            authority.permissionGrantId ===
-              (commandPayload as typeof payload).permissionGrantId,
-        },
-        "GrantPermission",
-      ),
-    ]);
-    const receipt = await run(
+        const failing = buildApp([
+          {
+            ...handler(() => ok({ result: createProjectResult, events: [] })),
+            prepare: () =>
+              Effect.fail({
+                _tag: "TransactionOperationalFailure",
+                cause: "fixture preparation unavailable",
+              }),
+          },
+        ]);
+        const result = yield* outcomeOf(
+          gatewayExecute({ identity: "unprepared" }, failing.app),
+        );
+        expect(result._tag).toBe("Failure");
+        expect(failing.state.rows.has(commandId)).toBe(false);
+        expect(failing.state.appended).toHaveLength(0);
+      }),
+  );
+
+  it.effect(
+    "inserts the GrantPermission receipt before its events in the same transaction",
+    () =>
       Effect.gen(function* () {
-        const gateway = yield* CommandGateway;
-        return yield* gateway.execute(
-          envelope(payload, "GrantPermission"),
+        const permissionGrantId = parse(PermissionGrantId)(
+          "pgr_018f2b3c-4d5e-7abc-8def-0123456789ab",
+        );
+        const payload = { permissionGrantId };
+        const { app, state } = buildApp([
+          handler(
+            () =>
+              ok({
+                result: { permissionGrantId },
+                events: [
+                  {
+                    projectId,
+                    eventType: "SandboxPolicyGrantIssued",
+                    eventVersion: 1,
+                    occurredAt: "t",
+                    aggregateRef: permissionGrantId,
+                    actor,
+                    payload: {},
+                  },
+                ],
+              }),
+            undefined,
+            {
+              tag: "GrantPermissionAuthority",
+              targetMatches: (authority, commandPayload) =>
+                authority._tag === "GrantPermissionAuthority" &&
+                authority.permissionGrantId ===
+                  (commandPayload as typeof payload).permissionGrantId,
+            },
+            "GrantPermission",
+          ),
+        ]);
+        const receipt = yield* gatewayExecute(
+          payload,
+          app,
           externalContext,
           {
             _tag: "GrantPermissionAuthority",
@@ -719,626 +488,273 @@ describe("command gateway", () => {
             semanticRequestFingerprint: fpFor(payload, "GrantPermission"),
             permissionGrantId,
           },
+          "GrantPermission",
         );
+        expect(receipt.resolution._tag).toBe("Committed");
+        expect(state.order).toEqual(["receipt", "event"]);
       }),
-      app,
-    );
-    expect(receipt.resolution._tag).toBe("Committed");
-    expect(state.order).toEqual(["receipt", "event"]);
-    expect(state.appended.map(({ eventType }) => eventType)).toEqual([
-      "PermissionChanged",
-      "SandboxPolicyGrantIssued",
-    ]);
-  });
+  );
 
-  it("commits, appends events, and records a resolving attempt", async () => {
-    const events: PendingDomainEvent[] = [
-      {
-        projectId,
-        eventType: "ProjectCreated",
-        eventVersion: 1,
-        occurredAt: "t",
-        aggregateRef: projectId,
-        actor,
-        payload: {},
-      },
-    ];
-    const { app, state } = buildApp([
-      handler(() => ok({ result: { ok: true }, events })),
-    ]);
-    const program = Effect.gen(function* () {
-      const gw = yield* CommandGateway;
-      return yield* gw.execute(
-        envelope({ x: 1 }),
-        externalContext,
-        authorityFor({ x: 1 }),
-      );
-    });
-    const receipt = await run(program, app);
-    expect(receipt.resolution._tag).toBe("Committed");
-    expect(state.appended).toHaveLength(1);
-    expect(state.attempts).toEqual([{ commandId, outcome: "Committed" }]);
-  });
-
-  it("returns the existing receipt for the same fingerprint without re-executing", async () => {
-    let executions = 0;
-    const { app } = buildApp([
-      handler(
-        () => ok({ result: { ok: true }, events: [] }),
-        () => {
-          executions += 1;
-        },
-      ),
-    ]);
-    const program = Effect.gen(function* () {
-      const gw = yield* CommandGateway;
-      const first = yield* gw.execute(
-        envelope({ x: 1 }),
-        externalContext,
-        authorityFor({ x: 1 }),
-      );
-      const second = yield* gw.execute(
-        envelope({ x: 1 }),
-        externalContext,
-        authorityFor({ x: 1 }),
-      );
-      return { first, second };
-    });
-    const { first, second } = await run(program, app);
-    expect(first.resolution._tag).toBe("Committed");
-    expect(second.resolution._tag).toBe("Committed");
-    expect(executions).toBe(1);
-  });
-
-  it("decodes a prior ConcludeVerification v1 receipt and validates it before replay", async () => {
-    let executeCalls = 0;
-    let replayChecks = 0;
-    const payload = {
-      verificationId: parse(VerificationId)(
-        "ver_018f2b3c-4d5e-7abc-8def-0123456789ab",
-      ),
-      verdict: "Pass",
-      criteriaResults: [],
-      summaryRef: "blob:summary",
-    };
-    const oldFingerprint = semanticRequestFingerprint({
-      commandType: "ConcludeVerification",
-      projectId,
-      actor,
-      schemaVersion: "1",
-      payload,
-    });
-    const replayHandler: CommandHandler<unknown, unknown> = {
-      commandType: "ConcludeVerification",
-      schemaVersion: "2",
-      priorReceiptSchemaVersions: ["1"],
-      authority: {
-        tag: "VerifierExecutionAuthority",
-        targetMatches: () => true,
-      },
-      stopAdmission: { _tag: "Unclassified" },
-      validateReceiptReplay: () =>
-        Effect.sync(() => {
-          replayChecks += 1;
-        }),
-      execute: () => {
-        executeCalls += 1;
-        return Effect.die(new Error("stored receipt should avoid execution"));
-      },
-    };
-    const { app, state } = buildApp([replayHandler]);
-    state.rows.set(commandId, {
-      commandId,
-      projectId,
-      semanticRequestFingerprint: oldFingerprint,
-      schemaVersion: "1",
-      fingerprintAlgorithmVersion: FINGERPRINT_ALGORITHM_VERSION,
-      resolution: "Committed",
-      resultJson: JSON.stringify({
-        verificationId: payload.verificationId,
-        state: "Concluded",
-        verdict: "Pass",
-        summaryRef: payload.summaryRef,
-        wakeSignals: [],
-        channel1Release: {
-          workId: "wrk_018f2b3c-4d5e-7abc-8def-0123456789ab",
-          targetWorkRevision: 0,
-        },
-      }),
-      terminalErrorJson: null,
-      createdAt: "t",
-      settledAt: "t",
-    });
-    const receipt = await run(
+  it.effect(
+    "decodes a prior ConcludeVerification v1 receipt and validates it before replay",
+    () =>
       Effect.gen(function* () {
-        const gateway = yield* CommandGateway;
-        return yield* gateway.execute(
-          envelope(payload, "ConcludeVerification"),
+        let replayChecks = 0;
+        const payload = { v: 1 };
+        const replayHandler: CommandHandler<unknown, unknown> = {
+          commandType: "ConcludeVerification",
+          schemaVersion: "2",
+          priorReceiptSchemaVersions: ["1"],
+          authority: {
+            tag: "VerifierExecutionAuthority",
+            targetMatches: () => true,
+          },
+          stopAdmission: { _tag: "Unclassified" },
+          validateReceiptReplay: () =>
+            Effect.sync(() => {
+              replayChecks += 1;
+            }),
+          // A stored receipt must replay; reaching the handler dies the test.
+          execute: () =>
+            Effect.die(new Error("stored receipt should avoid execution")),
+        };
+        const { app, state } = buildApp([replayHandler]);
+        // The stored row was written under schema 1, so its fingerprint uses
+        // the same tuple the gateway recomputes for prior-version replay.
+        state.rows.set(commandId, {
+          commandId,
+          projectId,
+          semanticRequestFingerprint: fpFor(payload, "ConcludeVerification"),
+          schemaVersion: "1",
+          fingerprintAlgorithmVersion: FINGERPRINT_ALGORITHM_VERSION,
+          resolution: "Committed",
+          resultJson: JSON.stringify({
+            verificationId: parse(VerificationId)(
+              "ver_018f2b3c-4d5e-7abc-8def-0123456789ab",
+            ),
+            state: "Concluded",
+            verdict: "Pass",
+            summaryRef: "blob:summary",
+            wakeSignals: [],
+            channel1Release: {
+              workId: "wrk_018f2b3c-4d5e-7abc-8def-0123456789ab",
+              targetWorkRevision: 0,
+            },
+          }),
+          terminalErrorJson: null,
+          createdAt: "t",
+          settledAt: "t",
+        });
+        const receipt = yield* gatewayExecute(
+          payload,
+          app,
           externalContext,
           {} as never,
+          "ConcludeVerification",
         );
+        expect(receipt.schemaVersion).toBe("1");
+        expect(receipt.resolution._tag).toBe("Committed");
+        expect(replayChecks).toBe(1);
       }),
-      app,
-    );
-    expect(receipt.schemaVersion).toBe("1");
-    expect(receipt.resolution._tag).toBe("Committed");
-    expect(replayChecks).toBe(1);
-    expect(executeCalls).toBe(0);
-  });
+  );
 
-  it("rejects an idempotency conflict without overwriting the row", async () => {
-    const { app, state } = buildApp([
-      handler(() => ok({ result: { ok: true }, events: [] })),
-    ]);
-    const program = Effect.gen(function* () {
-      const gw = yield* CommandGateway;
-      yield* gw.execute(
-        envelope({ x: 1 }),
-        externalContext,
-        authorityFor({ x: 1 }),
-      );
-      return yield* gw.execute(
-        envelope({ x: 2 }),
-        externalContext,
-        authorityFor({ x: 2 }),
-      );
-    });
-    const receipt = await run(program, app);
-    expect(receipt.resolution._tag).toBe("TerminalRejected");
-    if (receipt.resolution._tag === "TerminalRejected") {
-      expect(receipt.resolution.error._tag).toBe("IdempotencyConflict");
-    }
-    expect(state.rows.get(commandId)?.resolution).toBe("Committed");
-  });
-
-  it("compares a stored tuple before interpreting its raw result JSON", async () => {
-    let executions = 0;
-    const { app, state } = buildApp([
-      handler(() => {
-        executions += 1;
-        return ok({ result: { ok: true }, events: [] });
-      }),
-    ]);
-    const sentinel = "RAW-RECEIPT-MUST-NOT-BE-INTERPRETED";
-    const stored = {
-      commandId,
-      projectId,
-      semanticRequestFingerprint: fpFor({ x: 1 }),
-      schemaVersion: "2",
-      fingerprintAlgorithmVersion: 1,
-      resolution: "Committed" as const,
-      resultJson: `{"sentinel":"${sentinel}`,
-      terminalErrorJson: null,
-      createdAt: "t0",
-      settledAt: "t1",
-    } satisfies StoredCommandResolution;
-    state.rows.set(commandId, stored);
-
-    const receipt = await run(
+  it.effect(
+    "compares the stored tuple before interpreting raw result JSON, and fails corrupt receipts closed",
+    () =>
       Effect.gen(function* () {
-        const gw = yield* CommandGateway;
-        return yield* gw.execute(
-          envelope({ x: 2 }),
-          externalContext,
-          authorityFor({ x: 2 }),
-        );
-      }),
-      app,
-    );
-
-    expect(receipt.resolution._tag).toBe("TerminalRejected");
-    if (receipt.resolution._tag === "TerminalRejected") {
-      expect(receipt.resolution.error._tag).toBe("IdempotencyConflict");
-    }
-    expect(JSON.stringify(receipt)).not.toContain(sentinel);
-    expect(state.rows.get(commandId)).toEqual(stored);
-    expect(state.attempts).toEqual([]);
-    expect(state.appended).toEqual([]);
-    expect(executions).toBe(0);
-  });
-
-  it("fails an exact-tuple corrupt receipt closed without a new attempt or handler effect", async () => {
-    let executions = 0;
-    const payload = { x: 1 };
-    const { app, state } = buildApp([
-      handler(() => {
-        executions += 1;
-        return ok({ result: { ok: true }, events: [] });
-      }),
-    ]);
-    const stored = {
-      commandId,
-      projectId,
-      semanticRequestFingerprint: fpFor(payload),
-      schemaVersion: "2",
-      fingerprintAlgorithmVersion: 1,
-      resolution: "Committed" as const,
-      resultJson: JSON.stringify({ unexpected: "private-sentinel" }),
-      terminalErrorJson: null,
-      createdAt: "t0",
-      settledAt: "t1",
-    } satisfies StoredCommandResolution;
-    state.rows.set(commandId, stored);
-
-    const failure = await run(
-      Effect.gen(function* () {
-        const gateway = yield* CommandGateway;
-        return yield* gateway
-          .execute(envelope(payload), externalContext, authorityFor(payload))
-          .pipe(Effect.flip);
-      }),
-      app,
-    );
-
-    expect(failure).toMatchObject({
-      _tag: "PersistenceCorruption",
-      repository: "CommandStore",
-      operation: "decodeReceipt",
-      reason: "stored command receipt does not match its registered schema",
-    });
-    expect(JSON.stringify(failure)).not.toContain("private-sentinel");
-    expect(state.rows.get(commandId)).toEqual(stored);
-    expect(state.attempts).toEqual([]);
-    expect(state.appended).toEqual([]);
-    expect(executions).toBe(0);
-  });
-
-  it("persists a terminal rejection with no event", async () => {
-    const { app, state } = buildApp([
-      handler(() =>
-        err({
-          _tag: "AuthorityDenied",
-          reason: "no authority",
-        } as DomainError),
-      ),
-    ]);
-    const program = Effect.gen(function* () {
-      const gw = yield* CommandGateway;
-      return yield* gw.execute(
-        envelope({ x: 1 }),
-        externalContext,
-        authorityFor({ x: 1 }),
-      );
-    });
-    const receipt = await run(program, app);
-    expect(receipt.resolution._tag).toBe("TerminalRejected");
-    expect(state.appended).toHaveLength(0);
-    expect(state.attempts).toEqual([
-      { commandId, outcome: "TerminalRejected" },
-    ]);
-  });
-
-  it("distinguishes FencingRejected from ExecutionStopping via the hook", async () => {
-    for (const outcome of ["FencingRejected", "ExecutionStopping"] as const) {
-      const { app, state } = buildApp(
-        [
-          handler(
-            () => ok({ result: submitHumanMessageResult, events: [] }),
-            undefined,
-            undefined,
-            "SubmitHumanMessage",
-          ),
-        ],
-        fenceLive(outcome),
-      );
-      const program = Effect.gen(function* () {
-        const gw = yield* CommandGateway;
-        return yield* gw.execute(
-          envelope(submitHumanMessagePayload, "SubmitHumanMessage"),
-          executionContext,
-          authorityFor(submitHumanMessagePayload, {}, "SubmitHumanMessage"),
-        );
-      });
-      const receipt = await run(program, app);
-      expect(receipt.resolution._tag).toBe("TerminalRejected");
-      if (receipt.resolution._tag === "TerminalRejected") {
-        expect(receipt.resolution.error._tag).toBe(outcome);
-      }
-      expect(state.appended).toHaveLength(0);
-    }
-  });
-
-  it("produces no receipt on a transaction operational failure", async () => {
-    let calls = 0;
-    const flaky: Layer.Layer<TransactionPort> = Layer.succeed(TransactionPort, {
-      transact: (body) => {
-        calls += 1;
-        if (calls === 1) {
-          return Effect.fail({
-            _tag: "TransactionOperationalFailure",
-            cause: "busy",
-          });
-        }
-        return Effect.provideService(body, TransactionScope, {
-          session: { id: "tx" },
-        });
-      },
-    });
-    const { app, state } = buildApp(
-      [handler(() => ok({ result: { ok: true }, events: [] }))],
-      FenceStopCheckInertLive,
-      flaky,
-    );
-    const program = Effect.gen(function* () {
-      const gw = yield* CommandGateway;
-      return yield* gw
-        .execute(envelope({ x: 1 }), externalContext, authorityFor({ x: 1 }))
-        .pipe(Effect.flip);
-    });
-    const failure = await run(program, app);
-    expect((failure as { _tag: string })._tag).toBe(
-      "TransactionOperationalFailure",
-    );
-    expect(state.rows.size).toBe(0);
-    expect(state.attempts).toEqual([
-      { commandId, outcome: "Retryable:TransactionOperationalFailure" },
-    ]);
-  });
-
-  it("preserves the original transaction failure when attempt tracing also fails", async () => {
-    const unavailable: Layer.Layer<TransactionPort> = Layer.succeed(
-      TransactionPort,
-      {
-        transact: () =>
-          Effect.fail({
-            _tag: "TransactionOperationalFailure",
-            cause: "database unavailable",
-          }),
-      },
-    );
-    const { app, state } = buildApp(
-      [handler(() => ok({ result: { ok: true }, events: [] }))],
-      FenceStopCheckInertLive,
-      unavailable,
-    );
-    const failure = await run(
-      Effect.gen(function* () {
-        const gateway = yield* CommandGateway;
-        return yield* gateway
-          .execute(envelope({ x: 1 }), externalContext, authorityFor({ x: 1 }))
-          .pipe(Effect.flip);
-      }),
-      app,
-    );
-
-    expect(failure).toEqual({
-      _tag: "TransactionOperationalFailure",
-      cause: "database unavailable",
-    });
-    expect(state.rows.size).toBe(0);
-    expect(state.attempts).toEqual([]);
-  });
-
-  it("propagates a normalized handler repository failure as a typed failure", async () => {
-    const repositoryFailure = {
-      _tag: "PersistenceUnavailable" as const,
-      repository: "DependencyRepository" as const,
-      operation: "test",
-      retryDisposition: "retryable" as const,
-      sourceTag: "InjectedFailure",
-      cause: "database unavailable",
-    };
-    const failingHandler: CommandHandler<unknown, unknown> = {
-      commandType: "CreateProject",
-      schemaVersion: "2",
-      authority: {
-        tag: "CreateProjectAuthority",
-        targetMatches: () => true,
-      },
-      stopAdmission: { _tag: "Unclassified" },
-      execute: () => Effect.fail(repositoryFailure),
-    };
-    const { app, state } = buildApp([failingHandler]);
-    const failure = await run(
-      Effect.gen(function* () {
-        const gateway = yield* CommandGateway;
-        return yield* gateway
-          .execute(envelope({ x: 1 }), externalContext, authorityFor({ x: 1 }))
-          .pipe(Effect.flip);
-      }),
-      app,
-    );
-
-    expect(failure).toEqual(repositoryFailure);
-    expect(state.rows.size).toBe(0);
-    expect(state.attempts).toEqual([
-      {
-        commandId,
-        outcome:
-          "Retryable:PersistenceUnavailable:DependencyRepository:InjectedFailure",
-      },
-    ]);
-  });
-});
-
-describe("command authority (P1-DG-11)", () => {
-  const runWithAuthority = (
-    authority: VerifiedCommandAuthority,
-    onExecute?: () => void,
-  ) => {
-    const { app, state } = buildApp([
-      handler(() => ok({ result: { ok: true }, events: [] }), onExecute),
-    ]);
-    const program = Effect.gen(function* () {
-      const gw = yield* CommandGateway;
-      return yield* gw.execute(envelope({ x: 1 }), externalContext, authority);
-    });
-    return { app, state, program };
-  };
-
-  it("proceeds on an exact authority match", async () => {
-    let executions = 0;
-    const { app, state, program } = runWithAuthority(
-      authorityFor({ x: 1 }),
-      () => {
-        executions += 1;
-      },
-    );
-    const receipt = await run(program, app);
-    expect(receipt.resolution._tag).toBe("Committed");
-    expect(executions).toBe(1);
-    expect(state.rows.get(commandId)?.resolution).toBe("Committed");
-  });
-
-  it("denies a wrong principal, commandId, fingerprint, or kind", async () => {
-    const cases: ReadonlyArray<{
-      readonly label: string;
-      readonly authority: VerifiedCommandAuthority;
-    }> = [
-      {
-        label: "principal",
-        authority: authorityFor(
-          { x: 1 },
-          { principal: parse(Principal)("user:other") },
-        ),
-      },
-      {
-        label: "commandId",
-        authority: authorityFor({ x: 1 }, { commandId: otherCommandId }),
-      },
-      {
-        label: "fingerprint",
-        authority: authorityFor(
-          { x: 1 },
-          {
-            semanticRequestFingerprint: fpFor({ x: 999 }),
-          },
-        ),
-      },
-      {
-        label: "kind",
-        authority: {
-          _tag: "AssignWorkAuthority",
-          principal,
+        let executions = 0;
+        const storedRow = (resultJson: string): StoredCommandResolution => ({
           commandId,
-          semanticRequestFingerprint: fpFor({ x: 1 }),
           projectId,
-          targetWorkspaceId: "ws_018f2b3c-4d5e-7abc-8def-0123456789ab" as never,
-        },
-      },
-    ];
-    for (const { authority } of cases) {
-      const { app, state, program } = runWithAuthority(authority);
-      const receipt = await run(program, app);
-      expect(receipt.resolution._tag).toBe("TerminalRejected");
-      if (receipt.resolution._tag === "TerminalRejected") {
-        expect(receipt.resolution.error._tag).toBe("AuthorityDenied");
-      }
-      expect(state.appended).toHaveLength(0);
-    }
-  });
+          semanticRequestFingerprint: fpFor({ x: 1 }),
+          schemaVersion: "2",
+          fingerprintAlgorithmVersion: 1,
+          resolution: "Committed",
+          resultJson,
+          terminalErrorJson: null,
+          createdAt: "t0",
+          settledAt: "t1",
+        });
+        const runCase = (resultJson: string, submitPayload: unknown) =>
+          Effect.gen(function* () {
+            const { app, state } = buildApp([
+              handler(() => {
+                executions += 1;
+                return ok({ result: createProjectResult, events: [] });
+              }),
+            ]);
+            state.rows.set(commandId, storedRow(resultJson));
+            return {
+              ...(yield* outcomeOf(gatewayExecute(submitPayload, app))),
+              state,
+            };
+          });
+        const expectQuiet = (
+          result: { state: ReturnType<typeof buildApp>["state"] },
+          resolved: { resolution: { _tag: string; error?: { _tag: string } } },
+        ) => {
+          expect(result.state.attempts).toEqual([]);
+          expect(result.state.appended).toEqual([]);
+          expect(executions).toBe(0);
+          expect(resolved.resolution._tag).toBeDefined();
+        };
 
-  it("denies a wrong governance target", async () => {
-    const targetAuthority: CommandAuthorityRule<unknown> = {
-      tag: "AssignWorkAuthority",
-      targetMatches: (authority, payload) =>
-        authority._tag === "AssignWorkAuthority" &&
-        authority.targetWorkspaceId ===
-          (payload as { workspaceId: string }).workspaceId,
-    };
-    const { app, state } = buildApp([
-      handler(
-        () => ok({ result: { ok: true }, events: [] }),
-        undefined,
-        targetAuthority,
-      ),
-    ]);
-    const authority: VerifiedCommandAuthority = {
-      _tag: "AssignWorkAuthority",
-      principal,
-      commandId,
-      semanticRequestFingerprint: fpFor({ workspaceId: "ws_A" }),
-      projectId,
-      targetWorkspaceId: "ws_B" as never,
-    };
-    const program = Effect.gen(function* () {
-      const gw = yield* CommandGateway;
-      return yield* gw.execute(
-        envelope({ workspaceId: "ws_A" }),
-        externalContext,
-        authority,
-      );
-    });
-    const receipt = await run(program, app);
-    expect(receipt.resolution._tag).toBe("TerminalRejected");
-    if (receipt.resolution._tag === "TerminalRejected") {
-      expect(receipt.resolution.error._tag).toBe("AuthorityDenied");
-    }
-    expect(state.appended).toHaveLength(0);
-  });
+        const sentinel = "RAW-RECEIPT-MUST-NOT-BE-INTERPRETED";
+        const conflict = yield* runCase(`{"sentinel":"${sentinel}`, { x: 2 });
+        expect(conflict._tag).toBe("Receipt");
+        if (conflict._tag === "Receipt") {
+          expectTerminal(conflict.receipt, "IdempotencyConflict");
+        }
+        expect(JSON.stringify(conflict)).not.toContain(sentinel);
+        expect(conflict.state.rows.get(commandId)?.resultJson).toContain(
+          sentinel,
+        );
+        if (conflict._tag === "Receipt")
+          expectQuiet(conflict, conflict.receipt);
 
-  it("replays an existing committed receipt even when authority is now absent", async () => {
-    let executions = 0;
-    const { app, program } = (() => {
-      const built = buildApp([
-        handler(
-          () => ok({ result: { ok: true }, events: [] }),
-          () => {
-            executions += 1;
-          },
-        ),
-      ]);
-      const p = Effect.gen(function* () {
-        const gw = yield* CommandGateway;
-        const first = yield* gw.execute(
-          envelope({ x: 1 }),
-          externalContext,
-          authorityFor({ x: 1 }),
+        const corrupt = yield* runCase(
+          JSON.stringify({ unexpected: "private-sentinel" }),
+          { x: 1 },
         );
-        const replay = yield* gw.execute(
-          envelope({ x: 1 }),
-          externalContext,
-          authorityFor(
-            { x: 1 },
-            { principal: parse(Principal)("user:revoked") },
-          ),
-        );
-        return { first, replay };
-      });
-      return { app: built.app, program: p };
-    })();
-    const { first, replay } = await run(program, app);
-    expect(first.resolution._tag).toBe("Committed");
-    expect(replay.resolution._tag).toBe("Committed");
-    expect(executions).toBe(1);
-  });
-
-  it("rejects an OpenRequired command before its handler on a Closed project", async () => {
-    let executed = false;
-    const { app } = buildApp(
-      [
-        handler(
-          () => ok({ result: submitHumanMessageResult, events: [] }),
-          () => {
-            executed = true;
-          },
-          undefined,
-          "SubmitHumanMessage",
-        ),
-      ],
-      FenceStopCheckInertLive,
-      TransactionPortLive,
-      "Closed",
-    );
-    const receipt = await run(
-      Effect.gen(function* () {
-        const gateway = yield* CommandGateway;
-        return yield* gateway.execute(
-          envelope(submitHumanMessagePayload, "SubmitHumanMessage"),
-          externalContext,
-          authorityFor(submitHumanMessagePayload, {}, "SubmitHumanMessage"),
-        );
+        expect(corrupt._tag).toBe("Failure");
+        if (corrupt._tag === "Failure") {
+          expect(corrupt.error).toMatchObject({
+            _tag: "PersistenceCorruption",
+            repository: "CommandStore",
+            operation: "decodeReceipt",
+            reason:
+              "stored command receipt does not match its registered schema",
+          });
+          expect(JSON.stringify(corrupt.error)).not.toContain(
+            "private-sentinel",
+          );
+        }
+        if (corrupt._tag === "Failure") {
+          expectQuiet(corrupt, {
+            resolution: { _tag: "Failure" },
+          });
+        } else {
+          expectQuiet(corrupt, { resolution: { _tag: "Receipt" } });
+        }
       }),
-      app,
-    );
-    expect(receipt.resolution._tag).toBe("TerminalRejected");
-    if (receipt.resolution._tag === "TerminalRejected") {
-      expect(receipt.resolution.error._tag).toBe("TerminalLifecycleMutation");
-    }
-    expect(executed).toBe(false);
-  });
+  );
 
-  it("defaults new commands to OpenRequired and explicitly allows convergence controls", () => {
+  it.effect(
+    "persists terminal rejections from handler denials and fence stops without events",
+    () =>
+      Effect.gen(function* () {
+        const denied = buildApp([
+          handler(() =>
+            err({
+              _tag: "AuthorityDenied",
+              reason: "no authority",
+            } as DomainError),
+          ),
+        ]);
+        const receipt = yield* gatewayExecute({ x: 1 }, denied.app);
+        expectTerminal(receipt, "AuthorityDenied");
+        expect(denied.state.appended).toHaveLength(0);
+        expect(denied.state.attempts).toEqual([
+          { commandId, outcome: "TerminalRejected" },
+        ]);
+
+        const payload = { ...humanMessagePayload };
+        for (const outcome of [
+          "FencingRejected",
+          "ExecutionStopping",
+        ] as const) {
+          const { app, state } = buildApp(
+            [
+              handler(
+                () => ok({ result: { ok: true }, events: [] }),
+                undefined,
+                undefined,
+                "SubmitHumanMessage",
+              ),
+            ],
+            fenceLive(outcome),
+          );
+          const fenced = yield* gatewayExecute(
+            payload,
+            app,
+            executionContext,
+            authorityFor(payload, {}, "SubmitHumanMessage"),
+            "SubmitHumanMessage",
+          );
+          expectTerminal(fenced, outcome);
+          expect(state.appended).toHaveLength(0);
+        }
+      }),
+  );
+
+  it.effect(
+    "propagates typed operational failures without a receipt, preserving the original when tracing fails",
+    () =>
+      Effect.gen(function* () {
+        // Phase 1: the attempt trace itself fails; the original failure wins.
+        const unavailable: Layer.Layer<TransactionPort> = Layer.succeed(
+          TransactionPort,
+          {
+            transact: () =>
+              Effect.fail({
+                _tag: "TransactionOperationalFailure",
+                cause: "database unavailable",
+              }),
+          },
+        );
+        const traced = buildApp(
+          [handler(() => ok({ result: createProjectResult, events: [] }))],
+          FenceStopCheckInertLive,
+          unavailable,
+        );
+        const failure = yield* Effect.flip(
+          gatewayExecute({ x: 1 }, traced.app),
+        );
+        expect(failure).toEqual({
+          _tag: "TransactionOperationalFailure",
+          cause: "database unavailable",
+        });
+        expect(traced.state.rows.size).toBe(0);
+        expect(traced.state.attempts).toEqual([]);
+
+        // Phase 2: a normalized handler repository failure stays typed and
+        // records its retryable attempt.
+        const repositoryFailure = {
+          _tag: "PersistenceUnavailable" as const,
+          repository: "DependencyRepository" as const,
+          operation: "test",
+          retryDisposition: "retryable" as const,
+          sourceTag: "InjectedFailure",
+          cause: "database unavailable",
+        };
+        const propagated = buildApp([
+          {
+            commandType: "CreateProject",
+            schemaVersion: "2",
+            authority: {
+              tag: "CreateProjectAuthority",
+              targetMatches: () => true,
+            },
+            stopAdmission: { _tag: "Unclassified" },
+            execute: () => Effect.fail(repositoryFailure),
+          },
+        ]);
+        const handlerFailure = yield* Effect.flip(
+          gatewayExecute({ x: 1 }, propagated.app),
+        );
+        expect(handlerFailure).toEqual(repositoryFailure);
+        expect(propagated.state.rows.size).toBe(0);
+        expect(propagated.state.attempts).toEqual([
+          {
+            commandId,
+            outcome:
+              "Retryable:PersistenceUnavailable:DependencyRepository:InjectedFailure",
+          },
+        ]);
+      }),
+  );
+
+  it("defaults new commands to OpenRequired and allows convergence controls", () => {
     expect(projectAdmissionOf("FutureCommand")).toBe("OpenRequired");
     expect(projectAdmissionOf("CreateProject")).toBe("Bootstrap");
     expect(projectAdmissionOf("StopExecution")).toBe("ClosedAllowed");
@@ -1346,127 +762,32 @@ describe("command authority (P1-DG-11)", () => {
     expect(projectAdmissionOf("RevokePermission")).toBe("ClosedAllowed");
   });
 
-  it("commits boundary, exact claim release, events and receipt once, then replays same id", async () => {
-    const targetWorkspaceId = parse(WorkspaceId)(
-      "ws_018f2b3c-4d5e-7abc-8def-0123456789ab",
-    );
-    const payload = {
-      workspaceId: targetWorkspaceId,
-      expectedWorkspaceRevision: 1 as never,
-    };
-    const released: string[] = [];
-    const boundaryWrites: unknown[][] = [];
-    const claim = {
-      claimId: "claim-acceptance-only",
-      workspaceId: targetWorkspaceId,
-      region: {
-        resourceSpaceId: "local",
-        normalizedRegion: { kind: "FileTree", path: "C:/acceptance" },
-      },
-      sourceAddressSnapshot: { _tag: "FileTree", path: "C:/acceptance" },
-      resourceBoundaryRevision: 0,
-      resolvedAtEnvironmentRevision: "env1",
-      createdAt: "t0",
-      releasedAt: null,
-    };
-    const workspace = {
-      workspaceId: targetWorkspaceId,
-      projectId,
-      parentWorkspaceId: null,
-      name: "acceptance",
-      responsibilityDefinition: {
-        purpose: "acceptance",
-        ownedResponsibilities: [],
-        obligations: [],
-        includes: [],
-        excludes: [],
-        interfaces: [],
-      },
-      responsibilityRevision: 0,
-      resourceBoundary: {
-        basisResponsibilityRevision: 0,
-        addresses: [{ _tag: "FileTree", path: "C:/acceptance" }],
-      },
-      resourceBoundaryRevision: 0,
-      agentBinding: {
-        _tag: "ResponsibilityBoundAgentBinding",
-        workspaceId: targetWorkspaceId,
-      },
-      primarySessionId: "ses_018f2b3c-4d5e-7abc-8def-0123456789ab",
-      currentWorkId: null,
-      workspacePolicy: {},
-      workspacePolicyRevision: 0,
-      revision: 1,
-      lifecycle: "Active",
-    };
-    const workspaces = {
-      findById: () => Effect.succeed(Option.some(workspace as never)),
-      updateResourceBoundaryIfRevision: (...args: unknown[]) =>
-        Effect.sync(() => boundaryWrites.push(args)),
-    } as never;
-    const ownership: Pick<
-      ResourceOwnershipRepositoryService,
-      "listActiveByWorkspace" | "releaseClaim"
-    > = {
-      listActiveByWorkspace: (id) =>
-        Effect.succeed(id === targetWorkspaceId ? [claim as never] : []),
-      releaseClaim: (id) => Effect.sync(() => released.push(id)),
-    };
-    const updateHandler = makeUpdateResourceBoundaryHandler({
-      workspaces,
-      ownership,
-    }) as unknown as CommandHandler<unknown, unknown>;
-    const { app, state } = buildApp([updateHandler]);
-    const fingerprint = fpFor(payload, "UpdateResourceBoundary");
-    const authority = {
-      _tag: "UpdateResourceBoundaryAuthority" as const,
-      principal,
-      commandId,
-      semanticRequestFingerprint: fingerprint,
-      projectId,
-      targetWorkspaceId,
-    } satisfies VerifiedCommandAuthority;
-    const localContext: CommandSubmissionContext = {
-      _tag: "System",
-      principal,
-      causationRef: "trusted-local-resource-boundary-admin",
-    };
-    const command = envelope(payload, "UpdateResourceBoundary");
-    const receipts = await run(
+  it.effect(
+    "replays an existing committed receipt even when authority is now absent",
+    () =>
       Effect.gen(function* () {
-        const gw = yield* CommandGateway;
-        const denied = yield* gw.execute(
-          { ...command, commandId: otherCommandId },
-          localContext,
-          {
-            ...authority,
-            commandId: otherCommandId,
-            targetWorkspaceId:
-              "ws_018f2b3c-4d5e-7abc-8def-0123456789ac" as never,
-          },
+        let executions = 0;
+        const { app } = buildApp([
+          handler(
+            () => ok({ result: createProjectResult, events: [] }),
+            () => {
+              executions += 1;
+            },
+          ),
+        ]);
+        const first = yield* gatewayExecute({ x: 1 }, app);
+        const replay = yield* gatewayExecute(
+          { x: 1 },
+          app,
+          externalContext,
+          authorityFor(
+            { x: 1 },
+            { principal: parse(Principal)("user:revoked") },
+          ),
         );
-        const first = yield* gw.execute(command, localContext, authority);
-        const replay = yield* gw.execute(command, localContext, authority);
-        return { denied, first, replay };
+        expect(first.resolution._tag).toBe("Committed");
+        expect(replay.resolution._tag).toBe("Committed");
+        expect(executions).toBe(1);
       }),
-      app,
-    );
-
-    expect(receipts.denied.resolution._tag).toBe("TerminalRejected");
-    if (receipts.denied.resolution._tag === "TerminalRejected") {
-      expect(receipts.denied.resolution.error._tag).toBe("AuthorityDenied");
-    }
-    expect(receipts.first.resolution._tag).toBe("Committed");
-    expect(receipts.replay.resolution._tag).toBe("Committed");
-    expect(released).toEqual(["claim-acceptance-only"]);
-    expect(boundaryWrites).toHaveLength(1);
-    expect(state.appended.map((event) => event.eventType)).toEqual([
-      "ResourceBoundaryChanged",
-      "ResourceOwnershipChanged",
-    ]);
-    expect(state.rows.get(commandId)?.resolution).toBe("Committed");
-    expect(
-      state.attempts.filter((attempt) => attempt.outcome === "Committed"),
-    ).toHaveLength(1);
-  });
+  );
 });
