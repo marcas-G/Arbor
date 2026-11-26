@@ -96,7 +96,6 @@ import {
   CommandHandlerRegistry,
   FenceStopCheckInertLive,
   type GatewayEnvelope,
-  InputPromotionServiceLive,
   semanticRequestFingerprint,
 } from "../packages/application/src/index.js";
 import {

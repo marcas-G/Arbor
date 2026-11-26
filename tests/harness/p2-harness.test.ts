@@ -51,7 +51,7 @@ describe("p2 harness wiring", () => {
     // Semantic assertion on the imported matrix: the P2 heritage edges
     // plus the consumer-side adapter/runtime edges the TestKit driver
     // assembly needs (string-pinning the literal broke on reformatting).
-    expect(ALLOWED_EDGES.worker-local).toEqual(["domain", "ports"]);
+    expect(ALLOWED_EDGES["worker-local"]).toEqual(["domain", "ports"]);
     expect(ALLOWED_EDGES.testkit).toEqual([
       "domain",
       "ports",

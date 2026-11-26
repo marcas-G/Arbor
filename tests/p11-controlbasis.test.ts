@@ -50,7 +50,6 @@ import {
   ModelDecisionServiceLive,
   makeControlToolRegistry,
 } from "../packages/agent-runtime/src/index.js";
-import { InputPromotionServiceLive } from "../packages/application/src/index.js";
 import {
   type AgentExecutionState,
   type CommandSubmissionContext,
