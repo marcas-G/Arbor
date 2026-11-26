@@ -8,7 +8,7 @@ if (
   (modeRaw !== "shared" && modeRaw !== "exclusive")
 ) {
   throw new Error(
-    "usage: p39-lock-same-layer-contender.mjs <lock-file> <shared|exclusive>",
+    "usage: same-layer-lock-contender.mjs <lock-file> <shared|exclusive>",
   );
 }
 const mode = modeRaw === "shared" ? "RuntimeShared" : "MaintenanceExclusive";

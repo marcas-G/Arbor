@@ -5,7 +5,7 @@ const { DatabaseWriterLockClient, databaseWriterLockLayer } = await import(
 );
 const [lockFilename] = process.argv.slice(2);
 if (lockFilename === undefined) {
-  throw new Error("usage: p39-release-construction-child.mjs <lock-file>");
+  throw new Error("usage: release-construction-child.mjs <lock-file>");
 }
 
 const scopedLayer = Effect.scoped(

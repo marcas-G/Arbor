@@ -53,7 +53,7 @@ four OS-specific denial tests use the explicit gate
 The P39 path/recovery suites that support POSIX use the separate gate
 `process.platform !== "win32" || p39WindowsAclQualificationAvailable()`;
 specifically, `blocked-workepisode-restart-wake.test.ts` and
-`p39-maintenance-writer-exclusion.functional.test.ts` remain enabled on POSIX.
+`maintenance-writer-exclusion.functional.test.ts` remain enabled on POSIX.
 A pure gate test checks the non-Windows branch, Windows without the ACL module,
 and Windows with the module. No Linux-host run is claimed.
 
@@ -74,7 +74,7 @@ pnpm exec vitest run apps/single-workspace/test/blocked-workepisode-restart-wake
 Result: **2/2 PASS** on `W10-20250217599`.
 
 ```powershell
-pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/p39-maintenance-writer-exclusion.functional.test.ts --reporter=verbose
+pnpm exec vitest run --config vitest.functional.config.ts tests/functional/process/maintenance-writer-exclusion.functional.test.ts --reporter=verbose
 ```
 
 Result: **3/3 PASS** on `W10-20250217599`; all three cross-process writer

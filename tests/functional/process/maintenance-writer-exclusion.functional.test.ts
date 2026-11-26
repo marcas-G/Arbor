@@ -31,10 +31,10 @@ const contenderModule = resolve(
   "tests/functional/support/database-writer-lock-contender.mjs",
 );
 const sameLayerContenderModule = resolve(
-  "tests/functional/support/p39-lock-same-layer-contender.mjs",
+  "tests/functional/support/same-layer-lock-contender.mjs",
 );
 const releaseConstructionModule = resolve(
-  "tests/functional/support/p39-release-construction-child.mjs",
+  "tests/functional/support/release-construction-child.mjs",
 );
 
 const startHolder = async (

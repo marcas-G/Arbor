@@ -2,8 +2,8 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    globalSetup: ["./tests/support/p39-windows-global-setup.ts"],
-    setupFiles: ["./tests/support/p39-windows-test-setup.ts"],
+    globalSetup: ["./tests/support/windows-global-setup.ts"],
+    setupFiles: ["./tests/support/windows-test-setup.ts"],
     include: [
       "tests/functional/process/ah10-child/committed-receipts.functional.test.ts",
       "tests/functional/process/ah10-child/corrupt-binding-attention.functional.test.ts",

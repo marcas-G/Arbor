@@ -3,10 +3,10 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     globalSetup: [
-      "./tests/support/p39-windows-global-setup.ts",
+      "./tests/support/windows-global-setup.ts",
       "./tests/functional/support/schema44-global-setup.ts",
     ],
-    setupFiles: ["./tests/support/p39-windows-test-setup.ts"],
+    setupFiles: ["./tests/support/windows-test-setup.ts"],
     include: ["tests/capability/real-provider/s1/public-s1-lifecycle.test.ts"],
     exclude: ["**/node_modules/**"],
     // The test gets its own 20-minute absolute journey deadline; leave a

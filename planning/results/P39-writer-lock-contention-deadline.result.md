@@ -120,7 +120,7 @@ one-time setup and event-loop scheduling can still consume time.
 The final two candidate commits were integrated as source `cd1a2845` and the
 SQLite adapter package was rebuilt before qualification. The complete focused
 file
-`tests/functional/process/p39-maintenance-writer-exclusion.functional.test.ts`
+`tests/functional/process/maintenance-writer-exclusion.functional.test.ts`
 then passed 11/11 with retry 0 and one worker in 97.50 seconds. It covered both
 cross-process shared/exclusive directions, deferred and repeated Effects,
 zero-budget free and contended acquisition, constructed-but-unrun release,
