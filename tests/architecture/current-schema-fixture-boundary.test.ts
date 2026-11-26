@@ -28,7 +28,7 @@ const historicalSchemaFixtureOwners = [
   "apps/single-workspace/test/p6-inbox-rebuild.test.ts",
   "apps/single-workspace/test/retry-verification-origin-backfill.test.ts",
   "apps/single-workspace/test/schema-upgrade-operator.test.ts",
-  "tests/functional/process/agent-loop-ah10-direct-child-assign-work-receipt-binding.functional.test.ts",
+  "tests/functional/process/ah10-child/support-legacy-image.ts",
   "tests/functional/support/schema44-bootstrap.ts",
   // Explicit legacy/fail-closed replay qualification.
   "adapters/persistence-sqlite/test/p40-observation-schema44-fail-closed.test.ts",
