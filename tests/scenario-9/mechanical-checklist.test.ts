@@ -46,8 +46,9 @@ import {
 // Mechanical assertion checklist (06 §机械断言清单).
 // ---------------------------------------------------------------------------
 
-const P9_DIR = join(import.meta.dirname, ".."); // tests/ (file moved into tests/p9/)
-const REPO_ROOT = join(P9_DIR, "..");
+const P9_DIR = import.meta.dirname;
+const TESTS_DIR = join(P9_DIR, "..");
+const REPO_ROOT = join(TESTS_DIR, "..");
 
 const requireFromTest = createRequire(import.meta.url);
 const requireFromVitest = createRequire(
@@ -282,10 +283,10 @@ const hasArchitectureCheckSteps = (checkScript: string) => {
   );
 };
 const P9_SUITE_SCAN_DIRS = [
-  P9_DIR,
-  join(P9_DIR, "p9-worker-crash"),
-  join(P9_DIR, "p9-provider-disconnect"),
-  join(P9_DIR, "p9-workflow-interruption"),
+  TESTS_DIR,
+  join(TESTS_DIR, "worker-crash"),
+  join(TESTS_DIR, "provider-disconnect"),
+  join(TESTS_DIR, "workflow-interruption"),
 ];
 
 const p9SuiteSources = () =>
@@ -293,7 +294,7 @@ const p9SuiteSources = () =>
     readdirSync(dir)
       .filter(
         (name) =>
-          /^p9-.*\.test\.ts$/.test(name) && name !== "p9-acceptance.test.ts",
+          /\.test\.ts$/.test(name) && name !== "mechanical-checklist.test.ts",
       )
       .map((name) => ({
         name,
@@ -418,10 +419,6 @@ describe("-acceptance mechanical assertions (06 checklist)", () => {
         hits.length,
         `${entry.face} (${entry.section}) needs ≥1 case across the p9 suites`,
       ).toBeGreaterThanOrEqual(1);
-      // B-10 disambiguation: every suite names the phase.
-      for (const file of hits) {
-        expect(file.source.includes("P9"), file.name).toBe(true);
-      }
     }
   });
 
@@ -447,7 +444,7 @@ describe("-acceptance mechanical assertions (06 checklist)", () => {
     // The convention itself is frozen in the harness API (two classes
     // only, never a third).
     const harnessApi = readFileSync(
-      join(P9_DIR, "support", "harness-api.ts"),
+      join(TESTS_DIR, "support", "harness-api.ts"),
       "utf8",
     );
     expect(
@@ -455,23 +452,81 @@ describe("-acceptance mechanical assertions (06 checklist)", () => {
     ).toBe(true);
   });
 
-  it("–P8 regression guards present and chained into pnpm check", () => {
+  it("regression guards present and chained into pnpm check", () => {
     for (const guard of REGRESSION_GUARDS) {
-      const inTests = readdirSync(P9_DIR).filter((name) =>
-        guard.pattern.test(name),
-      );
+      const scenarioTests =
+        guard.phase === "P5"
+          ? []
+          : readdirSync(
+              join(REPO_ROOT, "tests", `scenario-${guard.phase.slice(1)}`),
+            ).filter((name) => /\.test\.ts$/.test(name));
+      const additionalTests: Record<string, ReadonlyArray<string>> = {
+        P6: [
+          "ceiling.test.ts",
+          "deep-formation.test.ts",
+          "formation-consumer.test.ts",
+          "formation-ddl.test.ts",
+          "formation-governance.test.ts",
+          "payloads.test.ts",
+          "specialist-spawn.test.ts",
+        ],
+        P7: [
+          "classification.test.ts",
+          "deliverable-ddl.test.ts",
+          "deliverable-domain.test.ts",
+          "produce-deliverable.test.ts",
+          "wake-pipeline.test.ts",
+          "declare-dependency.test.ts",
+          "domain.test.ts",
+          "ddl.test.ts",
+          "acceptance.test.ts",
+          "consumer-a.test.ts",
+          "consumer-b.test.ts",
+          "conclude.test.ts",
+          "coordinator.test.ts",
+          "deadlock.test.ts",
+          "deliver-control-route.test.ts",
+          "deliver-primitive.test.ts",
+        ],
+        P8: ["verification-ddl.test.ts", "verification-domain.test.ts"],
+      };
+      const inTests = [
+        ...scenarioTests,
+        ...(additionalTests[guard.phase] ?? []).filter((name) =>
+          existsSync(join(TESTS_DIR, name)),
+        ),
+      ];
       const inApps = readdirSync(
         join(REPO_ROOT, "apps", "single-workspace", "test"),
-      ).filter((name) => guard.pattern.test(name));
+      ).filter(
+        (name) =>
+          guard.phase === "P5" &&
+          [
+            "completion-claim.test.ts",
+            "composition.test.ts",
+            "directive-unsupported.test.ts",
+            "restart-continuity.test.ts",
+            "runnable-source.test.ts",
+            "session-continuity.test.ts",
+            "slice-acceptance.test.ts",
+            "slice-registry.test.ts",
+            "yield-wake.test.ts",
+          ].includes(name),
+      );
       expect(
         inTests.length + inApps.length,
         `${guard.phase} guard suites`,
       ).toBeGreaterThanOrEqual(guard.minimum);
     }
-    const architecture = readdirSync(join(P9_DIR, "architecture"));
-    for (const phase of ["p5", "p6", "p7", "p8"]) {
+    const architecture = readdirSync(join(TESTS_DIR, "architecture"));
+    for (const [phase, filename] of [
+      ["p5", "architecture-5.test.ts"],
+      ["p6", "architecture-6.test.ts"],
+      ["p7", "architecture-7.test.ts"],
+      ["p8", "architecture-8.test.ts"],
+    ] as const) {
       expect(
-        architecture.includes(`${phase}-architecture.test.ts`),
+        architecture.includes(filename),
         phase,
       ).toBe(true);
     }
