@@ -714,7 +714,7 @@ describe("/ legacy-adoption immutable failure facts", () => {
                        binding_sha256, admitted_at, admission_source,
                        admission_time_precision
                      ) VALUES (?, 0, 'MayHaveStarted', ?, 'ReadOnly', NULL, NULL,
-                       NULL, NULL, NULL, ?, 't0', 'Admission',
+                       NULL, NULL, NULL, ?, 't0', 'P39Admission',
                        'TransactionTimestamp')`,
                     [invocationId, binding.toolDefinitionHash, bindingHash],
                   );

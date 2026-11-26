@@ -854,7 +854,7 @@ describe("migration module boundary", () => {
                  profile_protocol,effect_key,binding_sha256,admitted_at,
                  admission_source,admission_time_precision
                ) VALUES ('tin_denied_unbound_valid',0,'NotAdmitted',NULL,'ReadOnly',
-                         NULL,NULL,NULL,NULL,NULL,NULL,NULL,'Claim','NotAdmitted')`,
+                         NULL,NULL,NULL,NULL,NULL,NULL,NULL,'P39Claim','NotAdmitted')`,
             ),
           ),
         );
@@ -968,7 +968,7 @@ describe("migration module boundary", () => {
             profile_protocol,effect_key,binding_sha256,admitted_at,
             admission_source,admission_time_precision
           ) VALUES (?,0,'MayHaveStarted',?,'Reconcilable','profile','1',?,'v1',?,?,'t1',
-                    'Admission','TransactionTimestamp')`,
+                    'P39Admission','TransactionTimestamp')`,
           [
             invocationId,
             "d".repeat(64),

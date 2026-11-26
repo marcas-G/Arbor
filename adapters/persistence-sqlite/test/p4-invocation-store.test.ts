@@ -338,7 +338,7 @@ describe("tool invocation store", () => {
            profile_protocol,effect_key,binding_sha256,admitted_at,
            admission_source,admission_time_precision
          ) VALUES (?,0,'NotAdmitted',NULL,'ReadOnly',NULL,NULL,NULL,NULL,NULL,
-                   ?,NULL,'Claim','NotAdmitted')`,
+                   ?,NULL,'P39Claim','NotAdmitted')`,
             [boundId, bindingSha],
           );
           const boundDenied = yield* tx.transact(

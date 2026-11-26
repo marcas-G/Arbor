@@ -105,7 +105,7 @@ describe("ToolReconciliationFactStore", () => {
             profile_protocol,effect_key,binding_sha256,admitted_at,
             admission_source,admission_time_precision
           ) VALUES (?,0,'MayHaveStarted',?,'Reconcilable','profile','1',?,'v1',?,?,'t1',
-                    'Admission','TransactionTimestamp')`,
+                    'P39Admission','TransactionTimestamp')`,
               [
                 invocationId,
                 "e".repeat(64),

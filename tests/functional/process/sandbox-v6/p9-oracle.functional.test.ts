@@ -126,7 +126,7 @@ describe("V6 P9 action oracle tracks the exact P4 source Step", () => {
             invocation_id: probe.invocationId,
             attempt_no: 0,
             admission_state: "MayHaveStarted",
-            admission_source: "Admission",
+            admission_source: "P39Admission",
             binding_sha256: bindingSha256,
           },
         ],
