@@ -1,13 +1,15 @@
+import { it } from "@effect/vitest";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import { layer } from "../src/client.js";
 import { runMigrations } from "../src/migrate.js";
 import { P24_MIGRATIONS, P25_MIGRATIONS } from "../src/migrations.js";
 
 describe("DID v1.28 migration 0025 legacy focus retirement", () => {
-  it("physically removes focus columns and leaves foreign keys valid", async () => {
-    await Effect.runPromise(
+  it.effect(
+    "physically removes focus columns and leaves foreign keys valid",
+    () =>
       Effect.gen(function* () {
         yield* runMigrations(P24_MIGRATIONS);
         const applied = yield* runMigrations(P25_MIGRATIONS);
@@ -35,6 +37,5 @@ describe("DID v1.28 migration 0025 legacy focus retirement", () => {
         );
         expect(violations).toEqual([]);
       }).pipe(Effect.provide(layer({ filename: ":memory:" }))),
-    );
-  });
+  );
 });

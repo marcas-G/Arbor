@@ -1,6 +1,7 @@
+import { it } from "@effect/vitest";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import {
   layer,
   P17_MIGRATIONS,
@@ -8,12 +9,10 @@ import {
   runMigrations,
 } from "../src/index.js";
 
-const withClient = <A>(program: Effect.Effect<A, unknown, SqlClient>) =>
-  Effect.runPromise(Effect.provide(program, layer({ filename: ":memory:" })));
-
 describe("P18 project archive migration", () => {
-  it("preserves existing messages and admits the Declined terminal state", async () => {
-    const result = await withClient(
+  it.effect(
+    "preserves existing messages and admits the Declined terminal state",
+    () =>
       Effect.gen(function* () {
         yield* runMigrations(P17_MIGRATIONS);
         const sql = yield* SqlClient;
@@ -30,10 +29,8 @@ describe("P18 project archive migration", () => {
         const rows = yield* sql.unsafe<{ state: string; body_ref: string }>(
           "SELECT state, body_ref FROM human_messages WHERE message_id = 'msg_1'",
         );
-        return { version: Number(version[0]?.user_version), row: rows[0] };
-      }),
-    );
-    expect(result.version).toBe(18);
-    expect(result.row).toEqual({ state: "Declined", body_ref: "body" });
-  });
+        expect(Number(version[0]?.user_version)).toBe(18);
+        expect(rows[0]).toEqual({ state: "Declined", body_ref: "body" });
+      }).pipe(Effect.provide(layer({ filename: ":memory:" }))),
+  );
 });
