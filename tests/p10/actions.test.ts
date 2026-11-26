@@ -41,7 +41,7 @@ import {
   p7TestPrincipal,
   runP7,
 } from "../support/p7-app.js";
-import { insertWorkspaceRow, seedCanonical } from "../support/p10-fixture.js";
+import { insertWorkspaceRow, seedCanonical } from "../support/fixture-support.js";
 
 describe("p10-acceptance (P10 07 Stories A–G)", () => {
   it("Story G — Action surfaces: message-mediated Query lands the Inbox consumable; Steer/Stop/Governance via the gateway only; frozen Stop typed rejection; P12 negative (no HTTP/WS/CLI)", async () => {

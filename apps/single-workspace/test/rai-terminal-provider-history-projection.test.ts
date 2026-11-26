@@ -23,7 +23,7 @@ import {
   it,
 } from "vitest";
 import { P10_ATTENTION_CONSUMER_ID } from "../../../adapters/persistence-sqlite/src/index.js";
-import { insertWorkRow } from "../../../tests/support/p10-fixture.js";
+import { insertWorkRow } from "../../../tests/support/fixture-support.js";
 import { createCurrentSchemaTestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import { buildSingleWorkspaceLayer } from "../src/index.js";
 

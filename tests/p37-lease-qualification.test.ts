@@ -7,7 +7,7 @@ import {
   captureP37LeaseOwnerProcessAnchor,
   expireP37LeaseForQualification,
   type P37Probe,
-} from "./functional/support/p37-deliver-process-fixture.js";
+} from "./functional/support/deliver-process-fixture.js";
 
 const directories: string[] = [];
 

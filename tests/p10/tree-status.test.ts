@@ -28,7 +28,7 @@ import {
   seedCanonical,
   setCurrentWork,
   snapshotDatabase,
-} from "../support/p10-fixture.js";
+} from "../support/fixture-support.js";
 import { makeQueryService, malformedTreeCases } from "./support.js";
 
 describe("p10-acceptance (P10 07 Stories A–G)", () => {

@@ -53,7 +53,7 @@ import {
   makeP9ConsumerApp,
   p9Boot,
   runP9Consumer,
-} from "./support/p9-consumer-app.js";
+} from "./support/consumer-app-support.js";
 import { labeled } from "./support/p9-harness-api.js";
 
 /** P9-010 — consumer crash injection matrix CC-1..CC-6 (P9 `02` §7 +

@@ -72,7 +72,7 @@ import {
   p10Root,
   seedCanonical,
   setCurrentWork,
-} from "../support/p10-fixture.js";
+} from "../support/fixture-support.js";
 
 describe("p10-acceptance (P10 07 Stories A–G)", () => {
   it("Story E — Rebuild at scale: drift → orchestrated rebuild → RB-4 per-view equality; checkpoint resume from the persisted crash point; journal horizon untouched (negative)", async () => {

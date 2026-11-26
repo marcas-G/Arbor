@@ -43,7 +43,7 @@ import {
   p7TestPrincipal,
   runP7,
 } from "./support/p7-app.js";
-import { insertWorkspaceRow, seedCanonical } from "./support/p10-fixture.js";
+import { insertWorkspaceRow, seedCanonical } from "./support/fixture-support.js";
 
 /** P10-011 — the four user-action surfaces (P10 `05` §2; SD §12.5 four
  * verbs): message-mediated Query full chain (message lands the target

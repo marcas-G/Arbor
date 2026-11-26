@@ -23,7 +23,7 @@ import {
   seedCanonical,
   setCurrentWork,
   snapshotDatabase,
-} from "./support/p10-fixture.js";
+} from "./support/fixture-support.js";
 
 const projectId = parse(ProjectId)(p10Project);
 const consumerWorkId = parse(WorkId)(

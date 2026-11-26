@@ -25,7 +25,7 @@ import {
   makeP9ConsumerApp,
   p9Boot,
   runP9Consumer,
-} from "../support/p9-consumer-app.js";
+} from "../support/consumer-app-support.js";
 import { labeled } from "../support/p9-harness-api.js";
 import {
   ASSIGN_CMD_1,

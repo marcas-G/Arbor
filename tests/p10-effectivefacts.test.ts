@@ -33,7 +33,7 @@ import {
   seedCanonical,
   setCurrentWork,
   snapshotDatabase,
-} from "./support/p10-fixture.js";
+} from "./support/fixture-support.js";
 
 const W_ROOT = parse(WorkId)("wrk_00000000-0000-7000-8000-0000000000e1");
 const _W_OTHER = parse(WorkId)("wrk_00000000-0000-7000-8000-0000000000e2");

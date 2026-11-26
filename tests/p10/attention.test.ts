@@ -25,7 +25,7 @@ import {
   runP10,
   seedCanonical,
   snapshotDatabase,
-} from "../support/p10-fixture.js";
+} from "../support/fixture-support.js";
 import { makeQueryService } from "./support.js";
 
 describe("p10-acceptance (P10 07 Stories A–G)", () => {

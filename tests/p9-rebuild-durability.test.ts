@@ -44,7 +44,7 @@ import {
   makeP9ConsumerApp,
   p9Boot,
   runP9Consumer,
-} from "./support/p9-consumer-app.js";
+} from "./support/consumer-app-support.js";
 import {
   collectDurabilityEvidence,
   type DurabilityEvidence,

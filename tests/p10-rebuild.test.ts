@@ -63,7 +63,7 @@ import {
 } from "../packages/projection-runtime/src/index.js";
 import { NoHoldWorkReadmissionGateStoreLive } from "../packages/testkit/src/index.js";
 
-import type { P10FixtureDeps } from "./support/p10-fixture.js";
+import type { P10FixtureDeps } from "./support/fixture-support.js";
 import {
   insertDependencyRow,
   insertEventRow,
@@ -77,7 +77,7 @@ import {
   p10Root,
   seedCanonical,
   setCurrentWork,
-} from "./support/p10-fixture.js";
+} from "./support/fixture-support.js";
 
 /** P10-009 — rebuild at scale (P10 `04`): checkpointed catch-up per
  * materialized projection along the P1 offsets face (view-prefixed

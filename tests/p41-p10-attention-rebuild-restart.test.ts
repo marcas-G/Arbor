@@ -26,7 +26,7 @@ import {
   makeP10Deps,
   runP10,
   seedCanonical,
-} from "./support/p10-fixture.js";
+} from "./support/fixture-support.js";
 import { createCurrentSchemaTestDatabase } from "./support/schema44-database.js";
 
 describe("P41 P10 Attention rebuild after SQLite reopen", () => {

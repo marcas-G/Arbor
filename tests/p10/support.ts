@@ -4,8 +4,8 @@ import type {
 } from "../../packages/domain/dist/index.js";
 import type { ProjectionQueryRuntimeDeps } from "../../packages/projection-runtime/src/index.js";
 import { makeProjectionQueryService } from "../../packages/projection-runtime/src/index.js";
-import type { P10FixtureDeps } from "../support/p10-fixture.js";
-import { p10Child, p10Leaf, p10Root } from "../support/p10-fixture.js";
+import type { P10FixtureDeps } from "../support/fixture-support.js";
+import { p10Child, p10Leaf, p10Root } from "../support/fixture-support.js";
 
 export const makeQueryService = (deps: P10FixtureDeps) =>
   makeProjectionQueryService({

@@ -18,7 +18,7 @@ import {
   runP10,
   seedCanonical,
   setCurrentWork,
-} from "../support/p10-fixture.js";
+} from "../support/fixture-support.js";
 import { makeQueryService, runtimeDepsOf } from "./support.js";
 
 describe("p10-acceptance (P10 07 Stories A–G)", () => {

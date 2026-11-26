@@ -762,7 +762,7 @@ const MISSION = JSON.stringify({
   goal: "g",
   criteria: [
     {
-      criterionId: "p10-fixture-criterion",
+      criterionId: "fixture-support-criterion",
       requirement: "fixture criterion passes",
       required: true,
     },
@@ -1044,7 +1044,7 @@ export const insertVerificationRow = (input: {
       input.summaryRef ??
       (snapshotStatus === "Available" ||
       snapshotStatus === "NotApplicableOrphaned"
-        ? "sha256:p10-fixture-summary"
+        ? "sha256:fixture-support-summary"
         : null);
     yield* sql.unsafe(
       "INSERT INTO verifications (verification_id, project_id, work_id, target_work_revision, owner_workspace_id, mission_snapshot, target_deliverables, target_artifact_versions, target_environment_revision, environment_snapshot_ref, verification_execution_ids, state, verdict, conclusion_reason, summary_ref, criteria_results, snapshot_status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",

@@ -42,7 +42,7 @@ import {
   runP10,
   seedCanonical,
   snapshotDatabase,
-} from "./support/p10-fixture.js";
+} from "./support/fixture-support.js";
 
 const WS_CONSUMER = parse(WorkspaceId)(
   "ws_00000000-0000-7000-8000-0000000000c1",

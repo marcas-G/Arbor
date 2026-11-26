@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import type { P37Probe } from "../support/p37-deliver-process-fixture.js";
+import type { P37Probe } from "../support/deliver-process-fixture.js";
 import {
   awaitP37Probe,
   captureP37LeaseOwnerProcessAnchor,
@@ -19,7 +19,7 @@ import {
   restartP37Normally,
   seedDeliverableWaitingForDelivery,
   startP37RecoveryDaemon,
-} from "../support/p37-deliver-process-fixture.js";
+} from "../support/deliver-process-fixture.js";
 import { makePublicClient, waitForPublic } from "../support/public-client.js";
 
 afterEach(async ({ task }) => {

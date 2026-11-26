@@ -43,7 +43,7 @@ import {
   seedCanonical,
   setCurrentWork,
   snapshotDatabase,
-} from "../support/p10-fixture.js";
+} from "../support/fixture-support.js";
 
 describe("p10-acceptance (P10 07 Stories A–G)", () => {
   it("Story D — six views: Detail ①–⑥ (audit timeline), Verification, Dependency, CurrentWork, Transcript paging, Usage aggregates (observe-only), Inbox unconsumed", async () => {
