@@ -25,7 +25,7 @@ describe("schema-upgrade qualification layering", () => {
     );
     for (const representative of [
       "serializes two competing CLI resumes at the prepared P57 commit boundary",
-      "creates a P57 fresh target without accepting a source",
+      "creates a fresh target without accepting a source",
       "upgrades an exact schema-48 copy through pinned 0049–0057 prefixes",
       "refuses a schema-48 copy with an unreconciled NULL grant revision",
       "upgrades an exact disposable schema44 copy",
