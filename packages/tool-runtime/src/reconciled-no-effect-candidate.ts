@@ -16,7 +16,7 @@ export type ReconciledNoEffectReasonCode =
 
 /** The small P39 candidate handed to P4 for one atomic terminal transaction.
  * P4 owns the canonical Artifact/resultRef and P40 observation envelope. */
-export interface P39ReconciledNoEffectCandidate {
+export interface ReconciledNoEffectCandidate {
   readonly settlement: {
     readonly _tag: "ReconciledNoEffect";
     readonly reasonCode: ReconciledNoEffectReasonCode;
@@ -83,13 +83,13 @@ const exactNotOccurredFact = (
  * exact-attempt NotOccurred proof into a terminal P39 candidate. Callers must
  * still revalidate current authority/resource/approval/Stop and lease state in
  * the fenced transaction immediately before asking P4 to settle it. */
-export const p39ReconciledNoEffectCandidate = (input: {
+export const reconciledNoEffectCandidate = (input: {
   readonly request: ToolReconciliationRequest;
   readonly result: ToolReconciliationResult;
   readonly recordedFact: RecordedReconciliationFact;
   readonly reasonCode: ReconciledNoEffectReasonCode;
   readonly observation: BoundedObservation;
-}): P39ReconciledNoEffectCandidate | null => {
+}): ReconciledNoEffectCandidate | null => {
   if (
     !exactNotOccurredFact(input.request, input.result, input.recordedFact) ||
     !isReasonCode(input.reasonCode) ||

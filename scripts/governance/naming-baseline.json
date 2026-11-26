@@ -629,10 +629,6 @@
         "evidence": "packages/model-context/test/p3-skills.test.ts"
       },
       {
-        "path": "packages/tool-runtime/src/p39-reconciliation-candidate.ts",
-        "evidence": "packages/tool-runtime/src/p39-reconciliation-candidate.ts"
-      },
-      {
         "path": "packages/tool-runtime/test/p12-filesystem-boundaries.test.ts",
         "evidence": "packages/tool-runtime/test/p12-filesystem-boundaries.test.ts"
       },
@@ -643,10 +639,6 @@
       {
         "path": "packages/tool-runtime/test/p12-write-failures.test.ts",
         "evidence": "packages/tool-runtime/test/p12-write-failures.test.ts"
-      },
-      {
-        "path": "packages/tool-runtime/test/p39-reconciliation-candidate.test.ts",
-        "evidence": "packages/tool-runtime/test/p39-reconciliation-candidate.test.ts"
       },
       {
         "path": "packages/tool-runtime/test/p4-ah7-approval-consumption-reentry.test.ts",
@@ -2253,12 +2245,6 @@
         "symbol": "P4SandboxOutcomeReadPort"
       },
       {
-        "path": "packages/tool-runtime/src/p39-reconciliation-candidate.ts",
-        "line": 19,
-        "evidence": "export interface P39ReconciledNoEffectCandidate {",
-        "symbol": "P39ReconciledNoEffectCandidate"
-      },
-      {
         "path": "tests/architecture/p40-tool-observation-composition.test.ts",
         "line": 48,
         "evidence": "\"export const P39RecoveryEvidenceStoreLive = makeP39RecoveryEvidenceStoreLive();\",",
@@ -2991,11 +2977,6 @@
         "path": "packages/ports/test/tool-reconciliation.test.ts",
         "line": 37,
         "evidence": "describe(\"P39 exact-attempt reconciliation proof boundary\", () => {"
-      },
-      {
-        "path": "packages/tool-runtime/test/p39-reconciliation-candidate.test.ts",
-        "line": 48,
-        "evidence": "describe(\"P39 ReconciledNoEffect candidate\", () => {"
       },
       {
         "path": "packages/tool-runtime/test/p4-ah7-approval-consumption-reentry.test.ts",
@@ -4601,10 +4582,6 @@
         "evidence": "packages/model-context/test/p3-skills.test.ts"
       },
       {
-        "path": "packages/tool-runtime/src/p39-reconciliation-candidate.ts",
-        "evidence": "packages/tool-runtime/src/p39-reconciliation-candidate.ts"
-      },
-      {
         "path": "packages/tool-runtime/test/p12-filesystem-boundaries.test.ts",
         "evidence": "packages/tool-runtime/test/p12-filesystem-boundaries.test.ts"
       },
@@ -4615,10 +4592,6 @@
       {
         "path": "packages/tool-runtime/test/p12-write-failures.test.ts",
         "evidence": "packages/tool-runtime/test/p12-write-failures.test.ts"
-      },
-      {
-        "path": "packages/tool-runtime/test/p39-reconciliation-candidate.test.ts",
-        "evidence": "packages/tool-runtime/test/p39-reconciliation-candidate.test.ts"
       },
       {
         "path": "packages/tool-runtime/test/p4-ah7-approval-consumption-reentry.test.ts",

@@ -4,7 +4,7 @@ import type {
   ToolReconciliationResult,
 } from "@arbor/ports";
 import { describe, expect, it } from "vitest";
-import { p39ReconciledNoEffectCandidate } from "../src/p39-reconciliation-candidate.js";
+import { reconciledNoEffectCandidate } from "../src/reconciled-no-effect-candidate.js";
 
 const request: ToolReconciliationRequest = {
   invocationId: "tin_00000000-0000-7000-8000-000000000001" as never,
@@ -45,9 +45,9 @@ const recordedFact: RecordedReconciliationFact = {
   outcome: "NotOccurred",
 };
 
-describe("P39 ReconciledNoEffect candidate", () => {
+describe("ReconciledNoEffect candidate", () => {
   it("carries the exact recorded NotOccurred fact into P4 selection and never invents a result ref", () => {
-    const candidate = p39ReconciledNoEffectCandidate({
+    const candidate = reconciledNoEffectCandidate({
       request,
       result: notOccurred,
       recordedFact,
@@ -74,7 +74,7 @@ describe("P39 ReconciledNoEffect candidate", () => {
   });
 
   it("does not turn an Occurred proof into a ReconciledNoEffect candidate", () => {
-    const candidate = p39ReconciledNoEffectCandidate({
+    const candidate = reconciledNoEffectCandidate({
       request,
       result: {
         _tag: "Occurred",
@@ -94,7 +94,7 @@ describe("P39 ReconciledNoEffect candidate", () => {
   });
 
   it("rejects a fact from another invocation or attempt", () => {
-    const candidate = p39ReconciledNoEffectCandidate({
+    const candidate = reconciledNoEffectCandidate({
       request,
       result: notOccurred,
       recordedFact: {
@@ -120,7 +120,7 @@ describe("P39 ReconciledNoEffect candidate", () => {
         },
       },
     };
-    const candidate = p39ReconciledNoEffectCandidate({
+    const candidate = reconciledNoEffectCandidate({
       request,
       result: incompleteFinality,
       recordedFact,
