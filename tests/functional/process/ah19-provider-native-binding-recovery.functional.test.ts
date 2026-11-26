@@ -3791,7 +3791,8 @@ describe("AH19 ProviderNative binding recovery", () => {
     if (idle?.workId !== workId) {
       throw new Error("pre-checkpoint Work stopped being current");
     }
-    const batchSize = 32;
+    // B2: keep "rows > 64" satisfiable — 32 steers could land on exactly 64.
+    const batchSize = 40;
     for (let index = 0; index < batchSize; index += 1) {
       await client.command(project.projectId, "SteerWork", {
         workId,
@@ -3805,18 +3806,17 @@ describe("AH19 ProviderNative binding recovery", () => {
       });
     }
     const batchedRevision = idle.revision + batchSize;
-    const reachedBoundedHistory = await waitForPublic(
+    // B2: revision ∧ idle ∧ rows raced projection vs idle; drop idle here.
+    await waitForPublic(
       async () => ({
         work: await currentWork(),
         rows: typedRowsNow(),
       }),
       (state) =>
-        state.work?.revision === batchedRevision &&
-        state.work.activeExecution === undefined &&
-        state.rows.length > 64,
+        state.work?.revision === batchedRevision && state.rows.length > 64,
       120_000,
     );
-    expect(reachedBoundedHistory.work?.revision).toBe(batchedRevision);
+    await awaitIdleWork();
 
     const beforeRestartRows = typedRowsNow();
     expect(beforeRestartRows.length).toBeGreaterThan(64);
