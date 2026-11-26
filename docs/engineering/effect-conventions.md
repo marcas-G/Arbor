@@ -96,6 +96,33 @@ not its persisted identity.
 | Qualification | Real release environment | no fake substitutions |
 
 Every capability gets Service-level tests through its Layer, so a change
-does not require booting the single-workspace daemon. Candidate tooling
-(such as `@effect/vitest`) is compatibility-checked against the pinned
-Effect 4 RC and Vitest versions before adoption.
+does not require booting the single-workspace daemon.
+
+## Test authoring (`@effect/vitest`)
+
+Adopted 2026-11-26 (owner decision: full migration) on
+`@effect/vitest@4.0.0-rc.115` — the same release line as the pinned
+`effect`. The `it.effect` / `it.layer` / `it.prop` helpers are the
+repository canon for Effect-based tests; plain `it` remains correct for
+non-Effect code (raw adapters, codemods, scripts).
+
+Rules:
+
+- An Effect test returns the Effect from `it.effect(name, () => effect)`
+  — no `Effect.runPromise` scaffolding, no manual scope management (the
+  runner provides a fresh `Scope` per test and closes it).
+- Wall-clock waits are forbidden in Effect tests: time-dependent
+  behavior advances via `TestClock.adjust`; a test that needs live time
+  says so explicitly with `it.live`.
+- Layers shared by a suite are declared once with `it.layer` blocks
+  instead of rebuilt per test; the TestKit driver assembly
+  (`agentDriverTestDependencies`) is consumed inside an `it.layer`.
+- `it.flakyTest` is not a repair tool: a flaky test is a defect (see
+  the test-effectiveness program, B2).
+- Property tests for derivation functions use `it.prop` with Schema
+  arbitraries.
+
+Migration order: new tests write in canon immediately; existing files
+migrate when touched (B3 capability landing, B5 splits) — wave one
+(adapters/persistence-sqlite migration tests, environment-local,
+tool-runtime resolve) landed in the same PR as the dependency.

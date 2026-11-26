@@ -63,3 +63,8 @@ investment.
   on wall-clock timing.
 - Every PR that fixes a real defect states the escape analysis line:
   "should have been caught by X (missing) / X (why it failed)".
+- Effect-based tests are authored with `@effect/vitest` (`it.effect`,
+  TestClock, `it.layer`) per effect-conventions.md — adopted after
+  surveying Effect's own package and OpenCode's test organization
+  (flat scenario-family files, shared `test/lib`, recorded provider
+  transcripts). Full migration; existing files convert when touched.

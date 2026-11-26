@@ -1,13 +1,15 @@
+import { it } from "@effect/vitest";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import { layer } from "../src/client.js";
 import { runMigrations } from "../src/migrate.js";
 import { P22_MIGRATIONS } from "../src/migrations.js";
 
 describe("P22 verification delivery migration", () => {
-  it("adds the durable summary_ref column and advances user_version", async () => {
-    await Effect.runPromise(
+  it.effect(
+    "adds the durable summary_ref column and advances user_version",
+    () =>
       Effect.gen(function* () {
         yield* runMigrations(P22_MIGRATIONS);
         const sql = yield* SqlClient;
@@ -31,6 +33,5 @@ describe("P22 verification delivery migration", () => {
           "verifications_conclusion_summary_update",
         ]);
       }).pipe(Effect.provide(layer({ filename: ":memory:" }))),
-    );
-  });
+  );
 });

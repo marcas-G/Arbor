@@ -52,6 +52,7 @@
   "devDependencies": {
     "@babel/parser": "7.28.5",
     "@biomejs/biome": "2.5.14",
+    "@effect/vitest": "4.0.0-rc.115",
     "@playwright/test": "1.63.0",
     "@types/node": "^24.13.5",
     "@vitest/coverage-v8": "5.0.1",
