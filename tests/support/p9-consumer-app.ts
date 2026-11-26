@@ -72,6 +72,7 @@ import {
   WorkspaceRepository,
   WorkWaitStore,
 } from "../../packages/ports/src/index.js";
+import { NoHoldWorkReadmissionGateStoreService } from "../../packages/testkit/src/index.js";
 import { ReconciliationSourceLive } from "../../packages/tool-runtime/src/index.js";
 import { ensureLegacyProjectResourceSourceFixture } from "./legacy-project-resource-source.js";
 
@@ -225,6 +226,7 @@ export const makeP9ConsumerApp = (options?: {
             workspaces,
             sessions,
             executions,
+            readmissionGate: NoHoldWorkReadmissionGateStoreService,
             workWaits,
           }),
           makeSatisfyDependencyHandler({

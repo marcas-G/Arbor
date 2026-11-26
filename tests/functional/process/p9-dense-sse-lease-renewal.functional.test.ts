@@ -72,6 +72,7 @@ import {
 import { ProviderRuntimeLive } from "../../../packages/provider-runtime/src/index.js";
 import {
   FixedSecretStoreLive,
+  NoHoldWorkReadmissionGateStoreLive,
   NoPendingControlApprovalStoreLive,
   NoPendingExecutableApprovalStoreLive,
 } from "../../../packages/testkit/src/index.js";
@@ -344,10 +345,7 @@ const makeApp = (providerBaseUrl: string, fetcher: OpenAICompatibleFetch) => {
   );
   const transaction = Layer.provide(TransactionPortLive, infra);
   const repository = Layer.provide(ExecutionRepositoryLive, infra);
-  const fence = Layer.provide(
-    FenceStopCheckLive,
-    Layer.merge(infra, repository),
-  );
+  const gate = NoHoldWorkReadmissionGateStoreLive;
   const repos = Layer.mergeAll(
     transaction,
     Layer.provide(CommandStoreLive, infra),
@@ -359,7 +357,8 @@ const makeApp = (providerBaseUrl: string, fetcher: OpenAICompatibleFetch) => {
     Layer.provide(AgentExecutionStateStoreLive, infra),
     repository,
     Layer.provide(LeaseServiceLive, Layer.merge(infra, repository)),
-    recoveryAttentionFactStore,
+    Layer.provide(FenceStopCheckLive, Layer.merge(infra, repository)),
+    Layer.merge(recoveryAttentionFactStore, gate),
   );
   const providerTurnStore = Layer.provide(ProviderTurnStoreLive, infra);
   const providerRuntime = Layer.provide(
@@ -432,7 +431,6 @@ const makeApp = (providerBaseUrl: string, fetcher: OpenAICompatibleFetch) => {
   const core = Layer.mergeAll(
     infra,
     repos,
-    fence,
     NoPendingControlApprovalStoreLive,
     NoPendingExecutableApprovalStoreLive,
     WorkerDispatchPortLive,

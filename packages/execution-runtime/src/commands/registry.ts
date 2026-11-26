@@ -24,7 +24,10 @@ export interface P2CommandDependencies {
   readonly workspaces: import("@arbor/ports").WorkspaceRepositoryService;
   readonly sessions: import("@arbor/ports").SessionRepositoryService;
   readonly executions: import("@arbor/ports").ExecutionRepositoryService;
-  readonly readmissionGate?: import("@arbor/ports").WorkReadmissionGateStoreService;
+  /** E06: the durable environment-blocking fact source is a required
+   * dependency of WorkspaceMain WorkEpisode admission — a composition
+   * without it must fail at layer construction, not at admission time. */
+  readonly readmissionGate: import("@arbor/ports").WorkReadmissionGateStoreService;
   readonly workWaits: import("@arbor/ports").WorkWaitStoreService;
   readonly blockers?: import("@arbor/ports").WorkBlockerStoreService;
   readonly works?: Pick<
@@ -46,17 +49,6 @@ export interface P2CommandDependencies {
 export const makeP2CommandHandlers = (
   dependencies: P2CommandDependencies,
 ): ReadonlyArray<CommandHandler<unknown, unknown>> => {
-  const readmissionGate = dependencies.readmissionGate ?? {
-    hasBlockingSource: () =>
-      Effect.fail({
-        _tag: "PersistenceUnavailable" as const,
-        repository: "WorkReadmissionGateStore" as const,
-        operation: "AdmitExecution",
-        retryDisposition: "non-retryable" as const,
-        sourceTag: "ReadmissionGateUnavailable",
-        cause: "readmission gate service is not registered",
-      }),
-  };
   const executableApprovals = dependencies.executableApprovals ?? {
     // Test/legacy compositions without the P38 port fail closed on Stop;
     // production SingleWorkspace composition always supplies the real store.
@@ -76,7 +68,7 @@ export const makeP2CommandHandlers = (
       workspaces: dependencies.workspaces,
       sessions: dependencies.sessions,
       executions: dependencies.executions,
-      readmissionGate,
+      readmissionGate: dependencies.readmissionGate,
       ...(dependencies.conversationResponse === undefined
         ? {}
         : { conversationResponse: dependencies.conversationResponse }),
@@ -99,6 +91,7 @@ export const P2CommandHandlerRegistryLive: Layer.Layer<
   | WorkspaceRepository
   | SessionRepository
   | ExecutionRepository
+  | WorkReadmissionGateStore
   | WorkWaitStore
 > = Layer.effect(
   CommandHandlerRegistry,
@@ -107,9 +100,7 @@ export const P2CommandHandlerRegistryLive: Layer.Layer<
     const workspaces = yield* WorkspaceRepository;
     const sessions = yield* SessionRepository;
     const executions = yield* ExecutionRepository;
-    const readmissionGate = yield* Effect.serviceOption(
-      WorkReadmissionGateStore,
-    );
+    const readmissionGate = yield* WorkReadmissionGateStore;
     const workWaits = yield* WorkWaitStore;
     const executableApprovals = yield* Effect.serviceOption(
       ExecutableApprovalStore,
@@ -122,9 +113,7 @@ export const P2CommandHandlerRegistryLive: Layer.Layer<
       workspaces,
       sessions,
       executions,
-      ...(Option.isSome(readmissionGate)
-        ? { readmissionGate: readmissionGate.value }
-        : {}),
+      readmissionGate,
       workWaits,
       ...(Option.isSome(executableApprovals)
         ? { executableApprovals: executableApprovals.value }

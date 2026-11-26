@@ -69,6 +69,7 @@ import {
   WorkspaceRepository,
   WorkWaitStore,
 } from "../../packages/ports/src/index.js";
+import { NoHoldWorkReadmissionGateStoreService } from "../../packages/testkit/src/index.js";
 import { yieldedSettlement } from "../support/execution-episode-fixtures.js";
 import { labeled } from "../support/p9-harness-api.js";
 import { durableFile, executionRowOf, runOn, sqlCount } from "./support.js";
@@ -133,6 +134,7 @@ const makeStoryCApp = (filename: string) => {
             workspaces: yield* WorkspaceRepository,
             sessions: yield* SessionRepository,
             executions: yield* ExecutionRepository,
+            readmissionGate: NoHoldWorkReadmissionGateStoreService,
             workWaits: yield* WorkWaitStore,
           }),
           makeSelectCurrentWorkHandler({

@@ -60,6 +60,7 @@ import {
   WorkspaceRepository,
   WorkWaitStore,
 } from "../packages/ports/src/index.js";
+import { NoHoldWorkReadmissionGateStoreService } from "../packages/testkit/src/index.js";
 import {
   type ToolExecutor,
   ToolRuntimeLive,
@@ -237,6 +238,7 @@ const makeApp = (probe: Probe, crash: CrashMode) => {
             workspaces: yield* WorkspaceRepository,
             sessions: yield* SessionRepository,
             executions: yield* ExecutionRepository,
+            readmissionGate: NoHoldWorkReadmissionGateStoreService,
             workWaits: yield* WorkWaitStore,
           });
         return CommandHandlerRegistry.of({

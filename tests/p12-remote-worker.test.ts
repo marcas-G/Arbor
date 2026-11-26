@@ -58,6 +58,7 @@ import {
   type TransportVersionRejected,
   type WorkerCommandRejection,
 } from "../packages/ports/src/index.js";
+import { NoHoldWorkReadmissionGateStoreLive } from "../packages/testkit/src/index.js";
 import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-project-resource-source.js";
 
 /**
@@ -189,7 +190,14 @@ const buildApp = (dbFile: string, counter: { count: number }) => {
   const workspaces = Layer.provide(WorkspaceRepositoryLive, infra);
   const registry = Layer.provide(
     P2CommandHandlerRegistryLive,
-    Layer.mergeAll(projects, workspaces, sessions, repo, workWaits),
+    Layer.mergeAll(
+      projects,
+      workspaces,
+      sessions,
+      repo,
+      workWaits,
+      NoHoldWorkReadmissionGateStoreLive,
+    ),
   );
   const gateway = Layer.provide(
     CommandGatewayLive,

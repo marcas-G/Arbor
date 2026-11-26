@@ -59,6 +59,7 @@ import {
   WorkspaceRepository,
   WorkWaitStore,
 } from "../../packages/ports/src/index.js";
+import { NoHoldWorkReadmissionGateStoreService } from "../../packages/testkit/src/index.js";
 import {
   ReconciliationSourceLive,
   type ToolExecutor,
@@ -263,6 +264,7 @@ const makeStoryEApp = (
             workspaces: yield* WorkspaceRepository,
             sessions: yield* SessionRepository,
             executions: yield* ExecutionRepository,
+            readmissionGate: NoHoldWorkReadmissionGateStoreService,
             workWaits: yield* WorkWaitStore,
           });
         return CommandHandlerRegistry.of({
