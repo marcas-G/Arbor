@@ -43,6 +43,25 @@ import type {
   ToolExecutionResult,
   ToolExecutor,
 } from "../types.js";
+import type { ToolRuntimeRecoveryError } from "./errors.js";
+
+/** E09: the phase's success channel. Failures propagate through the typed
+ * `ToolRuntimeRecoveryError` channel and fold into `ToolRuntimeError`
+ * once, at the invoke-pipeline boundary. */
+export type AdmittedInvocationReconciliation =
+  | {
+      readonly _tag: "Terminal";
+      readonly observation: {
+        readonly _tag: "OutcomeUnknown";
+        readonly reconciliationRefs: ReadonlyArray<string>;
+      };
+    }
+  | {
+      readonly _tag: "Ready";
+      readonly recoveredToolOutcome: ToolExecutionResult | undefined;
+      readonly pendingReconciliation: PendingReconciliation | undefined;
+      readonly retryAdmitted: boolean;
+    };
 
 /** Reconcile one admitted external effect. Fact recording and retry admission remain atomic. */
 export const reconcileAdmittedInvocation = (
@@ -69,7 +88,7 @@ export const reconcileAdmittedInvocation = (
   executableApprovals: Option.Option<ExecutableApprovalStoreService>,
   options: { readonly maxDelegationDepth?: number },
   probeReconciliation: ReconciliationProbe,
-) =>
+): Effect.Effect<AdmittedInvocationReconciliation, ToolRuntimeRecoveryError> =>
   Effect.gen(function* () {
     const {
       regions,
@@ -205,11 +224,7 @@ export const reconcileAdmittedInvocation = (
       );
     if (portResult._tag === "StillUnknown") {
       const observedAt = yield* clock.now();
-      yield* persistUnknownFact(portResult, observedAt).pipe(
-        Effect.mapError(
-          operationalFailure("SettlementJournal", String(intent.invocationId)),
-        ),
-      );
+      yield* persistUnknownFact(portResult, observedAt);
       yield* probeReconciliation("AH7AfterReconciliationFactCommit", {
         attemptNo: request.attemptNo,
         outcomeTag: portResult._tag,
@@ -291,12 +306,7 @@ export const reconcileAdmittedInvocation = (
                 },
               );
               if (snapshotAdmission._tag === "Failure") {
-                return yield* Effect.fail(
-                  operationalFailure(
-                    "ResourceAdmission",
-                    String(intent.invocationId),
-                  )(snapshotAdmission.cause),
-                );
+                return yield* Effect.fail(snapshotAdmission.cause);
               }
               if (snapshotAdmission._tag !== "Admitted") {
                 return snapshotAdmission;
@@ -314,12 +324,6 @@ export const reconcileAdmittedInvocation = (
                     .pipe(
                       Effect.catchTag("ToolAuthorityDenied", () =>
                         Effect.succeed(undefined),
-                      ),
-                      Effect.mapError(
-                        operationalFailure(
-                          "AuthorityResolution",
-                          String(intent.invocationId),
-                        ),
                       ),
                     )
                 : context.authority;
@@ -350,15 +354,9 @@ export const reconcileAdmittedInvocation = (
                     _tag: "ApprovalNoLongerAuthorized" as const,
                   };
                 }
-                const currentApproval = yield* executableApprovals.value
-                  .findById(context.executableApproval.approvalId)
-                  .pipe(
-                    Effect.mapError(
-                      operationalFailure(
-                        "ApprovalLookup",
-                        String(intent.invocationId),
-                      ),
-                    ),
+                const currentApproval =
+                  yield* executableApprovals.value.findById(
+                    context.executableApproval.approvalId,
                   );
                 if (
                   Option.isNone(currentApproval) ||
@@ -381,16 +379,7 @@ export const reconcileAdmittedInvocation = (
                 intent.approvalId !== null &&
                 context.executableApproval === undefined
               ) {
-                const approval = yield* store
-                  .findApproval(intent.approvalId)
-                  .pipe(
-                    Effect.mapError(
-                      operationalFailure(
-                        "ApprovalLookup",
-                        String(intent.invocationId),
-                      ),
-                    ),
-                  );
+                const approval = yield* store.findApproval(intent.approvalId);
                 if (
                   Option.isNone(approval) ||
                   matchApproval({
@@ -480,33 +469,24 @@ export const reconcileAdmittedInvocation = (
           };
         }
       } else {
-        const fact = yield* tx
-          .transact(
-            Effect.gen(function* () {
-              yield* observationEvidence.value.assertCurrentFence(
-                context.executionFence,
-                yield* clock.now(),
-              );
-              yield* probeReconciliation("AH7BeforeReconciliationFactCommit", {
-                attemptNo: request.attemptNo,
-                outcomeTag: portResult._tag,
-                factId,
-              });
-              return yield* reconciliationFacts.value.record(
-                request,
-                portResult,
-                observedAt,
-              );
-            }),
-          )
-          .pipe(
-            Effect.mapError(
-              operationalFailure(
-                "SettlementJournal",
-                String(intent.invocationId),
-              ),
-            ),
-          );
+        const fact = yield* tx.transact(
+          Effect.gen(function* () {
+            yield* observationEvidence.value.assertCurrentFence(
+              context.executionFence,
+              yield* clock.now(),
+            );
+            yield* probeReconciliation("AH7BeforeReconciliationFactCommit", {
+              attemptNo: request.attemptNo,
+              outcomeTag: portResult._tag,
+              factId,
+            });
+            return yield* reconciliationFacts.value.record(
+              request,
+              portResult,
+              observedAt,
+            );
+          }),
+        );
         yield* probeReconciliation("AH7AfterReconciliationFactCommit", {
           attemptNo: request.attemptNo,
           outcomeTag: portResult._tag,
@@ -543,16 +523,9 @@ export const reconcileAdmittedInvocation = (
       if (Option.isSome(artifactService)) {
         try {
           const resultArtifactId = parse(ArtifactId)(portResult.resultRef);
-          const loaded = yield* tx
-            .transact(artifactService.value.load(resultArtifactId))
-            .pipe(
-              Effect.mapError(
-                operationalFailure(
-                  "SettlementJournal",
-                  String(intent.invocationId),
-                ),
-              ),
-            );
+          const loaded = yield* tx.transact(
+            artifactService.value.load(resultArtifactId),
+          );
           if (Option.isSome(loaded)) resultBytes = loaded.value;
         } catch {
           resultBytes = undefined;
@@ -575,14 +548,7 @@ export const reconcileAdmittedInvocation = (
           evidenceRef: portResult.proof.evidenceRef,
         };
         const unknownAt = yield* clock.now();
-        yield* persistUnknownFact(unknown, unknownAt).pipe(
-          Effect.mapError(
-            operationalFailure(
-              "SettlementJournal",
-              String(intent.invocationId),
-            ),
-          ),
-        );
+        yield* persistUnknownFact(unknown, unknownAt);
         return {
           _tag: "Terminal" as const,
           observation: {
@@ -600,33 +566,24 @@ export const reconcileAdmittedInvocation = (
         resultRef:
           portResult.settlement === "Success" ? portResult.resultRef : null,
       };
-      const fact = yield* tx
-        .transact(
-          Effect.gen(function* () {
-            yield* observationEvidence.value.assertCurrentFence(
-              context.executionFence,
-              yield* clock.now(),
-            );
-            yield* probeReconciliation("AH7BeforeReconciliationFactCommit", {
-              attemptNo: request.attemptNo,
-              outcomeTag: portResult._tag,
-              factId,
-            });
-            return yield* reconciliationFacts.value.record(
-              request,
-              portResult,
-              observedAt,
-            );
-          }),
-        )
-        .pipe(
-          Effect.mapError(
-            operationalFailure(
-              "SettlementJournal",
-              String(intent.invocationId),
-            ),
-          ),
-        );
+      const fact = yield* tx.transact(
+        Effect.gen(function* () {
+          yield* observationEvidence.value.assertCurrentFence(
+            context.executionFence,
+            yield* clock.now(),
+          );
+          yield* probeReconciliation("AH7BeforeReconciliationFactCommit", {
+            attemptNo: request.attemptNo,
+            outcomeTag: portResult._tag,
+            factId,
+          });
+          return yield* reconciliationFacts.value.record(
+            request,
+            portResult,
+            observedAt,
+          );
+        }),
+      );
       yield* probeReconciliation("AH7AfterReconciliationFactCommit", {
         attemptNo: request.attemptNo,
         outcomeTag: portResult._tag,

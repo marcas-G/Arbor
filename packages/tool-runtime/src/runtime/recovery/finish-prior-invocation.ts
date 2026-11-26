@@ -22,6 +22,7 @@ import type {
   ToolExecutionResult,
   ToolRuntimeQualificationProbe,
 } from "../types.js";
+import type { ToolRuntimeRecoveryError } from "./errors.js";
 import type { makeObservationReplay } from "./observation-replay.js";
 
 type Replay = ReturnType<typeof makeObservationReplay>;
@@ -41,7 +42,10 @@ export const finishPriorInvocation = (
   artifactService: Option.Option<ArtifactServiceService>,
   decodeRecordedEvidence: Replay["decodeRecordedEvidence"],
   resolveReplaySandboxPolicy: Parameters<Replay["decodeRecordedEvidence"]>[3],
-): Effect.Effect<CanonicalToolObservation | undefined, ToolRuntimeError> =>
+): Effect.Effect<
+  CanonicalToolObservation | undefined,
+  ToolRuntimeRecoveryError
+> =>
   Effect.gen(function* () {
     if (recorded.settlement !== null) {
       if (recorded.settlement._tag === "Denied") {
@@ -75,16 +79,9 @@ export const finishPriorInvocation = (
             reconciliationRefs: [String(intent.invocationId)],
           };
         }
-        const bytes = yield* tx
-          .transact(artifactService.value.load(artifactId))
-          .pipe(
-            Effect.mapError(
-              operationalFailure(
-                "SettlementJournal",
-                String(intent.invocationId),
-              ),
-            ),
-          );
+        const bytes = yield* tx.transact(
+          artifactService.value.load(artifactId),
+        );
         if (Option.isSome(bytes)) {
           return {
             _tag: "Success" as const,
