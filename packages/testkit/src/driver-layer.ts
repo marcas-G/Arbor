@@ -1,3 +1,7 @@
+// biome-ignore-all lint/suspicious/noExplicitAny: test assembly helper —
+// A-channels stay concrete while E/R channels are intentionally loose so
+// Layer.mergeAll infers the member union instead of widening every member
+// (docs/engineering/test-effectiveness.md, B1).
 import {
   AgentLoopDriverLive,
   ControlBasisResolverLive,
