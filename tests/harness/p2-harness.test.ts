@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { ALLOWED_EDGES } from "../architecture/package-dag.js";
 
 const repoRoot = join(import.meta.dirname, "..", "..");
 const read = (relative: string): string =>
@@ -47,6 +48,18 @@ describe("p2 harness wiring", () => {
   it("declares the P2 adapter and testkit edges in the architecture matrix", () => {
     const dag = read("tests/architecture/package-dag.ts");
     expect(dag).toContain('"worker-local": ["domain", "ports"]');
-    expect(dag).toContain('testkit: ["domain", "ports", "application"]');
+    // Semantic assertion on the imported matrix: the P2 heritage edges
+    // plus the consumer-side adapter/runtime edges the TestKit driver
+    // assembly needs (string-pinning the literal broke on reformatting).
+    expect(ALLOWED_EDGES["worker-local"]).toEqual(["domain", "ports"]);
+    expect(ALLOWED_EDGES.testkit).toEqual([
+      "domain",
+      "ports",
+      "application",
+      "model-context",
+      "agent-runtime",
+      "persistence-sqlite",
+      "blob-local",
+    ]);
   });
 });

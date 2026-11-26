@@ -15,7 +15,10 @@
   "dependencies": {
     "@arbor/domain": "workspace:*",
     "@arbor/ports": "workspace:*",
+    "@arbor/agent-runtime": "workspace:*",
+    "@arbor/blob-local": "workspace:*",
     "@arbor/application": "workspace:*",
+    "@arbor/persistence-sqlite": "workspace:*",
     "effect": "4.0.0-rc.115"
   },
   "scripts": {

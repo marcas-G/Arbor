@@ -16,6 +16,15 @@
     },
     {
       "path": "../application"
+    },
+    {
+      "path": "../agent-runtime"
+    },
+    {
+      "path": "../../adapters/blob-local"
+    },
+    {
+      "path": "../../adapters/persistence-sqlite"
     }
   ]
 }

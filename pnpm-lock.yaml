@@ -673,12 +673,21 @@ importers:
 
   packages/testkit:
     dependencies:
+      '@arbor/agent-runtime':
+        specifier: workspace:*
+        version: link:../agent-runtime
       '@arbor/application':
         specifier: workspace:*
         version: link:../application
+      '@arbor/blob-local':
+        specifier: workspace:*
+        version: link:../../adapters/blob-local
       '@arbor/domain':
         specifier: workspace:*
         version: link:../domain
+      '@arbor/persistence-sqlite':
+        specifier: workspace:*
+        version: link:../../adapters/persistence-sqlite
       '@arbor/ports':
         specifier: workspace:*
         version: link:../ports
