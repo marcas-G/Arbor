@@ -22,10 +22,12 @@ import {
   ProjectRepositoryLive,
   ResourceOwnershipRepositoryLive,
   SandboxPolicyDecisionStoreLive,
+  SandboxProviderUnavailableStoreLive,
   SessionRepositoryLive,
   TransactionPortLive,
   VerificationRepositoryLive,
   WorkContractRevisionRepositoryLive,
+  WorkReadmissionGateStoreLive,
   WorkRepositoryLive,
   WorkspaceRepositoryLive,
   WorkWaitStoreLive,
@@ -229,10 +231,15 @@ const transportApp = (
 ): Layer.Layer<TransportDbServices> => {
   const base = layer({ filename: databaseFile });
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
+  const domainEventJournal = Layer.provide(DomainEventJournalLive, infra);
+  const sandboxUnavailableStore = Layer.provide(
+    SandboxProviderUnavailableStoreLive,
+    Layer.mergeAll(infra, domainEventJournal),
+  );
   const deps = Layer.mergeAll(
     Layer.provide(TransactionPortLive, infra),
     Layer.provide(CommandStoreLive, infra),
-    Layer.provide(DomainEventJournalLive, infra),
+    domainEventJournal,
     Layer.provide(ProjectRepositoryLive, infra),
     Layer.provide(ResourceOwnershipRepositoryLive, infra),
     Layer.provide(WorkspaceRepositoryLive, infra),
@@ -257,6 +264,10 @@ const transportApp = (
     Layer.provide(DeliverableRepositoryLive, infra),
     Layer.provide(EnvironmentRevisionStoreLive, infra),
     Layer.provide(EvidenceRepositoryLive, infra),
+    Layer.provide(
+      WorkReadmissionGateStoreLive,
+      Layer.mergeAll(infra, sandboxUnavailableStore),
+    ),
   );
   const all = Layer.mergeAll(
     infra,
