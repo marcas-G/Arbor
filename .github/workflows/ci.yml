@@ -1,11 +1,6 @@
 name: Arbor CI
 
 on:
-  merge_group:
-  pull_request:
-    branches: [master]
-  push:
-    branches: [master]
   workflow_dispatch:
 
 concurrency:
