@@ -2,7 +2,7 @@
 
 Scope: repository implementation, review and maintenance. Product semantics remain owned by the frozen design chain. This guide complements, not replaces, AGENTS.md, ARCHITECTURE.md and ENGINEERING_HEALTH.md.
 
-Companion documents: [code-organization.md](code-organization.md) (placement and naming rules), [effect-conventions.md](effect-conventions.md) (the E01–E12 Effect development standard), [architecture-evolution.md](architecture-evolution.md) (the sequenced capability-oriented refactor plan and its measurement discipline), [test-effectiveness.md](test-effectiveness.md) (the test-system diagnosis, remediation batches and escape-analysis convention).
+Companion documents: [code-organization.md](code-organization.md) (placement and naming rules), [semantic-naming-policy.md](semantic-naming-policy.md) (the planning-code naming ratchet and its inventory baseline), [effect-conventions.md](effect-conventions.md) (the E01–E12 Effect development standard), [architecture-evolution.md](architecture-evolution.md) (the sequenced capability-oriented refactor plan and its measurement discipline), [test-effectiveness.md](test-effectiveness.md) (the test-system diagnosis, remediation batches and escape-analysis convention).
 
 ## Module boundaries and code
 

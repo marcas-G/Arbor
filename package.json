@@ -47,7 +47,9 @@
     "schema:upgrade": "pnpm build && node apps/single-workspace/dist/schema-upgrade.js",
     "check": "pnpm lint && pnpm typecheck && pnpm architecture && pnpm test && pnpm --filter @arbor/web typecheck && pnpm --filter @arbor/web build && pnpm --filter @arbor/web test",
     "check:source-lines": "node scripts/governance/check-source-lines.mjs",
-    "test:source-lines": "node --test scripts/governance/source-lines-lib.test.mjs"
+    "check:naming": "node scripts/governance/check-semantic-naming.mjs",
+    "test:source-lines": "node --test scripts/governance/source-lines-lib.test.mjs",
+    "test:naming": "node --test scripts/governance/semantic-naming-lib.test.mjs"
   },
   "devDependencies": {
     "@babel/parser": "7.28.5",

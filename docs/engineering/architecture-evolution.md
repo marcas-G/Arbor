@@ -77,6 +77,7 @@ persistence-sqlite) and any place where ownership is contested.
 | 8 | SQLite | persistence detail isolated from business decisions |
 | 9 | Scheduler | strengthen the admission boundary on the already-clear structure |
 | 10 | CI | verify module boundaries and independent testability |
+| 11 | Semantic Naming | ratchet planning-code names out of new code (path, symbol and test-name rules against a frozen inventory baseline) |
 
 `scheduler.ts` is the in-repo positive example to build on. The order is
 capability-value-driven, not line-count-driven (that is what distinguishes
