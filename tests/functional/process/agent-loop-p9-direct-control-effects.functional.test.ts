@@ -2,7 +2,7 @@ import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import { p39WindowsTestEnvironment } from "../../support/p39-windows-deployment-test.js";
+import { windowsTestEnvironment } from "../../support/windows-deployment-qualification.js";
 import {
   archiveProductionFixtureFailure,
   writeProductionFixtureArchiveSkipped,
@@ -488,7 +488,7 @@ const qualifiesLiveStaleGenerationSuppression = (
     await fixture.restart({
       entry: childEntry,
       daemonEnvironment: {
-        ...p39WindowsTestEnvironment(),
+        ...windowsTestEnvironment(),
         ARBOR_AH10_ROLE: "old",
         ARBOR_AH10_CONTROL_EFFECT_KIND: action,
         ARBOR_AH10_EMIT_STALE_GATE_RELEASE: "1",
@@ -527,7 +527,7 @@ const qualifiesLiveStaleGenerationSuppression = (
     const newDaemon = await fixture.startAdditionalDaemon({
       entry: childEntry,
       daemonEnvironment: {
-        ...p39WindowsTestEnvironment(),
+        ...windowsTestEnvironment(),
         ARBOR_AH10_ROLE: "new",
         ARBOR_AH10_CONTROL_EFFECT_KIND: action,
         ARBOR_AH10_GATE_ACTION_KIND: action,
@@ -1028,7 +1028,7 @@ const qualifies = (action: ActionKind, boundary: Boundary) =>
     await fixture.restart({
       entry: childEntry,
       daemonEnvironment: {
-        ...p39WindowsTestEnvironment(),
+        ...windowsTestEnvironment(),
         ARBOR_AH10_ROLE: "old",
         ARBOR_AH10_CONTROL_EFFECT_BOUNDARY: boundary,
         ARBOR_AH10_CONTROL_EFFECT_KIND: action,
@@ -1117,7 +1117,7 @@ const qualifies = (action: ActionKind, boundary: Boundary) =>
     const newDaemon = await fixture.startAdditionalDaemon({
       entry: childEntry,
       daemonEnvironment: {
-        ...p39WindowsTestEnvironment(),
+        ...windowsTestEnvironment(),
         ARBOR_AH10_ROLE: "new",
         ARBOR_AH10_CONTROL_EFFECT_KIND: action,
         ARBOR_AH10_GATE_ACTION_KIND: action,

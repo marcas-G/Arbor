@@ -11,7 +11,7 @@ import {
   parse,
   type SandboxAuthorityBundleV2,
 } from "../../../packages/domain/src/index.js";
-import { setP39PrivateWindowsAcl } from "../../support/p39-windows-deployment-test.js";
+import { setPrivateWindowsAcl } from "../../support/windows-deployment-qualification.js";
 
 const hash = (value: string) =>
   createHash("sha256").update(value, "utf8").digest("hex");
@@ -130,9 +130,9 @@ export const writeSandboxPolicyV2TestPair = (
     { mode: 0o600 },
   );
   chmodSync(temporary, 0o600);
-  setP39PrivateWindowsAcl(temporary, "file");
+  setPrivateWindowsAcl(temporary, "file");
   renameSync(temporary, sourceFilename);
-  setP39PrivateWindowsAcl(sourceFilename, "file");
-  setP39PrivateWindowsAcl(directory, "directory");
+  setPrivateWindowsAcl(sourceFilename, "file");
+  setPrivateWindowsAcl(directory, "directory");
   return sourceFilename;
 };

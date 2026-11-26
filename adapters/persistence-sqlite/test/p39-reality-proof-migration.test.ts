@@ -17,13 +17,13 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   createP39PrivateTestFile,
-  isP39PathQualificationEnabled,
+  isWindowsPathQualificationEnabled,
   makeP39PrivateTestDirectory,
-  p39WindowsAclQualificationAvailable,
-  p39WindowsTestEnvironment,
+  windowsAclQualificationAvailable,
+  windowsTestEnvironment,
   removeP39PrivateTestDirectory,
-  setP39PrivateWindowsAcl,
-} from "../../../tests/support/p39-windows-deployment-test.js";
+  setPrivateWindowsAcl,
+} from "../../../tests/support/windows-deployment-qualification.js";
 import { layer } from "../src/client.js";
 import { runMigrations, splitStatements } from "../src/migrate.js";
 import * as migrations from "../src/migrations.js";
@@ -53,12 +53,12 @@ import {
 } from "../src/p39-writer-lock.js";
 
 const crossPlatformP39PathQualificationAvailable =
-  isP39PathQualificationEnabled(
+  isWindowsPathQualificationEnabled(
     process.platform,
-    p39WindowsAclQualificationAvailable(),
+    windowsAclQualificationAvailable(),
   );
-const windowsAclQualificationAvailable =
-  process.platform === "win32" && p39WindowsAclQualificationAvailable();
+const windowsAclQualificationReady =
+  process.platform === "win32" && windowsAclQualificationAvailable();
 const inheritedTempQualificationAvailable = (() => {
   const directory = mkdtempSync(join(tmpdir(), "arbor-p39-temp-probe-"));
   try {
@@ -80,7 +80,7 @@ const executorWithP39ScriptTransform =
     }
     return execFileSync(command, [...args.slice(0, -1), transformed], {
       ...options,
-      env: p39WindowsTestEnvironment(),
+      env: windowsTestEnvironment(),
     });
   };
 
@@ -89,7 +89,7 @@ const addEveryoneWriterAce = (filename: string): void => {
     encoding: "utf8",
     timeout: 30_000,
     windowsHide: true,
-    env: p39WindowsTestEnvironment(),
+    env: windowsTestEnvironment(),
   });
 };
 
@@ -172,9 +172,9 @@ const withP39Client = async <A>(
       throw new Error("P39 reality test template was not prepared.");
     }
     copyFileSync(p39TemplateFilename, filename);
-    setP39PrivateWindowsAcl(filename, "file");
+    setPrivateWindowsAcl(filename, "file");
     copyFileSync(p39TemplateSidecarFilename, sidecarFilename);
-    setP39PrivateWindowsAcl(sidecarFilename, "file");
+    setPrivateWindowsAcl(sidecarFilename, "file");
     return await Effect.runPromise(
       Effect.scoped(Effect.provide(program, layer({ filename }))),
     );
@@ -526,7 +526,7 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
     120_000,
   );
 
-  it.skipIf(!windowsAclQualificationAvailable)(
+  it.skipIf(!windowsAclQualificationReady)(
     "fails closed when a real protected file grants a foreign principal write access",
     () => {
       const directory = makeP39PrivateTestDirectory(
@@ -550,7 +550,7 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
               encoding: "utf8",
               timeout: 30_000,
               windowsHide: true,
-              env: p39WindowsTestEnvironment(),
+              env: windowsTestEnvironment(),
             });
           }
         } finally {
@@ -561,7 +561,7 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
     120_000,
   );
 
-  it.skipIf(!windowsAclQualificationAvailable)(
+  it.skipIf(!windowsAclQualificationReady)(
     "fails closed on a mismatched ACL owner in a controlled PowerShell probe",
     () => {
       const directory = makeP39PrivateTestDirectory(
@@ -587,7 +587,7 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
     120_000,
   );
 
-  it.skipIf(!windowsAclQualificationAvailable).each([
+  it.skipIf(!windowsAclQualificationReady).each([
     { driveType: "Network", driveFormat: "NTFS" },
     { driveType: "Fixed", driveFormat: "UNKNOWN" },
   ])(

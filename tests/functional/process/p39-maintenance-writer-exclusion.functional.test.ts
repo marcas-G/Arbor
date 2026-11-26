@@ -11,17 +11,17 @@ import {
   releaseP39WriterPermit,
 } from "../../../adapters/persistence-sqlite/src/index.js";
 import {
-  isP39PathQualificationEnabled,
+  isWindowsPathQualificationEnabled,
   makeP39PrivateTestDirectory,
   p39TestTempRoot,
-  p39WindowsAclQualificationAvailable,
-  p39WindowsTestEnvironment,
+  windowsAclQualificationAvailable,
+  windowsTestEnvironment,
   removeP39PrivateTestDirectory,
-} from "../../support/p39-windows-deployment-test.js";
+} from "../../support/windows-deployment-qualification.js";
 
-const p39PathQualificationAvailable = isP39PathQualificationEnabled(
+const windowsPathQualificationAvailable = isWindowsPathQualificationEnabled(
   process.platform,
-  p39WindowsAclQualificationAvailable(),
+  windowsAclQualificationAvailable(),
 );
 
 const childModule = resolve(
@@ -44,7 +44,7 @@ const startHolder = async (
   const child = spawn(process.execPath, [childModule, lockFilename, mode], {
     cwd: process.cwd(),
     stdio: ["pipe", "pipe", "pipe"],
-    env: p39WindowsTestEnvironment(),
+    env: windowsTestEnvironment(),
   });
   let output = "";
   const ready = new Promise<void>((resolveReady, rejectReady) => {
@@ -156,7 +156,7 @@ const startReleaseConstructionChild = (lockFilename: string) => {
     {
       cwd: process.cwd(),
       stdio: ["pipe", "pipe", "pipe"],
-      env: p39WindowsTestEnvironment(),
+      env: windowsTestEnvironment(),
     },
   );
   const output = { stdout: "", stderr: "" };
@@ -193,7 +193,7 @@ const startContender = (
     {
       cwd: process.cwd(),
       stdio: ["pipe", "pipe", "pipe"],
-      env: p39WindowsTestEnvironment(),
+      env: windowsTestEnvironment(),
     },
   );
   const output = { stdout: "", stderr: "" };
@@ -439,7 +439,7 @@ const competeAcrossProcess = async (input: {
   }
 };
 
-describe.skipIf(!p39PathQualificationAvailable)(
+describe.skipIf(!windowsPathQualificationAvailable)(
   "P39 cross-process SQLite writer exclusion",
   () => {
     it("blocks maintenance while another OS process holds a daemon shared permit", async () => {

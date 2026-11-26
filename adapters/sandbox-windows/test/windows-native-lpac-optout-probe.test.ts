@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   createP39PrivateTestFile,
   makeP39PrivateTestDirectory,
-} from "../../../tests/support/p39-windows-deployment-test.js";
+} from "../../../tests/support/windows-deployment-qualification.js";
 
 const testDirectory = dirname(fileURLToPath(import.meta.url));
 const source = join(

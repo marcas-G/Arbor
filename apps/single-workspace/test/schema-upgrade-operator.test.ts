@@ -28,7 +28,7 @@ import {
   createP39PrivateTestFile,
   makeP39PrivateTestDirectory,
   removeP39PrivateTestDirectory,
-} from "../../../tests/support/p39-windows-deployment-test.js";
+} from "../../../tests/support/windows-deployment-qualification.js";
 import {
   createCurrentSchemaTestDatabase,
   createSchema42TestDatabase,

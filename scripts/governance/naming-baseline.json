@@ -1969,8 +1969,8 @@
         "evidence": "tests/support/p10-fixture.ts"
       },
       {
-        "path": "tests/support/p39-windows-deployment-test.ts",
-        "evidence": "tests/support/p39-windows-deployment-test.ts"
+        "path": "tests/support/windows-deployment-qualification.ts",
+        "evidence": "tests/support/windows-deployment-qualification.ts"
       },
       {
         "path": "tests/support/p39-windows-global-setup.ts",
@@ -2335,7 +2335,7 @@
         "symbol": "P10FixtureDeps"
       },
       {
-        "path": "tests/support/p39-windows-deployment-test.ts",
+        "path": "tests/support/windows-deployment-qualification.ts",
         "line": 59,
         "evidence": "export interface P39PrivateTestTempRoot {",
         "symbol": "P39PrivateTestTempRoot"
@@ -5922,8 +5922,8 @@
         "evidence": "tests/support/p10-fixture.ts"
       },
       {
-        "path": "tests/support/p39-windows-deployment-test.ts",
-        "evidence": "tests/support/p39-windows-deployment-test.ts"
+        "path": "tests/support/windows-deployment-qualification.ts",
+        "evidence": "tests/support/windows-deployment-qualification.ts"
       },
       {
         "path": "tests/support/p39-windows-global-setup.ts",

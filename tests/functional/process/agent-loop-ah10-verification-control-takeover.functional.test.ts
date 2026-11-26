@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { newUuid7 } from "../../../packages/application/src/formation-plan.js";
-import { p39WindowsTestEnvironment } from "../../support/p39-windows-deployment-test.js";
+import { windowsTestEnvironment } from "../../support/windows-deployment-qualification.js";
 import { expireExecutionLeaseAfterOwnerExitForQualification } from "../support/lease-qualification.js";
 import {
   type ProductionFixture,
@@ -241,7 +241,7 @@ const releaseGate = (
 
 describe("AH10 P8 verification control takeover", () => {
   it("passes the P39 PowerShell module path from Vitest through a child Node process", () => {
-    const testEnvironment = p39WindowsTestEnvironment();
+    const testEnvironment = windowsTestEnvironment();
     if (process.platform !== "win32") return;
     const expected = resolve(
       process.env.WINDIR ?? process.env.SystemRoot ?? "C:\\Windows",

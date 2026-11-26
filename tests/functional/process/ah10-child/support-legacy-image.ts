@@ -6,7 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import {
   makeP39PrivateTestDirectory,
   removeP39PrivateTestDirectory,
-} from "../../../support/p39-windows-deployment-test.js";
+} from "../../../support/windows-deployment-qualification.js";
 import {
   copySchema44RowsIntoP38Seed,
   createP32HistoricalTestImage,

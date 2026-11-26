@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
-  isP39PathQualificationEnabled,
+  isWindowsPathQualificationEnabled,
   isP39WindowsAclQualificationEnabled,
-} from "../../../tests/support/p39-windows-deployment-test.js";
+} from "../../../tests/support/windows-deployment-qualification.js";
 import {
   executeP39WindowsSecurityQuery,
   isP39WindowsPowerShellPathSafe,
-  P39_WINDOWS_POWERSHELL_EXECUTABLE,
-  P39_WINDOWS_SECURITY_QUERY_TIMEOUT_MS,
+  WINDOWS_POWERSHELL_EXECUTABLE,
+  WINDOWS_SECURITY_QUERY_TIMEOUT_MS,
   type P39WindowsSecurityQueryExecutor,
   p39WindowsProtectedPathsScript,
   validateP39WindowsProtectedPaths,
@@ -22,10 +22,10 @@ describe("P39 Windows security query timeout", () => {
   });
 
   it("keeps cross-platform P39 suites enabled on POSIX and gates only Windows without ACL support", () => {
-    expect(isP39PathQualificationEnabled("linux", false)).toBe(true);
-    expect(isP39PathQualificationEnabled("darwin", false)).toBe(true);
-    expect(isP39PathQualificationEnabled("win32", false)).toBe(false);
-    expect(isP39PathQualificationEnabled("win32", true)).toBe(true);
+    expect(isWindowsPathQualificationEnabled("linux", false)).toBe(true);
+    expect(isWindowsPathQualificationEnabled("darwin", false)).toBe(true);
+    expect(isWindowsPathQualificationEnabled("win32", false)).toBe(false);
+    expect(isWindowsPathQualificationEnabled("win32", true)).toBe(true);
   });
 
   it("batches volume, reparse, ACL and owner checks for every path in one query", () => {
@@ -52,13 +52,13 @@ describe("P39 Windows security query timeout", () => {
     expect(validateP39WindowsProtectedPaths(paths, executor)).toBe(true);
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({
-      command: P39_WINDOWS_POWERSHELL_EXECUTABLE,
+      command: WINDOWS_POWERSHELL_EXECUTABLE,
       args: expect.arrayContaining([
         "-NoProfile",
         "-NonInteractive",
         "-Command",
       ]),
-      timeout: P39_WINDOWS_SECURITY_QUERY_TIMEOUT_MS,
+      timeout: WINDOWS_SECURITY_QUERY_TIMEOUT_MS,
     });
     for (const { path, kind } of paths) {
       expect(script).toContain(Buffer.from(path, "utf8").toString("base64"));
@@ -85,7 +85,7 @@ describe("P39 Windows security query timeout", () => {
         return "P39_FIXED_BINARY";
       });
       expect(output).toBe("P39_FIXED_BINARY");
-      expect(invokedCommand).toBe(P39_WINDOWS_POWERSHELL_EXECUTABLE);
+      expect(invokedCommand).toBe(WINDOWS_POWERSHELL_EXECUTABLE);
       expect(invokedCommand).not.toBe("powershell.exe");
     } finally {
       if (originalPath === undefined) delete process.env.PATH;
@@ -96,7 +96,7 @@ describe("P39 Windows security query timeout", () => {
   it("fails closed when the fixed inbox binary is missing or any path component is a reparse point", () => {
     const missingFixedBinary = isP39WindowsPowerShellPathSafe({
       lstat: (path) => {
-        if (path === P39_WINDOWS_POWERSHELL_EXECUTABLE) {
+        if (path === WINDOWS_POWERSHELL_EXECUTABLE) {
           throw new Error("fixed inbox binary missing");
         }
         return {
@@ -157,7 +157,7 @@ describe("P39 Windows security query timeout", () => {
         timedOutExecutor,
       ),
     ).toBe(false);
-    expect(observedTimeout).toBe(P39_WINDOWS_SECURITY_QUERY_TIMEOUT_MS);
+    expect(observedTimeout).toBe(WINDOWS_SECURITY_QUERY_TIMEOUT_MS);
   });
 
   it("allows a simulated probe slower than 5s but below the shared bound", () => {
@@ -180,7 +180,7 @@ describe("P39 Windows security query timeout", () => {
     expect(executeP39WindowsSecurityQuery("probe", delayedExecutor)).toBe(
       "Fixed|NTFS",
     );
-    expect(observedTimeout).toBe(P39_WINDOWS_SECURITY_QUERY_TIMEOUT_MS);
+    expect(observedTimeout).toBe(WINDOWS_SECURITY_QUERY_TIMEOUT_MS);
     expect(observedTimeout).toBe(30_000);
   });
 

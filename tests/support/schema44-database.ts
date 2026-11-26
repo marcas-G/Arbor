@@ -33,8 +33,8 @@ import { backfillRetryVerificationOrigins } from "../../apps/single-workspace/sr
 import {
   createP39PrivateTestFile,
   removeP39PrivateTestDirectory,
-  setP39PrivateWindowsAcl,
-} from "./p39-windows-deployment-test.js";
+  setPrivateWindowsAcl,
+} from "./windows-deployment-qualification.js";
 import { HISTORICAL_SCHEMA42_SUFFIX_MIGRATIONS } from "./schema-prefix-contract.js";
 
 export class Schema42TestDatabaseSetupError extends Error {
@@ -574,7 +574,7 @@ export const createSchema42PrivateTestDirectory = (
   parent: string,
   prefix: string,
   setPrivateDirectoryAcl: (directory: string) => void = (directory) =>
-    setP39PrivateWindowsAcl(directory, "directory"),
+    setPrivateWindowsAcl(directory, "directory"),
   removeDirectory: (directory: string) => void = removeP39PrivateTestDirectory,
 ): string => {
   const directory = mkdtempSync(join(parent, prefix));
@@ -1188,9 +1188,9 @@ export const createSchema42TestDatabaseFactory = async (
       const p39ReportFilename = join(directory, "p39-report.sqlite");
       try {
         copyFileSync(template.databaseFilename, databaseFilename);
-        setP39PrivateWindowsAcl(databaseFilename, "file");
+        setPrivateWindowsAcl(databaseFilename, "file");
         copyFileSync(template.p39ReportFilename, p39ReportFilename);
-        setP39PrivateWindowsAcl(p39ReportFilename, "file");
+        setPrivateWindowsAcl(p39ReportFilename, "file");
         cloneDirectories.add(directory);
         let cloneCleanedUp = false;
         return {

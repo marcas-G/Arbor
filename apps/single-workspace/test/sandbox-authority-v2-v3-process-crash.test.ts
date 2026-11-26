@@ -22,8 +22,8 @@ import { describe, expect, it } from "vitest";
 import {
   makeP39PrivateTestDirectory,
   removeP39PrivateTestDirectory,
-  setP39PrivateWindowsAcl,
-} from "../../../tests/support/p39-windows-deployment-test.js";
+  setPrivateWindowsAcl,
+} from "../../../tests/support/windows-deployment-qualification.js";
 
 const hash = (value: string) =>
   createHash("sha256").update(value, "utf8").digest("hex");
@@ -32,7 +32,7 @@ const seed = (root: string) => {
   const forensic = join(root, "forensic");
   mkdirSync(forensic, { mode: 0o700 });
   if (process.platform !== "win32") chmodSync(forensic, 0o700);
-  setP39PrivateWindowsAcl(forensic, "directory");
+  setPrivateWindowsAcl(forensic, "directory");
   const issuerConfig = {
     version: 1 as const,
     revision: 1,
@@ -97,7 +97,7 @@ const seed = (root: string) => {
   ] as const) {
     writeFileSync(path, bytes, { encoding: "utf8", mode: 0o600 });
     if (process.platform !== "win32") chmodSync(path, 0o600);
-    setP39PrivateWindowsAcl(path, "file");
+    setPrivateWindowsAcl(path, "file");
   }
   return { source, highWater, audit };
 };
@@ -109,7 +109,7 @@ const childPath = fileURLToPath(
   ),
 );
 
-const p39QualificationAvailable = (() => {
+const windowsQualificationAvailable = (() => {
   const root = makeP39PrivateTestDirectory(
     tmpdir(),
     "arbor-sandbox-p39-qualification-",
@@ -129,7 +129,7 @@ const runChild = (root: string, stage: string, nonce: string) =>
     { cwd: process.cwd(), encoding: "utf8", timeout: 120_000 },
   );
 
-describe.skipIf(!p39QualificationAvailable)(
+describe.skipIf(!windowsQualificationAvailable)(
   "Windows D2 V3 protected file source process-crash cutover",
   () => {
     it.each([

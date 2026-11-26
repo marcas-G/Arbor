@@ -1,8 +1,8 @@
 import {
   createP39PrivateTestTempRoot,
-  p39WindowsTestEnvironment,
+  windowsTestEnvironment,
   removeP39PrivateTestTempRoot,
-} from "./p39-windows-deployment-test.js";
+} from "./windows-deployment-qualification.js";
 
 const environmentKeys = ["TEMP", "TMP", "TMPDIR", "PSModulePath"] as const;
 
@@ -21,7 +21,7 @@ export default function p39WindowsGlobalSetup() {
     process.env.TMP = privateTempRoot.path;
     process.env.TMPDIR = privateTempRoot.path;
   }
-  p39WindowsTestEnvironment();
+  windowsTestEnvironment();
 
   return () => {
     try {

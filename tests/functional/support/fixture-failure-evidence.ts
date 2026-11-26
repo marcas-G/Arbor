@@ -7,7 +7,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import { setP39PrivateWindowsAcl } from "../../support/p39-windows-deployment-test.js";
+import { setPrivateWindowsAcl } from "../../support/windows-deployment-qualification.js";
 import type { ProductionFixture } from "./production-fixture.js";
 
 const normalizedPath = (path: string): string =>
@@ -60,7 +60,7 @@ const validateResultDirectory = (resultDirectory: string) => {
       );
     }
   }
-  setP39PrivateWindowsAcl(resolvedResultDirectory, "directory");
+  setPrivateWindowsAcl(resolvedResultDirectory, "directory");
   const resultStat = lstatSync(resolvedResultDirectory);
   if (!resultStat.isDirectory() || resultStat.isSymbolicLink()) {
     throw new Error(

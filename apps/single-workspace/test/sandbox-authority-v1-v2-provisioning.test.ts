@@ -30,8 +30,8 @@ import { describe, expect, it } from "vitest";
 import {
   makeP39PrivateTestDirectory,
   removeP39PrivateTestDirectory,
-  setP39PrivateWindowsAcl,
-} from "../../../tests/support/p39-windows-deployment-test.js";
+  setPrivateWindowsAcl,
+} from "../../../tests/support/windows-deployment-qualification.js";
 import {
   loadSandboxAuthorityBundleSnapshotV1Forensic,
   loadSandboxAuthorityBundleSnapshotV2,
@@ -158,7 +158,7 @@ const pathsFor = (root: string) => ({
   sourceIdentity,
 });
 
-const p39QualificationAvailable = (() => {
+const windowsQualificationAvailable = (() => {
   const root = makeP39PrivateTestDirectory(
     tmpdir(),
     "arbor-sandbox-p39-qualification-",
@@ -176,7 +176,7 @@ const seed = (root: string) => {
   const forensic = join(root, "forensic");
   mkdirSync(forensic, { mode: 0o700 });
   if (process.platform !== "win32") chmodSync(forensic, 0o700);
-  setP39PrivateWindowsAcl(forensic, "directory");
+  setPrivateWindowsAcl(forensic, "directory");
   writeFileSync(join(root, "authority.json"), v1BundleJson, {
     encoding: "utf8",
     mode: 0o600,
@@ -200,10 +200,10 @@ const seed = (root: string) => {
     "high-water.json",
     "operator-config.json",
   ])
-    setP39PrivateWindowsAcl(join(root, filename), "file");
+    setPrivateWindowsAcl(join(root, filename), "file");
 };
 
-describe.skipIf(!p39QualificationAvailable)(
+describe.skipIf(!windowsQualificationAvailable)(
   "P5 operator-only V1→V2 sandbox authority provisioning",
   () => {
     it("runs the explicit file-based offline CLI over protected disposable inputs", async () => {

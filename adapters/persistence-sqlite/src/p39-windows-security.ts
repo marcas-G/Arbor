@@ -2,8 +2,8 @@ import { execFileSync } from "node:child_process";
 import { lstatSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
-export const P39_WINDOWS_SECURITY_QUERY_TIMEOUT_MS = 30_000;
-export const P39_WINDOWS_POWERSHELL_EXECUTABLE =
+export const WINDOWS_SECURITY_QUERY_TIMEOUT_MS = 30_000;
+export const WINDOWS_POWERSHELL_EXECUTABLE =
   "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
 const atomicMoveCompleteMarker = "P39_ATOMIC_WRITE_THROUGH_MOVE_OK";
 const atomicMoveScript = [
@@ -40,7 +40,7 @@ const executeProcess: P39WindowsSecurityQueryExecutor = (
 ) => {
   if (
     process.platform === "win32" &&
-    (command !== P39_WINDOWS_POWERSHELL_EXECUTABLE ||
+    (command !== WINDOWS_POWERSHELL_EXECUTABLE ||
       !isP39WindowsPowerShellExecutableAvailable())
   ) {
     throw new Error("P39 inbox Windows PowerShell is unavailable or unsafe");
@@ -84,7 +84,7 @@ export const isP39WindowsPowerShellPathSafe = (
     "C:\\Windows\\System32",
     "C:\\Windows\\System32\\WindowsPowerShell",
     "C:\\Windows\\System32\\WindowsPowerShell\\v1.0",
-    P39_WINDOWS_POWERSHELL_EXECUTABLE,
+    WINDOWS_POWERSHELL_EXECUTABLE,
   ];
   try {
     for (let index = 0; index < components.length; index += 1) {
@@ -99,8 +99,8 @@ export const isP39WindowsPowerShellPathSafe = (
       }
     }
     return (
-      operations.realpath(P39_WINDOWS_POWERSHELL_EXECUTABLE).toLowerCase() ===
-      P39_WINDOWS_POWERSHELL_EXECUTABLE.toLowerCase()
+      operations.realpath(WINDOWS_POWERSHELL_EXECUTABLE).toLowerCase() ===
+      WINDOWS_POWERSHELL_EXECUTABLE.toLowerCase()
     );
   } catch {
     return false;
@@ -120,11 +120,11 @@ export const executeP39WindowsSecurityQuery = (
   executor: P39WindowsSecurityQueryExecutor = executeProcess,
 ): string =>
   executor(
-    P39_WINDOWS_POWERSHELL_EXECUTABLE,
+    WINDOWS_POWERSHELL_EXECUTABLE,
     ["-NoProfile", "-NonInteractive", "-Command", script],
     {
       encoding: "utf8",
-      timeout: P39_WINDOWS_SECURITY_QUERY_TIMEOUT_MS,
+      timeout: WINDOWS_SECURITY_QUERY_TIMEOUT_MS,
       windowsHide: true,
     },
   ).trim();
@@ -161,11 +161,11 @@ export const moveP39ProtectedFileAtomically = (
   };
   try {
     const output = execFileSync(
-      P39_WINDOWS_POWERSHELL_EXECUTABLE,
+      WINDOWS_POWERSHELL_EXECUTABLE,
       ["-NoProfile", "-NonInteractive", "-Command", atomicMoveScript],
       {
         encoding: "utf8",
-        timeout: P39_WINDOWS_SECURITY_QUERY_TIMEOUT_MS,
+        timeout: WINDOWS_SECURITY_QUERY_TIMEOUT_MS,
         windowsHide: true,
         env: environment,
       },

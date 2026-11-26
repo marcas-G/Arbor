@@ -377,7 +377,7 @@ const scanSource = (source: string, path: string): ReadonlyArray<string> => {
     const fixedQuery = hasSequence(values, [
       "executor",
       "(",
-      "P39_WINDOWS_POWERSHELL_EXECUTABLE",
+      "WINDOWS_POWERSHELL_EXECUTABLE",
       ",",
       "[",
       "-NoProfile",
@@ -393,7 +393,7 @@ const scanSource = (source: string, path: string): ReadonlyArray<string> => {
     const fixedTimeout = hasSequence(values, [
       "timeout",
       ":",
-      "P39_WINDOWS_SECURITY_QUERY_TIMEOUT_MS",
+      "WINDOWS_SECURITY_QUERY_TIMEOUT_MS",
     ]);
     const fixedProcessExecutor = hasSequence(values, [
       "execFileSync",
@@ -418,7 +418,7 @@ const scanSource = (source: string, path: string): ReadonlyArray<string> => {
     const fixedAtomicMove = hasSequence(values, [
       "execFileSync",
       "(",
-      "P39_WINDOWS_POWERSHELL_EXECUTABLE",
+      "WINDOWS_POWERSHELL_EXECUTABLE",
       ",",
       "[",
       "-NoProfile",
@@ -437,7 +437,7 @@ const scanSource = (source: string, path: string): ReadonlyArray<string> => {
       ",",
       "timeout",
       ":",
-      "P39_WINDOWS_SECURITY_QUERY_TIMEOUT_MS",
+      "WINDOWS_SECURITY_QUERY_TIMEOUT_MS",
       ",",
       "windowsHide",
       ":",

@@ -25,7 +25,7 @@ import {
 } from "@arbor/ports";
 import { Effect, Layer } from "effect";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { p39WindowsTestEnvironment } from "../../../tests/support/p39-windows-deployment-test.js";
+import { windowsTestEnvironment } from "../../../tests/support/windows-deployment-qualification.js";
 import {
   createSchema48TestDatabaseFactory,
   type Schema48TestDatabase,
@@ -1095,7 +1095,7 @@ describe("Inbox operator rebuild CLI contract", () => {
             cwd: repositoryRoot,
             windowsHide: true,
             env: {
-              ...p39WindowsTestEnvironment(),
+              ...windowsTestEnvironment(),
               ARBOR_P6_LOCK_DIAGNOSTIC: join(
                 fixture.directory,
                 "lock-holder-diagnostic.txt",

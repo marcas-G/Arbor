@@ -16,7 +16,7 @@ const windowsPowerShellModules = (): string =>
 
 /** Set the module path explicitly so child Node and Windows PowerShell
  * processes can load the inbox Microsoft.PowerShell.Security module. */
-export const p39WindowsTestEnvironment = (): NodeJS.ProcessEnv => {
+export const windowsTestEnvironment = (): NodeJS.ProcessEnv => {
   if (process.platform !== "win32") return process.env;
   const environment = {
     ...process.env,
@@ -34,7 +34,7 @@ export const isP39WindowsAclQualificationEnabled = (
   aclModuleAvailable: boolean,
 ): boolean => platform === "win32" && aclModuleAvailable;
 
-export const isP39PathQualificationEnabled = (
+export const isWindowsPathQualificationEnabled = (
   platform: NodeJS.Platform,
   aclModuleAvailable: boolean,
 ): boolean => platform !== "win32" || aclModuleAvailable;
@@ -121,7 +121,7 @@ export const removeP39PrivateTestTempRoot = (
 
 /** Missing PowerShell ACL support means Windows deployment qualification
  * cannot run. Keep ordinary SQL and non-deployment tests enabled. */
-export const p39WindowsAclQualificationAvailable = (): boolean => {
+export const windowsAclQualificationAvailable = (): boolean => {
   if (process.platform !== "win32") return false;
   if (windowsAclModuleAvailable !== undefined) return windowsAclModuleAvailable;
   try {
@@ -137,7 +137,7 @@ export const p39WindowsAclQualificationAvailable = (): boolean => {
         encoding: "utf8",
         timeout: childProcessTimeoutMs,
         windowsHide: true,
-        env: p39WindowsTestEnvironment(),
+        env: windowsTestEnvironment(),
       },
     );
     windowsAclModuleAvailable = true;
@@ -152,7 +152,7 @@ export const p39WindowsAclQualificationAvailable = (): boolean => {
 
 /** Apply an exact private ACL to one test-owned path. The only principals
  * granted access are the current SID, SYSTEM, and Administrators. */
-export const setP39PrivateWindowsAcl = (
+export const setPrivateWindowsAcl = (
   path: string,
   kind: "directory" | "file",
 ): void => {
@@ -161,7 +161,7 @@ export const setP39PrivateWindowsAcl = (
     else chmodSync(path, 0o600);
     return;
   }
-  if (!p39WindowsAclQualificationAvailable()) {
+  if (!windowsAclQualificationAvailable()) {
     throw new Error(
       "P39 Windows deployment qualification requires Windows PowerShell filesystem ACL APIs.",
     );
@@ -202,7 +202,7 @@ export const setP39PrivateWindowsAcl = (
       encoding: "utf8",
       timeout: childProcessTimeoutMs,
       windowsHide: true,
-      env: p39WindowsTestEnvironment(),
+      env: windowsTestEnvironment(),
     },
   );
 };
@@ -215,10 +215,10 @@ export const makeP39PrivateTestDirectory = (
   const directory = mkdtempSync(join(parent, prefix));
   if (
     process.platform !== "win32" ||
-    p39WindowsAclQualificationAvailable() ||
+    windowsAclQualificationAvailable() ||
     requireWindowsAcl
   ) {
-    setP39PrivateWindowsAcl(directory, "directory");
+    setPrivateWindowsAcl(directory, "directory");
   }
   return directory;
 };
@@ -230,10 +230,10 @@ export const createP39PrivateTestFile = (
   writeFileSync(filename, "");
   if (
     process.platform !== "win32" ||
-    p39WindowsAclQualificationAvailable() ||
+    windowsAclQualificationAvailable() ||
     requireWindowsAcl
   ) {
-    setP39PrivateWindowsAcl(filename, "file");
+    setPrivateWindowsAcl(filename, "file");
   }
 };
 

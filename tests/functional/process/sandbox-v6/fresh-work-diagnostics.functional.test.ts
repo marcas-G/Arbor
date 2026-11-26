@@ -16,9 +16,9 @@ import { describe, expect, it } from "vitest";
 import { CURRENT_SCHEMA_VERSION } from "../../../../adapters/persistence-sqlite/src/index.js";
 import { shellPolicy } from "../../../../packages/tool-runtime/src/tools/shell.js";
 import {
-  p39WindowsAclQualificationAvailable,
-  p39WindowsTestEnvironment,
-} from "../../../support/p39-windows-deployment-test.js";
+  windowsAclQualificationAvailable,
+  windowsTestEnvironment,
+} from "../../../support/windows-deployment-qualification.js";
 import { createCurrentSchemaTestDatabase } from "../../../support/schema44-database.js";
 import {
   archiveProductionFixtureFailure,
@@ -60,7 +60,7 @@ const fixtureArchiveAclSnapshot = (path: string): FixtureArchiveAclSnapshot => {
       {
         encoding: "utf8",
         windowsHide: true,
-        env: p39WindowsTestEnvironment(),
+        env: windowsTestEnvironment(),
       },
     ),
   ) as FixtureArchiveAclSnapshot;
@@ -147,7 +147,7 @@ describe("V6 diagnostic SQL follows current persistence schema", () => {
         evidence: { testName: "private-result-directory" },
       });
       if (process.platform === "win32") {
-        expect(p39WindowsAclQualificationAvailable()).toBe(true);
+        expect(windowsAclQualificationAvailable()).toBe(true);
         const directoryAcl = fixtureArchiveAclSnapshot(resultDirectory);
         const expectedSids = [
           directoryAcl.currentSid,

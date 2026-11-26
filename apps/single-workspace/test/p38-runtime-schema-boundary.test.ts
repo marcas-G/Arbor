@@ -13,7 +13,7 @@ import {
   createP39PrivateTestFile,
   makeP39PrivateTestDirectory,
   removeP39PrivateTestDirectory,
-} from "../../../tests/support/p39-windows-deployment-test.js";
+} from "../../../tests/support/windows-deployment-qualification.js";
 import { createSchema48TestDatabase } from "../../../tests/support/schema44-database.js";
 import { buildSingleWorkspaceLayer } from "../src/composition.js";
 import {

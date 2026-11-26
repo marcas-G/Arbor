@@ -8,7 +8,7 @@ import {
   createP39PrivateTestFile,
   makeP39PrivateTestDirectory,
   removeP39PrivateTestDirectory,
-} from "../../../tests/support/p39-windows-deployment-test.js";
+} from "../../../tests/support/windows-deployment-qualification.js";
 import {
   CURRENT_SCHEMA45_SUFFIX_IDS,
   HISTORICAL_SCHEMA42_SUFFIX_IDS,

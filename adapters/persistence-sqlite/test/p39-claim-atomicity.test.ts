@@ -34,8 +34,8 @@ import {
   createP39PrivateTestFile,
   makeP39PrivateTestDirectory,
   removeP39PrivateTestDirectory,
-  setP39PrivateWindowsAcl,
-} from "../../../tests/support/p39-windows-deployment-test.js";
+  setPrivateWindowsAcl,
+} from "../../../tests/support/windows-deployment-qualification.js";
 import {
   CURRENT_MIGRATION_BASELINE,
   CURRENT_MIGRATIONS,
@@ -545,9 +545,9 @@ const withDb = async <A>(
       throw new Error("P39 claim test template was not prepared.");
     }
     copyFileSync(p39TemplateFilename, filename);
-    setP39PrivateWindowsAcl(filename, "file");
+    setPrivateWindowsAcl(filename, "file");
     copyFileSync(p39TemplateSidecarFilename, sidecarFilename);
-    setP39PrivateWindowsAcl(sidecarFilename, "file");
+    setPrivateWindowsAcl(sidecarFilename, "file");
     return await run(filename, invocationId);
   } finally {
     removeP39PrivateTestDirectory(directory);
