@@ -7,9 +7,9 @@ import {
   parse,
 } from "@arbor/domain";
 import { SandboxPort } from "@arbor/ports";
-import { it } from "@effect/vitest";
-import { Effect } from "effect";
-import { describe, expect } from "vitest";
+import { it as itEffect } from "@effect/vitest";
+import { Context, Effect, Layer } from "effect";
+import { describe, expect, it } from "vitest";
 import { SandboxPortLive } from "../src/index.js";
 
 const executionId = parse(ExecutionId)(
@@ -23,7 +23,7 @@ const regions: ReadonlyArray<CanonicalResourceRegion> = [
 ];
 
 describe("P4 local sandbox", () => {
-  it.effect(
+  itEffect.effect(
     "binds the admitted workspace root and never deletes it on close",
     () =>
       Effect.gen(function* () {
@@ -50,4 +50,29 @@ describe("P4 local sandbox", () => {
         expect(handle.writableRegions).toHaveLength(1);
       }).pipe(Effect.provide(SandboxPortLive)),
   );
+
+  it("removes a legacy region root left open when the Layer scope closes", async () => {
+    let rootPath: string | undefined;
+    // Build and tear the Layer down manually: the release obligation is the
+    // Layer's (E07), so scope close must remove an open legacy root.
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const context = yield* Layer.build(SandboxPortLive);
+          const sandbox = Context.get(context, SandboxPort);
+          const handle = yield* sandbox.open({
+            executionId,
+            workspaceId: "ws_x" as never,
+            // No mounts: the legacy pre-EWB path owns a temporary root.
+          });
+          expect(handle.rootPath).toContain("arbor-sbx-");
+          expect(existsSync(handle.rootPath)).toBe(true);
+          rootPath = handle.rootPath;
+          // The handle is deliberately never closed here.
+        }),
+      ),
+    );
+    expect(rootPath).toBeDefined();
+    expect(existsSync(rootPath as string)).toBe(false);
+  });
 });
