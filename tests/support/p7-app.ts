@@ -203,6 +203,7 @@ export const makeP7App = (
   | WorkRepository
   | DependencyRepository
   | DeliverableRepository
+  | ExecutionRepository
   | VerificationRepository
   | EvidenceRepository
   | AcceptanceRepository
@@ -277,6 +278,7 @@ export const makeP7App = (
     | WorkRepository
     | DependencyRepository
     | DeliverableRepository
+    | ExecutionRepository
     | VerificationRepository
     | EvidenceRepository
     | AcceptanceRepository
