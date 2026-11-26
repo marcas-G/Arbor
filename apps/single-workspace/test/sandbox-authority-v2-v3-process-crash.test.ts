@@ -17,7 +17,7 @@ import {
   Principal,
   parse,
 } from "@arbor/domain";
-import { validateP39ProtectedDirectory } from "@arbor/persistence-sqlite";
+import { validateProtectedDirectory } from "@arbor/persistence-sqlite";
 import { describe, expect, it } from "vitest";
 import {
   makeP39PrivateTestDirectory,
@@ -116,7 +116,7 @@ const windowsQualificationAvailable = (() => {
     false,
   );
   try {
-    return validateP39ProtectedDirectory(root);
+    return validateProtectedDirectory(root);
   } finally {
     removeP39PrivateTestDirectory(root);
   }

@@ -13,7 +13,7 @@ import { DatabaseSync } from "node:sqlite";
 import {
   P39_REPORT_APPLICATION_ID,
   P39_REPORT_USER_VERSION,
-  p39WriterLockFilename,
+  databaseWriterLockFilename,
   RetryVerificationOriginRepositoryLive,
   layer as sqliteLayer,
   TransactionPortLive,
@@ -1633,7 +1633,7 @@ export const qualifySidecarCrashRestart = async (
       }
     }
     if (phase === "writer-lock-initialized-before-permit") {
-      const lockPath = p39WriterLockFilename(database);
+      const lockPath = databaseWriterLockFilename(database);
       expect(typeof lockPath).toBe("string");
       if (typeof lockPath !== "string")
         throw new Error("P39 writer-lock path was unavailable after crash");

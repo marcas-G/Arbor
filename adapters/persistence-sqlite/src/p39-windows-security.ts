@@ -213,7 +213,7 @@ export const p39WindowsProtectedPathsScript = (
 };
 
 /** Validate every supplied Windows path in one bounded PowerShell process. */
-export const validateP39WindowsProtectedPaths = (
+export const validateWindowsProtectedPaths = (
   paths: ReadonlyArray<P39WindowsProtectedPath>,
   executor: P39WindowsSecurityQueryExecutor = executeProcess,
 ): boolean => {

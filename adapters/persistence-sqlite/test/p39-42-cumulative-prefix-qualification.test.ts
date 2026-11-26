@@ -15,22 +15,22 @@ import {
   HISTORICAL_SCHEMA42_SUFFIX_MIGRATIONS,
 } from "../../../tests/support/schema-prefix-contract.js";
 import {
-  acquireP39MaintenanceWriterExclusion,
+  acquireMaintenanceWriterExclusion,
   CURRENT_MIGRATIONS,
   type MigrationFile,
   P38_MIGRATIONS,
   P39_MAINTENANCE_MIGRATION_MANIFEST,
   P39_MAINTENANCE_MIGRATIONS,
   P39_RECONCILIATION_MIGRATION,
-  P39WriterLockClient,
+  DatabaseWriterLockClient,
   P40_TOOL_OBSERVATION_REPLAY_MIGRATION,
   P41_SUBMITTED_DECISION_BINDING_ATTENTION_DDL,
   P41_SUBMITTED_DECISION_BINDING_ATTENTION_FINGERPRINT,
   P41_SUBMITTED_DECISION_BINDING_ATTENTION_MIGRATION,
   P42_PROJECT_RESOURCE_SOURCE_MIGRATION,
-  p39WriterLockLayer,
-  prepareP39PrimaryDatabasePath,
-  releaseP39WriterPermit,
+  databaseWriterLockLayer,
+  preparePrimaryDatabasePath,
+  releaseDatabaseWriterPermit,
   runMigrations,
   runP39SqliteMaintenance,
   splitStatements,
@@ -241,21 +241,21 @@ const withP39MaintenanceWriter = <A>(
   filename: string,
   effect: Effect.Effect<A, unknown, SqlClient>,
 ) => {
-  const prepared = prepareP39PrimaryDatabasePath(filename);
+  const prepared = preparePrimaryDatabasePath(filename);
   if (!("databaseFilename" in prepared)) {
     throw new Error(`P39 test DB path rejected: ${prepared.code}`);
   }
   const infrastructure = Layer.mergeAll(
     sqliteLayer({ filename: prepared.databaseFilename }),
-    p39WriterLockLayer(prepared.writerLockFilename),
+    databaseWriterLockLayer(prepared.writerLockFilename),
   );
   return Effect.runPromise(
     Effect.scoped(
       Effect.provide(
         Effect.acquireUseRelease(
-          acquireP39MaintenanceWriterExclusion(),
+          acquireMaintenanceWriterExclusion(),
           () => effect,
-          releaseP39WriterPermit,
+          releaseDatabaseWriterPermit,
         ),
         infrastructure,
       ),
@@ -427,14 +427,14 @@ describe("test-only P39 maintenance cumulative prefix qualification 0039–0042"
   it("applies the configured writer-lock busy timeout before initialization reads", async () => {
     const directory = makeP39PrivateTestDirectory(
       process.cwd(),
-      ".p39-writer-lock-timeout-",
+      ".database-writer-lock-timeout-",
     );
     let blocker: ChildProcess | undefined;
     let blockerExit: Promise<void> | undefined;
     try {
       const primary = join(directory, "primary.sqlite");
       createP39PrivateTestFile(primary);
-      const prepared = prepareP39PrimaryDatabasePath(primary);
+      const prepared = preparePrimaryDatabasePath(primary);
       if (!("writerLockFilename" in prepared)) {
         throw new Error(`P39 test DB path rejected: ${prepared.code}`);
       }
@@ -443,13 +443,13 @@ describe("test-only P39 maintenance cumulative prefix qualification 0039–0042"
           Effect.scoped(
             Effect.provide(
               Effect.gen(function* () {
-                const writerLock = yield* P39WriterLockClient;
+                const writerLock = yield* DatabaseWriterLockClient;
                 const permit = yield* writerLock.acquire(
                   "MaintenanceExclusive",
                 );
                 yield* writerLock.release(permit);
               }),
-              p39WriterLockLayer(prepared.writerLockFilename, 20_000),
+              databaseWriterLockLayer(prepared.writerLockFilename, 20_000),
             ),
           ),
         );

@@ -64,7 +64,7 @@ import {
   AssignWorkTargetBindingRepositoryLive,
   AttentionPollStoreLive,
   type AttentionProjectionQualificationProbe,
-  acquireP39RuntimeWriterPermit,
+  acquireRuntimeWriterPermit,
   ClockLive,
   CommandStoreLive,
   CompletionHoldReadLive,
@@ -116,15 +116,15 @@ import {
   ProviderDeploymentBreakerLive,
   ProviderTurnStoreLive,
   p39UnsupportedDeployment,
-  p39WriterLockFilename,
-  p39WriterLockLayer,
-  prepareP39PrimaryDatabasePath,
+  databaseWriterLockFilename,
+  databaseWriterLockLayer,
+  preparePrimaryDatabasePath,
   RecordEnvironmentChangeLive,
   type RecoveryAttentionFactQualificationProbe,
   ResourceOwnershipRepositoryLive,
   RetryVerificationOriginRepositoryLive,
   RuntimeClockLive,
-  releaseP39WriterPermit,
+  releaseDatabaseWriterPermit,
   runMigrations,
   SandboxPolicyDecisionStoreLive,
   SandboxPolicyRequirementReadPortLive,
@@ -600,7 +600,7 @@ const buildSingleWorkspaceLayerInternal = (
   const preparedDatabase =
     config.databaseFile === ":memory:"
       ? undefined
-      : prepareP39PrimaryDatabasePath(config.databaseFile);
+      : preparePrimaryDatabasePath(config.databaseFile);
   try {
     config.startupDiagnosticProbe?.("p39.layer-path-validation.after");
   } catch {
@@ -1502,7 +1502,7 @@ const buildSingleWorkspaceLayerInternal = (
           // Test-only startup diagnostics are non-authoritative.
         }
         if (preparedDatabase !== undefined) {
-          const lock = p39WriterLockFilename(primaryDatabaseFilename);
+          const lock = databaseWriterLockFilename(primaryDatabaseFilename);
           if (
             typeof lock !== "string" ||
             lock !== preparedDatabase.writerLockFilename
@@ -1550,11 +1550,11 @@ const buildSingleWorkspaceLayerInternal = (
   }
   const p39WriterPermit = Layer.provide(
     Layer.effectDiscard(
-      Effect.acquireRelease(acquireP39RuntimeWriterPermit(), (permit) =>
-        releaseP39WriterPermit(permit).pipe(Effect.orDie),
+      Effect.acquireRelease(acquireRuntimeWriterPermit(), (permit) =>
+        releaseDatabaseWriterPermit(permit).pipe(Effect.orDie),
       ),
     ),
-    p39WriterLockLayer(preparedDatabase.writerLockFilename),
+    databaseWriterLockLayer(preparedDatabase.writerLockFilename),
   );
   const p39StartupGate = Layer.provide(currentSchemaGate, p39WriterPermit);
   return Layer.provide(

@@ -18,8 +18,8 @@ import {
   parse,
 } from "@arbor/domain";
 import {
-  validateP39ProtectedDirectory,
-  validateP39ProtectedFile,
+  validateProtectedDirectory,
+  validateProtectedFile,
 } from "@arbor/persistence-sqlite";
 import {
   SANDBOX_ENV_ALLOWLIST,
@@ -165,7 +165,7 @@ const windowsQualificationAvailable = (() => {
     false,
   );
   try {
-    return validateP39ProtectedDirectory(root);
+    return validateProtectedDirectory(root);
   } finally {
     removeP39PrivateTestDirectory(root);
   }
@@ -251,11 +251,11 @@ describe.skipIf(!windowsQualificationAvailable)(
       );
       try {
         seed(root);
-        expect(validateP39ProtectedDirectory(root)).toBe(true);
-        expect(validateP39ProtectedFile(join(root, "authority.json"))).toBe(
+        expect(validateProtectedDirectory(root)).toBe(true);
+        expect(validateProtectedFile(join(root, "authority.json"))).toBe(
           true,
         );
-        expect(validateP39ProtectedFile(join(root, "high-water.json"))).toBe(
+        expect(validateProtectedFile(join(root, "high-water.json"))).toBe(
           true,
         );
         const store = await Effect.runPromise(

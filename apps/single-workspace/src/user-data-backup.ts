@@ -21,11 +21,11 @@ import { dirname, join, resolve } from "node:path";
 import { backup, DatabaseSync } from "node:sqlite";
 import { reconcileRestoredLeases } from "@arbor/application";
 import {
-  acquireP39MaintenanceWriterExclusion,
+  acquireMaintenanceWriterExclusion,
   CURRENT_SCHEMA_VERSION,
-  p39WriterLockFilename,
-  p39WriterLockLayer,
-  releaseP39WriterPermit,
+  databaseWriterLockFilename,
+  databaseWriterLockLayer,
+  releaseDatabaseWriterPermit,
 } from "@arbor/persistence-sqlite";
 import { Effect } from "effect";
 import { makeHostProjectDirectories } from "./project-directories.js";
@@ -170,7 +170,7 @@ const withMaintenance = async <A>(
   databaseFile: string,
   body: () => Promise<A>,
 ): Promise<A> => {
-  const lock = p39WriterLockFilename(databaseFile);
+  const lock = databaseWriterLockFilename(databaseFile);
   if (typeof lock !== "string")
     refuse("database-path-does-not-support-maintenance");
   let bodyError: unknown;
@@ -179,7 +179,7 @@ const withMaintenance = async <A>(
       Effect.scoped(
         Effect.provide(
           Effect.acquireUseRelease(
-            acquireP39MaintenanceWriterExclusion(),
+            acquireMaintenanceWriterExclusion(),
             () =>
               Effect.tryPromise({
                 try: async () => {
@@ -192,9 +192,9 @@ const withMaintenance = async <A>(
                 },
                 catch: (cause) => cause,
               }),
-            (permit) => releaseP39WriterPermit(permit).pipe(Effect.orDie),
+            (permit) => releaseDatabaseWriterPermit(permit).pipe(Effect.orDie),
           ),
-          p39WriterLockLayer(lock, 1000),
+          databaseWriterLockLayer(lock, 1000),
         ),
       ),
     );

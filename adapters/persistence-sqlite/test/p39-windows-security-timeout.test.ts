@@ -10,7 +10,7 @@ import {
   WINDOWS_SECURITY_QUERY_TIMEOUT_MS,
   type P39WindowsSecurityQueryExecutor,
   p39WindowsProtectedPathsScript,
-  validateP39WindowsProtectedPaths,
+  validateWindowsProtectedPaths,
 } from "../src/p39-windows-security.js";
 
 describe("P39 Windows security query timeout", () => {
@@ -49,7 +49,7 @@ describe("P39 Windows security query timeout", () => {
       return "P39_PROTECTED_PATHS_OK";
     };
 
-    expect(validateP39WindowsProtectedPaths(paths, executor)).toBe(true);
+    expect(validateWindowsProtectedPaths(paths, executor)).toBe(true);
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({
       command: WINDOWS_POWERSHELL_EXECUTABLE,
@@ -129,11 +129,11 @@ describe("P39 Windows security query timeout", () => {
     const unexpectedExecutor: P39WindowsSecurityQueryExecutor = () =>
       "anything else";
 
-    expect(validateP39WindowsProtectedPaths(paths, failedExecutor)).toBe(false);
-    expect(validateP39WindowsProtectedPaths(paths, unexpectedExecutor)).toBe(
+    expect(validateWindowsProtectedPaths(paths, failedExecutor)).toBe(false);
+    expect(validateWindowsProtectedPaths(paths, unexpectedExecutor)).toBe(
       false,
     );
-    expect(validateP39WindowsProtectedPaths([], unexpectedExecutor)).toBe(
+    expect(validateWindowsProtectedPaths([], unexpectedExecutor)).toBe(
       false,
     );
   });
@@ -152,7 +152,7 @@ describe("P39 Windows security query timeout", () => {
     };
 
     expect(
-      validateP39WindowsProtectedPaths(
+      validateWindowsProtectedPaths(
         [{ path: "C:\\private\\primary.sqlite", kind: "file" }],
         timedOutExecutor,
       ),

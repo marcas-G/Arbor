@@ -431,13 +431,13 @@ describe.skipIf(process.platform !== "linux")(
           "--input-type=module",
           "-e",
           `
-      import {p39WriterLockFilename,p39WriterLockLayer,acquireP39RuntimeWriterPermit,releaseP39WriterPermit} from '@arbor/persistence-sqlite';
+      import {databaseWriterLockFilename,databaseWriterLockLayer,acquireRuntimeWriterPermit,releaseDatabaseWriterPermit} from '@arbor/persistence-sqlite';
       import {Effect} from 'effect';
-      const lock = p39WriterLockFilename(process.argv[1]);
+      const lock = databaseWriterLockFilename(process.argv[1]);
       await Effect.runPromise(Effect.scoped(Effect.provide(Effect.acquireUseRelease(
-        acquireP39RuntimeWriterPermit(),
+        acquireRuntimeWriterPermit(),
         () => Effect.promise(() => new Promise(resolve => {process.stdout.write('ready\\n'); process.stdin.once('data', resolve);})),
-        releaseP39WriterPermit),p39WriterLockLayer(lock,1000))));
+        releaseDatabaseWriterPermit),databaseWriterLockLayer(lock,1000))));
     `,
           fixture.databaseFilename,
         ],

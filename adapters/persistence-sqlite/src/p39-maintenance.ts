@@ -432,7 +432,7 @@ export const readP39BlockReports = (): Effect.Effect<
 /** Returns the exact suffix permitted by the P36→P37→P38→P39 prefix. This is
  * intentionally strict: a direct [0039] call or a missing predecessor fails
  * before any migration SQL is executed. */
-export const validateP39MigrationPrefix = (
+export const validateMigrationPrefix = (
   currentVersion: number,
   orderedMigrations: ReadonlyArray<{ readonly id: number }>,
 ): Effect.Effect<

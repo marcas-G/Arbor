@@ -4,11 +4,11 @@ import { DatabaseSync } from "node:sqlite";
 import { Duration, Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import {
-  acquireP39MaintenanceWriterExclusion,
-  acquireP39RuntimeWriterPermit,
-  P39WriterLockClient,
-  p39WriterLockLayer,
-  releaseP39WriterPermit,
+  acquireMaintenanceWriterExclusion,
+  acquireRuntimeWriterPermit,
+  DatabaseWriterLockClient,
+  databaseWriterLockLayer,
+  releaseDatabaseWriterPermit,
 } from "../../../adapters/persistence-sqlite/src/index.js";
 import {
   isWindowsPathQualificationEnabled,
@@ -25,10 +25,10 @@ const windowsPathQualificationAvailable = isWindowsPathQualificationEnabled(
 );
 
 const childModule = resolve(
-  "tests/functional/support/p39-writer-lock-child.mjs",
+  "tests/functional/support/database-writer-lock-child.mjs",
 );
 const contenderModule = resolve(
-  "tests/functional/support/p39-writer-lock-contender.mjs",
+  "tests/functional/support/database-writer-lock-contender.mjs",
 );
 const sameLayerContenderModule = resolve(
   "tests/functional/support/p39-lock-same-layer-contender.mjs",
@@ -391,7 +391,7 @@ const competeAcrossProcess = async (input: {
 }) => {
   const directory = makeP39PrivateTestDirectory(
     p39TestTempRoot(),
-    "arbor-p39-writer-lock-",
+    "arbor-database-writer-lock-",
   );
   const lockFilename = join(directory, "maintenance.sqlite");
   let child: ChildProcessWithoutNullStreams | undefined;
@@ -466,14 +466,14 @@ describe.skipIf(!windowsPathQualificationAvailable)(
         await Effect.runPromise(
           Effect.scoped(
             Effect.gen(function* () {
-              const client = yield* P39WriterLockClient;
+              const client = yield* DatabaseWriterLockClient;
               const acquire = client.acquire("RuntimeShared");
               yield* Effect.sleep(Duration.millis(600));
               const first = yield* acquire;
               yield* client.release(first);
               const second = yield* acquire;
               yield* client.release(second);
-            }).pipe(Effect.provide(p39WriterLockLayer(lockFilename, 500))),
+            }).pipe(Effect.provide(databaseWriterLockLayer(lockFilename, 500))),
           ),
         );
       } finally {
@@ -491,10 +491,10 @@ describe.skipIf(!windowsPathQualificationAvailable)(
         await Effect.runPromise(
           Effect.scoped(
             Effect.gen(function* () {
-              const client = yield* P39WriterLockClient;
+              const client = yield* DatabaseWriterLockClient;
               const permit = yield* client.acquire("RuntimeShared");
               yield* client.release(permit);
-            }).pipe(Effect.provide(p39WriterLockLayer(lockFilename, 0))),
+            }).pipe(Effect.provide(databaseWriterLockLayer(lockFilename, 0))),
           ),
         );
       } finally {
@@ -590,7 +590,7 @@ describe.skipIf(!windowsPathQualificationAvailable)(
           await Effect.runPromise(
             Effect.scoped(
               Effect.gen(function* () {
-                const client = yield* P39WriterLockClient;
+                const client = yield* DatabaseWriterLockClient;
                 phase = "first RuntimeShared acquire";
                 const first = yield* client.acquire("RuntimeShared");
                 phase = "second RuntimeShared acquire";
@@ -608,9 +608,9 @@ describe.skipIf(!windowsPathQualificationAvailable)(
                 expect(blockedByBoth._tag).toBe("Failure");
                 if (blockedByBoth._tag === "Failure") {
                   expect(blockedByBoth.failure._tag).toBe(
-                    "P39WriterLockFailure",
+                    "DatabaseWriterLockFailure",
                   );
-                  if (blockedByBoth.failure._tag === "P39WriterLockFailure") {
+                  if (blockedByBoth.failure._tag === "DatabaseWriterLockFailure") {
                     expect(blockedByBoth.failure.code).toBe(
                       "P39_WRITER_LOCK_ACQUIRE_FAILED",
                     );
@@ -632,7 +632,7 @@ describe.skipIf(!windowsPathQualificationAvailable)(
                 const exclusive = yield* client.acquire("MaintenanceExclusive");
                 phase = "release final MaintenanceExclusive permit";
                 yield* client.release(exclusive);
-              }).pipe(Effect.provide(p39WriterLockLayer(lockFilename, 1_000))),
+              }).pipe(Effect.provide(databaseWriterLockLayer(lockFilename, 1_000))),
             ),
           );
         } catch (cause) {
@@ -718,9 +718,9 @@ describe.skipIf(!windowsPathQualificationAvailable)(
         await Effect.runPromise(
           Effect.scoped(
             Effect.gen(function* () {
-              const permit = yield* acquireP39RuntimeWriterPermit();
-              yield* releaseP39WriterPermit(permit);
-            }).pipe(Effect.provide(p39WriterLockLayer(lockFilename, 1_000))),
+              const permit = yield* acquireRuntimeWriterPermit();
+              yield* releaseDatabaseWriterPermit(permit);
+            }).pipe(Effect.provide(databaseWriterLockLayer(lockFilename, 1_000))),
           ),
         );
       } finally {
@@ -796,10 +796,10 @@ describe.skipIf(!windowsPathQualificationAvailable)(
                   );
                 }
                 yield* Effect.promise(() => killHolder(holder));
-                const permit = yield* acquireP39MaintenanceWriterExclusion();
-                yield* releaseP39WriterPermit(permit);
+                const permit = yield* acquireMaintenanceWriterExclusion();
+                yield* releaseDatabaseWriterPermit(permit);
               }),
-              p39WriterLockLayer(lockFilename, 1000),
+              databaseWriterLockLayer(lockFilename, 1000),
             ),
           ),
         );

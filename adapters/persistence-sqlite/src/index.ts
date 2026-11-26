@@ -30,7 +30,7 @@ export * from "./p39-maintenance.js";
 export * from "./p39-maintenance-adapter.js";
 export * from "./p39-report-database.js";
 export * from "./p39-windows-security.js";
-export * from "./p39-writer-lock.js";
+export * from "./database-writer-lock.js";
 export * from "./p42-project-resource-source-migration.js";
 export * from "./p43-blocked-workepisode-migration.js";
 export * from "./p45-retry-verification-origin-migration.js";

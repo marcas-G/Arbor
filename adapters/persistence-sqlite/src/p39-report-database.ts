@@ -31,9 +31,9 @@ import {
 } from "./p39-maintenance.js";
 import { executeP39WindowsSecurityQuery } from "./p39-windows-security.js";
 import {
-  validateP39ProtectedDirectory,
-  validateP39ProtectedFile,
-} from "./p39-writer-lock.js";
+  validateProtectedDirectory,
+  validateProtectedFile,
+} from "./database-writer-lock.js";
 
 const failure = (
   code: P39MaintenanceFailure["code"],
@@ -106,7 +106,7 @@ const fileIdentity = (path: string): string | P39MaintenanceFailure => {
       stat.dev === 0n ||
       stat.ino === 0n ||
       stat.nlink !== 1n ||
-      !validateP39ProtectedFile(path)
+      !validateProtectedFile(path)
     ) {
       return failure("P39_UNSUPPORTED_DEPLOYMENT");
     }
@@ -164,7 +164,7 @@ const validateLocalFilesystem = (
 /** Validate the explicitly selected sidecar before opening the primary DB.
  * Network paths and non-absolute paths are rejected. Windows VM/VFS/power-loss
  * qualification remains a separate release gate even for a local drive. */
-export const validateP39ReportSidecarPath = (
+export const validateReportSidecarPath = (
   primaryFilename: string,
   sidecarFilename: string,
   protectedStoreFilenames: ReadonlyArray<string> = [],
@@ -209,7 +209,7 @@ export const validateP39ReportSidecarPath = (
       const filesystemFailure = validateLocalFilesystem(path);
       if (
         filesystemFailure !== undefined ||
-        !validateP39ProtectedDirectory(dirname(path))
+        !validateProtectedDirectory(dirname(path))
       ) {
         return Effect.fail(
           filesystemFailure ?? failure("P39_UNSUPPORTED_DEPLOYMENT"),
@@ -256,7 +256,7 @@ export const validateP39ReportSidecarPath = (
       const filesystemFailure = validateLocalFilesystem(protectedCanonical);
       if (
         filesystemFailure !== undefined ||
-        !validateP39ProtectedDirectory(dirname(protectedCanonical))
+        !validateProtectedDirectory(dirname(protectedCanonical))
       ) {
         return Effect.fail(
           filesystemFailure ?? failure("P39_UNSUPPORTED_DEPLOYMENT"),
@@ -417,13 +417,13 @@ const p39ReportSetup = (
 
 /** Initialize or validate the operator sidecar using the production SQLite
  * Node VFS. Call and close this layer before opening the primary connection. */
-export const validateP39ReportSidecarDatabase = (
+export const validateReportSidecarDatabase = (
   primaryFilename: string,
   sidecarFilename: string,
   protectedStoreFilenames: ReadonlyArray<string> = [],
   onPhase?: ReportValidationPhaseObserver,
 ): Effect.Effect<void, P39MaintenanceFailure | SqliteAdapterError> =>
-  validateP39ReportSidecarDatabaseInternal(
+  validateReportSidecarDatabaseInternal(
     primaryFilename,
     sidecarFilename,
     protectedStoreFilenames,
@@ -433,13 +433,13 @@ export const validateP39ReportSidecarDatabase = (
 
 /** Validate an already-created report sidecar without initializing or
  * substituting missing/empty evidence. Intended for resume-copy admission. */
-export const validateP39ExistingReportSidecarDatabase = (
+export const validateExistingReportSidecarDatabase = (
   primaryFilename: string,
   sidecarFilename: string,
   protectedStoreFilenames: ReadonlyArray<string> = [],
   onPhase?: ReportValidationPhaseObserver,
 ): Effect.Effect<void, P39MaintenanceFailure | SqliteAdapterError> =>
-  validateP39ReportSidecarDatabaseInternal(
+  validateReportSidecarDatabaseInternal(
     primaryFilename,
     sidecarFilename,
     protectedStoreFilenames,
@@ -447,7 +447,7 @@ export const validateP39ExistingReportSidecarDatabase = (
     onPhase,
   );
 
-const validateP39ReportSidecarDatabaseInternal = (
+const validateReportSidecarDatabaseInternal = (
   primaryFilename: string,
   sidecarFilename: string,
   protectedStoreFilenames: ReadonlyArray<string>,
@@ -456,7 +456,7 @@ const validateP39ReportSidecarDatabaseInternal = (
 ): Effect.Effect<void, P39MaintenanceFailure | SqliteAdapterError> =>
   Effect.gen(function* () {
     onPhase?.("report-database-path-revalidation");
-    const path = yield* validateP39ReportSidecarPath(
+    const path = yield* validateReportSidecarPath(
       primaryFilename,
       sidecarFilename,
       protectedStoreFilenames,
@@ -506,7 +506,7 @@ const validateP39ReportSidecarDatabaseInternal = (
       ),
     );
     onPhase?.("report-final-path-and-identity");
-    const finalPath = yield* validateP39ReportSidecarPath(
+    const finalPath = yield* validateReportSidecarPath(
       primaryFilename,
       path,
       protectedStoreFilenames,

@@ -39,7 +39,7 @@ const p39QueryCallers = new Set([
   "adapters/persistence-sqlite/src/p39-windows-security.ts",
 ]);
 const p39ValidationCallers = new Set([
-  "adapters/persistence-sqlite/src/p39-writer-lock.ts",
+  "adapters/persistence-sqlite/src/database-writer-lock.ts",
 ]);
 const forbiddenNativeModuleFragment =
   /\b(?:child_process|worker_threads|vm)\b/iu;
@@ -623,7 +623,7 @@ describe("SandboxProcessPort architecture boundary", () => {
       .filter((file) => {
         const source = readFileSync(file, "utf8");
         return (
-          source.includes("validateP39WindowsProtectedPaths") &&
+          source.includes("validateWindowsProtectedPaths") &&
           source.includes('from "./p39-windows-security.js"')
         );
       })
@@ -633,10 +633,10 @@ describe("SandboxProcessPort architecture boundary", () => {
     expect(
       callCount(
         readFileSync(
-          join(repoRoot, "adapters/persistence-sqlite/src/p39-writer-lock.ts"),
+          join(repoRoot, "adapters/persistence-sqlite/src/database-writer-lock.ts"),
           "utf8",
         ),
-        "validateP39WindowsProtectedPaths",
+        "validateWindowsProtectedPaths",
       ),
     ).toBe(1);
     const source = readFileSync(join(repoRoot, p39SpawnModule), "utf8");

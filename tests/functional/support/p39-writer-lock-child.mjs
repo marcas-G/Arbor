@@ -1,23 +1,23 @@
 import { Effect } from "effect";
 
 const {
-  acquireP39MaintenanceWriterExclusion,
-  acquireP39RuntimeWriterPermit,
-  p39WriterLockLayer,
-  releaseP39WriterPermit,
+  acquireMaintenanceWriterExclusion,
+  acquireRuntimeWriterPermit,
+  databaseWriterLockLayer,
+  releaseDatabaseWriterPermit,
 } = await import("../../../adapters/persistence-sqlite/dist/index.js");
 
 const [lockFilename, mode] = process.argv.slice(2);
 if (!lockFilename || (mode !== "shared" && mode !== "exclusive")) {
   throw new Error(
-    "usage: p39-writer-lock-child.mjs <lock-db> <shared|exclusive>",
+    "usage: database-writer-lock-child.mjs <lock-db> <shared|exclusive>",
   );
 }
 
 const acquire =
   mode === "shared"
-    ? acquireP39RuntimeWriterPermit()
-    : acquireP39MaintenanceWriterExclusion();
+    ? acquireRuntimeWriterPermit()
+    : acquireMaintenanceWriterExclusion();
 
 const waitForRelease = Effect.promise(
   () =>
@@ -35,9 +35,9 @@ const program = Effect.scoped(
           process.stdout.write("READY\n");
           yield* waitForRelease;
         }),
-      releaseP39WriterPermit,
+      releaseDatabaseWriterPermit,
     ),
-    p39WriterLockLayer(lockFilename, 1000),
+    databaseWriterLockLayer(lockFilename, 1000),
   ),
 );
 

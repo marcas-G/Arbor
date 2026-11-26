@@ -449,7 +449,7 @@ describe("offline P39–P57 schema-upgrade CLI", () => {
       _tag: "P39MaintenanceFailure",
       code: "P39_WRITER_LOCK_ACQUIRE_FAILED",
       cause: {
-        _tag: "P39WriterLockFailure",
+        _tag: "DatabaseWriterLockFailure",
         code: "P39_WRITER_LOCK_ACQUIRE_FAILED",
         reasonCode: "SQLITE_BUSY",
         message: "secret=not-for-output C:\\private\\db.sqlite",
@@ -457,7 +457,7 @@ describe("offline P39–P57 schema-upgrade CLI", () => {
     });
     expect(message).toBe(
       "P39MaintenanceFailure/P39_WRITER_LOCK_ACQUIRE_FAILED: " +
-        "P39WriterLockFailure/P39_WRITER_LOCK_ACQUIRE_FAILED/SQLITE_BUSY",
+        "DatabaseWriterLockFailure/P39_WRITER_LOCK_ACQUIRE_FAILED/SQLITE_BUSY",
     );
     expect(message).not.toContain("[object Object]");
     expect(message).not.toContain("private");

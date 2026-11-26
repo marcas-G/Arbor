@@ -1,7 +1,7 @@
 const {
-  acquireP39RuntimeWriterPermit,
-  p39WriterLockLayer,
-  releaseP39WriterPermit,
+  acquireRuntimeWriterPermit,
+  databaseWriterLockLayer,
+  releaseDatabaseWriterPermit,
 } = await import("../../../adapters/persistence-sqlite/dist/index.js");
 process.stdout.write("CHILD_STARTED\n");
 
@@ -30,7 +30,7 @@ if (lockFilename === undefined)
 const program = Effect.scoped(
   Effect.provide(
     Effect.acquireUseRelease(
-      acquireP39RuntimeWriterPermit(),
+      acquireRuntimeWriterPermit(),
       () =>
         Effect.gen(function* () {
           process.stdout.write("READY\n");
@@ -38,9 +38,9 @@ const program = Effect.scoped(
             () => new Promise((resolve) => process.stdin.once("data", resolve)),
           );
         }),
-      releaseP39WriterPermit,
+      releaseDatabaseWriterPermit,
     ),
-    p39WriterLockLayer(lockFilename, 1000),
+    databaseWriterLockLayer(lockFilename, 1000),
   ),
 );
 

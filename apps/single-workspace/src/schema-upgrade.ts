@@ -40,13 +40,13 @@ import {
   P55_SESSION_CAUSAL_PROVENANCE_MIGRATION,
   P56_LINUX_WORKSPACE_NETWORK_V2_MIGRATION,
   P57_WORKSPACE_SANDBOX_AUTHORIZATION_MIGRATION,
-  p39WriterLockFilename,
+  databaseWriterLockFilename,
   preflightVerificationEvidenceSnapshot,
   runMigrations,
   runP39SqliteMaintenance,
   runP39SqliteMaintenanceWithPermit,
   splitStatements,
-  validateP39ProtectedDirectory,
+  validateProtectedDirectory,
 } from "@arbor/persistence-sqlite";
 import { canonicalWorkContractJson, sha256Hex } from "@arbor/ports";
 import { Effect } from "effect";
@@ -498,7 +498,7 @@ const validatePathSet = (
     const targetIdentity = existingPathIdentity(targetPath);
     const reportIdentity = existingPathIdentity(reportPath);
     const manifestIdentity = existingPathIdentity(manifestPath);
-    const lockPath = p39WriterLockFilename(targetPath);
+    const lockPath = databaseWriterLockFilename(targetPath);
     if (typeof lockPath !== "string")
       throw new SchemaUpgradeRefusal(
         `P39 writer lock path is unsupported: ${lockPath.code}`,
@@ -687,7 +687,7 @@ const verifySourcePrefixSchema = async (
     join(dirname(filename), ".arbor-schema-prefix-check-"),
   );
   try {
-    if (!validateP39ProtectedDirectory(directory))
+    if (!validateProtectedDirectory(directory))
       throw new SchemaUpgradeRefusal(
         "source-prefix verification directory failed the P39 protected ACL/local-volume checks",
       );
@@ -813,7 +813,7 @@ const createOrCopyTarget = async (
   }
   const target = existingPathIdentity(paths.targetPath);
   const report = reserveNewFile(paths.reportPath);
-  const lockPath = p39WriterLockFilename(target.canonicalPath);
+  const lockPath = databaseWriterLockFilename(target.canonicalPath);
   if (typeof lockPath !== "string")
     throw new SchemaUpgradeRefusal(
       `P39 writer lock path is unsupported: ${lockPath.code}`,
@@ -1455,7 +1455,7 @@ const previewCommittedPrefixes = async (
   );
   let database: DatabaseSync | undefined;
   try {
-    if (!validateP39ProtectedDirectory(directory))
+    if (!validateProtectedDirectory(directory))
       throw new SchemaUpgradeRefusal(
         "private schema preview directory failed the P39 protected ACL/local-volume checks",
       );

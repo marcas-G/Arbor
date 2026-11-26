@@ -101,6 +101,6 @@ describe("MAC-P4 final active-runtime convergence", () => {
     expect(composition).toContain("requires an offline upgrade to schema");
     expect(composition).toContain("sqliteAdapterError(");
     expect(production).toContain("runMigrations(CURRENT_MIGRATIONS)");
-    expect(production).not.toMatch(/P39|p39WriterLock/);
+    expect(production).not.toMatch(/P39|databaseWriterLock/);
   });
 });

@@ -18,8 +18,8 @@ import {
   P39_REPORT_APPLICATION_ID,
   P39_REPORT_USER_VERSION,
   type P39ReportSidecarValidationPhase,
-  validateP39ProtectedDirectory,
-  validateP39ProtectedFile,
+  validateProtectedDirectory,
+  validateProtectedFile,
 } from "@arbor/persistence-sqlite";
 
 export type SchemaUpgradeMode = "fresh" | "copy" | "resume-copy";
@@ -163,7 +163,7 @@ export const canonicalNewPath = (input: string): string => {
   if (normalizePath(parent) !== normalizePath(dirname(resolved))) {
     refuse(`new artifact parent is not canonical: ${input}`);
   }
-  if (!validateP39ProtectedDirectory(parent)) {
+  if (!validateProtectedDirectory(parent)) {
     refuse(
       `new artifact parent does not meet the P39 owner/ACL profile: ${parent}`,
     );
@@ -192,8 +192,8 @@ export const existingPathIdentity = (
     stat.dev === 0n ||
     stat.ino === 0n ||
     stat.nlink !== 1n ||
-    !validateP39ProtectedDirectory(dirname(canonicalPath)) ||
-    !validateP39ProtectedFile(canonicalPath)
+    !validateProtectedDirectory(dirname(canonicalPath)) ||
+    !validateProtectedFile(canonicalPath)
   ) {
     refuse(`file identity/owner/ACL validation failed: ${input}`);
   }

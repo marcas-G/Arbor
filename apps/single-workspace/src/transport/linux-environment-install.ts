@@ -28,7 +28,7 @@ import {
   type SandboxOperatorPolicyConfigV1,
   type SandboxProviderQualificationRegistryV1,
 } from "@arbor/domain";
-import { validateP39ProtectedDirectory } from "@arbor/persistence-sqlite";
+import { validateProtectedDirectory } from "@arbor/persistence-sqlite";
 import { SANDBOX_ENV_ALLOWLIST } from "@arbor/ports";
 import { Effect } from "effect";
 import lockfile from "proper-lockfile";
@@ -116,7 +116,7 @@ const installLinuxSandboxEnvironmentInternal = async (
       );
     }
     assert.ok(
-      validateP39ProtectedDirectory(parent),
+      validateProtectedDirectory(parent),
       "执行环境目录不满足持久本地存储和目录权限要求；请使用当前用户的本地磁盘数据目录，不能放在 /tmp 内存盘或网络盘。",
     );
     const report = await checkLinuxSandboxEnvironment(input);

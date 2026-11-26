@@ -21,25 +21,25 @@ import {
   p39UnsupportedDeployment,
   readP39BlockReports,
   runP39MaintenanceGateWithLease,
-  validateP39MigrationPrefix,
+  validateMigrationPrefix,
   writeP39BlockReportAndReadBack,
 } from "./p39-maintenance.js";
 import {
   type P39ReportSidecarValidationPhase,
-  validateP39ExistingReportSidecarDatabase,
-  validateP39ReportSidecarDatabase,
-  validateP39ReportSidecarPath,
+  validateExistingReportSidecarDatabase,
+  validateReportSidecarDatabase,
+  validateReportSidecarPath,
 } from "./p39-report-database.js";
 import type {
-  P39DatabaseWriterPermit,
-  P39WriterLockClientService,
-  P39WriterLockFailure,
-} from "./p39-writer-lock.js";
+  DatabaseWriterPermit,
+  DatabaseWriterLockClientService,
+  DatabaseWriterLockFailure,
+} from "./database-writer-lock.js";
 import {
-  P39WriterLockClient,
-  p39WriterLockFilename,
-  p39WriterLockLayer,
-} from "./p39-writer-lock.js";
+  DatabaseWriterLockClient,
+  databaseWriterLockFilename,
+  databaseWriterLockLayer,
+} from "./database-writer-lock.js";
 
 /** The subset of Effect SQL used by the maintenance adapter. Concrete
  * SqlClient services from the primary and operator-selected sidecar databases
@@ -56,10 +56,10 @@ export interface P39MaintenanceSqlClient {
 
 interface P39SqliteMaintenanceAdapterOptions {
   readonly primary: P39MaintenanceSqlClient;
-  readonly writerLock: P39WriterLockClientService;
+  readonly writerLock: DatabaseWriterLockClientService;
   readonly primaryFilename: string;
   readonly writerLockFilename: string;
-  readonly maintenancePermit?: P39DatabaseWriterPermit;
+  readonly maintenancePermit?: DatabaseWriterPermit;
   readonly writeAndReadBackSidecarReport: (
     report: P39MigrationBlockReport,
   ) => Effect.Effect<
@@ -102,7 +102,7 @@ export const runP39SqliteMaintenanceWithPermit = (
   options: P39SqliteMaintenanceCommandOptions,
   continuation: (
     primary: P39MaintenanceSqlClient,
-    permit: P39DatabaseWriterPermit,
+    permit: DatabaseWriterPermit,
   ) => Effect.Effect<
     void,
     P39MaintenanceFailure | SqliteAdapterError | SqlError
@@ -132,7 +132,7 @@ export const runP39SqliteMaintenanceWithPermit = (
     /** After the current-schema primary client has been closed, perform an explicit
      * read-only no-op verification while MaintenanceExclusive is still held. */
     readonly afterPrimaryClosedNoOp?: (
-      permit: P39DatabaseWriterPermit,
+      permit: DatabaseWriterPermit,
     ) => Effect.Effect<
       void,
       P39MaintenanceFailure | SqliteAdapterError | SqlError
@@ -142,14 +142,14 @@ export const runP39SqliteMaintenanceWithPermit = (
      * the provenance head under the same cross-process permit as migrations. */
     readonly beforeMaintenance?: (
       primary: P39MaintenanceSqlClient,
-      permit: P39DatabaseWriterPermit,
+      permit: DatabaseWriterPermit,
     ) => Effect.Effect<
       boolean,
       P39MaintenanceFailure | SqliteAdapterError | SqlError
     >;
     readonly beforeP39?: (
       primary: P39MaintenanceSqlClient,
-      permit: P39DatabaseWriterPermit,
+      permit: DatabaseWriterPermit,
     ) => Effect.Effect<
       void,
       P39MaintenanceFailure | SqliteAdapterError | SqlError
@@ -159,7 +159,7 @@ export const runP39SqliteMaintenanceWithPermit = (
      * record is serialized with every resume attempt. */
     readonly onP39Blocked?: (
       primary: P39MaintenanceSqlClient,
-      permit: P39DatabaseWriterPermit,
+      permit: DatabaseWriterPermit,
     ) => Effect.Effect<
       void,
       P39MaintenanceFailure | SqliteAdapterError | SqlError
@@ -183,7 +183,7 @@ export const runP39SqliteMaintenanceWithPermit = (
     }
     const primaryPath = realpathSync.native(resolvedPrimaryPath);
     settings.onPhase?.("writer-lock-path-validation");
-    const lockPath = p39WriterLockFilename(primaryPath);
+    const lockPath = databaseWriterLockFilename(primaryPath);
     if (typeof lockPath !== "string") {
       return yield* Effect.fail(
         failure(
@@ -195,7 +195,7 @@ export const runP39SqliteMaintenanceWithPermit = (
       );
     }
     settings.onPhase?.("report-path-validation");
-    const sidecarPath = yield* validateP39ReportSidecarPath(
+    const sidecarPath = yield* validateReportSidecarPath(
       resolvedPrimaryPath,
       options.sidecarFilename,
       options.protectedStoreFilenames,
@@ -204,8 +204,8 @@ export const runP39SqliteMaintenanceWithPermit = (
     settings.onPhase?.("report-database-validation");
     const validateReportSidecar =
       settings.reportMustAlreadyExist === true
-        ? validateP39ExistingReportSidecarDatabase
-        : validateP39ReportSidecarDatabase;
+        ? validateExistingReportSidecarDatabase
+        : validateReportSidecarDatabase;
     yield* validateReportSidecar(
       primaryPath,
       sidecarPath,
@@ -253,7 +253,7 @@ export const runP39SqliteMaintenanceWithPermit = (
       Effect.scoped(Effect.provide(readP39BlockReports(), reportSidecarLayer));
     settings.onPhase?.("writer-lock-initialization");
     const maintenance = Effect.gen(function* () {
-      const writerLock = yield* P39WriterLockClient;
+      const writerLock = yield* DatabaseWriterLockClient;
       if (process.env.NODE_ENV === "test")
         settings.onPhase?.("writer-lock-initialized-before-permit");
       settings.onPhase?.("writer-lock-acquisition");
@@ -437,7 +437,7 @@ export const runP39SqliteMaintenanceWithPermit = (
     yield* Effect.scoped(
       Effect.provide(
         maintenance,
-        p39WriterLockLayer(lockPath, options.writerLockBusyTimeoutMs ?? 30_000),
+        databaseWriterLockLayer(lockPath, options.writerLockBusyTimeoutMs ?? 30_000),
       ),
     ).pipe(
       Effect.mapError((cause) => {
@@ -445,9 +445,9 @@ export const runP39SqliteMaintenanceWithPermit = (
           typeof cause === "object" &&
           cause !== null &&
           "_tag" in cause &&
-          cause._tag === "P39WriterLockFailure"
+          cause._tag === "DatabaseWriterLockFailure"
         ) {
-          const lockFailure = cause as P39WriterLockFailure;
+          const lockFailure = cause as DatabaseWriterLockFailure;
           const { code, ...detail } = lockFailure;
           return failure(
             code === "P39_WRITER_LOCK_UNSUPPORTED_DEPLOYMENT"
@@ -492,7 +492,7 @@ const failure = (
 const normalizeP39DeploymentFailure = (
   cause:
     | P39MaintenanceFailure
-    | P39WriterLockFailure
+    | DatabaseWriterLockFailure
     | SqliteAdapterError
     | SqlError,
 ): P39MaintenanceFailure | SqliteAdapterError | SqlError => {
@@ -500,9 +500,9 @@ const normalizeP39DeploymentFailure = (
     typeof cause === "object" &&
     cause !== null &&
     "_tag" in cause &&
-    cause._tag === "P39WriterLockFailure"
+    cause._tag === "DatabaseWriterLockFailure"
   ) {
-    const lockFailure = cause as P39WriterLockFailure;
+    const lockFailure = cause as DatabaseWriterLockFailure;
     if (
       lockFailure.code === "P39_WRITER_LOCK_PATH_INVALID" ||
       lockFailure.code === "P39_WRITER_LOCK_UNSUPPORTED_DEPLOYMENT"
@@ -546,7 +546,7 @@ const makeP39SqliteMaintenancePort = (
   options: P39SqliteMaintenanceAdapterOptions,
 ): P39MaintenancePort => {
   let snapshotState: SnapshotState | undefined;
-  let writerLockPermit: P39DatabaseWriterPermit | undefined =
+  let writerLockPermit: DatabaseWriterPermit | undefined =
     options.maintenancePermit;
   const sql = options.primary;
   return {
@@ -579,7 +579,7 @@ const makeP39SqliteMaintenancePort = (
         if (lease.token !== writerLockPermit?.token) {
           return yield* Effect.fail(failure("P39_WRITER_LOCK_ACQUIRE_FAILED"));
         }
-        const currentLockPath = p39WriterLockFilename(options.primaryFilename);
+        const currentLockPath = databaseWriterLockFilename(options.primaryFilename);
         if (
           typeof currentLockPath !== "string" ||
           currentLockPath !== options.writerLockFilename
@@ -697,7 +697,7 @@ const makeP39SqliteMaintenancePort = (
         const suffix = P39_MAINTENANCE_MIGRATIONS.filter(
           ({ id }) => id > currentVersion,
         );
-        yield* validateP39MigrationPrefix(currentVersion, suffix);
+        yield* validateMigrationPrefix(currentVersion, suffix);
         for (const migration of suffix) {
           const approved = P39_MAINTENANCE_MIGRATION_MANIFEST[migration.id];
           if (

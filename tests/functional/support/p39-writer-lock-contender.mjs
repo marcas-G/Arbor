@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 
-const { P39WriterLockClient, p39WriterLockLayer } = await import(
+const { DatabaseWriterLockClient, databaseWriterLockLayer } = await import(
   "../../../adapters/persistence-sqlite/dist/index.js"
 );
 
@@ -11,7 +11,7 @@ if (
   timeoutRaw === undefined
 ) {
   throw new Error(
-    "usage: p39-writer-lock-contender.mjs <lock-db> <shared|exclusive> <timeout-ms>",
+    "usage: database-writer-lock-contender.mjs <lock-db> <shared|exclusive> <timeout-ms>",
   );
 }
 
@@ -30,7 +30,7 @@ const acquireMode =
 const program = Effect.scoped(
   Effect.gen(function* () {
     process.stdout.write("LAYER_READY\n");
-    const lockClient = yield* P39WriterLockClient;
+    const lockClient = yield* DatabaseWriterLockClient;
     process.stdin.setEncoding("utf8");
     yield* Effect.promise(
       () => new Promise((resolve) => process.stdin.once("data", resolve)),
@@ -96,7 +96,7 @@ const program = Effect.scoped(
         timerFired,
       })}\n`,
     );
-  }).pipe(Effect.provide(p39WriterLockLayer(lockFilename, Number(timeoutRaw)))),
+  }).pipe(Effect.provide(databaseWriterLockLayer(lockFilename, Number(timeoutRaw)))),
 );
 
 try {

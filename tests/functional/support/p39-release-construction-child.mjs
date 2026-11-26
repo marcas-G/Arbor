@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 
-const { P39WriterLockClient, p39WriterLockLayer } = await import(
+const { DatabaseWriterLockClient, databaseWriterLockLayer } = await import(
   "../../../adapters/persistence-sqlite/dist/index.js"
 );
 const [lockFilename] = process.argv.slice(2);
@@ -10,11 +10,11 @@ if (lockFilename === undefined) {
 
 const scopedLayer = Effect.scoped(
   Effect.gen(function* () {
-    const client = yield* P39WriterLockClient;
+    const client = yield* DatabaseWriterLockClient;
     const permit = yield* client.acquire("RuntimeShared");
     const releaseEffect = client.release(permit);
     void releaseEffect;
-  }).pipe(Effect.provide(p39WriterLockLayer(lockFilename, 250))),
+  }).pipe(Effect.provide(databaseWriterLockLayer(lockFilename, 250))),
 );
 
 await Effect.runPromise(scopedLayer);

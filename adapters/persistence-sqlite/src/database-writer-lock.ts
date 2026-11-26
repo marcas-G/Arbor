@@ -18,7 +18,7 @@ import type { SqliteAdapterError } from "./errors.js";
 import { sqliteAdapterError } from "./errors.js";
 import {
   type P39WindowsProtectedPath,
-  validateP39WindowsProtectedPaths,
+  validateWindowsProtectedPaths,
 } from "./p39-windows-security.js";
 
 export const P39_WRITER_LOCK_DDL = `
@@ -28,18 +28,18 @@ CREATE TABLE IF NOT EXISTS p39_writer_lock (
 INSERT OR IGNORE INTO p39_writer_lock (lock_id) VALUES (1);
 `;
 
-export const p39SameOperatingSystemIdentity = (
+export const sameOperatingSystemIdentity = (
   ownerIdentity: string,
   processIdentity: string,
 ): boolean => ownerIdentity.length > 0 && ownerIdentity === processIdentity;
 
-export interface P39DatabaseWriterPermit {
+export interface DatabaseWriterPermit {
   readonly token: string;
   readonly mode: "RuntimeShared" | "MaintenanceExclusive";
 }
 
-export interface P39WriterLockFailure {
-  readonly _tag: "P39WriterLockFailure";
+export interface DatabaseWriterLockFailure {
+  readonly _tag: "DatabaseWriterLockFailure";
   readonly code:
     | "P39_WRITER_LOCK_PATH_INVALID"
     | "P39_WRITER_LOCK_UNSUPPORTED_DEPLOYMENT"
@@ -49,28 +49,28 @@ export interface P39WriterLockFailure {
   readonly cause?: unknown;
 }
 
-export interface P39WriterLockClientService {
+export interface DatabaseWriterLockClientService {
   readonly acquire: (
-    mode: P39DatabaseWriterPermit["mode"],
+    mode: DatabaseWriterPermit["mode"],
   ) => Effect.Effect<
-    P39DatabaseWriterPermit,
-    P39WriterLockFailure | SqliteAdapterError
+    DatabaseWriterPermit,
+    DatabaseWriterLockFailure | SqliteAdapterError
   >;
   readonly release: (
-    permit: P39DatabaseWriterPermit,
-  ) => Effect.Effect<void, P39WriterLockFailure>;
+    permit: DatabaseWriterPermit,
+  ) => Effect.Effect<void, DatabaseWriterLockFailure>;
 }
 
-export class P39WriterLockClient extends Context.Service<
-  P39WriterLockClient,
-  P39WriterLockClientService
->()("arbor/P39WriterLockClient") {}
+export class DatabaseWriterLockClient extends Context.Service<
+  DatabaseWriterLockClient,
+  DatabaseWriterLockClientService
+>()("arbor/DatabaseWriterLockClient") {}
 
 /** v1 supports one OS identity owning the daemon, maintenance process, primary,
  * writer lock and audit sidecar. Different owners and any other writers fail
  * closed; deployments needing separate service/operator identities need a
  * separately governed shared-ACL profile. */
-const validateP39ProtectedPaths = (
+const validateProtectedPaths = (
   paths: ReadonlyArray<P39WindowsProtectedPath>,
 ): boolean => {
   if (paths.length === 0) return false;
@@ -90,7 +90,7 @@ const validateP39ProtectedPaths = (
       }
     }
     if (process.platform === "win32") {
-      return validateP39WindowsProtectedPaths(paths);
+      return validateWindowsProtectedPaths(paths);
     }
     const currentUid = process.getuid?.();
     if (currentUid === undefined) return false;
@@ -100,7 +100,7 @@ const validateP39ProtectedPaths = (
       }
       const mode = Number(stat.mode & 0o7777n);
       if (
-        !p39SameOperatingSystemIdentity(
+        !sameOperatingSystemIdentity(
           `uid:${stat.uid}`,
           `uid:${currentUid}`,
         ) ||
@@ -116,19 +116,19 @@ const validateP39ProtectedPaths = (
   }
 };
 
-export const validateP39ProtectedDirectory = (directory: string): boolean =>
-  validateP39ProtectedPaths([{ path: directory, kind: "directory" }]);
+export const validateProtectedDirectory = (directory: string): boolean =>
+  validateProtectedPaths([{ path: directory, kind: "directory" }]);
 
-export const validateP39ProtectedFile = (filename: string): boolean =>
-  validateP39ProtectedPaths([{ path: filename, kind: "file" }]);
+export const validateProtectedFile = (filename: string): boolean =>
+  validateProtectedPaths([{ path: filename, kind: "file" }]);
 
 /** A primary-adjacent lock path shared by daemon and maintenance under the same
  * validated OS identity. The v1 owner profile deliberately rejects other OS
  * identities before either process can migrate or assemble P4. */
-const p39WriterLockFilenameValidatedParent = (
+const databaseWriterLockFilenameValidatedParent = (
   primaryDatabaseFilename: string,
   parentAlreadyValidated: boolean,
-): string | P39WriterLockFailure => {
+): string | DatabaseWriterLockFailure => {
   if (
     primaryDatabaseFilename === ":memory:" ||
     primaryDatabaseFilename.trim().length === 0 ||
@@ -148,7 +148,7 @@ const p39WriterLockFilenameValidatedParent = (
         !/^(?:\\\\\?\\)?[a-z]:\\/iu.test(canonical))
     ) {
       return {
-        _tag: "P39WriterLockFailure",
+        _tag: "DatabaseWriterLockFailure",
         code: "P39_WRITER_LOCK_PATH_INVALID",
       };
     }
@@ -174,7 +174,7 @@ const p39WriterLockFilenameValidatedParent = (
     if (
       !existsSync(filename) &&
       !parentAlreadyValidated &&
-      !validateP39ProtectedPaths([
+      !validateProtectedPaths([
         { path: parent, kind: "directory" },
         { path: canonical, kind: "file" },
       ])
@@ -219,7 +219,7 @@ const p39WriterLockFilenameValidatedParent = (
       return invalidLockPath();
     }
     if (
-      !validateP39ProtectedPaths([
+      !validateProtectedPaths([
         { path: parent, kind: "directory" },
         { path: canonical, kind: "file" },
         { path: canonicalLock, kind: "file" },
@@ -236,12 +236,12 @@ const p39WriterLockFilenameValidatedParent = (
 /** A primary-adjacent lock path shared by daemon and maintenance under the same
  * validated OS identity. The v1 owner profile deliberately rejects other OS
  * identities before either process can migrate or assemble P4. */
-export const p39WriterLockFilename = (
+export const databaseWriterLockFilename = (
   primaryDatabaseFilename: string,
-): string | P39WriterLockFailure =>
-  p39WriterLockFilenameValidatedParent(primaryDatabaseFilename, false);
+): string | DatabaseWriterLockFailure =>
+  databaseWriterLockFilenameValidatedParent(primaryDatabaseFilename, false);
 
-export interface P39PreparedPrimaryDatabasePath {
+export interface PreparedPrimaryDatabasePath {
   readonly databaseFilename: string;
   readonly writerLockFilename: string;
 }
@@ -249,9 +249,9 @@ export interface P39PreparedPrimaryDatabasePath {
 /** Prepare a new zero-byte SQLite file only after the parent volume is known
  * local and supported. This gives every daemon/maintenance process the same
  * device+file-id lock key, including their first startup. */
-export const prepareP39PrimaryDatabasePath = (
+export const preparePrimaryDatabasePath = (
   filename: string,
-): P39PreparedPrimaryDatabasePath | P39WriterLockFailure => {
+): PreparedPrimaryDatabasePath | DatabaseWriterLockFailure => {
   if (
     filename === ":memory:" ||
     filename.trim().length === 0 ||
@@ -272,7 +272,7 @@ export const prepareP39PrimaryDatabasePath = (
     ) {
       return invalidLockPath();
     }
-    if (!validateP39ProtectedDirectory(canonicalParent)) {
+    if (!validateProtectedDirectory(canonicalParent)) {
       return unsupportedWriterDeployment();
     }
     if (!existsSync(resolved)) {
@@ -303,7 +303,7 @@ export const prepareP39PrimaryDatabasePath = (
     ) {
       return invalidLockPath();
     }
-    const lockFilename = p39WriterLockFilenameValidatedParent(canonical, true);
+    const lockFilename = databaseWriterLockFilenameValidatedParent(canonical, true);
     return typeof lockFilename === "string"
       ? { databaseFilename: canonical, writerLockFilename: lockFilename }
       : lockFilename;
@@ -312,24 +312,24 @@ export const prepareP39PrimaryDatabasePath = (
   }
 };
 
-const invalidLockPath = (): P39WriterLockFailure => ({
-  _tag: "P39WriterLockFailure",
+const invalidLockPath = (): DatabaseWriterLockFailure => ({
+  _tag: "DatabaseWriterLockFailure",
   code: "P39_WRITER_LOCK_PATH_INVALID",
 });
 
-const unsupportedWriterDeployment = (): P39WriterLockFailure => ({
-  _tag: "P39WriterLockFailure",
+const unsupportedWriterDeployment = (): DatabaseWriterLockFailure => ({
+  _tag: "DatabaseWriterLockFailure",
   code: "P39_WRITER_LOCK_UNSUPPORTED_DEPLOYMENT",
 });
 
-const writerLockAcquireFailed = (cause?: unknown): P39WriterLockFailure => ({
-  _tag: "P39WriterLockFailure",
+const writerLockAcquireFailed = (cause?: unknown): DatabaseWriterLockFailure => ({
+  _tag: "DatabaseWriterLockFailure",
   code: "P39_WRITER_LOCK_ACQUIRE_FAILED",
   ...(cause === undefined ? {} : { cause }),
 });
 
-const writerLockSchemaInvalid = (cause?: unknown): P39WriterLockFailure => ({
-  _tag: "P39WriterLockFailure",
+const writerLockSchemaInvalid = (cause?: unknown): DatabaseWriterLockFailure => ({
+  _tag: "DatabaseWriterLockFailure",
   code: "P39_WRITER_LOCK_SCHEMA_INVALID",
   ...(cause === undefined ? {} : { cause }),
 });
@@ -345,13 +345,13 @@ const isSqliteLockContention = (cause: unknown): cause is SqlError =>
   "_tag" in cause.reason &&
   cause.reason._tag === "LockTimeoutError";
 
-const isP39WriterLockFailure = (
+const isDatabaseWriterLockFailure = (
   cause: unknown,
-): cause is P39WriterLockFailure =>
+): cause is DatabaseWriterLockFailure =>
   typeof cause === "object" &&
   cause !== null &&
   "_tag" in cause &&
-  cause._tag === "P39WriterLockFailure";
+  cause._tag === "DatabaseWriterLockFailure";
 
 const isSqliteAdapterError = (cause: unknown): cause is SqliteAdapterError =>
   typeof cause === "object" &&
@@ -386,18 +386,18 @@ const isSupportedLocalFilesystem = (path: string): boolean => {
  * and EXCLUSIVE VFS locks provide daemon-reader / maintenance-writer exclusion.
  * It contains no application data and is separate from both primary and audit
  * sidecar databases. Process death closes SQLite handles and releases the lock. */
-export const p39WriterLockLayer = (
+export const databaseWriterLockLayer = (
   filename: string,
   busyTimeoutMs = 30_000,
 ): Layer.Layer<
-  P39WriterLockClient,
-  SqliteAdapterError | P39WriterLockFailure
+  DatabaseWriterLockClient,
+  SqliteAdapterError | DatabaseWriterLockFailure
 > => {
   const lockClient = Layer.effect(
-    P39WriterLockClient,
+    DatabaseWriterLockClient,
     Effect.gen(function* () {
       const parent = dirname(filename);
-      if (!validateP39ProtectedPaths([{ path: parent, kind: "directory" }])) {
+      if (!validateProtectedPaths([{ path: parent, kind: "directory" }])) {
         return yield* Effect.fail(unsupportedWriterDeployment());
       }
       if (!existsSync(filename)) {
@@ -427,7 +427,7 @@ export const p39WriterLockLayer = (
         }
       }
       if (
-        !validateP39ProtectedPaths([
+        !validateProtectedPaths([
           { path: parent, kind: "directory" },
           { path: filename, kind: "file" },
         ])
@@ -448,12 +448,12 @@ export const p39WriterLockLayer = (
           busyTimeout: Duration.zero,
         });
       const acquireOnce = (
-        mode: P39DatabaseWriterPermit["mode"],
+        mode: DatabaseWriterPermit["mode"],
         deadline: number,
         enforceDeadline: boolean,
       ): Effect.Effect<
-        P39DatabaseWriterPermit,
-        SqlError | P39WriterLockFailure | SqliteAdapterError
+        DatabaseWriterPermit,
+        SqlError | DatabaseWriterLockFailure | SqliteAdapterError
       > =>
         Effect.acquireUseRelease(
           Scope.make(),
@@ -599,7 +599,7 @@ export const p39WriterLockLayer = (
               return yield* acquireInScope.pipe(
                 Effect.mapError((cause) => {
                   if (isSqliteLockContention(cause)) return cause;
-                  if (isP39WriterLockFailure(cause)) return cause;
+                  if (isDatabaseWriterLockFailure(cause)) return cause;
                   if (isSqliteAdapterError(cause)) return cause;
                   return initializationComplete
                     ? writerLockAcquireFailed(cause)
@@ -625,7 +625,7 @@ export const p39WriterLockLayer = (
             return Scope.close(scope, exit);
           },
         );
-      const acquire = (mode: P39DatabaseWriterPermit["mode"]) => {
+      const acquire = (mode: DatabaseWriterPermit["mode"]) => {
         return Effect.suspend(() => {
           const timeout = Number.isFinite(busyTimeoutMs)
             ? Math.max(0, Math.floor(busyTimeoutMs))
@@ -634,8 +634,8 @@ export const p39WriterLockLayer = (
           const loop = (
             firstAttempt: boolean,
           ): Effect.Effect<
-            P39DatabaseWriterPermit,
-            P39WriterLockFailure | SqliteAdapterError
+            DatabaseWriterPermit,
+            DatabaseWriterLockFailure | SqliteAdapterError
           > =>
             Effect.suspend(() => {
               if (!firstAttempt && performance.now() >= deadline) {
@@ -659,7 +659,7 @@ export const p39WriterLockLayer = (
                       Duration.millis(Math.min(10, remainingMs)),
                     ).pipe(Effect.flatMap(() => loop(false)));
                   }
-                  if (isP39WriterLockFailure(result.failure)) {
+                  if (isDatabaseWriterLockFailure(result.failure)) {
                     return Effect.fail(result.failure);
                   }
                   if (isSqliteAdapterError(result.failure)) {
@@ -672,13 +672,13 @@ export const p39WriterLockLayer = (
           return loop(true);
         });
       };
-      const release = (permit: P39DatabaseWriterPermit) => {
+      const release = (permit: DatabaseWriterPermit) => {
         return Effect.uninterruptible(
           Effect.suspend(() => {
             const active = activePermits.get(permit.token);
             if (active === undefined) {
               return Effect.fail({
-                _tag: "P39WriterLockFailure" as const,
+                _tag: "DatabaseWriterLockFailure" as const,
                 code: "P39_WRITER_LOCK_RELEASE_FAILED" as const,
               });
             }
@@ -688,7 +688,7 @@ export const p39WriterLockLayer = (
                 return Scope.close(active.scope, Exit.void);
               }),
               Effect.mapError((cause) => ({
-                _tag: "P39WriterLockFailure" as const,
+                _tag: "DatabaseWriterLockFailure" as const,
                 code: "P39_WRITER_LOCK_RELEASE_FAILED" as const,
                 cause,
               })),
@@ -707,7 +707,7 @@ export const p39WriterLockLayer = (
           }
         }),
       );
-      return P39WriterLockClient.of({
+      return DatabaseWriterLockClient.of({
         acquire: (mode) => acquire(mode),
         release,
       });
@@ -716,25 +716,25 @@ export const p39WriterLockLayer = (
   return lockClient;
 };
 
-export const acquireP39RuntimeWriterPermit = (): Effect.Effect<
-  P39DatabaseWriterPermit,
-  P39WriterLockFailure | SqliteAdapterError,
-  P39WriterLockClient
+export const acquireRuntimeWriterPermit = (): Effect.Effect<
+  DatabaseWriterPermit,
+  DatabaseWriterLockFailure | SqliteAdapterError,
+  DatabaseWriterLockClient
 > =>
-  Effect.flatMap(P39WriterLockClient, (client) =>
+  Effect.flatMap(DatabaseWriterLockClient, (client) =>
     client.acquire("RuntimeShared"),
   );
 
-export const acquireP39MaintenanceWriterExclusion = (): Effect.Effect<
-  P39DatabaseWriterPermit,
-  P39WriterLockFailure | SqliteAdapterError,
-  P39WriterLockClient
+export const acquireMaintenanceWriterExclusion = (): Effect.Effect<
+  DatabaseWriterPermit,
+  DatabaseWriterLockFailure | SqliteAdapterError,
+  DatabaseWriterLockClient
 > =>
-  Effect.flatMap(P39WriterLockClient, (client) =>
+  Effect.flatMap(DatabaseWriterLockClient, (client) =>
     client.acquire("MaintenanceExclusive"),
   );
 
-export const releaseP39WriterPermit = (
-  _permit: P39DatabaseWriterPermit,
-): Effect.Effect<void, P39WriterLockFailure, P39WriterLockClient> =>
-  Effect.flatMap(P39WriterLockClient, (client) => client.release(_permit));
+export const releaseDatabaseWriterPermit = (
+  _permit: DatabaseWriterPermit,
+): Effect.Effect<void, DatabaseWriterLockFailure, DatabaseWriterLockClient> =>
+  Effect.flatMap(DatabaseWriterLockClient, (client) => client.release(_permit));

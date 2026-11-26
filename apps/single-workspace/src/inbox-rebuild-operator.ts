@@ -18,7 +18,7 @@ import {
   P39_MAINTENANCE_MIGRATIONS,
   type P39MaintenanceFailure,
   type P39MaintenanceSqlClient,
-  p39WriterLockFilename,
+  databaseWriterLockFilename,
   RetryVerificationOriginRepositoryLive,
   runMigrations,
   runP39SqliteMaintenanceWithPermit,
@@ -57,12 +57,12 @@ export interface InboxRebuildArguments {
  * an already-qualified SQLite permit harness so crash/replay cases do not
  * repeatedly re-qualify the unrelated Windows ACL boundary. */
 export interface InboxRebuildDependencies {
-  readonly writerLockFilename: typeof p39WriterLockFilename;
+  readonly writerLockFilename: typeof databaseWriterLockFilename;
   readonly runMaintenanceWithPermit: typeof runP39SqliteMaintenanceWithPermit;
 }
 
 const productionInboxRebuildDependencies: InboxRebuildDependencies = {
-  writerLockFilename: p39WriterLockFilename,
+  writerLockFilename: databaseWriterLockFilename,
   runMaintenanceWithPermit: runP39SqliteMaintenanceWithPermit,
 };
 

@@ -32,25 +32,25 @@ import {
   readP39BlockReports,
   requireP39RuntimeSchema,
   runP39MaintenanceGate,
-  validateP39MigrationPrefix,
+  validateMigrationPrefix,
   writeP39BlockReportAndReadBack,
 } from "../src/p39-maintenance.js";
 import { runP39SqliteMaintenance } from "../src/p39-maintenance-adapter.js";
 import {
-  validateP39ReportSidecarDatabase,
-  validateP39ReportSidecarPath,
+  validateReportSidecarDatabase,
+  validateReportSidecarPath,
 } from "../src/p39-report-database.js";
 import {
   type P39WindowsSecurityQueryExecutor,
-  validateP39WindowsProtectedPaths,
+  validateWindowsProtectedPaths,
 } from "../src/p39-windows-security.js";
 import {
-  p39SameOperatingSystemIdentity,
-  p39WriterLockFilename,
-  prepareP39PrimaryDatabasePath,
-  validateP39ProtectedDirectory,
-  validateP39ProtectedFile,
-} from "../src/p39-writer-lock.js";
+  sameOperatingSystemIdentity,
+  databaseWriterLockFilename,
+  preparePrimaryDatabasePath,
+  validateProtectedDirectory,
+  validateProtectedFile,
+} from "../src/database-writer-lock.js";
 
 const crossPlatformP39PathQualificationAvailable =
   isWindowsPathQualificationEnabled(
@@ -63,7 +63,7 @@ const inheritedTempQualificationAvailable = (() => {
   const directory = mkdtempSync(join(tmpdir(), "arbor-p39-temp-probe-"));
   try {
     if (process.platform !== "win32") chmodSync(directory, 0o700);
-    return validateP39ProtectedDirectory(directory);
+    return validateProtectedDirectory(directory);
   } finally {
     removeP39PrivateTestDirectory(directory);
   }
@@ -348,21 +348,21 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
       try {
         createP39PrivateTestFile(primary);
         const normalized = await Effect.runPromise(
-          validateP39ReportSidecarPath(primary, sidecar),
+          validateReportSidecarPath(primary, sidecar),
         );
         expect(normalized.endsWith("reports.sqlite")).toBe(true);
         await Effect.runPromise(
-          validateP39ReportSidecarDatabase(primary, sidecar),
+          validateReportSidecarDatabase(primary, sidecar),
         );
         const sidecarIdentityBefore = statSync(sidecar, { bigint: true });
         await Effect.runPromise(
-          validateP39ReportSidecarDatabase(primary, sidecar),
+          validateReportSidecarDatabase(primary, sidecar),
         );
         const sidecarIdentityAfter = statSync(sidecar, { bigint: true });
         expect(sidecarIdentityAfter.dev).toBe(sidecarIdentityBefore.dev);
         expect(sidecarIdentityAfter.ino).toBe(sidecarIdentityBefore.ino);
         const samePath = await Effect.runPromise(
-          Effect.flip(validateP39ReportSidecarPath(primary, primary)),
+          Effect.flip(validateReportSidecarPath(primary, primary)),
         );
         expect(samePath.code).toBe("P39_REPORT_DB_PATH_INVALID");
       } finally {
@@ -386,7 +386,7 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
         createP39PrivateTestFile(primary);
         const tempDenied = await Effect.runPromise(
           Effect.flip(
-            validateP39ReportSidecarPath(
+            validateReportSidecarPath(
               primary,
               join(tmpdir(), "p39-report-sidecar.sqlite"),
             ),
@@ -396,12 +396,12 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
         createP39PrivateTestFile(otherStore);
         const otherStoreAliasDenied = await Effect.runPromise(
           Effect.flip(
-            validateP39ReportSidecarPath(primary, otherStore, [otherStore]),
+            validateReportSidecarPath(primary, otherStore, [otherStore]),
           ),
         );
         linkSync(primary, hardLink);
         const hardLinkDenied = await Effect.runPromise(
-          Effect.flip(validateP39ReportSidecarPath(primary, localReport)),
+          Effect.flip(validateReportSidecarPath(primary, localReport)),
         );
 
         expect(hardLinkDenied.code).toBe("P39_UNSUPPORTED_DEPLOYMENT");
@@ -419,19 +419,19 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
     () => {
       const directory = makeP39PrivateTestDirectory(
         process.cwd(),
-        ".p39-writer-lock-test-",
+        ".database-writer-lock-test-",
       );
       const primary = join(directory, "primary.sqlite");
       const hardLink = join(directory, "primary-hardlink.sqlite");
       try {
-        const prepared = prepareP39PrimaryDatabasePath(primary);
+        const prepared = preparePrimaryDatabasePath(primary);
         expect("databaseFilename" in prepared).toBe(true);
         if (!("databaseFilename" in prepared)) return;
-        expect(p39WriterLockFilename(primary)).toBe(
+        expect(databaseWriterLockFilename(primary)).toBe(
           prepared.writerLockFilename,
         );
         linkSync(primary, hardLink);
-        expect(p39WriterLockFilename(hardLink)).toMatchObject({
+        expect(databaseWriterLockFilename(hardLink)).toMatchObject({
           code: "P39_WRITER_LOCK_PATH_INVALID",
         });
       } finally {
@@ -453,21 +453,21 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
       const savedLocalAppData = process.env.LOCALAPPDATA;
       const savedXdgStateHome = process.env.XDG_STATE_HOME;
       try {
-        const prepared = prepareP39PrimaryDatabasePath(primary);
+        const prepared = preparePrimaryDatabasePath(primary);
         expect("databaseFilename" in prepared).toBe(true);
         if (!("databaseFilename" in prepared)) return;
         process.env.LOCALAPPDATA = join(directory, "account-a-state");
         process.env.XDG_STATE_HOME = join(directory, "account-a-state");
-        const accountAPath = p39WriterLockFilename(primary);
+        const accountAPath = databaseWriterLockFilename(primary);
         process.env.LOCALAPPDATA = join(directory, "account-b-state");
         process.env.XDG_STATE_HOME = join(directory, "account-b-state");
-        const accountBPath = p39WriterLockFilename(primary);
+        const accountBPath = databaseWriterLockFilename(primary);
         expect(accountBPath).toBe(accountAPath);
         expect(accountAPath).toBe(prepared.writerLockFilename);
 
         if (process.platform === "win32") linkSync(primary, alias);
         else symlinkSync(primary, alias);
-        expect(typeof p39WriterLockFilename(alias)).not.toBe("string");
+        expect(typeof databaseWriterLockFilename(alias)).not.toBe("string");
       } finally {
         if (savedLocalAppData === undefined) delete process.env.LOCALAPPDATA;
         else process.env.LOCALAPPDATA = savedLocalAppData;
@@ -486,7 +486,7 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
     );
     try {
       chmodSync(directory, 0o777);
-      expect(validateP39ProtectedDirectory(directory)).toBe(false);
+      expect(validateProtectedDirectory(directory)).toBe(false);
     } finally {
       chmodSync(directory, 0o700);
       rmSync(directory, { recursive: true, force: true });
@@ -500,7 +500,7 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
         join(tmpdir(), "arbor-p39-inherited-temp-"),
       );
       try {
-        expect(validateP39ProtectedDirectory(directory)).toBe(true);
+        expect(validateProtectedDirectory(directory)).toBe(true);
       } finally {
         removeP39PrivateTestDirectory(directory);
       }
@@ -517,8 +517,8 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
       const filename = join(directory, "primary.sqlite");
       try {
         createP39PrivateTestFile(filename);
-        expect(validateP39ProtectedDirectory(directory)).toBe(true);
-        expect(validateP39ProtectedFile(filename)).toBe(true);
+        expect(validateProtectedDirectory(directory)).toBe(true);
+        expect(validateProtectedFile(filename)).toBe(true);
       } finally {
         removeP39PrivateTestDirectory(directory);
       }
@@ -538,7 +538,7 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
         createP39PrivateTestFile(filename);
         addEveryoneWriterAce(filename);
         expect(
-          validateP39WindowsProtectedPaths([
+          validateWindowsProtectedPaths([
             { path: directory, kind: "directory" },
             { path: filename, kind: "file" },
           ]),
@@ -578,8 +578,8 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
             "$a=$i.GetAccessControl();$a.SetOwner([Security.Principal.SecurityIdentifier]::new('S-1-5-18'))",
           ),
         );
-        expect(validateP39WindowsProtectedPaths(paths, executor)).toBe(false);
-        expect(validateP39ProtectedFile(filename)).toBe(true);
+        expect(validateWindowsProtectedPaths(paths, executor)).toBe(false);
+        expect(validateProtectedFile(filename)).toBe(true);
       } finally {
         removeP39PrivateTestDirectory(directory);
       }
@@ -607,8 +607,8 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
             `$d=[pscustomobject]@{DriveType='${driveType}';DriveFormat='${driveFormat}'}`,
           ),
         );
-        expect(validateP39WindowsProtectedPaths(paths, executor)).toBe(false);
-        expect(validateP39ProtectedFile(filename)).toBe(true);
+        expect(validateWindowsProtectedPaths(paths, executor)).toBe(false);
+        expect(validateProtectedFile(filename)).toBe(true);
       } finally {
         removeP39PrivateTestDirectory(directory);
       }
@@ -624,7 +624,7 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
     const primary = join(directory, "primary.sqlite");
     try {
       chmodSync(directory, 0o777);
-      const prepared = prepareP39PrimaryDatabasePath(primary);
+      const prepared = preparePrimaryDatabasePath(primary);
       expect("databaseFilename" in prepared).toBe(false);
       expect(existsSync(primary)).toBe(false);
     } finally {
@@ -635,20 +635,20 @@ describe("AH7-DG-02 P39 migration module boundary", () => {
 
   it("accepts same-owner deployment identity and rejects another OS account", () => {
     expect(
-      p39SameOperatingSystemIdentity("sid:S-1-5-21-100", "sid:S-1-5-21-100"),
+      sameOperatingSystemIdentity("sid:S-1-5-21-100", "sid:S-1-5-21-100"),
     ).toBe(true);
     expect(
-      p39SameOperatingSystemIdentity("sid:S-1-5-21-100", "sid:S-1-5-21-200"),
+      sameOperatingSystemIdentity("sid:S-1-5-21-100", "sid:S-1-5-21-200"),
     ).toBe(false);
-    expect(p39SameOperatingSystemIdentity("uid:1000", "uid:1001")).toBe(false);
+    expect(sameOperatingSystemIdentity("uid:1000", "uid:1001")).toBe(false);
   });
 
   it("requires the exact 0037→0038→0039 suffix and refuses service at user_version 39", async () => {
     const exact = await Effect.runPromise(
-      validateP39MigrationPrefix(36, [{ id: 37 }, { id: 38 }, { id: 39 }]),
+      validateMigrationPrefix(36, [{ id: 37 }, { id: 38 }, { id: 39 }]),
     );
     const skipped = await Effect.runPromise(
-      Effect.flip(validateP39MigrationPrefix(36, [{ id: 39 }])),
+      Effect.flip(validateMigrationPrefix(36, [{ id: 39 }])),
     );
     const service = await Effect.runPromise(
       Effect.flip(requireP39RuntimeSchema(39)),

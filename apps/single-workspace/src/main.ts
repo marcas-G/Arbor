@@ -9,13 +9,13 @@ import {
   startupRecovery,
 } from "@arbor/execution-runtime";
 import {
-  acquireP39RuntimeWriterPermit,
+  acquireRuntimeWriterPermit,
   type P39MaintenanceFailure,
-  type P39WriterLockFailure,
+  type DatabaseWriterLockFailure,
   p39UnsupportedDeployment,
-  p39WriterLockLayer,
-  prepareP39PrimaryDatabasePath,
-  releaseP39WriterPermit,
+  databaseWriterLockLayer,
+  preparePrimaryDatabasePath,
+  releaseDatabaseWriterPermit,
   type SqliteAdapterError,
 } from "@arbor/persistence-sqlite";
 import {
@@ -763,14 +763,14 @@ const withP39RuntimeWriterPermit = <A, E, R>(
   use: Effect.Effect<A, E, R>,
 ): Effect.Effect<
   A,
-  E | P39MaintenanceFailure | P39WriterLockFailure | SqliteAdapterError,
+  E | P39MaintenanceFailure | DatabaseWriterLockFailure | SqliteAdapterError,
   Exclude<R, Scope.Scope>
 > => {
   reportStartupPhase(
     startupDiagnosticProbe,
     "p39.runtime-path-validation.before",
   );
-  const prepared = prepareP39PrimaryDatabasePath(primaryDatabaseFilename);
+  const prepared = preparePrimaryDatabasePath(primaryDatabaseFilename);
   reportStartupPhase(
     startupDiagnosticProbe,
     "p39.runtime-path-validation.after",
@@ -786,7 +786,7 @@ const withP39RuntimeWriterPermit = <A, E, R>(
             startupDiagnosticProbe,
             "p39.writer-permit-acquire.before",
           );
-          const permit = yield* acquireP39RuntimeWriterPermit();
+          const permit = yield* acquireRuntimeWriterPermit();
           reportStartupPhase(
             startupDiagnosticProbe,
             "p39.writer-permit-acquire.after",
@@ -794,16 +794,16 @@ const withP39RuntimeWriterPermit = <A, E, R>(
           return permit;
         }),
         () => use,
-        releaseP39WriterPermit,
+        releaseDatabaseWriterPermit,
       ),
-      p39WriterLockLayer(prepared.writerLockFilename),
+      databaseWriterLockLayer(prepared.writerLockFilename),
     ),
   ).pipe(
     Effect.mapError((cause) =>
       typeof cause === "object" &&
       cause !== null &&
       "_tag" in cause &&
-      cause._tag === "P39WriterLockFailure" &&
+      cause._tag === "DatabaseWriterLockFailure" &&
       (cause.code === "P39_WRITER_LOCK_PATH_INVALID" ||
         cause.code === "P39_WRITER_LOCK_UNSUPPORTED_DEPLOYMENT")
         ? p39UnsupportedDeployment(cause.code)
