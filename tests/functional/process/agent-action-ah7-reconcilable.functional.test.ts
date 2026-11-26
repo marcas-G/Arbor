@@ -3906,7 +3906,24 @@ describe("AH7 Reconcilable tool intent after process crash", () => {
             ),
           ),
         ).toEqual(crashedTarget.providerTurns);
-        expect(targetProviderCalls).toBeLessThanOrEqual(2);
+        // B2 oracle precision: the model-call count is not the invariant.
+        // After the replay denial the driver legally continues the turn
+        // loop — the scripted Text replies never claim completion, so the
+        // conversation runs until RuntimeSafety stops the non-progress
+        // chatter (observed 2..6 calls; the stop point is
+        // content/timing-dependent, which is what made the old <= 2 bound
+        // flaky). The real invariants: the reconciled-no-effect denial
+        // lands exactly once for the crashed invocation, the shell never
+        // re-executes (the marker count below), and the chatter stays
+        // inside the MAX_TURNS budget.
+        expect(
+          recovered.toolResults.filter((row) =>
+            String(row.payload_json).includes(
+              "authoritative source confirmed that the effect attempt did not occur",
+            ),
+          ),
+        ).toHaveLength(1);
+        expect(targetProviderCalls).toBeLessThanOrEqual(24);
         if (noEffectRetryDenied) {
           expect(contentAfter).toBeNull();
           expect(externalEffects).toHaveLength(0);
