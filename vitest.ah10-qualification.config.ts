@@ -5,7 +5,10 @@ export default defineConfig({
     globalSetup: ["./tests/support/p39-windows-global-setup.ts"],
     setupFiles: ["./tests/support/p39-windows-test-setup.ts"],
     include: [
-      "tests/functional/process/agent-loop-ah10-direct-child-assign-work-receipt-binding.functional.test.ts",
+      "tests/functional/process/ah10-child/committed-receipts.functional.test.ts",
+      "tests/functional/process/ah10-child/corrupt-binding-attention.functional.test.ts",
+      "tests/functional/process/ah10-child/legacy-upgrade.functional.test.ts",
+      "tests/functional/process/ah10-child/target-degradation.functional.test.ts",
       "tests/functional/process/ah10-p10-attention-materialization.functional.test.ts",
     ],
     exclude: ["**/node_modules/**"],
