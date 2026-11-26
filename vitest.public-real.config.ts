@@ -9,6 +9,7 @@ export default defineConfig({
     setupFiles: ["./tests/support/p39-windows-test-setup.ts"],
     include: [
       "tests/capability/real-provider/public-s*-*.test.ts",
+      "tests/capability/real-provider/s1/*.test.ts",
       "tests/capability/real-provider/s4/*.test.ts",
     ],
     exclude: ["**/node_modules/**"],
