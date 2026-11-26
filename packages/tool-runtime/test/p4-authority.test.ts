@@ -98,7 +98,7 @@ const check = (
     ...overrides,
   });
 
-describe("P4 invocation authority", () => {
+describe("invocation authority", () => {
   it("accepts an exact match", () => {
     expect(check()._tag).toBe("Ok");
   });

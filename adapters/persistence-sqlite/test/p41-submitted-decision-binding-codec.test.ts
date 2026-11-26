@@ -23,7 +23,7 @@ const validRow = {
   first_detected_at: "2026-10-12T00:00:00.000Z",
 };
 
-describe("P41 submitted DecisionEpisode fact codec", () => {
+describe("submitted DecisionEpisode fact codec", () => {
   it("decodes only the closed failure-code set and valid row primitives", () => {
     expect(
       decodeSubmittedDecisionBindingFailureCode("StepManifestMismatch"),

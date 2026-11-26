@@ -32,7 +32,7 @@ const sandbox = {
   writableRegions: [],
 };
 
-describe("P4 list tool", () => {
+describe("list tool", () => {
   it("lists a relative target within the sandbox", async () => {
     const result = await Effect.runPromise(
       listExecutor.execute({

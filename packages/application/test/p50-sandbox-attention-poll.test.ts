@@ -23,7 +23,7 @@ const pollClaim = {
   leaseExpiresAt: "2026-10-19T10:00:30.000Z",
 };
 
-describe("P50 sandbox unavailable Attention queue polling", () => {
+describe("sandbox unavailable Attention queue polling", () => {
   it.effect(
     "claims separately, consumes in the poll transaction, and commits the dispatcher lease",
     () =>

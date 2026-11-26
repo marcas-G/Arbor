@@ -32,7 +32,7 @@ const executionId = parse(ExecutionId)(
   "exe_018f2b3c-4d5e-7abc-8def-0123456789a1",
 );
 
-describe("P17 conversation response stores", () => {
+describe("conversation response stores", () => {
   it.effect(
     "CAS-transitions one eligible Job and records one append-only Attempt",
     () =>

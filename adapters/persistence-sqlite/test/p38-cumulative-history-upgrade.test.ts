@@ -8,7 +8,7 @@ import { runMigrations } from "../src/migrate.js";
 import { P37_MIGRATIONS, P38_MIGRATIONS } from "../src/migrations.js";
 import { P38_EXECUTABLE_APPROVAL_MIGRATION } from "../src/p38-executable-approval-migration.js";
 
-describe("P38 cumulative historical database upgrade", () => {
+describe("cumulative historical database upgrade", () => {
   it.effect(
     "preserves legacy approval identity and the 0033 composite FK through 0038",
     () =>

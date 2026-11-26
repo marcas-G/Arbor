@@ -90,7 +90,7 @@ describe("Native OS Sandbox schema 0049/0050 storage", () => {
     );
   });
 
-  it("normalizes only revoked P29-unbound NULL revisions and creates empty immutable ledgers", async () => {
+  it("normalizes only revoked -unbound NULL revisions and creates empty immutable ledgers", async () => {
     const fixture = await createSchema48TestDatabase();
     try {
       const seed = new DatabaseSync(fixture.databaseFilename);

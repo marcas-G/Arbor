@@ -54,7 +54,7 @@ const requireSchema44Factory = () => {
   return schema44Factory;
 };
 
-describe("P39 ToolReconciliationFactStore", () => {
+describe("ToolReconciliationFactStore", () => {
   it("stores exact bound proof facts idempotently and never invents Success", async () => {
     await withSchema44TestDatabase(
       requireSchema44Factory(),

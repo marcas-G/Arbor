@@ -2,7 +2,7 @@ import { VIEW_IDS } from "@arbor/domain";
 import { describe, expect, it } from "vitest";
 import { makeInvalidationFanout } from "../src/transport/invalidation.js";
 
-describe("P13 TR-W1 invalidation fanout", () => {
+describe("TR-W1 invalidation fanout", () => {
   it("frames carry view + watermark only — no DTO payload", () => {
     const fanout = makeInvalidationFanout();
     const frames: unknown[] = [];

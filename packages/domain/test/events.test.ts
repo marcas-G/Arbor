@@ -260,7 +260,7 @@ describe("domain event catalog", () => {
     }
   });
 
-  it("keeps SandboxPolicyGrantIssued as the exact P1 audit/wake tuple", () => {
+  it("keeps SandboxPolicyGrantIssued as the exact audit/wake tuple", () => {
     const schema = EVENT_CATALOG.SandboxPolicyGrantIssued as unknown as {
       readonly fields: Readonly<Record<string, unknown>>;
     };
@@ -274,7 +274,7 @@ describe("domain event catalog", () => {
     ]);
   });
 
-  it("keeps SandboxPolicyDecisionRecorded as the exact minimal P1 wake tuple", () => {
+  it("keeps SandboxPolicyDecisionRecorded as the exact minimal wake tuple", () => {
     const schema = EVENT_CATALOG.SandboxPolicyDecisionRecorded as unknown as {
       readonly fields: Readonly<Record<string, unknown>>;
     };

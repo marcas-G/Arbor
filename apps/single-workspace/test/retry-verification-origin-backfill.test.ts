@@ -254,7 +254,7 @@ const insertForeignProject = (db: DatabaseSync) => {
   return projectId;
 };
 
-describe("P45 RetryVerification legacy backfill", () => {
+describe("RetryVerification legacy backfill", () => {
   afterEach(() => {
     for (const fixture of fixtures.splice(0)) fixture.cleanup();
   });

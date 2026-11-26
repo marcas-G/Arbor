@@ -105,7 +105,7 @@ const invalidContexts: ReadonlyArray<ToolExecutionContext> = [
   } as ToolExecutionContext,
 ];
 
-describe("P4 requires a context-bound ExecutionOrigin fence", () => {
+describe("requires a context-bound ExecutionOrigin fence", () => {
   it.each(invalidContexts)(
     "fails before definition resolution or any tool effect",
     async (context) => {

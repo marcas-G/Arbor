@@ -81,7 +81,7 @@ const insertBound = (executionId: string, parent: string) =>
     );
   });
 
-describe("P2 DDL", () => {
+describe("DDL", () => {
   it("migrates to user_version 2", async () => {
     const version = await withClient(
       Effect.gen(function* () {

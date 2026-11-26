@@ -144,8 +144,8 @@ const expectedP40Guard = (name: string): string => {
     .replace(/;\s*$/u, "");
 };
 
-describe("P44 ApprovalRejected no-effect migration", () => {
-  it("refuses direct application on schema 42 without changing the version or P40 guards", async () => {
+describe("ApprovalRejected no-effect migration", () => {
+  it("refuses direct application on schema 42 without changing the version or guards", async () => {
     const fixture = await createSchema42TestDatabase();
     try {
       const before = [
@@ -195,7 +195,7 @@ describe("P44 ApprovalRejected no-effect migration", () => {
     }
   }, 180_000);
 
-  it("applies only after isolated dormant P43, preserves P43 tables/relations, and changes exactly the P40 denial allowlist", async () => {
+  it("applies only after isolated dormant , preserves tables/relations, and changes exactly the denial allowlist", async () => {
     const fixture = await createSchema42TestDatabase();
     try {
       const before = new DatabaseSync(fixture.databaseFilename, {
@@ -251,7 +251,7 @@ describe("P44 ApprovalRejected no-effect migration", () => {
     }
   }, 180_000);
 
-  it("records P38 Reject/Expire P4 denials on insert and update, while preserving other P40 guard failures", async () => {
+  it("records Reject/Expire denials on insert and update, while preserving other guard failures", async () => {
     const fixture = await createSchema42TestDatabase();
     try {
       await runP43ThenP44(fixture.databaseFilename);

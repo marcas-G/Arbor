@@ -296,7 +296,7 @@ describe("operator subprocess timeout cleanup", () => {
 });
 
 describe("Inbox operator rebuild CLI contract", () => {
-  it("requires explicit absolute database, P39 sidecar and JSONL manifest paths", () => {
+  it("requires explicit absolute database, sidecar and JSONL manifest paths", () => {
     expect(() => parseInboxRebuildArguments([])).toThrow(/required/u);
     expect(() =>
       parseInboxRebuildArguments([

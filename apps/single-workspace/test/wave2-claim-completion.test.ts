@@ -665,7 +665,7 @@ describe("Wave 2 — model-facing control actions through the adopted route", ()
     );
   });
 
-  it("MAC-P1 binds RootConversation AssignWork to the current Workspace", async () => {
+  it("MAC-binds RootConversation AssignWork to the current Workspace", async () => {
     const { app } = setupApp([]);
     const result = await Effect.runPromise(
       Effect.provide(
@@ -1002,7 +1002,7 @@ describe("Wave 2 — model-facing control actions through the adopted route", ()
     ]);
   }, 120_000);
 
-  it("MAC-P2 exposes governed ProposeChildWorkspace without creating the child before approval", async () => {
+  it("MAC-exposes governed ProposeChildWorkspace without creating the child before approval", async () => {
     const { app } = setupApp([proposeChildTurn]);
     const databaseFilename =
       fixture?.databaseFilename ?? "<fixture unavailable>";
@@ -1039,7 +1039,7 @@ describe("Wave 2 — model-facing control actions through the adopted route", ()
     expect(result.workspaces).toHaveLength(1);
   }, 120_000);
 
-  it("MAC-P1 hides legacy SpawnSpecialist from WorkEpisode new writes", async () => {
+  it("MAC-hides legacy SpawnSpecialist from WorkEpisode new writes", async () => {
     const { app } = setupApp([spawnSpecialistTurn]);
     const result = await Effect.runPromise(
       Effect.provide(runTurns([spawnSpecialistTurn]), app),
@@ -1052,7 +1052,7 @@ describe("Wave 2 — model-facing control actions through the adopted route", ()
     expect(result.workspaces).toHaveLength(1);
   }, 120_000);
 
-  it("MAC-P3 exposes DeclareDependency and persists an Unsatisfied exact contract", async () => {
+  it("MAC-exposes DeclareDependency and persists an Unsatisfied exact contract", async () => {
     const { app } = setupApp([declareDependencyTurn]);
     const result = await Effect.runPromise(
       Effect.provide(

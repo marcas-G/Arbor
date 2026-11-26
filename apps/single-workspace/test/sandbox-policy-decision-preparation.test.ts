@@ -648,7 +648,7 @@ describe("production sandbox decision materializer", () => {
     },
   );
 
-  it("binds P1 preparation to complete current V3 bundle revision/digest", async () => {
+  it("binds preparation to complete current V3 bundle revision/digest", async () => {
     const v3 = {
       ...authorityBundleSnapshot,
       bundle: {
@@ -699,7 +699,7 @@ describe("production sandbox decision materializer", () => {
     });
   });
 
-  it("materializes TrustedLocal from one V2 bundle and complete P11 boundary", async () => {
+  it("materializes TrustedLocal from one V2 bundle and complete boundary", async () => {
     const { preparation, transaction } = fixture();
     const request = payload();
     const prepared = await Effect.runPromise(
@@ -777,7 +777,7 @@ describe("production sandbox decision materializer", () => {
     });
   });
 
-  it("rejects inconsistent P11 observation entries and normalized region set", async () => {
+  it("rejects inconsistent observation entries and normalized region set", async () => {
     const inconsistentResolver: EnvironmentResolverService = {
       observe: (project, addresses) =>
         resolver.observe(project, addresses).pipe(

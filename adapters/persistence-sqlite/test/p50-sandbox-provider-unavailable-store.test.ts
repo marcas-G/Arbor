@@ -379,7 +379,7 @@ const factInput2 = () => ({
   fence: { ...factInput().fence, executionId: executionId2 },
 });
 
-describe("P50 sandbox provider-unavailable fact and Attention queue", () => {
+describe("sandbox provider-unavailable fact and Attention queue", () => {
   it("commits one fenced fact, queue row and wake event; exact retry reuses them", async () => {
     const rawResult = JSON.parse(
       resultFor(

@@ -289,7 +289,7 @@ const scenario = (decision: "Approve" | "Reject") => {
   );
 };
 
-describe("MAC-P1 Root Conversation Work initiation", () => {
+describe("MAC-Root Conversation Work initiation", () => {
   it("pauses before mutation, approves, resumes the same run and creates one exact Work", async () => {
     const result = await scenario("Approve");
     expect(result.approvalBefore).toMatchObject({

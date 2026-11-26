@@ -6,7 +6,7 @@ import { layer } from "../src/client.js";
 import { runMigrations } from "../src/migrate.js";
 import { P23_MIGRATIONS } from "../src/migrations.js";
 
-describe("P23 verification evidence identity migration", () => {
+describe("verification evidence identity migration", () => {
   it.effect("adds the three exact ToolObservation source columns", () =>
     Effect.gen(function* () {
       yield* runMigrations(P23_MIGRATIONS);

@@ -29,7 +29,7 @@ const runP45 = (filename: string) =>
     ),
   );
 
-describe("P45 RetryVerification origin and UnboundLegacy schema", () => {
+describe("RetryVerification origin and UnboundLegacy schema", () => {
   it("preserves existing Inbox rows and adds exact revision/timestamp state", async () => {
     const fixture = await createSchema44TestDatabase();
     try {
@@ -163,7 +163,7 @@ describe("P45 RetryVerification origin and UnboundLegacy schema", () => {
     }
   }, 180_000);
 
-  it("rolls back all P45 DDL when a later statement fails", async () => {
+  it("rolls back all DDL when a later statement fails", async () => {
     const fixture = await createSchema44TestDatabase();
     try {
       const db = new DatabaseSync(fixture.databaseFilename);

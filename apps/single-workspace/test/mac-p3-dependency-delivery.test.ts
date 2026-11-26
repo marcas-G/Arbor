@@ -88,7 +88,7 @@ beforeEach(() => {
   fixture = fixtureFactory.create();
 });
 
-describe("MAC-P3 cross-Work deliverable closure", () => {
+describe("MAC-cross-Work deliverable closure", () => {
   it.effect(
     "declares, produces, delivers, deterministically satisfies and wakes without a model satisfy action",
     () =>

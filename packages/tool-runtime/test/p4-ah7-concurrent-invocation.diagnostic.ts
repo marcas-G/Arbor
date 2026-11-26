@@ -92,7 +92,7 @@ const context: ToolExecutionContext = {
   requestedAt: "2026-10-06T00:00:00.000Z",
 };
 
-describe("AH7 concurrent ToolInvocationId reentry", () => {
+describe("concurrent ToolInvocationId reentry", () => {
   it("admits one intent and one non-idempotent effect; the racing duplicate fails closed", async () => {
     let invocation: ToolInvocationRecord | undefined;
     let firstLookupCount = 0;

@@ -32,7 +32,7 @@ const sandbox = {
   writableRegions: [],
 };
 
-describe("P4 read tool", () => {
+describe("read tool", () => {
   it("reads a bounded slice within the sandbox", async () => {
     const result = await Effect.runPromise(
       readExecutor.execute({

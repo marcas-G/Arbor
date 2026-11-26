@@ -130,7 +130,7 @@ describe("p8-programs", () => {
     }
   });
 
-  it("registers the two P8 families beside the four P6 families", () => {
+  it("registers the two families beside the four families", () => {
     expect(PROGRAM_REGISTRY).toHaveLength(6);
     expect(p8Entries.map((entry) => entry.familyId)).toEqual([
       "p8-verification",
@@ -144,7 +144,7 @@ describe("p8-programs", () => {
     ]);
   });
 
-  it("keeps the P6 families green after the registry extension", async () => {
+  it("keeps the families green after the registry extension", async () => {
     const results = await Effect.runPromise(evalAllPrograms());
     for (const entry of p6Entries) {
       const result = results.find(
@@ -219,7 +219,7 @@ describe("p8-programs", () => {
     expect(result.passed).toBe(false);
   });
 
-  it("enforces the E4 version gate on load for both P8 families", async () => {
+  it("enforces the E4 version gate on load for both families", async () => {
     for (const familyId of [
       "p8-verification",
       "p8-query-inspection",

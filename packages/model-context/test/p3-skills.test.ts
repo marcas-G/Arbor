@@ -31,7 +31,7 @@ const fakeRegistry: SkillRegistryService = {
 
 const layer = Layer.succeed(SkillRegistry, fakeRegistry);
 
-describe("P3 skills surface", () => {
+describe("skills surface", () => {
   it.effect("loads summary first and body only on demand", () =>
     Effect.gen(function* () {
       const summaryOnly = yield* progressiveLoad(

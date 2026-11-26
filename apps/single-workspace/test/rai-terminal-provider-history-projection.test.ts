@@ -316,7 +316,7 @@ const readViews = () =>
   });
 
 describe("RAI-DG-02 production terminal history projection", () => {
-  it("projects one earliest witness from 200 real chains and keeps the P2 hold across P10 ACK, reads, and restart-equivalent wiring", async () => {
+  it("projects one earliest witness from 200 real chains and keeps the hold across ACK, reads, and restart-equivalent wiring", async () => {
     if (database === undefined) throw new Error("fresh database missing");
     const filename = database.databaseFilename;
 

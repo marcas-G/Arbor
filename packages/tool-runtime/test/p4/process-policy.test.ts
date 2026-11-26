@@ -20,7 +20,7 @@ import {
 import { app, run } from "./support-app.js";
 import type { PipelineTrace } from "./support-harness.js";
 
-describe("P4 tool runtime pipeline", () => {
+describe("tool runtime pipeline", () => {
   it("parks an unexpired process policy from an earlier Workspace authorization before effect admission", async () => {
     const p39Case = p39ApprovedCase(
       "c7",

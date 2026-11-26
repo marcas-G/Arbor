@@ -30,7 +30,7 @@ const nativeEntry = (
   },
 });
 
-describe("AH19 ProviderNative Session projection", () => {
+describe("ProviderNative Session projection", () => {
   it("projects the opaque ref only for the exact full binding fingerprint", () => {
     const matching = projectSessionTimeline([nativeEntry()], bindingA, true);
     expect(matching.inputItems).toContainEqual({

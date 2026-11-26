@@ -179,8 +179,8 @@ const applyP43AndSeed = Effect.gen(function* () {
   yield* seed;
 });
 
-describe("P43 WorkBlocker and Inbox sequence adapters", () => {
-  it("registers P43 and P44 after the accepted 42 prefix", () => {
+describe("WorkBlocker and Inbox sequence adapters", () => {
+  it("registers and after the accepted 42 prefix", () => {
     expect(CURRENT_MIGRATIONS.map(({ id }) => id).slice(-15)).toEqual([
       43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57,
     ]);

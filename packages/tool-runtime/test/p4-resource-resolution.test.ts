@@ -19,7 +19,7 @@ const environment = Layer.succeed(ProjectEnvironmentPort, {
     }),
 });
 
-describe("P4 canonical resource resolution", () => {
+describe("canonical resource resolution", () => {
   it.effect(
     "resolves addresses to canonical regions via the environment port",
     () =>

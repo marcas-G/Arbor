@@ -140,7 +140,7 @@ const runStore = <A, E>(
   body: Effect.Effect<A, E, TransactionPort | ToolInvocationStore | SqlClient>,
 ) => Effect.runPromise(Effect.scoped(Effect.provide(body, app)));
 
-describe("AH7 SQLite Store concurrency", () => {
+describe("SQLite Store concurrency", () => {
   it("converges exact same-invocation intent claims across independent connections", async () => {
     const directory = mkdtempSync(join(tmpdir(), "arbor-ah7-store-"));
     directories.push(directory);

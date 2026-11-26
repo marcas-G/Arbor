@@ -25,7 +25,7 @@ const request = buildCompactionRequest({
   reason: "BudgetPressure",
 });
 
-describe("P3 compaction protocol", () => {
+describe("compaction protocol", () => {
   it("binds the compaction turn to the compaction program + output contract", () => {
     expect(request.programId).toBe("compaction-program");
     expect(request.outputContractRef).toBe(COMPACTION_OUTPUT_CONTRACT);

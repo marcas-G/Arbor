@@ -54,7 +54,7 @@ beforeEach(() => {
   fixture = fixtureFactory.create();
 });
 
-describe("MAC-P2 formation fulfillment", () => {
+describe("MAC-formation fulfillment", () => {
   it.effect(
     "separates Approved from asynchronously Applied and replays without duplicates",
     () =>

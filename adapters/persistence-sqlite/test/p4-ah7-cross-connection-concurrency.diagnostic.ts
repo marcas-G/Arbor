@@ -562,7 +562,7 @@ const runCrossProcessRace = async (
   );
 };
 
-describe("AH7 SQLite cross-connection Store and copied-holder diagnostics", () => {
+describe("SQLite cross-connection Store and copied-holder diagnostics", () => {
   it("diagnostic: runs two copied-holder ToolRuntime connections against one effect log", async () => {
     const directory = mkdtempSync(join(tmpdir(), "arbor-ah7-cross-runtime-"));
     directories.push(directory);
@@ -712,7 +712,7 @@ describe("AH7 SQLite cross-connection Store and copied-holder diagnostics", () =
     });
   });
 
-  it("diagnostic: copied-holder P4 reentry can terminalize unknown before effect-owner success", async () => {
+  it("diagnostic: copied-holder reentry can terminalize unknown before effect-owner success", async () => {
     const directory = mkdtempSync(join(tmpdir(), "arbor-ah7-cross-process-"));
     directories.push(directory);
     const databaseFile = join(directory, "shared.db");

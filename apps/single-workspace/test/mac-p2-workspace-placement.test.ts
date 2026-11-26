@@ -57,7 +57,7 @@ const childId = (index: number): string =>
 const sessionId = (index: number): string =>
   `ses_018f2b3c-4d5e-7abc-8def-${String(12345678 + index).padStart(12, "0")}`;
 
-describe("MAC-P2 WorkspacePlacementContext", () => {
+describe("MAC-WorkspacePlacementContext", () => {
   it.effect(
     "pages Active Direct Children, includes in-flight formation and rejects stale refs",
     () =>

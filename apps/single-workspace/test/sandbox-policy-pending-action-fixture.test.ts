@@ -12,7 +12,7 @@ beforeAll(async () => {
 
 afterAll(() => factory?.cleanup(), 120_000);
 
-describe("current-schema production P3/P4 sandbox-policy fixture", () => {
+describe("current-schema production /sandbox-policy fixture", () => {
   it("constructs a read-back-proven Pending action with a bound NotAdmitted invocation", async () => {
     const database = factory.create();
     try {

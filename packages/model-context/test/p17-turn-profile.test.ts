@@ -161,7 +161,7 @@ const resolver = makeTurnProfileResolver({
     ),
 });
 
-describe("P17 TurnProfileResolver", () => {
+describe("TurnProfileResolver", () => {
   it.effect(
     "gives Root Conversation zero executable tools and only placement, authorization and work-initiation controls",
     () =>

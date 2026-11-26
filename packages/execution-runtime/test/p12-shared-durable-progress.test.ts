@@ -39,7 +39,7 @@ const runGate = (
     return yield* body(gate);
   }).pipe(Effect.provide(RuntimeSafetyGateLive(policy)));
 
-describe("P12-DG-01 shared D2/D4 durable progress observation", () => {
+describe("-DG-01 shared D2/D4 durable progress observation", () => {
   it.effect("one true observation clears D2 and resets D4 together", () =>
     Effect.gen(function* () {
       const decisions = yield* runGate((gate) =>

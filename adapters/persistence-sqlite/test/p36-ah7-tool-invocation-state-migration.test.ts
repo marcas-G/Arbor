@@ -112,7 +112,7 @@ const seedLegacyInvocationRows = Effect.gen(function* () {
   );
 });
 
-describe("AH7-DG-03 P36 ToolInvocation state migration", () => {
+describe("ToolInvocation state migration", () => {
   it("backfills legacy invocations to LegacyUnknown and preserves canonical settlement", async () => {
     const p36 = (
       migrationExports as typeof migrationExports & {

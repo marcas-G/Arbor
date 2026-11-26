@@ -69,7 +69,7 @@ const capability = {
   toolProtocol: "json",
 };
 
-describe("P3 model-family compiler", () => {
+describe("model-family compiler", () => {
   it("produces a stable manifest hash and carries A0 instructions", () => {
     const input = {
       plan,

@@ -45,7 +45,7 @@ describe("p6-prompt-programs", () => {
         expect(sha256Hex(program.text)).toBe(program.meta.textHash);
       });
 
-      it("contains every mandatory clause of P6-05 section 2", async () => {
+      it("contains every mandatory clause of -05 section 2", async () => {
         const results = await Effect.runPromise(evalAllPrograms());
         const result = results.find(
           (candidate) => candidate.familyId === entry.familyId,

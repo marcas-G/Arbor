@@ -99,7 +99,7 @@ const context: ToolExecutionContext = {
   requestedAt: "2026-10-06T00:00:00.000Z",
 };
 
-describe("AH7 exact approval reentry before the tool effect", () => {
+describe("exact approval reentry before the tool effect", () => {
   it("reuses the consumed approval and recorded intent after a pre-effect interruption", async () => {
     let approval: InvocationApproval = {
       approvalId,

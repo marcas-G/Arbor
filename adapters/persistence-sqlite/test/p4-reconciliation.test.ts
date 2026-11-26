@@ -129,7 +129,7 @@ const intent = (id: string, semantics: string) => ({
   intentAt: "t",
 });
 
-describe("P4 reconciliation source", () => {
+describe("reconciliation source", () => {
   it.effect("reports only reconcilable unsettled invocations", () =>
     Effect.gen(function* () {
       const app = makeApp();

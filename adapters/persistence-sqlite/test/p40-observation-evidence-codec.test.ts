@@ -28,7 +28,7 @@ const historicalExpectedFailureEvidence = (text: string) => {
   };
 };
 
-describe("P40 canonical tool observation evidence codec", () => {
+describe("canonical tool observation evidence codec", () => {
   it("encodes and decodes the exact bounded evidence bytes and version-bound hash", () => {
     const input = {
       settlement: { _tag: "ExpectedFailure" } as const,
@@ -233,7 +233,7 @@ describe("P40 canonical tool observation evidence codec", () => {
     );
   });
 
-  it("binds ReconciledNoEffect to the exact selected fact and separate P4 ArtifactRef", () => {
+  it("binds ReconciledNoEffect to the exact selected fact and separate ArtifactRef", () => {
     const settlement: ToolObservationSettlement = {
       _tag: "ReconciledNoEffect",
       reasonCode: "StopRequested",

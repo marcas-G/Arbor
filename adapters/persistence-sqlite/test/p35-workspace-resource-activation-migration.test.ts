@@ -10,7 +10,7 @@ const runDb = <A>(program: Effect.Effect<A, unknown, SqlClient>) =>
     Effect.scoped(Effect.provide(program, layer({ filename: ":memory:" }))),
   );
 
-describe("P35 F21 activation intent migration", () => {
+describe("F21 activation intent migration", () => {
   it("adds the intent table without inferring pre-intent v2 receipts or changing canonical rows", async () => {
     const program = Effect.gen(function* () {
       yield* runMigrations(P34_MIGRATIONS);

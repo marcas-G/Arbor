@@ -6,7 +6,7 @@ import { describe, expect } from "vitest";
 import { executeAgentLoopActions } from "../../../packages/agent-runtime/src/agent-loop-actions.js";
 import { makeExecutableToolHandler } from "../src/executable-tool-handler.js";
 
-describe("AH7 P39 fact-store failure at the P3 executable boundary", () => {
+describe("fact-store failure at the executable boundary", () => {
   it.effect(
     "projects SettlementJournal uncertainty as ReconciliationPending, never success",
     () =>

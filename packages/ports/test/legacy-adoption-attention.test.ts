@@ -5,7 +5,7 @@ import {
 } from "../src/legacy-adoption-attention.js";
 import { sha256Hex } from "../src/provider-extension.js";
 
-describe("AH14 legacy-adoption evidence v1 codec", () => {
+describe("legacy-adoption evidence v1 codec", () => {
   it("normalizes strings and recursively orders object keys by Unicode code point", () => {
     const value = {
       "𝄞": "e\u0301",

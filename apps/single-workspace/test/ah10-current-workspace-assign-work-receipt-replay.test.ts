@@ -337,7 +337,7 @@ const authorizePriorReceipt = async (input: {
   };
 };
 
-describe("AH10 current-Workspace AssignWork receipt-first authorization", () => {
+describe("current-Workspace AssignWork receipt-first authorization", () => {
   it("replays an exact active PermissionGrant without approval admission or a new-command replay flag", async () => {
     const { result, pendingApprovals, inboxAdmissions } =
       await authorizePriorReceipt({ grants: [exactGrant] });

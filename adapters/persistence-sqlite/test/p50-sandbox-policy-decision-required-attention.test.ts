@@ -84,7 +84,7 @@ const app = () => {
   );
 };
 
-describe("P10 derived SandboxPolicyDecisionRequired Attention", () => {
+describe("derived SandboxPolicyDecisionRequired Attention", () => {
   it.effect(
     "requires an exact verified pending NotAdmitted process action without writing facts or markers",
     () =>

@@ -46,7 +46,7 @@ const slots: ReadonlyArray<PromptSlot> = [
   },
 ];
 
-describe("P3 instruction resolver", () => {
+describe("instruction resolver", () => {
   it("suppresses a lower-authority fragment overridden by a Hard higher one", () => {
     const result = resolveInstructions({
       fragments: [fragment("a3", "A3"), fragment("a6", "A6")],

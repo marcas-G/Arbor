@@ -6,7 +6,7 @@ import { layer, P17_MIGRATIONS, runMigrations } from "../src/index.js";
 const withClient = <A>(program: Effect.Effect<A, unknown, SqlClient>) =>
   Effect.runPromise(Effect.provide(program, layer({ filename: ":memory:" })));
 
-describe("P17 AgentLoopStep migration", () => {
+describe("AgentLoopStep migration", () => {
   it("adds the step/action tables and sourced-session evidence at version 17", async () => {
     const result = await withClient(
       Effect.gen(function* () {

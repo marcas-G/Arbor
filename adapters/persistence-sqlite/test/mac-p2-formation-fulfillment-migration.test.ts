@@ -14,7 +14,7 @@ import {
 
 const directories: string[] = [];
 
-describe("MAC-P2 formation fulfillment migration", () => {
+describe("MAC-formation fulfillment migration", () => {
   it.effect(
     "backfills governance state without claiming application success and is re-entrant",
     () =>

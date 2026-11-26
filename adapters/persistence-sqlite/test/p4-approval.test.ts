@@ -117,7 +117,7 @@ const makeApp = () => {
   );
 };
 
-describe("P4 InvocationApproval", () => {
+describe("InvocationApproval", () => {
   it("matches an exact intent and denies mismatch/expiry/consumed", () => {
     expect(
       matchApproval({

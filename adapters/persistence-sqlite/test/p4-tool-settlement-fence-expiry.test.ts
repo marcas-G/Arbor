@@ -199,7 +199,7 @@ const context = {
   requestedAt: beforeExpiry,
 } as const;
 
-describe("P4 settlement fence expiry time", () => {
+describe("settlement fence expiry time", () => {
   it("samples fence time after a queued BEGIN IMMEDIATE, not with the earlier settlement timestamp", async () => {
     const sqlite = layer({ filename: ":memory:" });
     const control: FenceExpiryControl = {

@@ -568,7 +568,7 @@ const runScenario = (
     ),
   );
 
-describe("P39 P38-receipt plus RecoveryBinding claim atomicity", () => {
+describe("-receipt plus RecoveryBinding claim atomicity", () => {
   it("commits one receipt, binding, attempt-0 and Bound invocation, then exact-ID replay reuses them", async () => {
     await withDb(
       { suffix: "c1", logicalStepNo: 1 },
@@ -651,7 +651,7 @@ describe("P39 P38-receipt plus RecoveryBinding claim atomicity", () => {
     );
   }, 120_000);
 
-  it("rolls back intent, P38 receipt, binding and attempt-0 at each precommit fault boundary", async () => {
+  it("rolls back intent, receipt, binding and attempt-0 at each precommit fault boundary", async () => {
     for (const [suffix, fault] of [
       ["c2", "after-receipt"],
       ["c3", "before-bound-update"],

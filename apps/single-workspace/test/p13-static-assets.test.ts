@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { resolveStatic } from "../src/transport/static-assets.js";
 
-describe("P13 TR-W2 static asset face", () => {
+describe("TR-W2 static asset face", () => {
   let dist: string;
 
   beforeAll(() => {

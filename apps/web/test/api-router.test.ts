@@ -95,7 +95,7 @@ describe("W-00 project-scoped typed router", () => {
     });
   });
 
-  it("exactly the six frozen workspace tabs parse (P14 TR-C)", () => {
+  it("exactly the six frozen workspace tabs parse (TR-C)", () => {
     expect(WORKSPACE_TABS).toEqual([
       "overview",
       "dependencies",

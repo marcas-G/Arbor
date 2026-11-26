@@ -112,7 +112,7 @@ const seed = Effect.gen(function* () {
   );
 });
 
-describe("P2 LeaseService", () => {
+describe("LeaseService", () => {
   it.effect(
     "acquires, softly releases, and keeps the generation monotonic",
     () =>

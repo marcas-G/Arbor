@@ -196,7 +196,7 @@ const events = [
   { _tag: "TurnCompleted" as const, finishReason: "Stop" as const },
 ];
 
-describe("P3 ProviderRuntime + fake provider", () => {
+describe("ProviderRuntime + fake provider", () => {
   it.effect(
     "atomically refuses a new ProviderTurn after the Execution stop fence commits",
     () =>

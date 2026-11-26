@@ -32,7 +32,7 @@ const testProcess: SandboxProcessRunner = ({ args: processArgs }) =>
     truncated: false,
   });
 
-describe("P4 shell tool + policy", () => {
+describe("shell tool + policy", () => {
   it("classifies commands deterministically", () => {
     expect(shellPolicy("ls -la")).toBe("Allow");
     expect(shellPolicy("rm file.txt")).toBe("RequireApproval");

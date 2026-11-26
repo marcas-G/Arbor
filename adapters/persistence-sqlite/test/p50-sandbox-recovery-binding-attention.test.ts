@@ -316,7 +316,7 @@ describe("V21 derived SandboxRecoveryBindingFailure Attention", () => {
   );
 });
 
-describe("Native durable process denial P10 projection", () => {
+describe("Native durable process denial projection", () => {
   it.effect(
     "requires the exact P3 action to be TerminalRejected and fails closed on a conflicting state",
     () =>

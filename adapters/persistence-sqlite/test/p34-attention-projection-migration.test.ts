@@ -10,8 +10,8 @@ const runDb = <A>(program: Effect.Effect<A, unknown, SqlClient>) =>
     Effect.scoped(Effect.provide(program, layer({ filename: ":memory:" }))),
   );
 
-describe("P34 P10 Attention projection migration", () => {
-  it("upgrades a P33 database without changing P9 source rows or rerunning DDL", async () => {
+describe("Attention projection migration", () => {
+  it("upgrades a database without changing source rows or rerunning DDL", async () => {
     const program = Effect.gen(function* () {
       yield* runMigrations(P33_MIGRATIONS);
       const sql = yield* SqlClient;
@@ -78,7 +78,7 @@ describe("P34 P10 Attention projection migration", () => {
     expect(result.reapplied).toBe(0);
   });
 
-  it("creates the same P34 schema from a fresh database", async () => {
+  it("creates the same schema from a fresh database", async () => {
     const program = Effect.gen(function* () {
       yield* runMigrations(P34_MIGRATIONS);
       const sql = yield* SqlClient;

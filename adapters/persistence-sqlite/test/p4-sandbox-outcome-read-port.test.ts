@@ -161,7 +161,7 @@ const seedP4Rows = (
     );
   });
 
-describe("P4 sandbox outcome read port", () => {
+describe("sandbox outcome read port", () => {
   it.effect(
     "reads only a strictly decoded terminal no-effect provider outcome",
     () =>

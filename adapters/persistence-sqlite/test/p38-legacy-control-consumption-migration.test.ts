@@ -6,7 +6,7 @@ import { layer } from "../src/client.js";
 import { runMigrations } from "../src/migrate.js";
 import { P37_MIGRATIONS, P38_MIGRATIONS } from "../src/migrations.js";
 
-describe("P38 legacy Control approval migration boundary", () => {
+describe("legacy Control approval migration boundary", () => {
   it.effect(
     "preserves an unbound historical consumption and blocks 0038 without inventing a CommandId",
     () =>

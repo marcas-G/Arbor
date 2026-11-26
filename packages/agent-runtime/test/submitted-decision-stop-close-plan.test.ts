@@ -142,7 +142,7 @@ const reconstruct = (input: ReturnType<typeof makeInput>) =>
     >[0],
   );
 
-describe("P41 pinned action reconstruction for Stop-only close", () => {
+describe("pinned action reconstruction for Stop-only close", () => {
   it("reconstructs the exact pinned action from current typed ModelOutput even when the Step Manifest is mismatched", () => {
     const fixture = makeInput();
     const actions = reconstruct(fixture);

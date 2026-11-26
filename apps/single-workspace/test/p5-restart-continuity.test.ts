@@ -222,7 +222,7 @@ const readState = Effect.gen(function* () {
   };
 });
 
-describe("P5 restart continuity", () => {
+describe("restart continuity", () => {
   it.effect(
     "a fresh layer on the same database recovers and continues the session",
     () =>

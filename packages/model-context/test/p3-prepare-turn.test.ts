@@ -147,7 +147,7 @@ const prepare = (i: ReturnType<typeof input>) =>
     app,
   ) as Effect.Effect<unknown, unknown, never>;
 
-describe("P3 prepareTurn", () => {
+describe("prepareTurn", () => {
   it.effect("returns Ready for a resolvable, fitting turn", () =>
     Effect.gen(function* () {
       const result = (yield* prepare(input())) as { _tag: string };

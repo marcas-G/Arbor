@@ -84,7 +84,7 @@ const admit = (
     ) as Effect.Effect<{ _tag: string }, unknown, never>,
   );
 
-describe("P4 validate-only resource admission", () => {
+describe("validate-only resource admission", () => {
   it("admits a read region inside the boundary", async () => {
     const result = await admit(app([]), [region("/repo/a")], false);
     expect(result._tag).toBe("Admitted");

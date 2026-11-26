@@ -131,7 +131,7 @@ const seed = Effect.gen(function* () {
   );
 });
 
-describe("P4 tool invocation store", () => {
+describe("tool invocation store", () => {
   it.effect(
     "persists intent before settlement and detects a dangling intent",
     () =>

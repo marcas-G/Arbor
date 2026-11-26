@@ -104,7 +104,7 @@ const seedWork = (
     }
   });
 
-describe("MAC-P1 WorkspaceKnowledgeView", () => {
+describe("MAC-WorkspaceKnowledgeView", () => {
   it.effect(
     "includes only accepted PASS outcomes and rebuilds deterministically",
     () =>

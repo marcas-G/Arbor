@@ -10,7 +10,7 @@ import { okExecutor } from "./support.js";
 import { app, run, runShell } from "./support-app.js";
 import type { PipelineTrace } from "./support-harness.js";
 
-describe("P4 tool runtime pipeline", () => {
+describe("tool runtime pipeline", () => {
   it("distinguishes post-I/O authority denial from executable approval denial", () => {
     expect(
       reconciliationRetryDenialReasonCode("InvocationAuthorityDenied"),
@@ -23,7 +23,7 @@ describe("P4 tool runtime pipeline", () => {
     );
   });
 
-  it("uses fixed P39 target-region digest vectors preserving emitted order and multiplicity", () => {
+  it("uses fixed target-region digest vectors preserving emitted order and multiplicity", () => {
     const fileRegion = {
       resourceSpaceId: "filesystem",
       normalizedRegion: { kind: "FileTree", path: "/repo/a" },
@@ -63,7 +63,7 @@ describe("P4 tool runtime pipeline", () => {
     );
   });
 
-  it("keeps unknown and compound shell commands in the nonterminal P38 approval handoff", async () => {
+  it("keeps unknown and compound shell commands in the nonterminal approval handoff", async () => {
     for (const command of [
       "python -c 'print(1)'",
       "ls -la; rm file.txt",

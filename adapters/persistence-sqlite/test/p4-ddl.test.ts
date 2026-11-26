@@ -48,8 +48,8 @@ const seedExecution = Effect.gen(function* () {
   );
 });
 
-describe("P4 DDL", () => {
-  it("migrates to user_version 36 with the AH7 tool-invocation state", async () => {
+describe("DDL", () => {
+  it("migrates to user_version 36 with the tool-invocation state", async () => {
     const result = await withClient(
       Effect.gen(function* () {
         yield* runMigrations(P36_MIGRATIONS);

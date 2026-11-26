@@ -93,7 +93,7 @@ const runDatabase = <A>(
   );
 
 describe("central schema-42 test database fixture", () => {
-  it("updates only the exact P10 singleton and keeps other snapshot collisions strict", async () => {
+  it("updates only the exact singleton and keeps other snapshot collisions strict", async () => {
     const directory = mkdtempSync(
       join(tmpdir(), "arbor-schema44-p38-copy-probe-"),
     );
@@ -176,7 +176,7 @@ describe("central schema-42 test database fixture", () => {
     }
   });
 
-  it("copies rows from a verified schema-42 fixture into a real pre-binding P32 image", async () => {
+  it("copies rows from a verified schema-42 fixture into a real pre-binding image", async () => {
     const schema42 = await createSchema42TestDatabase({ seedP38 });
     const p32Filename = join(schema42.directory, "historical-p32.sqlite");
     try {
@@ -273,7 +273,7 @@ describe("central schema-42 test database fixture", () => {
     }
   });
 
-  it("uses P38, privileged P39, standalone P40–P42 and reopens as a no-op", async () => {
+  it("uses , privileged , standalone –and reopens as a no-op", async () => {
     const database = await createSchema42TestDatabase({ seedP38 });
     try {
       expect(database.databaseFilename).not.toBe(database.p39ReportFilename);

@@ -260,8 +260,8 @@ const prepareP36WithLegacyApproval = Effect.gen(function* () {
   yield* runMigrations(P36_MIGRATIONS);
 });
 
-describe("AH7-DG-03 P4 SQLite store contract", () => {
-  it("provides the P36 forward migration and fenced no-effect store operations", () => {
+describe("SQLite store contract", () => {
+  it("provides the forward migration and fenced no-effect store operations", () => {
     expect(P36_MIGRATIONS, "P36 migration must be exported").toBeDefined();
   });
 
@@ -362,7 +362,7 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
     }
   });
 
-  it("does not commit Native process denial when the exact P3 action is no longer Pending", async () => {
+  it("does not commit Native process denial when the exact action is no longer Pending", async () => {
     const app = makeApp();
     const program = Effect.gen(function* () {
       yield* prepareP36WithLegacyApproval;
@@ -518,7 +518,7 @@ describe("AH7-DG-03 P4 SQLite store contract", () => {
     expect(result.loserRows?.count).toBe(0);
   });
 
-  it("keeps binding-proven P38 approvals out of the legacy P4 find/consume route", async () => {
+  it("keeps binding-proven approvals out of the legacy find/consume route", async () => {
     const migration31 = p31Migrations();
     const migration36 = P36_MIGRATIONS;
     const app = makeApp();

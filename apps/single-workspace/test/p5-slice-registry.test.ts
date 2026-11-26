@@ -9,7 +9,7 @@ let schema44Factory: Awaited<
   ReturnType<typeof createCurrentSchemaTestDatabaseFactory>
 >;
 
-describe("P5 slice command handler registry", () => {
+describe("slice command handler registry", () => {
   beforeAll(async () => {
     schema44Factory = await createCurrentSchemaTestDatabaseFactory();
   }, 120_000);

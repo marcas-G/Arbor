@@ -25,7 +25,7 @@ import {
 import { app, runShell } from "./support-app.js";
 import type { PipelineTrace } from "./support-harness.js";
 
-describe("P4 tool runtime pipeline", () => {
+describe("tool runtime pipeline", () => {
   it.each(["NotOccurred", "Occurred", "StillUnknown"] as const)(
     "stops before admission and P40 settlement when the P39 %s fact write fails, then safely resumes the exact reconciliation",
     async (outcomeTag) => {

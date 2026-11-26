@@ -13,7 +13,7 @@ import {
   validateWindowsProtectedPaths,
 } from "../src/p39-windows-security.js";
 
-describe("P39 Windows security query timeout", () => {
+describe("Windows security query timeout", () => {
   it("enables Windows ACL qualification only on Windows with the module available", () => {
     expect(isP39WindowsAclQualificationEnabled("linux", true)).toBe(false);
     expect(isP39WindowsAclQualificationEnabled("darwin", true)).toBe(false);
@@ -21,7 +21,7 @@ describe("P39 Windows security query timeout", () => {
     expect(isP39WindowsAclQualificationEnabled("win32", true)).toBe(true);
   });
 
-  it("keeps cross-platform P39 suites enabled on POSIX and gates only Windows without ACL support", () => {
+  it("keeps cross-platform suites enabled on POSIX and gates only Windows without ACL support", () => {
     expect(isWindowsPathQualificationEnabled("linux", false)).toBe(true);
     expect(isWindowsPathQualificationEnabled("darwin", false)).toBe(true);
     expect(isWindowsPathQualificationEnabled("win32", false)).toBe(false);

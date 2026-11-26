@@ -18,8 +18,8 @@ const makeApp = (filename: string) => {
   );
 };
 
-describe("P39 RecoveryBinding store DeniedUnbound projection", () => {
-  it("returns the terminal P4 denial projection but never binding or selected evidence", async () => {
+describe("RecoveryBinding store DeniedUnbound projection", () => {
+  it("returns the terminal denial projection but never binding or selected evidence", async () => {
     const database = await createCurrentSchemaTestDatabase();
     try {
       const result = await Effect.runPromise(

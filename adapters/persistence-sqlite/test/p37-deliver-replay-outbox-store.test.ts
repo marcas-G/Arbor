@@ -97,7 +97,7 @@ const seedExecution = Effect.gen(function* () {
   );
 });
 
-describe("P37 DeliverReplay durable outbox", () => {
+describe("DeliverReplay durable outbox", () => {
   it("keeps the immutable fact/event and requeues only after ACK", () =>
     runDb(
       Effect.gen(function* () {
@@ -165,7 +165,7 @@ describe("P37 DeliverReplay durable outbox", () => {
       }),
     ));
 
-  it("rejects queue deletion until the P10 fact marker exists", () =>
+  it("rejects queue deletion until the fact marker exists", () =>
     runDb(
       Effect.gen(function* () {
         const sql = yield* SqlClient;
@@ -199,7 +199,7 @@ describe("P37 DeliverReplay durable outbox", () => {
       }),
     ));
 
-  it("preserves untagged registered P9 event payloads through raw decoding", () =>
+  it("preserves untagged registered event payloads through raw decoding", () =>
     runDb(
       Effect.gen(function* () {
         const tx = yield* TransactionPort;

@@ -68,7 +68,7 @@ beforeEach(() => {
   fixture = fixtureFactory.create();
 });
 
-describe("MAC-P2 Parent Agent acceptance", () => {
+describe("MAC-Parent Agent acceptance", () => {
   it.effect(
     "accepts one exact direct-child PASS result through an opaque result ref",
     () =>

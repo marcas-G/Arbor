@@ -110,7 +110,7 @@ const sourceFor = (
 
 const now = "2026-10-19T00:00:00.000Z";
 
-describe("P5 SandboxAuthorityBundleV2 exact source/high-water admission", () => {
+describe("SandboxAuthorityBundleV2 exact source/high-water admission", () => {
   it.effect(
     "publishes only the exact V2 source/high-water pair and emits V2 audit",
     () =>

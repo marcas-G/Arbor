@@ -803,7 +803,7 @@ describe("verification control actions", () => {
     expect(state.submitted).toHaveLength(0);
   });
 
-  it("returns from gen1 Evidence replay with a real SQLite transaction and the registered P8 validator", async () => {
+  it("returns from gen1 Evidence replay with a real SQLite transaction and the registered validator", async () => {
     const p8 = makeP8ReplayFixture();
     const app = Layer.provideMerge(
       TransactionPortLive,
@@ -832,7 +832,7 @@ describe("verification control actions", () => {
     expect(observed.submitted).toHaveLength(0);
   });
 
-  it("resumes step 1 Pending Control through the real SQLite P9 store, registry, authorizer, and receipt validator", async () => {
+  it("resumes step 1 Pending Control through the real SQLite store, registry, authorizer, and receipt validator", async () => {
     const p8 = makeP8ReplayFixture();
     const invocationArgumentsJson = JSON.stringify({
       criterionId: "focused-test",

@@ -354,7 +354,7 @@ const commitInput = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
-describe("P48 ConversationCheckpointStore owner CAS", () => {
+describe("ConversationCheckpointStore owner CAS", () => {
   it("initializes exactly one RootWorkspace owner and commits an inclusive Answered prefix by epoch/frontier CAS", async () => {
     const fixture = createCurrentSchemaCase();
     try {

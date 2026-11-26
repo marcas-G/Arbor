@@ -315,7 +315,7 @@ const classify = (
   );
 };
 
-describe("P5→P7 RunnableWorkSource (supersession semantics, P7 03 §4)", () => {
+describe("→RunnableWorkSource (supersession semantics, 03 §4)", () => {
   it("classifies the current Open work and the remaining open work", async () => {
     const result = await classify(workA);
     expect(result.current._tag).toBe("Some");

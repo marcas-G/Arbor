@@ -6,7 +6,7 @@ import { layer, P3_MIGRATIONS, runMigrations } from "../src/index.js";
 const withClient = <A>(program: Effect.Effect<A, unknown, SqlClient>) =>
   Effect.runPromise(Effect.provide(program, layer({ filename: ":memory:" })));
 
-describe("P3 DDL", () => {
+describe("DDL", () => {
   it("migrates to user_version 3 with the provider/model-context tables", async () => {
     const result = await withClient(
       Effect.gen(function* () {

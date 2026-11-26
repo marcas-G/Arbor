@@ -159,7 +159,7 @@ const admit = (executionId: ExecutionId, commandId: CommandId) =>
     );
   });
 
-describe("P5 multi-turn session continuity", () => {
+describe("multi-turn session continuity", () => {
   it.effect(
     "reuses the same primary session across Executions and keeps entries",
     () =>

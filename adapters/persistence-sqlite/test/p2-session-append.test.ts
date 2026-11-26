@@ -113,7 +113,7 @@ const seed = Effect.gen(function* () {
   );
 });
 
-describe("P2 Session appendEntry + AgentExecutionState", () => {
+describe("Session appendEntry + AgentExecutionState", () => {
   it.effect(
     "idempotently appends one sourced ModelOutput and rejects hash conflicts",
     () =>

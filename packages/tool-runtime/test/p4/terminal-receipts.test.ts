@@ -11,7 +11,7 @@ import {
 import { app } from "./support-app.js";
 import type { PipelineTrace } from "./support-harness.js";
 
-describe("P4 tool runtime pipeline", () => {
+describe("tool runtime pipeline", () => {
   it.each(["NotOccurred", "Success", "ExpectedFailure"] as const)(
     "returns a terminal P40 %s receipt before current-region admission or reconciliation",
     async (terminalOutcome) => {
@@ -117,7 +117,7 @@ describe("P4 tool runtime pipeline", () => {
     },
   );
 
-  it("falls back to strict replay when a terminal Reconcilable Success has no P39 selected fact", async () => {
+  it("falls back to strict replay when a terminal Reconcilable Success has no selected fact", async () => {
     const receipt = p39TerminalReceiptCase("Success");
     const trace: PipelineTrace = {
       noEffectDenials: [],

@@ -366,7 +366,7 @@ describe("schema 57 runtime startup boundary", () => {
     });
   });
 
-  it("keeps P39 maintenance outside the ordinary 40–57 schema suffix", () => {
+  it("keeps maintenance outside the ordinary 40–57 schema suffix", () => {
     expect(PersistenceSqlite.CURRENT_SCHEMA_VERSION).toBe(57);
     expect(PersistenceSqlite.CURRENT_MIGRATION_BASELINE).toBe(57);
     expect(PersistenceSqlite.P38_MIGRATIONS.at(-1)?.id).toBe(38);

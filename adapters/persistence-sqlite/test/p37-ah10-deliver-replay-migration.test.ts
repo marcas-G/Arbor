@@ -23,7 +23,7 @@ const prefixes = [
   { label: "v36", migrations: P36_MIGRATIONS, expectedApplied: 1 },
 ];
 
-describe("P37 AH10 DeliverReplay migration", () => {
+describe("DeliverReplay migration", () => {
   it.each(prefixes)(
     "upgrades $label through the ordered prefix to v37",
     ({ migrations, expectedApplied }) =>

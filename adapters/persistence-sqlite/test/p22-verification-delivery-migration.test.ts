@@ -6,7 +6,7 @@ import { layer } from "../src/client.js";
 import { runMigrations } from "../src/migrate.js";
 import { P22_MIGRATIONS } from "../src/migrations.js";
 
-describe("P22 verification delivery migration", () => {
+describe("verification delivery migration", () => {
   it.effect(
     "adds the durable summary_ref column and advances user_version",
     () =>

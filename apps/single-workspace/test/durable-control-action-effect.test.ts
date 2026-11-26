@@ -95,7 +95,7 @@ const settledProviderResult = (input: {
   evidenceVersion: "provider-success-v1",
 });
 
-describe("P9 direct Control effect commit", () => {
+describe("direct Control effect commit", () => {
   it("rolls an effect back on a stale fenced transition and applies it only once on retry", async () => {
     let durable = initialState();
     let transactionState: State | undefined;
@@ -282,7 +282,7 @@ describe("P9 direct Control effect commit", () => {
     expect(durable.effects).toBe(1);
   });
 
-  it("accepts the exact P20 replacement manifest as the action source and fails closed on mismatches", async () => {
+  it("accepts the exact replacement manifest as the action source and fails closed on mismatches", async () => {
     const replacementManifestId = "mft_control_replacement";
     const manifestFor = (
       providerTurnId: string,

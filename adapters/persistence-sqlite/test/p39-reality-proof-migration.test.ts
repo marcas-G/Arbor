@@ -195,8 +195,8 @@ const getP39Migration = () =>
     }
   ).P39_RECONCILIATION_MIGRATION;
 
-describe("AH7-DG-02 P39 migration module boundary", () => {
-  it("defines one isolated 0039 migration without registering a P39-only runtime", async () => {
+describe("migration module boundary", () => {
+  it("defines one isolated 0039 migration without registering a -only runtime", async () => {
     const migration = getP39Migration();
     expect(migration, "P39 migration module is missing").toBeDefined();
     if (!migration) return;

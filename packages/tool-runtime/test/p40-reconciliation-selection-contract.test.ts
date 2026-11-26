@@ -24,7 +24,7 @@ const executorSelectedResult: ToolExecutionResult = {
   },
 };
 
-describe("P40 reconciliation selection typing", () => {
+describe("reconciliation selection typing", () => {
   it("accepts the effect outcome without accepting executor-authored selection", () => {
     expect(runtimeResult.settlement).toEqual(rnoSettlement);
     expect(executorSelectedResult).toBeDefined();

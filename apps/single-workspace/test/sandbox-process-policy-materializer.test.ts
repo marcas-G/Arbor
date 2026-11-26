@@ -55,7 +55,7 @@ const entry = (
 });
 
 describe("current OS sandbox provider materialization gate", () => {
-  it("keeps the Windows D2 identity-only tuple unavailable for P4 materialization", () => {
+  it("keeps the Windows D2 identity-only tuple unavailable for materialization", () => {
     const windowsSummary = {
       ...summary,
       providerId: "windows-restricted-appcontainer-job",

@@ -118,7 +118,7 @@ const seed = Effect.gen(function* () {
   );
 });
 
-describe("P2 ExecutionRepository", () => {
+describe("ExecutionRepository", () => {
   it.effect("admits one active main; allows ExecutionBound concurrently", () =>
     Effect.gen(function* () {
       const app = makeApp();

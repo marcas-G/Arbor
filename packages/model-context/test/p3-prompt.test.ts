@@ -8,8 +8,8 @@ import {
   WORK_EXECUTION_PROGRAM,
 } from "../src/index.js";
 
-describe("P3 Prompt Program contract artifacts", () => {
-  it("exposes the four P3 programs with revision/hash/slots/evalSetRef", () => {
+describe("Prompt Program contract artifacts", () => {
+  it("exposes the four programs with revision/hash/slots/evalSetRef", () => {
     expect(P3_PROGRAMS.map((program) => program.programId).sort()).toEqual([
       "base-agent-protocol",
       "compaction-program",

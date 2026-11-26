@@ -132,7 +132,7 @@ const pendingInvocation: ToolInvocationRecord = {
   resultRef: null,
 };
 
-describe("P4 exact approval recovery for the same ToolInvocationId", () => {
+describe("exact approval recovery for the same ToolInvocationId", () => {
   it("preserves a committed Reject after its historical TTL passes", () => {
     expect(
       executableApprovalTerminalDenial(

@@ -152,7 +152,7 @@ afterAll(async () => {
 
 const base = () => `http://127.0.0.1:${handle.port}`;
 
-describe("P13 web transport server (TR-W1/W2 binding)", () => {
+describe("web transport server (TR-W1/W2 binding)", () => {
   it.effect(
     "passes the credential-authenticated principal to view composition, never a body actor",
     () =>

@@ -22,8 +22,8 @@ import {
 import { app, run } from "./support-app.js";
 import type { PipelineTrace } from "./support-harness.js";
 
-describe("P4 tool runtime pipeline", () => {
-  it("fails closed when P39 does not return authenticated selected evidence for RNO", async () => {
+describe("tool runtime pipeline", () => {
+  it("fails closed when does not return authenticated selected evidence for RNO", async () => {
     const trace: PipelineTrace = {
       noEffectDenials: [],
       events: [],
@@ -203,7 +203,7 @@ describe("P4 tool runtime pipeline", () => {
     expect(trace.effectAdmissions).toBe(0);
   });
 
-  it("fails a stale P39 environment snapshot before intent, approval, admission, or effect writes", async () => {
+  it("fails a stale environment snapshot before intent, approval, admission, or effect writes", async () => {
     let executorCalls = 0;
     const executor: ToolExecutor = {
       ...okExecutor,
@@ -289,7 +289,7 @@ describe("P4 tool runtime pipeline", () => {
     expect(executorCalls).toBe(0);
   });
 
-  it("accepts a P39 environment revision only when the current persisted revision exactly matches", async () => {
+  it("accepts a environment revision only when the current persisted revision exactly matches", async () => {
     const p39Case = p39ApprovedCase("c4", "action-p39-exact-current");
     const trace: PipelineTrace = {
       noEffectDenials: [],
@@ -496,7 +496,7 @@ describe("P4 tool runtime pipeline", () => {
     },
   );
 
-  it("accepts P39 environment None only for observed revision zero and binds only the selected target region", async () => {
+  it("accepts environment None only for observed revision zero and binds only the selected target region", async () => {
     const argumentsJson = '{"target":{"mount":"workspace","path":"."}}';
     const trace: PipelineTrace = {
       noEffectDenials: [],
@@ -565,7 +565,7 @@ describe("P4 tool runtime pipeline", () => {
     expect(trace.effectAdmissions).toBe(1);
   });
 
-  it("refreshes exactly once after the first stale P39 revision, then consumes the fresh snapshot", async () => {
+  it("refreshes exactly once after the first stale revision, then consumes the fresh snapshot", async () => {
     const trace: PipelineTrace = {
       noEffectDenials: [],
       events: [],
@@ -619,7 +619,7 @@ describe("P4 tool runtime pipeline", () => {
     expect(trace.effectAdmissions).toBe(1);
   });
 
-  it("fails closed after the single allowed P39 stale-snapshot refresh", async () => {
+  it("fails closed after the single allowed stale-snapshot refresh", async () => {
     const trace: PipelineTrace = {
       noEffectDenials: [],
       events: [],

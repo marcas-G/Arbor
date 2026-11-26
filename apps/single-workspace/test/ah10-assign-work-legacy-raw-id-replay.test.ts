@@ -218,7 +218,7 @@ const authorizeRawChildAction = async (
   return { result, pendingApprovals, inboxAdmissions };
 };
 
-describe("AH10 raw direct-child AssignWork authorization routing", () => {
+describe("raw direct-child AssignWork authorization routing", () => {
   it("routes a committed legacy raw-child-id action to binding validation", async () => {
     const { result, pendingApprovals, inboxAdmissions } =
       await authorizeRawChildAction("Committed");

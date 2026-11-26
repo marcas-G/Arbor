@@ -8,7 +8,7 @@ import {
   runSuite,
 } from "../src/index.js";
 
-describe("P3 behavioral-eval harness", () => {
+describe("behavioral-eval harness", () => {
   it.effect("runs the P3 program suites deterministically", () =>
     Effect.gen(function* () {
       for (const suite of P3_EVAL_SUITES) {

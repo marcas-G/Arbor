@@ -57,7 +57,7 @@ const approvalBinding: ExecutableApprovalBinding = {
   controlBasisDigest: "b".repeat(64),
 };
 
-describe("P4 RecoveryBinding source tuple validation", () => {
+describe("RecoveryBinding source tuple validation", () => {
   it("accepts the exact execution, invocation callRef and approval action tuple", () => {
     expect(
       recoveryBindingIdentityMatches({

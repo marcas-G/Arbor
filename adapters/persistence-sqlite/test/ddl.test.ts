@@ -33,8 +33,8 @@ const bootstrap = Effect.gen(function* () {
   );
 });
 
-describe("P1 DDL migration", () => {
-  it("creates every P1 table", async () => {
+describe("DDL migration", () => {
+  it("creates every table", async () => {
     const tables = await withMigrated(
       Effect.gen(function* () {
         const sql = yield* SqlClient;

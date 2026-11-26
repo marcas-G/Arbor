@@ -129,7 +129,7 @@ const prepared = {
   updatedAt: "t1",
 };
 
-describe("P17/P20 AgentLoopStepStore", () => {
+describe("/AgentLoopStepStore", () => {
   it.effect(
     "creates idempotently and advances by fenced state/revision CAS",
     () =>

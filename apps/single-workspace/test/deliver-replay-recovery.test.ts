@@ -297,7 +297,7 @@ const baseDependencies = (options: {
   };
 };
 
-describe("P37 Deliver receipt recovery", () => {
+describe("Deliver receipt recovery", () => {
   it.effect(
     "receipt-first converges an exact prior-generation delivery despite a different candidate fingerprint",
     () =>

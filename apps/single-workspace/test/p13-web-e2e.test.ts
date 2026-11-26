@@ -153,7 +153,7 @@ const authHeaders = {
   authorization: `Bearer ${TOKEN}`,
 };
 
-describe("P13 EC-11 e2e — real composition, story path", () => {
+describe("EC-11 e2e — real composition, story path", () => {
   it("serves the SPA and assets same-origin", async () => {
     const index = await fetch(base());
     expect(index.status).toBe(200);

@@ -409,7 +409,7 @@ const withReadOnlyTarget = (
   }
 };
 
-describe("offline P39–P57 schema-upgrade CLI", () => {
+describe("offline –schema-upgrade CLI", () => {
   it("loops through short manifest writes and never flushes a stalled append", () => {
     const bytes = Buffer.from("append-only-record\n", "utf8");
     let output = Buffer.alloc(0);
@@ -899,7 +899,7 @@ describe("offline P39–P57 schema-upgrade CLI", () => {
     CLI_PROCESS_TIMEOUT_MS,
   );
 
-  it("creates a P57 fresh target without accepting a source", async () => {
+  it("creates a fresh target without accepting a source", async () => {
     const directory = makeP39PrivateTestDirectory(
       process.cwd(),
       ".schema-upgrade-fresh-",
@@ -1238,7 +1238,7 @@ describe("offline P39–P57 schema-upgrade CLI", () => {
     600_000,
   );
 
-  it("upgrades an exact schema-51 source through P52 backfill and accepts schema-57 exact no-op", async () => {
+  it("upgrades an exact schema-51 source through backfill and accepts schema-57 exact no-op", async () => {
     const directory = makeP39PrivateTestDirectory(
       process.cwd(),
       ".schema-upgrade-50-noop-",

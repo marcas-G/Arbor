@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { createSchema44TestDatabase } from "../../../tests/support/schema44-database.js";
 
 describe("central schema-44 runtime test fixture", () => {
-  it("creates the ordered P43/P44 current schema with guarded ApprovalRejected outcomes", async () => {
+  it("creates the ordered /current schema with guarded ApprovalRejected outcomes", async () => {
     const fixture = await createSchema44TestDatabase();
     const db = new DatabaseSync(fixture.databaseFilename, { readOnly: true });
     try {

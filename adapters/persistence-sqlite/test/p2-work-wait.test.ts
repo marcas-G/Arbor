@@ -113,7 +113,7 @@ const waitSpec: WaitSpec = {
   conditions: [{ _tag: "TimeReached", instant: "2999-01-01T00:00:00.000Z" }],
 };
 
-describe("P2 WorkWaitStore + SchedulerTimerStore", () => {
+describe("WorkWaitStore + SchedulerTimerStore", () => {
   it.effect("upserts, reads, and clears WorkWait", () =>
     Effect.gen(function* () {
       const app = makeApp();

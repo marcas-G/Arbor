@@ -116,7 +116,7 @@ const makeHarness = () => {
   };
 };
 
-describe("P9 direct Control settlement effect commit", () => {
+describe("direct Control settlement effect commit", () => {
   it("keeps the effect absent before commit and does not replay it after terminal commit", async () => {
     const harness = makeHarness();
     let handlerCalls = 0;

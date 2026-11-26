@@ -206,7 +206,7 @@ const runStore = <A>(
 ) =>
   Effect.runPromise(Effect.scoped(Effect.provide(program, makeApp(filename))));
 
-describe("P47 / P9 legacy-adoption immutable failure facts", () => {
+describe("/ legacy-adoption immutable failure facts", () => {
   it("writes one exact fact/event pair and exact retry preserves the first timestamp", async () => {
     const fixture = createCurrentSchemaCase();
     try {
@@ -313,7 +313,7 @@ describe("P47 / P9 legacy-adoption immutable failure facts", () => {
     }
   });
 
-  it("rejects an expired current generation before reading or writing AH14 evidence", async () => {
+  it("rejects an expired current generation before reading or writing evidence", async () => {
     const fixture = createCurrentSchemaCase();
     try {
       await seed(fixture.databaseFilename);
@@ -375,7 +375,7 @@ describe("P47 / P9 legacy-adoption immutable failure facts", () => {
     }
   });
 
-  it("keeps Attention active and writes no resolution when any exact P4 action proof is absent", async () => {
+  it("keeps Attention active and writes no resolution when any exact action proof is absent", async () => {
     const fixture = createCurrentSchemaCase();
     try {
       await seed(fixture.databaseFilename);
@@ -435,7 +435,7 @@ describe("P47 / P9 legacy-adoption immutable failure facts", () => {
     }
   });
 
-  it("resolves only a complete exact P4 denial binding and writes the immutable resolution event/fact", async () => {
+  it("resolves only a complete exact denial binding and writes the immutable resolution event/fact", async () => {
     const fixture = createCurrentSchemaCase();
     try {
       await seed(fixture.databaseFilename);
@@ -597,7 +597,7 @@ describe("P47 / P9 legacy-adoption immutable failure facts", () => {
     }
   });
 
-  it("resolves an exact Applied P4 settlement only with its same-invocation Observation", async () => {
+  it("resolves an exact Applied settlement only with its same-invocation Observation", async () => {
     const fixture = createCurrentSchemaCase();
     try {
       await seed(fixture.databaseFilename);
@@ -939,7 +939,7 @@ describe("P47 / P9 legacy-adoption immutable failure facts", () => {
     }
   });
 
-  it("commits the AH14 marker with the P10 offset, rolls back before commit, and rebuilds after event pruning without reviving a resolved row", async () => {
+  it("commits the marker with the offset, rolls back before commit, and rebuilds after event pruning without reviving a resolved row", async () => {
     const fixture = createCurrentSchemaCase();
     try {
       await seed(fixture.databaseFilename);

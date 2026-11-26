@@ -214,7 +214,7 @@ describe("executable tool invocation identity scope", () => {
     expect(observed[0]?.invocationId).toBe(observed[2]?.invocationId);
   });
 
-  it("adopts only an exact pre-AH7 invocation from the same Execution", async () => {
+  it("adopts only an exact pre-invocation from the same Execution", async () => {
     const legacyId = `tin_018f2b3c-4d5e-7abc-8def-${createHash("sha256")
       .update(invocation.callRef)
       .digest("hex")
@@ -271,7 +271,7 @@ describe("executable tool invocation identity scope", () => {
     expect(ids[1]).not.toBe(legacyId);
   });
 
-  it("passes only the exact trusted P3 tuple and policy revisions into ToolRuntime", async () => {
+  it("passes only the exact trusted tuple and policy revisions into ToolRuntime", async () => {
     let observedContext:
       | import("@arbor/ports").ToolExecutionContext
       | undefined;

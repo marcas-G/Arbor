@@ -43,7 +43,7 @@ const app = Layer.mergeAll(
   ),
 );
 
-describe("P4 tool catalog", () => {
+describe("tool catalog", () => {
   it("hides every registered shell definition in Disabled mode", async () => {
     const registry = Layer.succeed(ProjectToolRegistry, {
       register: () => Effect.die("register is not used"),

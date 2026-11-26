@@ -26,7 +26,7 @@ const execution = (episode: Parameters<typeof workspaceEpisodeExecution>[1]) =>
     state: { status: "Active", settlement: null },
   }) as const;
 
-describe("AH19 owner epoch and Session epoch boundary", () => {
+describe("owner epoch and Session epoch boundary", () => {
   it("allows Conversation owner epoch 1 while the isolated Work Session remains at 0", () => {
     expect(
       sessionTimelineEpochForAcceptedOutput({

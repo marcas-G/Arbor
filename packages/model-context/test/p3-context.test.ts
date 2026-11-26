@@ -28,7 +28,7 @@ const budget = {
   toolReserve: 10,
 };
 
-describe("P3 context planning", () => {
+describe("context planning", () => {
   it("reserves output before input", () => {
     expect(contextBudget(budget)).toBe(60);
   });

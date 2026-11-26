@@ -211,7 +211,7 @@ const p40ReplayObservation = () => ({
   reconciliationFactRef,
 });
 
-describe("P40 P3 terminal observation transaction source", () => {
+describe("terminal observation transaction source", () => {
   it.each([
     "AH7BeforeActionResultCommit",
     "AH7AfterActionResultCommit",
@@ -292,7 +292,7 @@ describe("P40 P3 terminal observation transaction source", () => {
     },
   );
 
-  it("leaves Action and cursor pending when P40 reports a recovery block", async () => {
+  it("leaves Action and cursor pending when reports a recovery block", async () => {
     const harness = makeHarness();
     const outcomeExit = await Effect.runPromise(
       Effect.exit(

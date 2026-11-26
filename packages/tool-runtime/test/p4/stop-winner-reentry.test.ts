@@ -13,7 +13,7 @@ import {
 import { app, run } from "./support-app.js";
 import type { PipelineTrace } from "./support-harness.js";
 
-describe("P4 tool runtime pipeline", () => {
+describe("tool runtime pipeline", () => {
   it("runs the pipeline and returns Success", async () => {
     const result = await run(
       app(),
@@ -120,7 +120,7 @@ describe("P4 tool runtime pipeline", () => {
     },
   );
 
-  it("keeps the canonical P4 Denied winner when Stop arrives before the effect gate", async () => {
+  it("keeps the canonical Denied winner when Stop arrives before the effect gate", async () => {
     const argumentsJson = '{"target":{"mount":"workspace","path":"."}}';
     const deniedRecord: ToolInvocationRecord = {
       invocationId,
@@ -156,7 +156,7 @@ describe("P4 tool runtime pipeline", () => {
     expect(trace.effectAdmissions).toBe(1);
   });
 
-  it("uses the legacy no-P40 interruption writer idempotently for a Stop before effect admission", async () => {
+  it("uses the legacy no-interruption writer idempotently for a Stop before effect admission", async () => {
     const argumentsJson = '{"target":{"mount":"workspace","path":"."}}';
     const existing: ToolInvocationRecord = {
       invocationId,

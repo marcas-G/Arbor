@@ -156,7 +156,7 @@ const makeDeps = (
   return { ...deps, ...overrides } as never;
 };
 
-describe("P37 P10 Attention poll coordinator", () => {
+describe("Attention poll coordinator", () => {
   it.effect(
     "projects the retained F18 queue independently of the journal offset",
     () =>

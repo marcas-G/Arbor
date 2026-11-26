@@ -36,8 +36,8 @@ const readGuard = (filename: string, name: string): string => {
   }
 };
 
-describe("P54 Native process-mode no-effect Denied migration", () => {
-  it("changes only the current P40 Denied allowlists after schema 53", async () => {
+describe("Native process-mode no-effect Denied migration", () => {
+  it("changes only the current Denied allowlists after schema 53", async () => {
     const fixture = await createSchema51TestDatabase();
     try {
       const priorMigrations = CURRENT_MIGRATIONS.filter(

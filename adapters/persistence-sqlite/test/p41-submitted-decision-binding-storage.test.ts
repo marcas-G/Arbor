@@ -230,8 +230,8 @@ const runStoreDb = <A>(
     Effect.scoped(Effect.provide(program, makeStoreApp(filename))),
   );
 
-describe("P41 / 0041 submitted DecisionEpisode storage", () => {
-  it("pins the P41 descriptor in the schema-42 prefix and fingerprints the corrected DDL", () => {
+describe("/ 0041 submitted DecisionEpisode storage", () => {
+  it("pins the descriptor in the schema-42 prefix and fingerprints the corrected DDL", () => {
     expect(P41_SUBMITTED_DECISION_BINDING_ATTENTION_MIGRATION).toEqual({
       id: 41,
       name: "p41_submitted_decision_binding_attention",

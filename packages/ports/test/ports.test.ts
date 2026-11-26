@@ -21,7 +21,7 @@ import type { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 
 describe("ports contracts", () => {
-  it("exposes every frozen P1 service", () => {
+  it("exposes every frozen service", () => {
     for (const tag of [
       TransactionScope,
       TransactionPort,

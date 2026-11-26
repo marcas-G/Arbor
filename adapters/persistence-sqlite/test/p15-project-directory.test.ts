@@ -10,7 +10,7 @@ import {
   runMigrations,
 } from "../src/index.js";
 
-describe("P15 local ProjectDirectory", () => {
+describe("local ProjectDirectory", () => {
   it.effect(
     "returns canonical project rows through the port in updated order",
     () =>

@@ -17,7 +17,7 @@ import {
 import { app, run } from "./support-app.js";
 import type { PipelineTrace } from "./support-harness.js";
 
-describe("P4 tool runtime pipeline", () => {
+describe("tool runtime pipeline", () => {
   it("opens the full committed process mount set instead of the executor's single target", async () => {
     const trace: PipelineTrace = {
       noEffectDenials: [],

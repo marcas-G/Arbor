@@ -161,7 +161,7 @@ const bound = (input: {
   );
 };
 
-describe("P20 overflow replacement AgentLoopStep manifest binding", () => {
+describe("overflow replacement AgentLoopStep manifest binding", () => {
   it("resolves one exact contiguous inference-compaction-replacement chain", () => {
     expect(chain()).toMatchObject({
       inference: { providerTurnId: inferenceId, role: "Inference" },

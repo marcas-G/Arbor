@@ -16,7 +16,7 @@ import {
 import { app, run, runFailure } from "./support-app.js";
 import type { PipelineTrace } from "./support-harness.js";
 
-describe("P4 tool runtime pipeline", () => {
+describe("tool runtime pipeline", () => {
   it("settles a post-claim effect-gate denial without opening the executor", async () => {
     let executorCalls = 0;
     const approvalExecutor: ToolExecutor = {

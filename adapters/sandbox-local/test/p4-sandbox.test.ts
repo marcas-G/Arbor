@@ -22,7 +22,7 @@ const regions: ReadonlyArray<CanonicalResourceRegion> = [
   },
 ];
 
-describe("P4 local sandbox", () => {
+describe("local sandbox", () => {
   itEffect.effect(
     "binds the admitted workspace root and never deletes it on close",
     () =>

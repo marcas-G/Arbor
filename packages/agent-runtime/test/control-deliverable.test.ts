@@ -15,7 +15,7 @@ const invocation = (
   argumentsJson,
 });
 
-describe("MAC-P3 deliverable controls", () => {
+describe("MAC-deliverable controls", () => {
   it("decodes formal production and delivery without exposing satisfy", async () => {
     const produced = await Effect.runPromise(
       decodeControlInvocation(

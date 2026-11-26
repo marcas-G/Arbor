@@ -39,8 +39,8 @@ import {
   sendUsesNewCommandIdKeepingMessageIds,
 } from "./phases-send-message.js";
 
-describe("AH10 receipt-first generation takeover for a pinned AssignWork", () => {
-  it("rejects a model-authored raw direct-child WorkspaceId instead of committing without a P33 binding", async () => {
+describe("receipt-first generation takeover for a pinned AssignWork", () => {
+  it("rejects a model-authored raw direct-child WorkspaceId instead of committing without a binding", async () => {
     await rejectsModelAuthoredChildWorkspaceId();
   });
 
@@ -61,7 +61,7 @@ describe("AH10 receipt-first generation takeover for a pinned AssignWork", () =>
   });
 });
 
-describe("AH10 takeover for another canonical control action", () => {
+describe("takeover for another canonical control action", () => {
   it("uses a new generation CommandId after a prior ProduceDeliverable fence rejection", async () => {
     await produceNewCommandIdAfterFenceRejection();
   });
@@ -71,7 +71,7 @@ describe("AH10 takeover for another canonical control action", () => {
   });
 });
 
-describe("AH10 receipt-first DeclareDependency takeover", () => {
+describe("receipt-first DeclareDependency takeover", () => {
   it("rejects a new AnyProducer action without evidence before Command submission", async () => {
     await dependencyRejectsAnyProducerWithoutEvidence();
   });
@@ -97,7 +97,7 @@ describe("AH10 receipt-first DeclareDependency takeover", () => {
   });
 });
 
-describe("AH10 receipt-first AcceptResult takeover", () => {
+describe("receipt-first AcceptResult takeover", () => {
   it("uses a new CommandId after gen0 FencingRejected", async () => {
     await acceptUsesNewCommandIdAfterFencingRejected();
   });
@@ -115,7 +115,7 @@ describe("AH10 receipt-first AcceptResult takeover", () => {
   });
 });
 
-describe("AH10 receipt-first SendMessage takeover", () => {
+describe("receipt-first SendMessage takeover", () => {
   it("uses a new CommandId after gen0 FencingRejected while keeping message and correlation ids", async () => {
     await sendUsesNewCommandIdKeepingMessageIds();
   });
@@ -137,7 +137,7 @@ describe("AH10 receipt-first SendMessage takeover", () => {
   });
 });
 
-describe("AH10 receipt-first SelectCurrentWork takeover", () => {
+describe("receipt-first SelectCurrentWork takeover", () => {
   it("uses a new generation CommandId after gen0 FencingRejected and retains the legacy gen0 ID", async () => {
     await selectUsesNewCommandIdRetainingLegacyId();
   });
@@ -155,7 +155,7 @@ describe("AH10 receipt-first SelectCurrentWork takeover", () => {
   });
 });
 
-describe("AH10 prior-consumer corruption boundaries", () => {
+describe("prior-consumer corruption boundaries", () => {
   it.each([
     "AssignWork",
     "AcceptResult",

@@ -16,8 +16,8 @@ import {
 import { app } from "./support-app.js";
 import type { PipelineTrace } from "./support-harness.js";
 
-describe("P4 tool runtime pipeline", () => {
-  it("reconciles against the persisted P39 scope before denying a changed current resource boundary", async () => {
+describe("tool runtime pipeline", () => {
+  it("reconciles against the persisted scope before denying a changed current resource boundary", async () => {
     const retry = p39NotOccurredRetryCase("ResourceSnapshotChanged");
     const trace: PipelineTrace = {
       noEffectDenials: [],
@@ -104,7 +104,7 @@ describe("P4 tool runtime pipeline", () => {
     });
   });
 
-  it("emits the delayed reconciliation fence-rejection probe and preserves the P39 failure", async () => {
+  it("emits the delayed reconciliation fence-rejection probe and preserves the failure", async () => {
     const retry = p39NotOccurredRetryCase("ResourceSnapshotChanged");
     const trace: PipelineTrace = {
       noEffectDenials: [],

@@ -9,7 +9,7 @@ import { runMigrations } from "../src/migrate.js";
 import { P38_MIGRATIONS } from "../src/migrations.js";
 import { TransactionPortLive } from "../src/transaction.js";
 
-describe("P38 Control approval consumption", () => {
+describe("Control approval consumption", () => {
   it.effect(
     "requires and preserves a runtime action identity in the unified ledger",
     () =>

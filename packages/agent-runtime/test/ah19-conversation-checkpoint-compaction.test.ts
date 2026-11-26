@@ -104,7 +104,7 @@ const owner: ConversationCheckpointOwner = {
   updatedAt: "2026-10-17T00:00:00.000Z",
 };
 
-describe("AH19 Conversation checkpoint blob-before-owner commit", () => {
+describe("Conversation checkpoint blob-before-owner commit", () => {
   it("generates a stable composite ProviderTurnId and binds it exactly in the manifest", async () => {
     const composite = conversationCheckpointProviderTurnId(
       String(currentExecutionId),

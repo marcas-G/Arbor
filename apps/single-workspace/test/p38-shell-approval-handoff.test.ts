@@ -254,7 +254,7 @@ const runApprovalHandoff = async (command: string) => {
   return { outcome, pending, toolCalls };
 };
 
-describe("P38 shell policy approval handoff", () => {
+describe("shell policy approval handoff", () => {
   it.each(["python -c 'print(1)'", "ls -la; rm file.txt"])(
     "persists an exact Pending approval for %s without invoking a shell effect",
     async (command) => {

@@ -99,8 +99,8 @@ const applyP52 = (filename: string) =>
     ),
   );
 
-describe("P52 Work contract revision history migration", () => {
-  it("pins the exact offline P52 descriptor predecessor and fingerprint", () => {
+describe("Work contract revision history migration", () => {
+  it("pins the exact offline descriptor predecessor and fingerprint", () => {
     expect(P52_WORK_CONTRACT_REVISION_MIGRATION).toMatchObject({
       id: 52,
       name: "work_contract_revision_history",
@@ -183,7 +183,7 @@ describe("P52 Work contract revision history migration", () => {
     }
   }, 180_000);
 
-  it("rolls back schema, P52 backfill, and version if onApply fails after its writes", async () => {
+  it("rolls back schema, backfill, and version if onApply fails after its writes", async () => {
     const fixture = await createSchema51TestDatabase();
     try {
       await seedLegacyCurrentWork(fixture.databaseFilename);

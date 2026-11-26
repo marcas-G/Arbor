@@ -73,7 +73,7 @@ afterAll(() => {
   schema44Factory = undefined;
 }, 120_000);
 
-describe("P47 AH14 legacy-adoption evidence Attention migration", () => {
+describe("legacy-adoption evidence Attention migration", () => {
   it("registers exact 0047 predecessor and supports both disposable upgrade prefixes", async () => {
     expect(P47_AH14_LEGACY_ADOPTION_ATTENTION_MIGRATION).toMatchObject({
       id: 47,
@@ -121,7 +121,7 @@ describe("P47 AH14 legacy-adoption evidence Attention migration", () => {
     }
   });
 
-  it("creates permanent immutable P9 facts and the exact rebuildable P10 marker", async () => {
+  it("creates permanent immutable facts and the exact rebuildable marker", async () => {
     const fixture = await createSchema46Clone();
     try {
       await run(fixture.databaseFilename);

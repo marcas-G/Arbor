@@ -89,7 +89,7 @@ afterAll(() => {
   fixtureFactory = undefined;
 }, 120_000);
 
-describe("P14 production conversation model context", () => {
+describe("production conversation model context", () => {
   it.effect(
     "places the current claimed Human Input in the production ProviderTurn request",
     () =>

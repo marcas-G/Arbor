@@ -378,7 +378,7 @@ const trustedLocalCommittedFixture = () => {
   };
 };
 
-describe("P9 SandboxUnavailableV1 successor recovery", () => {
+describe("SandboxUnavailableV1 successor recovery", () => {
   it("restarts from the immutable terminal action and advances to one successor under a newer policy", async () => {
     // These rows represent the committed SQLite state after the old process
     // stopped: the P9 fact and terminal action are durable, and the old Step

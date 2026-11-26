@@ -39,7 +39,7 @@ const jobExecutionId =
         throw new Error("test job must be Running");
       })();
 
-describe("P17 conversation recovery policy", () => {
+describe("conversation recovery policy", () => {
   it("schedules a first transient provider failure with deterministic delay", () => {
     const input = {
       job,

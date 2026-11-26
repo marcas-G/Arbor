@@ -38,7 +38,7 @@ const insertMessage = (
     );
   });
 
-describe("P17 migration 0021 conversation response runtime", () => {
+describe("migration 0021 conversation response runtime", () => {
   it.effect(
     "backfills legacy messages into durable jobs and attempts re-entrantly",
     () =>

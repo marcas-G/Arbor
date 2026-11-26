@@ -217,7 +217,7 @@ const seedSettledExpectedFailure = Effect.gen(function* () {
   );
 });
 
-describe("P40 schema-44 observation evidence read failures", () => {
+describe("schema-44 observation evidence read failures", () => {
   it.each([
     { damage: "missing" as const, failureCode: "Missing" as const },
     { damage: "corrupt" as const, failureCode: "HashMismatch" as const },

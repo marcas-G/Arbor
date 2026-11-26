@@ -118,7 +118,7 @@ const fixture = (
   return { bundle, bundleJson, highWaterJson };
 };
 
-describe("P5 Windows D2 V3 current protected authority", () => {
+describe("Windows D2 V3 current protected authority", () => {
   it.skipIf(process.platform !== "win32")(
     "re-reads protected source, sidecar and PE at P4 admission after an earlier positive inspection",
     async () => {

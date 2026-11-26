@@ -75,8 +75,8 @@ afterAll(() => {
   schema44Factory = undefined;
 }, 120_000);
 
-describe("P48 AH19 Root Workspace Conversation checkpoint owner migration", () => {
-  it("requires exact schema 47 and appends after the F23/VCS/AH14 prefixes", async () => {
+describe("Root Workspace Conversation checkpoint owner migration", () => {
+  it("requires exact schema 47 and appends after the F23/VCS/prefixes", async () => {
     expect(P48_AH19_CONVERSATION_CHECKPOINT_OWNER_MIGRATION).toMatchObject({
       id: 48,
       name: "conversation_checkpoint_owner",

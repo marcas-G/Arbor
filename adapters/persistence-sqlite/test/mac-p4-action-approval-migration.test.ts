@@ -50,7 +50,7 @@ const currentControl: ControlApprovalRecord = {
   consumedAt: null,
 };
 
-describe("MAC-P4 unified ActionApproval migration", () => {
+describe("MAC-unified ActionApproval migration", () => {
   it.effect(
     "fails unbound legacy approvals closed, removes old tables, and single-consumes current intents",
     () =>

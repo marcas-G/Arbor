@@ -5,7 +5,7 @@ import {
   providerTurnSafetyFingerprint,
 } from "../src/p12-safety-identity.js";
 
-describe("P12-DG-01 D2 semantic identities", () => {
+describe("-DG-01 D2 semantic identities", () => {
   it("namespaces existing provider request hashes by operation kind", () => {
     expect(
       providerTurnSafetyFingerprint("Inference", "opaque-hash-v1"),

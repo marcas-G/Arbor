@@ -423,7 +423,7 @@ const summarizeLockFailure = (cause: unknown, depth = 0): string => {
   return labels.join("/") || "unclassified structured failure";
 };
 
-describe("test-only P39 maintenance cumulative prefix qualification 0039–0042", () => {
+describe("test-only maintenance cumulative prefix qualification 0039–0042", () => {
   it("applies the configured writer-lock busy timeout before initialization reads", async () => {
     const directory = makeP39PrivateTestDirectory(
       process.cwd(),
@@ -514,7 +514,7 @@ describe("test-only P39 maintenance cumulative prefix qualification 0039–0042"
     }
   }, 120_000);
 
-  it("rolls back/restarts each exact descriptor and preserves the P38 Project/approval prefix through 0042", async () => {
+  it("rolls back/restarts each exact descriptor and preserves the Project/approval prefix through 0042", async () => {
     assertDescriptorPrefixAndFingerprint();
     const directory = makeP39PrivateTestDirectory(
       process.cwd(),

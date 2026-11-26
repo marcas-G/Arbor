@@ -15,7 +15,7 @@ import {
 import { app, run } from "./support-app.js";
 import type { PipelineTrace } from "./support-harness.js";
 
-describe("P4 tool runtime pipeline", () => {
+describe("tool runtime pipeline", () => {
   it("returns ExpectedFailure on invalid input", async () => {
     const result = await run(app(), "{}");
     expect(result._tag).toBe("ExpectedFailure");
@@ -118,7 +118,7 @@ describe("P4 tool runtime pipeline", () => {
     ]);
   });
 
-  it("does not accept a P38 approval id without its exact executable context", async () => {
+  it("does not accept a approval id without its exact executable context", async () => {
     const approvalExecutor: ToolExecutor = {
       name: "read",
       write: false,

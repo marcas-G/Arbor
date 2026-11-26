@@ -60,7 +60,7 @@ const input = (
   ...overrides,
 });
 
-describe("P11 complete sandbox ResourceBoundary producer", () => {
+describe("complete sandbox ResourceBoundary producer", () => {
   it("hashes the complete boundary and materializes deterministic filesystem-only mounts", () => {
     const primary = gitWorktree("/repo/workspace");
     const primaryAlias = fileTree("/repo/workspace");
@@ -336,7 +336,7 @@ describe("P11 complete sandbox ResourceBoundary producer", () => {
     ).toBeUndefined();
   });
 
-  it("accepts P11 resolver-normalized relative paths and a FileTree alias representative for primary", () => {
+  it("accepts resolver-normalized relative paths and a FileTree alias representative for primary", () => {
     const resolvedPrimary = gitWorktree("C:\\resolved\\workspace");
     const result = produceSandboxBoundaryV1(
       input(

@@ -132,7 +132,7 @@ const resolveCapability = (
     ),
   );
 
-describe("AH19 full binding fingerprint propagation", () => {
+describe("full binding fingerprint propagation", () => {
   it("is stable for the same resolved deployment and changes with endpoint, deployment, model, or policy", () => {
     const baseline = resolveModelBinding(registry, nativeCatalog, {
       deploymentId: "dep-ah19",

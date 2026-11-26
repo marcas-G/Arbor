@@ -15,7 +15,7 @@ const events = (
   { _tag: "TurnCompleted", finishReason: "Stop" },
 ];
 
-describe("P3 decodeTurn", () => {
+describe("decodeTurn", () => {
   it("decodes text into ModelOutput without constructing an AgentAction", () => {
     const result = decodeTurn(events([{ _tag: "TextDelta", text: "hi" }]));
     expect(result.ok).toBe(true);

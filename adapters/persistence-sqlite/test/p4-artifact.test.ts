@@ -34,7 +34,7 @@ const makeApp = () => {
   return Layer.mergeAll(infra, deps, Layer.provide(ArtifactServiceLive, deps));
 };
 
-describe("P4 artifact service", () => {
+describe("artifact service", () => {
   it.effect("stores bytes as an artifact and loads them back", () =>
     Effect.gen(function* () {
       const app = makeApp();

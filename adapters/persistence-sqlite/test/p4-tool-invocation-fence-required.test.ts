@@ -28,7 +28,7 @@ const invocationId = parse(ToolInvocationId)(
 );
 const incompleteFence = { executionId } as never;
 
-describe("P4 SQLite ToolInvocationStore fence requirement", () => {
+describe("SQLite ToolInvocationStore fence requirement", () => {
   it.effect(
     "rejects every durable write before SQL when the holder tuple is incomplete",
     () =>

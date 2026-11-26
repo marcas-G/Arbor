@@ -31,7 +31,7 @@ const workId = parse(WorkId)("wrk_00000000-0000-7000-8000-000000000162");
 const providerTurnId = providerTurnInferenceId(executionId, 0);
 const bindingFingerprint = `p16fp_${"a".repeat(64)}`;
 
-describe("P16 reasoning round-trip output journal", () => {
+describe("reasoning round-trip output journal", () => {
   it("persists one content-addressed attachment and replays the same ProviderTurn idempotently", async () => {
     const writes = new Map<
       string,

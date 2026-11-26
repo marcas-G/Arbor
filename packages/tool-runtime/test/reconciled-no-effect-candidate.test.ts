@@ -46,7 +46,7 @@ const recordedFact: RecordedReconciliationFact = {
 };
 
 describe("ReconciledNoEffect candidate", () => {
-  it("carries the exact recorded NotOccurred fact into P4 selection and never invents a result ref", () => {
+  it("carries the exact recorded NotOccurred fact into selection and never invents a result ref", () => {
     const candidate = reconciledNoEffectCandidate({
       request,
       result: notOccurred,

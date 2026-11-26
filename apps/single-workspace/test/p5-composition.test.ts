@@ -27,7 +27,7 @@ beforeAll(async () => {
 
 afterAll(() => schema44Factory?.cleanup());
 
-describe("P5 composition root", () => {
+describe("composition root", () => {
   it.effect(
     "builds the full slice layer over a prestarted current-schema DB",
     () =>

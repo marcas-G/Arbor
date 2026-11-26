@@ -197,7 +197,7 @@ const setup = () => {
   };
 };
 
-describe("RetryVerification P8 handoff", () => {
+describe("RetryVerification handoff", () => {
   it.effect(
     "concludes the exact orphan and creates the preallocated successor under one handler outcome",
     () =>

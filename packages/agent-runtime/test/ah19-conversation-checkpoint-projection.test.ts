@@ -254,7 +254,7 @@ const standardInput = (
   ...overrides,
 });
 
-describe("AH19 Conversation owner history projection", () => {
+describe("Conversation owner history projection", () => {
   it.each([
     ["unknown owner kind", { checkpointKind: "CorruptKind" as never }],
     [

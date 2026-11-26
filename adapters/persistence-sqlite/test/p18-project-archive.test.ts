@@ -9,7 +9,7 @@ import {
   runMigrations,
 } from "../src/index.js";
 
-describe("P18 project archive migration", () => {
+describe("project archive migration", () => {
   it.effect(
     "preserves existing messages and admits the Declined terminal state",
     () =>

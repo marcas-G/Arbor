@@ -198,7 +198,7 @@ const admit = (commandId: CommandId) =>
     );
   });
 
-describe("I0 Wait control route -> P2 WorkWait -> wake", () => {
+describe("I0 Wait control route -> WorkWait -> wake", () => {
   it.effect(
     "routes a typed Wait action into durable WorkWait settlement",
     () =>

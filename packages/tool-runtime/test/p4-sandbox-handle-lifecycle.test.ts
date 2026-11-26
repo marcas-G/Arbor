@@ -73,7 +73,7 @@ const run = (executor: ToolExecutor, trace: LifecycleTrace) =>
     (() => {}) as unknown as ReturnType<typeof makeProcessRunner>,
   );
 
-describe("P4 sandbox handle lifecycle (E07)", () => {
+describe("sandbox handle lifecycle (E07)", () => {
   it("closes the handle on the success path", async () => {
     const trace: LifecycleTrace = { opened: false, closed: 0 };
     const outcome = await Effect.runPromise(run(okExecutor, trace));

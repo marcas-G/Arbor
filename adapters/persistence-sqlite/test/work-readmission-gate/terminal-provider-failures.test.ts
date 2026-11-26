@@ -13,7 +13,7 @@ import {
   terminalSettlement,
 } from "./support.js";
 
-describe("P2 WorkReadmissionGateStore", () => {
+describe("WorkReadmissionGateStore", () => {
   it.each([...TERMINAL_PROVIDER_FAILURE_KINDS])(
     "derives the complete %s Provider failure source from the exact durable chain",
     (kind) =>

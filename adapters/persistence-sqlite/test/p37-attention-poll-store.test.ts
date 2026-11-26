@@ -27,7 +27,7 @@ const runDb = <A>(
   >,
 ) => Effect.runPromise(Effect.scoped(Effect.provide(program, makeApp())));
 
-describe("P37 Attention poll claim store", () => {
+describe("Attention poll claim store", () => {
   it("returns non-mutating NoClaim while another valid global lease is active", () =>
     runDb(
       Effect.gen(function* () {

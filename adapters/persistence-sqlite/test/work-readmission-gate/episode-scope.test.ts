@@ -19,7 +19,7 @@ import {
   workspaceId,
 } from "./support.js";
 
-describe("P2 WorkReadmissionGateStore", () => {
+describe("WorkReadmissionGateStore", () => {
   it("does not let a malformed terminal Episode for another Work in the same Workspace cross-hold", () =>
     runDb(
       Effect.gen(function* () {

@@ -33,7 +33,7 @@ const sandbox = {
   writableRegions: [],
 };
 
-describe("P4 patch tool", () => {
+describe("patch tool", () => {
   it("applies a unified diff", async () => {
     const diff = "@@ -2,1 +2,1 @@\n-line2\n+LINE2";
     const result = await Effect.runPromise(

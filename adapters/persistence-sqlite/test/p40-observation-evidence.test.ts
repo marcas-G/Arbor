@@ -111,7 +111,7 @@ const baseAttentionFacts = () => ({
   acknowledgePendingDeliverReplayAttention: () => Effect.void,
 });
 
-describe("P40 tool observation evidence module", () => {
+describe("tool observation evidence module", () => {
   it.effect(
     "rejects a directly applied v2 AssignWork event at the P10 store boundary",
     () =>
@@ -205,7 +205,7 @@ describe("P40 tool observation evidence module", () => {
       }),
   );
 
-  it("exports an unregistered version-40 migration for the exact P39 prefix", () => {
+  it("exports an unregistered version-40 migration for the exact prefix", () => {
     expect(p36Migrations?.at(-1)?.id).toBe(36);
     expect(p36Migrations?.some((migration) => migration.id === 40)).toBe(false);
     expect(p40Migration).toBeDefined();
@@ -234,7 +234,7 @@ describe("P40 tool observation evidence module", () => {
     );
   });
 
-  it("exports a P40-only evidence store adapter without changing the P36 runner", () => {
+  it("exports a -only evidence store adapter without changing the runner", () => {
     expect(
       (
         persistenceExports as typeof persistenceExports & {

@@ -18,7 +18,7 @@ const secondExecution = parse(ExecutionId)(
   "exe_018f2b3c-4d5e-7abc-8def-0123456789a2",
 );
 
-describe("P17 provider deployment breaker", () => {
+describe("provider deployment breaker", () => {
   it.effect(
     "opens after systemic failures, admits one half-open probe, then closes on success",
     () =>

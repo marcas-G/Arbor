@@ -166,7 +166,7 @@ const seedExecution = Effect.gen(function* () {
   );
 });
 
-describe("AH7 SQLite concurrent ToolInvocationId reentry", () => {
+describe("SQLite concurrent ToolInvocationId reentry", () => {
   it("keeps one durable intent and settlement and safely admits one non-idempotent effect", async () => {
     let executorEffects = 0;
     const executor: ToolExecutor = {

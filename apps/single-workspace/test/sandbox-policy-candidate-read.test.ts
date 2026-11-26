@@ -179,7 +179,7 @@ const read = (
     currentHost,
   });
 
-describe("V6 per-candidate P4 binding digest projection", () => {
+describe("V6 per-candidate binding digest projection", () => {
   it("builds the unchanged public candidate DTO from a pre-intent approval proof", () => {
     const preIntent = {
       _tag: "SandboxPolicyPreIntentRequirementV1",
@@ -253,7 +253,7 @@ describe("V6 per-candidate P4 binding digest projection", () => {
     ).toBe(2);
   });
 
-  it("projects P10 common preconditions from complete current V3 bundle", () => {
+  it("projects common preconditions from complete current V3 bundle", () => {
     const v3 = {
       ...authority,
       bundle: {
@@ -298,7 +298,7 @@ describe("V6 per-candidate P4 binding digest projection", () => {
     });
   });
 
-  it("derives independent RO, owned RW and TrustedLocal digests from one pinned P11 snapshot", () => {
+  it("derives independent RO, owned RW and TrustedLocal digests from one pinned snapshot", () => {
     const claims = [
       {
         claimId: "claim_v6",
@@ -419,7 +419,7 @@ describe("V6 per-candidate P4 binding digest projection", () => {
     expect(result).toEqual({ _tag: "SandboxBoundaryProductionRejected" });
   });
 
-  it("filters wrong-host and Unsupported tuples using trusted P5 host facts without probing providers", () => {
+  it("filters wrong-host and Unsupported tuples using trusted host facts without probing providers", () => {
     const wrongHost = read([], {
       osFamily: "Windows",
       osBuild: "qualified-build",

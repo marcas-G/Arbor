@@ -101,7 +101,7 @@ describe("RecoveryBindingV1 canonical bytes and target projections", () => {
     ).toBeNull();
   });
 
-  it("preserves the raw P38 eight-hex action digest in the canonical P39 V1 binding", () => {
+  it("preserves the raw eight-hex action digest in the canonical V1 binding", () => {
     const approved = {
       ...binding(),
       approvalId: "eap:test-approval",
@@ -131,7 +131,7 @@ describe("RecoveryBindingV1 canonical bytes and target projections", () => {
     ).toEqual(approved);
   });
 
-  it("rejects an SHA-256 wrapper where the exact P38 action digest is required", () => {
+  it("rejects an SHA-256 wrapper where the exact action digest is required", () => {
     const approved = {
       ...binding(),
       approvalId: "eap:test-approval",

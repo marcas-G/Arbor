@@ -14,7 +14,7 @@ let schema44Factory: Awaited<
   ReturnType<typeof createCurrentSchemaTestDatabaseFactory>
 >;
 
-describe("P34 daemon migration wiring", () => {
+describe("daemon migration wiring", () => {
   beforeAll(async () => {
     schema44Factory = await createCurrentSchemaTestDatabaseFactory();
   }, 120_000);

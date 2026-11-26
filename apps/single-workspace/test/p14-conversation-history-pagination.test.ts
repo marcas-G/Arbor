@@ -49,7 +49,7 @@ afterAll(() => {
   fixtureFactory = undefined;
 }, 120_000);
 
-describe("P14 conversation history paging", () => {
+describe("conversation history paging", () => {
   it.effect(
     "returns the latest chronological page, then older pages by stable cursor",
     () =>

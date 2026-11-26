@@ -57,7 +57,7 @@ const sourceIdentity = (
     callRef: overrides.callRef ?? "call-1",
   });
 
-describe("P3 RecoveryBinding source identity", () => {
+describe("RecoveryBinding source identity", () => {
   it("binds one persisted Step, ProviderTurn, LogicalAction and callRef", () => {
     expect(sourceIdentity()).toEqual({
       executionId,
@@ -117,7 +117,7 @@ describe("P3 RecoveryBinding source identity", () => {
   });
 });
 
-describe("P3 RecoveryBinding policy revision source", () => {
+describe("RecoveryBinding policy revision source", () => {
   it("carries the exact prepared ControlBasis policy revisions", () => {
     const controlBasis = {
       workspacePolicyRevision: 17,

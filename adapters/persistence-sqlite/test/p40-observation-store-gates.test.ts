@@ -271,12 +271,12 @@ const seedWorkspaceExecution = Effect.gen(function* () {
   );
 });
 
-describe("P40 P4 persistent observation admission gates", () => {
+describe("persistent observation admission gates", () => {
   afterEach(() => {
     for (const database of databases.splice(0)) database.cleanup();
   });
 
-  it("keeps the maintenance-only P39 descriptor outside runtime migration prefixes", () => {
+  it("keeps the maintenance-only descriptor outside runtime migration prefixes", () => {
     expect(CURRENT_MIGRATIONS.some(({ id }) => id === 39)).toBe(false);
   });
 
@@ -382,7 +382,7 @@ describe("P40 P4 persistent observation admission gates", () => {
     });
   }, 120_000);
 
-  it("rejects a 2,001-unit P4 candidate before materializing its Artifact", async () => {
+  it("rejects a 2,001-unit candidate before materializing its Artifact", async () => {
     const database = createCurrentSchemaCase();
     const app = makeApp(database.databaseFilename);
     const program = Effect.gen(function* () {
@@ -849,7 +849,7 @@ describe("P40 P4 persistent observation admission gates", () => {
     });
   }, 120_000);
 
-  it("keeps a P9 replay-failure fact immutable in SQLite", async () => {
+  it("keeps a replay-failure fact immutable in SQLite", async () => {
     const database = createCurrentSchemaCase();
     const app = makeApp(database.databaseFilename);
     const program = Effect.gen(function* () {
@@ -905,7 +905,7 @@ describe("P40 P4 persistent observation admission gates", () => {
     expect(Exit.isFailure(result.deletion)).toBe(true);
   }, 120_000);
 
-  it("rechecks the lease at the P9 fact write boundary using trusted time, not firstDetectedAt", async () => {
+  it("rechecks the lease at the fact write boundary using trusted time, not firstDetectedAt", async () => {
     const database = createCurrentSchemaCase();
     const sqlite = layer({ filename: database.databaseFilename });
     const ticks = ["2026-10-11T00:00:01.999Z", "2026-10-11T00:00:02.001Z"];
@@ -975,7 +975,7 @@ describe("P40 P4 persistent observation admission gates", () => {
     expect(result.persisted).toEqual({ facts: 0, events: 0 });
   }, 120_000);
 
-  it("commits a final NotOccurred selection with its exact P40 RNO Observation and never rewrites the selection", async () => {
+  it("commits a final NotOccurred selection with its exact RNO Observation and never rewrites the selection", async () => {
     const database = createCurrentSchemaCase();
     const app = makeApp(database.databaseFilename);
     const factId = "f".repeat(64);

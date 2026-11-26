@@ -496,7 +496,7 @@ const seedPreIntentSchema = (sql: SqlClientService) =>
     );
   });
 
-describe("P4 SandboxPolicyRequirementReadPort", () => {
+describe("SandboxPolicyRequirementReadPort", () => {
   it("does not treat an open Verification shell as a Workspace policy requirement", async () => {
     const result = await Effect.runPromise(
       Effect.provide(
@@ -536,7 +536,7 @@ describe("P4 SandboxPolicyRequirementReadPort", () => {
     expect(result).toEqual(Option.none());
   });
 
-  it("returns the exact Pending P3 Action and P4 approval before intent, read-only", async () => {
+  it("returns the exact Pending Action and approval before intent, read-only", async () => {
     const result = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
@@ -620,7 +620,7 @@ describe("P4 SandboxPolicyRequirementReadPort", () => {
     expect(result).toEqual(Option.none());
   });
 
-  it("fails closed on duplicate or mismatched pre-intent P4 source evidence", async () => {
+  it("fails closed on duplicate or mismatched pre-intent source evidence", async () => {
     const duplicate = Effect.provide(
       Effect.gen(function* () {
         const sql = yield* SqlClient;
@@ -812,7 +812,7 @@ describe("P4 SandboxPolicyRequirementReadPort", () => {
     },
   );
 
-  it("returns exact active NotAdmitted P3/P4 evidence read-only in caller's transaction", async () => {
+  it("returns exact active NotAdmitted /evidence read-only in caller's transaction", async () => {
     const result = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
@@ -1053,7 +1053,7 @@ describe("P4 SandboxPolicyRequirementReadPort", () => {
     });
   });
 
-  it("fails closed on duplicate P3 action evidence", async () => {
+  it("fails closed on duplicate action evidence", async () => {
     const result = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {

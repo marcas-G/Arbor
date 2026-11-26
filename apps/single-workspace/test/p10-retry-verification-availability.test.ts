@@ -24,7 +24,7 @@ const attention: AttentionRes = {
   ],
 };
 
-describe("P10 RetryVerification availability projection", () => {
+describe("RetryVerification availability projection", () => {
   it.effect(
     "exposes a row action only when the same resolver authorizes the exact server-authenticated principal and target",
     () =>
