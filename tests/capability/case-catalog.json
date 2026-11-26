@@ -170,7 +170,7 @@
       "l2Suites": [
         "tests/p7-produce-deliverable.test.ts",
         "tests/p7-satisfy-dependency.test.ts",
-        "tests/p7-acceptance.test.ts"
+        "tests/p7/p7-acceptance.test.ts"
       ],
       "l3": {
         "caseId": "B09-L3-REAL",
