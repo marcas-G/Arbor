@@ -57,12 +57,243 @@ beforeAll(async () => {
 
 afterAll(() => schema48Factory?.cleanup(), 120_000);
 
-import {
-  cleanupProcessTreeUntilDeadline,
-  runTaskkillHelperWithTimeout,
-  withTimeout,
-  type TaskkillHelperControl,
-} from "./support/p6-process-tree-cleanup.js";
+interface CleanupTreeResult {
+  readonly confirmed: boolean;
+  readonly attempts: number;
+  readonly elapsedMs: number;
+  readonly lastTaskkillExit: number | null;
+  readonly lastTaskkillError: string | null;
+  readonly helperStopped: boolean;
+  readonly directExited: boolean;
+  readonly rootAlive: boolean;
+}
+
+interface TaskkillHelperControl {
+  readonly exited: Promise<{
+    readonly exitCode: number | null;
+    readonly error?: string;
+  }>;
+  readonly terminate: () => boolean;
+}
+
+const cleanupProcessTreeUntilDeadline = async (options: {
+  readonly totalDeadlineMs: number;
+  readonly retryDelayMs: number;
+  readonly now: () => number;
+  readonly killTree: (remainingMs: number) => Promise<{
+    readonly exitCode: number | null;
+    readonly helperStopped: boolean;
+    readonly error?: string;
+  }>;
+  readonly waitForDirectExit: (remainingMs: number) => Promise<boolean>;
+  readonly isRootAlive: () => boolean;
+  readonly sleep: (durationMs: number) => Promise<void>;
+}): Promise<CleanupTreeResult> => {
+  const startedAt = options.now();
+  const deadline = startedAt + options.totalDeadlineMs;
+  let attempts = 0;
+  let lastTaskkillExit: number | null = null;
+  let lastTaskkillError: string | null = null;
+  let helperStopped = true;
+  let directExited = false;
+  let rootAlive = true;
+  while (options.now() < deadline) {
+    attempts += 1;
+    const remainingForKill = Math.max(0, deadline - options.now());
+    const kill = await options.killTree(remainingForKill);
+    lastTaskkillExit = kill.exitCode;
+    lastTaskkillError = kill.error ?? null;
+    helperStopped = kill.helperStopped;
+    if (!helperStopped) {
+      const remainingForClose = Math.max(0, deadline - options.now());
+      if (remainingForClose > 0)
+        directExited = await options.waitForDirectExit(remainingForClose);
+      rootAlive = options.isRootAlive();
+      break;
+    }
+    const remainingForClose = Math.max(0, deadline - options.now());
+    if (remainingForClose > 0)
+      directExited = await options.waitForDirectExit(remainingForClose);
+    rootAlive = options.isRootAlive();
+    if (lastTaskkillExit === 0 && directExited && !rootAlive)
+      return {
+        confirmed: true,
+        attempts,
+        elapsedMs: options.now() - startedAt,
+        lastTaskkillExit,
+        lastTaskkillError,
+        helperStopped,
+        directExited,
+        rootAlive,
+      };
+    const remainingForRetry = Math.max(0, deadline - options.now());
+    if (remainingForRetry > 0)
+      await options.sleep(Math.min(options.retryDelayMs, remainingForRetry));
+  }
+  return {
+    confirmed: false,
+    attempts,
+    elapsedMs: Math.min(options.now() - startedAt, options.totalDeadlineMs),
+    lastTaskkillExit,
+    lastTaskkillError,
+    helperStopped,
+    directExited,
+    rootAlive,
+  };
+};
+
+const withTimeout = async <A>(
+  promise: Promise<A>,
+  timeoutMs: number,
+): Promise<
+  { readonly timedOut: true } | { readonly timedOut: false; readonly value: A }
+> =>
+  new Promise((resolveWithTimeout) => {
+    const timeout = setTimeout(
+      () => resolveWithTimeout({ timedOut: true }),
+      timeoutMs,
+    );
+    void promise.then(
+      (value) => {
+        clearTimeout(timeout);
+        resolveWithTimeout({ timedOut: false, value });
+      },
+      () => {
+        clearTimeout(timeout);
+        resolveWithTimeout({ timedOut: true });
+      },
+    );
+  });
+
+const runTaskkillHelperWithTimeout = async (
+  helper: TaskkillHelperControl,
+  commandDeadlineMs: number,
+  terminateDeadlineMs: number,
+): Promise<{
+  readonly exitCode: number | null;
+  readonly helperStopped: boolean;
+  readonly error?: string;
+}> => {
+  const command = await withTimeout(helper.exited, commandDeadlineMs);
+  if (!command.timedOut) return { ...command.value, helperStopped: true };
+  let terminateRequested = false;
+  let terminateError: string | undefined;
+  try {
+    terminateRequested = helper.terminate();
+  } catch (cause) {
+    terminateError = String(cause);
+  }
+  const terminated = await withTimeout(helper.exited, terminateDeadlineMs);
+  if (!terminated.timedOut)
+    return {
+      exitCode: terminated.value.exitCode,
+      helperStopped: true,
+      error: `taskkill timed out; terminateRequested=${terminateRequested}`,
+    };
+  return {
+    exitCode: null,
+    helperStopped: false,
+    error:
+      `taskkill timeout; terminateRequested=${terminateRequested}` +
+      (terminateError === undefined
+        ? ""
+        : `; terminateError=${terminateError}`),
+  };
+};
+
+describe("P6 operator subprocess timeout cleanup", () => {
+  it("bounds repeated taskkill failures by one total deadline", async () => {
+    let fakeNow = 0;
+    let attempts = 0;
+    const result = await cleanupProcessTreeUntilDeadline({
+      totalDeadlineMs: 100,
+      retryDelayMs: 10,
+      now: () => fakeNow,
+      killTree: async (remainingMs) => {
+        attempts += 1;
+        fakeNow += Math.min(20, remainingMs);
+        return {
+          exitCode: 1,
+          helperStopped: true,
+          error: "fake taskkill failure",
+        };
+      },
+      waitForDirectExit: async (remainingMs) => {
+        fakeNow += Math.min(20, remainingMs);
+        return false;
+      },
+      isRootAlive: () => true,
+      sleep: async (durationMs) => {
+        fakeNow += durationMs;
+      },
+    });
+    expect(result.confirmed).toBe(false);
+    expect(result.lastTaskkillExit).toBe(1);
+    expect(result.lastTaskkillError).toBe("fake taskkill failure");
+    expect(result.directExited).toBe(false);
+    expect(result.rootAlive).toBe(true);
+    expect(result.elapsedMs).toBeLessThanOrEqual(100);
+    expect(attempts).toBe(result.attempts);
+    expect(attempts).toBeGreaterThan(0);
+    expect(attempts).toBeLessThan(10);
+  });
+
+  it("does not launch another taskkill while a timed-out helper is still active", async () => {
+    let fakeNow = 0;
+    let killTreeCalls = 0;
+    const result = await cleanupProcessTreeUntilDeadline({
+      totalDeadlineMs: 100,
+      retryDelayMs: 10,
+      now: () => fakeNow,
+      killTree: async () => {
+        killTreeCalls += 1;
+        fakeNow += 10;
+        return {
+          exitCode: null,
+          helperStopped: false,
+          error: "fake helper termination was not confirmed",
+        };
+      },
+      waitForDirectExit: async (remainingMs) => {
+        fakeNow += remainingMs;
+        return false;
+      },
+      isRootAlive: () => true,
+      sleep: async (durationMs) => {
+        fakeNow += durationMs;
+      },
+    });
+    expect(result.confirmed).toBe(false);
+    expect(result.helperStopped).toBe(false);
+    expect(killTreeCalls).toBe(1);
+    expect(result.attempts).toBe(1);
+  });
+
+  it("terminates a timed-out taskkill helper and waits for its close", async () => {
+    let resolveHelperExit:
+      | ((value: { exitCode: number | null }) => void)
+      | null = null;
+    let terminateCalls = 0;
+    let helperActive = true;
+    const helper: TaskkillHelperControl = {
+      exited: new Promise((resolveExit) => {
+        resolveHelperExit = resolveExit;
+      }),
+      terminate: () => {
+        terminateCalls += 1;
+        helperActive = false;
+        resolveHelperExit?.({ exitCode: null });
+        return true;
+      },
+    };
+    const result = await runTaskkillHelperWithTimeout(helper, 5, 100);
+    expect(terminateCalls).toBe(1);
+    expect(helperActive).toBe(false);
+    expect(result.helperStopped).toBe(true);
+    expect(result.exitCode).toBeNull();
+    expect(result.error).toContain("terminateRequested=true");
+  });
+});
 
 describe("P6 Inbox operator rebuild CLI contract", () => {
   it("requires explicit absolute database, P39 sidecar and JSONL manifest paths", () => {
