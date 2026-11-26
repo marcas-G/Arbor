@@ -607,7 +607,7 @@ describe("-acceptance (P11 00 CI-1..CI-5 + end-to-end story)", () => {
     );
   });
 
-  it("–P10 regression guard reference — the guard suites are on the vitest include path and present per phase", () => {
+  it("regression guard reference — the guard suites are on the vitest include path and present per phase", () => {
     const config = readFileSync(
       join(import.meta.dirname, "..", "vitest.config.ts"),
       "utf8",
@@ -630,13 +630,20 @@ describe("-acceptance (P11 00 CI-1..CI-5 + end-to-end story)", () => {
       );
     }
     // per-phase architecture guards exist
-    for (const phase of ["p5", "p6", "p7", "p8", "p9", "p10"]) {
+    for (const [phase, filename] of [
+      ["p5", "architecture-5.test.ts"],
+      ["p6", "architecture-6.test.ts"],
+      ["p7", "architecture-7.test.ts"],
+      ["p8", "architecture-8.test.ts"],
+      ["p9", "architecture-9.test.ts"],
+      ["p10", "architecture-10.test.ts"],
+    ] as const) {
       expect(
         existsSync(
           join(
             import.meta.dirname,
             "architecture",
-            `${phase}-architecture.test.ts`,
+            filename,
           ),
         ),
         phase,
