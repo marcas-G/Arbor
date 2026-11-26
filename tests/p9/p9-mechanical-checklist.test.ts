@@ -281,21 +281,29 @@ const hasArchitectureCheckSteps = (checkScript: string) => {
     architectureIndex < coreTestIndex
   );
 };
-const p9SuiteSources = (): ReadonlyArray<{
-  name: string;
-  source: string;
-}> =>
-  readdirSync(P9_DIR)
-    .filter(
-      (name) =>
-        name.startsWith("p9-") &&
-        name.endsWith(".test.ts") &&
-        name !== "p9-acceptance.test.ts",
-    )
-    .map((name) => ({
-      name,
-      source: readFileSync(join(P9_DIR, name), "utf8"),
-    }));
+const P9_SUITE_SCAN_DIRS = [
+  P9_DIR,
+  join(P9_DIR, "p9-worker-crash"),
+  join(P9_DIR, "p9-provider-disconnect"),
+  join(P9_DIR, "p9-workflow-interruption"),
+];
+
+const p9SuiteSources = () =>
+  P9_SUITE_SCAN_DIRS.flatMap((dir) =>
+    readdirSync(dir)
+      .filter(
+        (name) =>
+          /^p9-.*\.test\.ts$/.test(name) && name !== "p9-acceptance.test.ts",
+      )
+      .map((name) => ({
+        name,
+        source: readFileSync(join(dir, name), "utf8"),
+      })),
+  );
+// biome-ignore format: keep the owning-suite list adjacent to its face rows
+const P9_PD_SUITES = [
+  "tests/p9-provider-disconnect/p9-provider-disconnect-turns.test.ts",
+  "tests/p9-provider-disconnect/p9-provider-disconnect-recovery.test.ts"];
 
 /** Coverage-audit table: matrix face (02 §1–§12) → owning suite files. */
 const FACE_SUITES: ReadonlyArray<{
@@ -308,13 +316,13 @@ const FACE_SUITES: ReadonlyArray<{
     face: "W",
     section: "02 §1 worker crash",
     rowPattern: /\bW[1-5]\b/,
-    suites: ["tests/p9-worker-crash.test.ts"],
+    suites: ["tests/p9-worker-crash/p9-worker-crash-w.test.ts"],
   },
   {
     face: "R",
     section: "02 §2 old-worker resurrection",
     rowPattern: /\bR[1-6]\b/,
-    suites: ["tests/p9-worker-crash.test.ts"],
+    suites: ["tests/p9-worker-crash/p9-resurrection.test.ts"],
   },
   {
     face: "L",
@@ -328,9 +336,9 @@ const FACE_SUITES: ReadonlyArray<{
     rowPattern: /\bD[1-6]\b/,
     suites: [
       "tests/p9-recovery-driver.test.ts",
-      "tests/p9-tool-outcome-unknown.test.ts",
       "tests/p9-timer-refire.test.ts",
-      "tests/p9-workflow-interruption.test.ts",
+      "tests/p9-tool-outcome-unknown.test.ts",
+      "tests/p9-workflow-interruption/p9-dispatch-recovery.test.ts",
     ],
   },
   {
@@ -343,7 +351,7 @@ const FACE_SUITES: ReadonlyArray<{
     face: "PD",
     section: "02 §6 provider disconnect",
     rowPattern: /\bPD[1-4]\b/,
-    suites: ["tests/p9-provider-disconnect.test.ts"],
+    suites: P9_PD_SUITES,
   },
   {
     face: "CC",
@@ -355,13 +363,13 @@ const FACE_SUITES: ReadonlyArray<{
     face: "WF",
     section: "02 §8 P7/P8 workflow interruption replay",
     rowPattern: /\bWF[1-3]\b/,
-    suites: ["tests/p9-workflow-interruption.test.ts"],
+    suites: ["tests/p9-workflow-interruption/p9-workflow-replay.test.ts"],
   },
   {
     face: "DF",
     section: "02 §9 dispatch failure / lost dispatch",
     rowPattern: /\bDF[1-2]\b/,
-    suites: ["tests/p9-workflow-interruption.test.ts"],
+    suites: ["tests/p9-workflow-interruption/p9-dispatch-recovery.test.ts"],
   },
   {
     face: "PR",
