@@ -4,7 +4,7 @@ import {
   type ProviderContinuationCheckpoint,
   ProviderRuntime,
 } from "../../packages/ports/src/index.js";
-import { labeled } from "../support/p9-harness-api.js";
+import { labeled } from "../support/harness-api.js";
 import type { ProviderProbe } from "./support.js";
 import {
   attemptRows,

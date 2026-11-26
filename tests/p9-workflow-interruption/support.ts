@@ -55,7 +55,7 @@ import {
   p7SeedWork,
   p7TestActor,
   p7TestPrincipal,
-} from "../support/p7-app.js";
+} from "../support/consumer-harness.js";
 import { p9Boot } from "../support/consumer-app-support.js";
 
 /** P9-012 — P7/P8 workflow interruption replay (WF1–WF3, 02 §8) +

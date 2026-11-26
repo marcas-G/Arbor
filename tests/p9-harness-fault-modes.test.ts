@@ -10,8 +10,8 @@ import { TransactionPort } from "../packages/ports/src/index.js";
 import {
   type FaultMode,
   faultingTransactionP9 as faultTx,
-} from "./support/p9-fault-transaction.js";
-import { labeled } from "./support/p9-harness-api.js";
+} from "./support/fault-transaction.js";
+import { labeled } from "./support/harness-api.js";
 
 const base = layer({ filename: ":memory:" });
 const txLayer = (mode: FaultMode, injectOn: number) =>

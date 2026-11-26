@@ -71,7 +71,7 @@ import {
 } from "../../packages/ports/src/index.js";
 import { NoHoldWorkReadmissionGateStoreService } from "../../packages/testkit/src/index.js";
 import { yieldedSettlement } from "../support/execution-episode-fixtures.js";
-import { labeled } from "../support/p9-harness-api.js";
+import { labeled } from "../support/harness-api.js";
 import { durableFile, executionRowOf, runOn, sqlCount } from "./support.js";
 
 // ---------------------------------------------------------------------------

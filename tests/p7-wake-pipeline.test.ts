@@ -34,7 +34,7 @@ import {
   p7SeedProject,
   p7SeedWork,
   runP7,
-} from "./support/p7-app.js";
+} from "./support/consumer-harness.js";
 import { createCurrentSchemaTestDatabaseFactory } from "./support/schema44-database.js";
 
 const WORK_CONSUMER = parse(WorkId)("wrk_018f2b3c-4d5e-7abc-8def-0123456789b1");

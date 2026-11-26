@@ -17,7 +17,7 @@ import {
   p7SeedProject,
   p7SeedWork,
   p7TestPrincipal,
-} from "../support/p7-app.js";
+} from "../support/consumer-harness.js";
 import {
   commitGate,
   gatedTransactionPort,
@@ -28,8 +28,8 @@ import {
 import {
   collectDurabilityEvidence,
   type DurabilityEvidence,
-} from "../support/p9-durability-evidence.js";
-import { labeled } from "../support/p9-harness-api.js";
+} from "../support/durability-evidence.js";
+import { labeled } from "../support/harness-api.js";
 import { durableFile } from "./support.js";
 import {
   armingGateway,

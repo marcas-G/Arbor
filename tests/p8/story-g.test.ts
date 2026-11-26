@@ -9,7 +9,7 @@ import {
   p7Project,
   p7RootWorkspace,
   p7TestPrincipal,
-} from "../support/p7-app.js";
+} from "../support/consumer-harness.js";
 import {
   cmd,
   EXE_G1B,

@@ -284,7 +284,7 @@ describe("p9-architecture", () => {
     }
     // The harness envelope (tests/support only) exposes the three
     // envelope-internal transaction fault modes and nothing else (GQ5).
-    const faultTransaction = sourceOf("tests/support/p9-fault-transaction.ts");
+    const faultTransaction = sourceOf("tests/support/fault-transaction.ts");
     for (const mode of [
       "fail-on-begin",
       "rollback-after-body",
@@ -302,7 +302,7 @@ describe("p9-architecture", () => {
   });
 
   it("the DA evidence protocol is exported by the durability support module (reopen + integrity + version + counts)", () => {
-    const evidence = sourceOf("tests/support/p9-durability-evidence.ts");
+    const evidence = sourceOf("tests/support/durability-evidence.ts");
     expect(evidence.includes("export const collectDurabilityEvidence")).toBe(
       true,
     );
@@ -315,7 +315,7 @@ describe("p9-architecture", () => {
     expect(evidence.includes("user_version")).toBe(true);
     expect(evidence.includes("synchronous")).toBe(true);
     // The guarantee-class convention itself stays two-valued (GQ5).
-    const harnessApi = sourceOf("tests/support/p9-harness-api.ts");
+    const harnessApi = sourceOf("tests/support/harness-api.ts");
     expect(
       harnessApi.includes('"crash-injected" | "durability-asserted"'),
     ).toBe(true);

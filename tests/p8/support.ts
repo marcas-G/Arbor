@@ -81,7 +81,7 @@ import {
   p7SeedProject,
   p7SeedWork,
   p7TestActor,
-} from "../support/p7-app.js";
+} from "../support/consumer-harness.js";
 
 export const wrk = (tail: string) =>
   parse(WorkId)(`wrk_00000000-0000-7000-8000-000000${tail}`);

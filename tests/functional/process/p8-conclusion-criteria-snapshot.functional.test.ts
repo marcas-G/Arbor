@@ -48,7 +48,7 @@ import {
   p7SeedProject,
   p7SeedWork,
   p7TestPrincipal,
-} from "../../support/p7-app.js";
+} from "../../support/consumer-harness.js";
 import { createCurrentSchemaTestDatabase } from "../../support/schema44-database.js";
 
 const sourceWorkId = "wrk_018f2b3c-4d5e-7abc-8def-0123456789d2" as never;

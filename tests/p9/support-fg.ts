@@ -54,7 +54,7 @@ import {
   p7RootWorkspace,
   p7TestActor,
   p7TestPrincipal,
-} from "../support/p7-app.js";
+} from "../support/consumer-harness.js";
 import { sqlCount } from "./support.js";
 
 // ---------------------------------------------------------------------------

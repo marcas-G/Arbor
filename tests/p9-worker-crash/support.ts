@@ -68,7 +68,7 @@ import { NoHoldWorkReadmissionGateStoreService } from "../../packages/testkit/sr
 import { ReconciliationSourceLive } from "../../packages/tool-runtime/src/index.js";
 import { yieldedSettlement } from "../support/execution-episode-fixtures.js";
 import { ensureLegacyProjectResourceSourceFixture } from "../support/legacy-project-resource-source.js";
-import { makeP41OptionalTestServices } from "../support/p41-optional-test-services.js";
+import { makeP41OptionalTestServices } from "../support/optional-test-services.js";
 
 /**
  * P9-006 — worker crash (W1–W5) + old-worker resurrection (R1–R6) injection

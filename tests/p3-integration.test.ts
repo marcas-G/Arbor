@@ -90,7 +90,7 @@ import {
   NoPendingExecutableApprovalStoreLive,
 } from "../packages/testkit/src/index.js";
 import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-project-resource-source.js";
-import { makeP41OptionalTestServices } from "./support/p41-optional-test-services.js";
+import { makeP41OptionalTestServices } from "./support/optional-test-services.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const workspaceId = parse(WorkspaceId)(

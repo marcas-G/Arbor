@@ -36,7 +36,7 @@ import {
   TransactionPort,
   TransactionScope,
 } from "../packages/ports/src/index.js";
-import { p7SeedProject, p7SeedWork } from "./support/p7-app.js";
+import { p7SeedProject, p7SeedWork } from "./support/consumer-harness.js";
 import {
   type CommitGate,
   commitGate,
@@ -48,8 +48,8 @@ import {
 import {
   collectDurabilityEvidence,
   type DurabilityEvidence,
-} from "./support/p9-durability-evidence.js";
-import { labeled } from "./support/p9-harness-api.js";
+} from "./support/durability-evidence.js";
+import { labeled } from "./support/harness-api.js";
 
 /** P9-011 — generic projection rebuild (RB-1..RB-5 / PR1–PR4, GQ2 P9
  * face) + the durability-asserted evidence protocol (GQ5). The rebuild

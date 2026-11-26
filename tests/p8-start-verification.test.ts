@@ -46,7 +46,7 @@ import {
   p7TestActor,
   p7TestPrincipal,
   runP7,
-} from "./support/p7-app.js";
+} from "./support/consumer-harness.js";
 
 const WORK_1 = parse(WorkId)("wrk_00000000-0000-7000-8000-000000000001");
 const UNKNOWN_WORK = parse(WorkId)("wrk_018f2b3c-4d5e-7abc-8def-0123456789ff");
@@ -59,7 +59,7 @@ const VER = (suffix: string) =>
 const CMD = (suffix: string) =>
   parse(CommandId)(`cmd_018f2b3c-4d5e-7abc-8def-${suffix}`);
 
-/** p7-app extension layer: adds the environment-revision store the handler
+/** consumer-harness extension layer: adds the environment-revision store the handler
  * reads (p8-ddl pattern — P8 repos already ride on makeP7App; the store
  * also needs Clock, satisfied locally so the merged layer stays
  * requirement-free). */

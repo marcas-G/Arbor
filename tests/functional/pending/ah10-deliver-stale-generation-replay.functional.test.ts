@@ -47,7 +47,7 @@ import {
   p7TestActor,
   p7TestPrincipal,
   runP7,
-} from "../../support/p7-app.js";
+} from "../../support/consumer-harness.js";
 
 const childWorkspaceId = parse(WorkspaceId)(
   "ws_018f2b3c-4d5e-7abc-8def-0123456789d2",

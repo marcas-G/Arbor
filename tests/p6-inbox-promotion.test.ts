@@ -50,7 +50,7 @@ import {
   p6TestActor,
   p6TestPrincipal,
   runP6,
-} from "./support/p6-app.js";
+} from "./support/workspace-harness.js";
 
 const CHILD = parse(WorkspaceId)("ws_018f2b3c-4d5e-7abc-8def-0123456789d2");
 const GRANDCHILD = parse(WorkspaceId)(

@@ -33,8 +33,8 @@ import {
   p7SeedWork,
   p7TestPrincipal,
   runP7,
-} from "../support/p7-app.js";
-import { labeled } from "../support/p9-harness-api.js";
+} from "../support/consumer-harness.js";
+import { labeled } from "../support/harness-api.js";
 import {
   attentionFacts,
   countEventsFor,

@@ -36,7 +36,7 @@ import {
   WorkRepository,
   WorkWaitStore,
 } from "../../packages/ports/src/index.js";
-import { p7Project, p7SeedProject } from "../support/p7-app.js";
+import { p7Project, p7SeedProject } from "../support/consumer-harness.js";
 import {
   cmd,
   DEP_E1,

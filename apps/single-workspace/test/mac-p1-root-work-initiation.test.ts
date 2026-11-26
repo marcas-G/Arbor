@@ -33,8 +33,8 @@ const workspaceId = parse(WorkspaceId)(
 );
 const sessionId = parse(SessionId)("ses_018f2b3c-4d5e-7abc-8def-0123456789e1");
 const messageId = "msg_018f2b3c-4d5e-7abc-8def-0123456789e1";
-const human = parse(Principal)("user:mac-p1-approver");
-const humanActor = parse(Actor)("user:mac-p1-approver");
+const human = parse(Principal)("user:mac-application-harnessrover");
+const humanActor = parse(Actor)("user:mac-application-harnessrover");
 
 let fixtureFactory:
   | Awaited<ReturnType<typeof createCurrentSchemaTestDatabaseFactory>>

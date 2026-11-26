@@ -30,8 +30,8 @@ import {
   type SchedulerDecision,
   type SchedulerTimer,
 } from "../packages/ports/src/index.js";
-import { makeP7App, p7SeedProject, runP7 } from "./support/p7-app.js";
-import { faultingTransactionP9 } from "./support/p9-fault-transaction.js";
+import { makeP7App, p7SeedProject, runP7 } from "./support/consumer-harness.js";
+import { faultingTransactionP9 } from "./support/fault-transaction.js";
 
 const principal = parse(Principal)("user:gov");
 

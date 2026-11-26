@@ -75,7 +75,7 @@ import {
   p6SeedProject,
   p6TestActor,
   p6TestPrincipal,
-} from "../support/p6-app.js";
+} from "../support/workspace-harness.js";
 
 export {
   type AssignWorkPayload,
@@ -185,7 +185,7 @@ const makeCriticalSteerRegistryLive = (
     }),
   );
 
-/** Self-contained Critical Steer harness (p6-steer/p6-app assembly copied;
+/** Self-contained Critical Steer harness (p6-steer/workspace-harness assembly copied;
  * those files are frozen for this task). Fixed clock keeps issuedAt="t". */
 const makeCriticalSteerApp = (
   filename = ":memory:",

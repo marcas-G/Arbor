@@ -30,7 +30,7 @@ import {
   p7RootSession,
   p7RootWorkspace,
   p7SeedProject,
-} from "../../../tests/support/p7-app.js";
+} from "../../../tests/support/consumer-harness.js";
 import { createCurrentSchemaTestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import { buildSingleWorkspaceLayer } from "../src/composition.js";
 import { makeHostProjectDirectories } from "../src/project-directories.js";

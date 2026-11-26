@@ -35,7 +35,7 @@ import {
   p6TestActor,
   p6TestPrincipal,
   runP6,
-} from "../../support/p6-app.js";
+} from "../../support/workspace-harness.js";
 import { defineCapabilityTest, metadataFor } from "../harness.js";
 
 const senderWorkspaceId = parse(WorkspaceId)(

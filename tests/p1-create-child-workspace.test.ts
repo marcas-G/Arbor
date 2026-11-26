@@ -33,7 +33,7 @@ import {
   ensureProjectResourceSourceTestColumn,
   makeP1App,
   runP1,
-} from "./support/p1-app.js";
+} from "./support/application-harness.js";
 
 const actor = parse(Actor)("user:test");
 const principal = parse(Principal)("user:test");

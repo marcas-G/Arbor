@@ -42,7 +42,7 @@ import {
   p7TestActor,
   p7TestPrincipal,
   runP7,
-} from "./support/p7-app.js";
+} from "./support/consumer-harness.js";
 import { insertWorkspaceRow, seedCanonical } from "./support/fixture-support.js";
 
 /** P10-011 — the four user-action surfaces (P10 `05` §2; SD §12.5 four

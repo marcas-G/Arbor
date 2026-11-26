@@ -65,7 +65,7 @@ import {
   type ToolExecutor,
   ToolRuntimeLive,
 } from "../../packages/tool-runtime/src/index.js";
-import { labeled } from "../support/p9-harness-api.js";
+import { labeled } from "../support/harness-api.js";
 import { fileTreeBoundaryJson } from "../support/resource-boundary-fixture.js";
 import {
   defectOf,

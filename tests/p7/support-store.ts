@@ -45,7 +45,7 @@ import {
   p7SeedWork,
   p7TestActor,
   p7TestPrincipal,
-} from "../support/p7-app.js";
+} from "../support/consumer-harness.js";
 import {
   CHILD_C,
   CMD_C_REPORT,

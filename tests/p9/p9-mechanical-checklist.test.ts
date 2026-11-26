@@ -447,7 +447,7 @@ describe("p9-acceptance mechanical assertions (06 checklist)", () => {
     // The convention itself is frozen in the harness API (two classes
     // only, never a third).
     const harnessApi = readFileSync(
-      join(P9_DIR, "support", "p9-harness-api.ts"),
+      join(P9_DIR, "support", "harness-api.ts"),
       "utf8",
     );
     expect(

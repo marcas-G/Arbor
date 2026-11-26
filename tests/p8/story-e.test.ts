@@ -5,7 +5,7 @@ import {
   EnvironmentRevisionStore,
   TransactionPort,
 } from "../../packages/ports/src/index.js";
-import { p7Project } from "../support/p7-app.js";
+import { p7Project } from "../support/consumer-harness.js";
 import {
   ART_E,
   cmd,

@@ -80,7 +80,7 @@ import { ensureLegacyProjectResourceSourceFixture } from "./legacy-project-resou
  * infrastructure. One app exposing the gateway (P1 + P2 + SatisfyDependency
  * + StartVerification + CompleteWork handlers), the consumer stores, the
  * repositories the loop dependencies read, and the recovery-drive faces
- * (sweep/scheduler/leases) — p7-app / p8-consumer mini-app precedents. */
+ * (sweep/scheduler/leases) — consumer-harness / p8-consumer mini-app precedents. */
 
 export type P9ConsumerAppServices =
   | CommandGateway

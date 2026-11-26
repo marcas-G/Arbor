@@ -58,7 +58,7 @@ import {
   p7TestActor,
   p7TestPrincipal,
   runP7,
-} from "../support/p7-app.js";
+} from "../support/consumer-harness.js";
 
 describe("p10-acceptance (P10 07 Stories A–G)", () => {
   it("Story F — Human intervention facts: steer both kinds paired same-transaction; four governance human branches emit the fact; agent submissions emit nothing; the Stop branch stays wire-only", async () => {

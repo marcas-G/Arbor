@@ -61,7 +61,7 @@ import {
 } from "../../packages/ports/src/index.js";
 import { NoHoldWorkReadmissionGateStoreService } from "../../packages/testkit/src/index.js";
 import { ensureLegacyProjectResourceSourceFixture } from "./legacy-project-resource-source.js";
-import { makeP41OptionalTestServices } from "./p41-optional-test-services.js";
+import { makeP41OptionalTestServices } from "./optional-test-services.js";
 
 export const p6TestActor = parse(Actor)("user:gov");
 export const p6TestPrincipal = parse(Principal)("user:gov");

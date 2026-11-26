@@ -46,7 +46,7 @@ import {
   p7SeedWork,
   p7TestActor,
   p7TestPrincipal,
-} from "./support/p7-app.js";
+} from "./support/consumer-harness.js";
 import {
   commitGate,
   gatedTransactionPort,
@@ -54,7 +54,7 @@ import {
   p9Boot,
   runP9Consumer,
 } from "./support/consumer-app-support.js";
-import { labeled } from "./support/p9-harness-api.js";
+import { labeled } from "./support/harness-api.js";
 
 /** P9-010 — consumer crash injection matrix CC-1..CC-6 (P9 `02` §7 +
  * `05` §1–§2) over the WIRED path: the P7 coordinator / P8 consumers A-B

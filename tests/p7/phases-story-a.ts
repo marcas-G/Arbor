@@ -10,7 +10,7 @@ import {
   WorkRevision,
   workBound,
 } from "../../packages/domain/dist/index.js";
-import { p7SeedProject } from "../support/p7-app.js";
+import { p7SeedProject } from "../support/consumer-harness.js";
 
 import {
   cmd,

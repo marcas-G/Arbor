@@ -62,7 +62,7 @@ import {
   p7TestActor,
   p7TestPrincipal,
   runP7,
-} from "./support/p7-app.js";
+} from "./support/consumer-harness.js";
 
 /** P10-010 — HumanInterventionApplied emission wiring (P10 `06` §2):
  * steer back-fill pairing, the four human-originated governance command

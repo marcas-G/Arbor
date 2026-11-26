@@ -29,7 +29,7 @@ import {
   seedProject,
   testActor,
   testPrincipal,
-} from "./support/p1-app.js";
+} from "./support/application-harness.js";
 
 const projectA = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789c1");
 const projectB = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789c2");

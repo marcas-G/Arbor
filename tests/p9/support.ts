@@ -14,7 +14,7 @@ import {
   ToolInvocationStore,
   TransactionPort,
 } from "../../packages/ports/src/index.js";
-import { p7Project } from "../support/p7-app.js";
+import { p7Project } from "../support/consumer-harness.js";
 
 /** P9-013 — the seven deterministic acceptance stories (P9 `06` §A–§G)
  * + the mechanical assertion checklist. Every story reuses the

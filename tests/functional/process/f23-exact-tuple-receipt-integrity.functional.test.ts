@@ -32,7 +32,7 @@ import {
   p7Project,
   p7RootWorkspace,
   p7SeedProject,
-} from "../../support/p7-app.js";
+} from "../../support/consumer-harness.js";
 import { createCurrentSchemaTestDatabaseFactory } from "../../support/schema44-database.js";
 import {
   type ProductionFixture,

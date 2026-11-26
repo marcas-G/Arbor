@@ -54,7 +54,7 @@ import {
   p7SeedProject,
   p7SeedWork,
   runP7,
-} from "./support/p7-app.js";
+} from "./support/consumer-harness.js";
 
 // --- pure-layer fixtures (no DB; ids sort deterministically) ---
 

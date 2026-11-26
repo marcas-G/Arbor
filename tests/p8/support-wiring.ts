@@ -50,7 +50,7 @@ import {
   p7RootWorkspace,
   p7TestActor,
   p7TestPrincipal,
-} from "../support/p7-app.js";
+} from "../support/consumer-harness.js";
 import { missionDigestOf, VERIFIER_PRINCIPAL, WREV } from "./support.js";
 
 export const fingerprintOf = (commandType: string, payload: unknown) =>

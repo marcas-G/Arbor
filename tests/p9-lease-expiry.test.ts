@@ -54,7 +54,7 @@ import { NoHoldWorkReadmissionGateStoreLive } from "../packages/testkit/src/inde
 import { ReconciliationSourceLive } from "../packages/tool-runtime/src/index.js";
 import { yieldedSettlement } from "./support/execution-episode-fixtures.js";
 import { ensureLegacyProjectResourceSourceFixture } from "./support/legacy-project-resource-source.js";
-import { labeled } from "./support/p9-harness-api.js";
+import { labeled } from "./support/harness-api.js";
 
 /**
  * P9-007 — lease expiry injection (L1–L4, P9 `02` §3) + the T4 proof

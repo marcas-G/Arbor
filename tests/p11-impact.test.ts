@@ -34,7 +34,7 @@ import {
   p7SeedProject,
   p7SeedWork,
   runP7,
-} from "./support/p7-app.js";
+} from "./support/consumer-harness.js";
 
 // -- narrow-side fixtures (pure; resolved canonical regions only) --
 

@@ -16,7 +16,7 @@ import {
   DeliverableRepository,
   TransactionPort,
 } from "../../packages/ports/src/index.js";
-import { p7RootWorkspace, p7SeedProject } from "../support/p7-app.js";
+import { p7RootWorkspace, p7SeedProject } from "../support/consumer-harness.js";
 
 import {
   ART_B,

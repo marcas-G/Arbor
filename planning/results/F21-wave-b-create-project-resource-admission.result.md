@@ -81,8 +81,8 @@ The read-only call-site audit found these migration groups; the companion
 fixture migration is separate from the production/Wave-B qualification files
 in this result:
 
-- Shared P1/P6/P7 gateway seed builders: `tests/support/p1-app.ts`,
-  `tests/support/p6-app.ts`, and `tests/support/p7-app.ts`.
+- Shared P1/P6/P7 gateway seed builders: `tests/support/application-harness.ts`,
+  `tests/support/workspace-harness.ts`, and `tests/support/consumer-harness.ts`.
 - P1/P5/P6/P12 direct acceptance and transport fixtures:
   `tests/p1-create-project.test.ts`, `tests/p1-create-child-workspace.test.ts`,
   `tests/p1-idempotency.test.ts`, `tests/p6-acceptance.test.ts`,

@@ -44,7 +44,7 @@ import {
   p7SeedProject,
   p7SeedWork,
   runP7,
-} from "./support/p7-app.js";
+} from "./support/consumer-harness.js";
 
 const WORK_1 = parse(WorkId)("wrk_00000000-0000-7000-8000-000000000001");
 const WORK_2 = parse(WorkId)("wrk_00000000-0000-7000-8000-000000000002");
@@ -64,7 +64,7 @@ const mission: VerificationMission = {
   riskRequirements: [],
 };
 
-/** p7-app extension: makeP7App consumes ExecutionRepositoryLive internally
+/** consumer-harness extension: makeP7App consumes ExecutionRepositoryLive internally
  * (P2 handler registry) but does not expose the service tag — provide it
  * (plus Clock, same pattern as p8-start-verification's store extension) so
  * test-side deps can share the gateway's repositories. */

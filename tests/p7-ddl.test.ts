@@ -29,7 +29,7 @@ import {
   p7TestActor,
   p7TestPrincipal,
   runP7,
-} from "./support/p7-app.js";
+} from "./support/consumer-harness.js";
 
 const DEP_1 = parse(
   (await import("../packages/domain/dist/index.js")).DependencyId,

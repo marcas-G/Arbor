@@ -101,7 +101,7 @@ import {
   p7RootWorkspace,
   p7TestActor,
   p7TestPrincipal,
-} from "../support/p7-app.js";
+} from "../support/consumer-harness.js";
 
 // --- ids (uuid-v7 shaped, one namespace per story) ---
 

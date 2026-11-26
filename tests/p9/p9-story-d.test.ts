@@ -35,7 +35,7 @@ import {
 } from "../../packages/ports/src/index.js";
 import { ProviderRuntimeLive } from "../../packages/provider-runtime/src/index.js";
 import { FixedSecretStoreLive } from "../../packages/testkit/src/index.js";
-import { labeled } from "../support/p9-harness-api.js";
+import { labeled } from "../support/harness-api.js";
 import { durableFile, runOn } from "./support.js";
 
 // ---------------------------------------------------------------------------

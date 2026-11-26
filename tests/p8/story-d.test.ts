@@ -5,7 +5,7 @@ import {
   runVerificationConsumer,
   verificationSpawnIds,
 } from "../../packages/application/src/verification-consumer.js";
-import { p7Project, p7TestPrincipal } from "../support/p7-app.js";
+import { p7Project, p7TestPrincipal } from "../support/consumer-harness.js";
 import {
   ACC_D1,
   ACC_D2,

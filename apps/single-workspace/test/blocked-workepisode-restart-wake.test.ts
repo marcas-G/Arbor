@@ -14,7 +14,7 @@ import {
   p7RootWorkspace,
   p7SeedProject,
   p7TestActor,
-} from "../../../tests/support/p7-app.js";
+} from "../../../tests/support/consumer-harness.js";
 import {
   isWindowsPathQualificationEnabled,
   windowsAclQualificationAvailable,

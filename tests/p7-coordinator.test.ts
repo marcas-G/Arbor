@@ -64,7 +64,7 @@ import {
   p7SeedProject,
   p7SeedWork,
   p7TestPrincipal,
-} from "./support/p7-app.js";
+} from "./support/consumer-harness.js";
 
 const WORK_C = parse(WorkId)("wrk_00000000-0000-7000-8000-000000000001");
 const WORK_P = parse(WorkId)("wrk_00000000-0000-7000-8000-000000000002");
@@ -310,7 +310,7 @@ const makeCoordinatorDeps = (
     };
   });
 
-/** Mini gateway (p7-app assembly, minimal segment): P1 handlers (seeding
+/** Mini gateway (consumer-harness assembly, minimal segment): P1 handlers (seeding
  * only) + exactly one satisfaction handler — any commandType the
  * coordinator submits other than SatisfyDependency finds no handler and
  * dies, making the single-command-face assertion mechanical. */

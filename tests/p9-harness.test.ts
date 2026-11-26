@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { labeled } from "./support/p9-harness-api.js";
+import { labeled } from "./support/harness-api.js";
 
 describe("P9-001 harness (PB rows as capability proof)", () => {
   it("guarantee-class labeling convention is exactly two-valued and every record carries one", () => {
@@ -10,7 +10,7 @@ describe("P9-001 harness (PB rows as capability proof)", () => {
   });
 
   it("harness never claims power/WAL injection (GQ5: no fault-injecting adapter class)", async () => {
-    const modes = await import("./support/p9-fault-transaction.js");
+    const modes = await import("./support/fault-transaction.js");
     // The harness surface exposes exactly three envelope-internal modes;
     // no power-loss / wal-corrupt / page-tear mode exists (GQ5).
     const exported = Object.keys(modes).sort();

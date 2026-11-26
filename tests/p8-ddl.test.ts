@@ -36,7 +36,7 @@ import {
   p7SeedProject,
   p7SeedWork,
   runP7,
-} from "./support/p7-app.js";
+} from "./support/consumer-harness.js";
 
 const WORK_1 = parse(WorkId)("wrk_00000000-0000-7000-8000-000000000001");
 const ASSIGN_CMD = parse(CommandId)("cmd_018f2b3c-4d5e-7abc-8def-0123456789a1");

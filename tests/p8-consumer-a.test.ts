@@ -67,7 +67,7 @@ import {
   p7SeedWork,
   p7TestActor,
   p7TestPrincipal,
-} from "./support/p7-app.js";
+} from "./support/consumer-harness.js";
 
 const WORK_1 = parse(WorkId)("wrk_00000000-0000-7000-8000-000000000001");
 const LEGACY_EXECUTION = parse(ExecutionId)(

@@ -58,7 +58,7 @@ import {
   p6SeedProject,
   p6TestActor,
   p6TestPrincipal,
-} from "./support/p6-app.js";
+} from "./support/workspace-harness.js";
 
 const workId = parse(WorkId)("wrk_018f2b3c-4d5e-7abc-8def-0123456789c1");
 const unknownWorkId = parse(WorkId)("wrk_018f2b3c-4d5e-7abc-8def-0123456789ff");
@@ -124,7 +124,7 @@ const SteerRegistryLive: Layer.Layer<
   }),
 );
 
-/** Self-contained SteerWork harness (p6-app.ts assembly copied; that file is
+/** Self-contained SteerWork harness (workspace-harness.ts assembly copied; that file is
  * frozen for this task). Fixed clock keeps replayed receipts byte-identical. */
 const makeSteerApp = (
   filename = ":memory:",

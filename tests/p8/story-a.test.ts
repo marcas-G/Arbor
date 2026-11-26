@@ -12,7 +12,7 @@ import {
   TransactionPort,
   WorkWaitStore,
 } from "../../packages/ports/src/index.js";
-import { p7Project, p7TestPrincipal } from "../support/p7-app.js";
+import { p7Project, p7TestPrincipal } from "../support/consumer-harness.js";
 import {
   ACC_A,
   acceptanceOf,

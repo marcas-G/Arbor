@@ -20,13 +20,13 @@ import {
   p7SeedProject,
   p7SeedWork,
   p7TestPrincipal,
-} from "../support/p7-app.js";
+} from "../support/consumer-harness.js";
 import {
   makeP9ConsumerApp,
   p9Boot,
   runP9Consumer,
 } from "../support/consumer-app-support.js";
-import { labeled } from "../support/p9-harness-api.js";
+import { labeled } from "../support/harness-api.js";
 import {
   ASSIGN_CMD_1,
   countEvents,

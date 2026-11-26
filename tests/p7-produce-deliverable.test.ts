@@ -39,7 +39,7 @@ import {
   p7TestActor,
   p7TestPrincipal,
   runP7,
-} from "./support/p7-app.js";
+} from "./support/consumer-harness.js";
 
 const DEL_1 = parse(DeliverableId)("del_00000000-0000-7000-8000-000000000001");
 const WORK_1 = parse(WorkId)("wrk_00000000-0000-7000-8000-000000000001");

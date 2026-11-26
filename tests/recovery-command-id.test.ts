@@ -26,7 +26,7 @@ import {
   p7SeedCommandId,
   p7SeedProject,
   runP7,
-} from "./support/p7-app.js";
+} from "./support/consumer-harness.js";
 
 const principal = parse(Principal)("user:gov");
 const executionId = parse(ExecutionId)(
