@@ -22,7 +22,9 @@ import type {
   AgentLoopActionOutcome,
   ReconciliationEscalationRecorderError,
 } from "./agent-loop-actions/types.js";
+import { foldAgentLoopActionPhaseError } from "./agent-loop-actions/errors.js";
 import { executeAgentLoopActions } from "./agent-loop-actions.js";
+import { foldAgentLoopStepCompletionError } from "./decision/errors.js";
 import type { ModelDecisionOutcome } from "./agent-loop-policy.js";
 import { completeAgentLoopStep } from "./agent-loop-step-completion.js";
 import type {
@@ -199,7 +201,7 @@ export const AgentLoopActionProgressionServiceLive = (
                     : {
                         sandboxPolicyDecisions: sandboxPolicyDecisions.value,
                       }),
-                });
+                }).pipe(Effect.mapError(foldAgentLoopActionPhaseError));
                 if (actionOutcome._tag !== "Completed") {
                   return actionOutcome;
                 }
@@ -223,12 +225,11 @@ export const AgentLoopActionProgressionServiceLive = (
                     : { loopStepFence: binding.loopStepFence }),
                   tx,
                   sessions,
-                  failure: binding.failure,
                   now: binding.now,
                   ...(options.qualificationProbe === undefined
                     ? {}
                     : { qualificationProbe: options.qualificationProbe }),
-                });
+                }).pipe(Effect.mapError(foldAgentLoopStepCompletionError));
                 if (completion._tag === "Settle") {
                   return {
                     _tag: "Settle",

@@ -6,8 +6,10 @@ import {
   P19_MIGRATIONS,
 } from "../../adapters/persistence-sqlite/src/index.js";
 import type { AgentActionHandler } from "../../packages/agent-runtime/src/index.js";
+import type { Execution, Principal } from "../../packages/domain/dist/index.js";
 import { decideSessionProjection } from "../../packages/model-context/src/index.js";
 import {
+  type AgentLoopStepFence,
   type RuntimeSafetyGateService,
   SessionRepository,
   TransactionPort,
@@ -109,7 +111,12 @@ describe("P3-013 agent driver", () => {
             },
           }),
       },
-      recordReconciliationEscalation: (input) => {
+      recordReconciliationEscalation: (input: {
+        readonly execution: Execution;
+        readonly fence: AgentLoopStepFence;
+        readonly principal: Principal;
+        readonly invocationRefs: ReadonlyArray<string>;
+      }) => {
         recoverySequence.push("P9EscalationCommitted");
         escalationCalls.push({
           executionId: input.execution.executionId,

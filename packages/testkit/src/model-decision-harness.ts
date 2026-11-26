@@ -5,7 +5,7 @@
 // driver-layer.ts).
 import {
   type AgentActionHandler,
-  AgentLoopDriverLive,
+  AgentLoopRuntimeLive,
   ModelDecisionServiceLive,
   makeControlToolRegistry,
 } from "@arbor/agent-runtime";
@@ -166,7 +166,7 @@ export const makeModelDecisionHarness = (input: ModelDecisionHarnessInput) => {
     ),
   );
   const driver = Layer.provide(
-    AgentLoopDriverLive({ controlRegistry }),
+    AgentLoopRuntimeLive({ controlRegistry }),
     Layer.mergeAll(driverDependencies, modelDecision, infra),
   );
   return {
