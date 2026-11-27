@@ -22,7 +22,5 @@
   "scripts": {
     "build": "tsc -b"
   },
-  "devDependencies": {
-    "@arbor/testkit": "workspace:*"
-  }
+  "devDependencies": {}
 }

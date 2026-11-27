@@ -10,9 +10,9 @@ import {
 } from "@arbor/domain";
 import type { ControlBasis } from "@arbor/model-context";
 import { ModelCapabilityPort } from "@arbor/ports";
-import { modelDecisionServiceUnitDependencies } from "@arbor/testkit";
 import { Effect, Layer } from "effect";
 import { describe, expect, it, vi } from "vitest";
+import { modelDecisionServiceUnitDependencies } from "../../../tests/support/model-decision-unit-deps.js";
 import { ControlBasisResolver } from "../src/control-basis-resolver.js";
 import {
   ModelDecisionService,

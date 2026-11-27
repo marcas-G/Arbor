@@ -1,8 +1,13 @@
 // biome-ignore-all lint/suspicious/noExplicitAny: test assembly helper —
 // the unused-service channels are intentionally loose (same discipline as
 // driver-layer.ts).
-import type { ControlBasisResolver } from "@arbor/agent-runtime";
-import { ModelContext, TurnProfileResolver } from "@arbor/model-context";
+
+import { Layer } from "effect";
+import type { ControlBasisResolver } from "../../packages/agent-runtime/src/index.js";
+import {
+  ModelContext,
+  TurnProfileResolver,
+} from "../../packages/model-context/src/index.js";
 import {
   BlobStorePort,
   ConversationAttemptStore,
@@ -21,8 +26,7 @@ import {
   WorkspaceKnowledgePort,
   WorkspacePlacementPort,
   WorkspaceRepository,
-} from "@arbor/ports";
-import { Layer } from "effect";
+} from "../../packages/ports/src/index.js";
 
 /**
  * ModelDecisionService unit-test dependencies (test-effectiveness B1/B3):
