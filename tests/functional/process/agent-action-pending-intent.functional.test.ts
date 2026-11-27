@@ -512,6 +512,35 @@ describe("AgentLoop and P4 tool intent process crash", () => {
             ARBOR_TICK_INTERVAL_MS: "10000",
           },
           preserveDirectoryOnStop: true,
+          // The seed daemon dispatches the newly approved Work inside the
+          // same wake loop that settled the approving conversation, so the
+          // 10-second seed tick cannot keep it away from the provider. Hold
+          // the pre-probe Work-turn request without writing any response
+          // bytes: the seed is then killed with the request still pending,
+          // every durable replay fact stays false, and restart recovery
+          // retries the same ProviderTurn under the armed probe. Answering
+          // that request instead — even with a transport failure — persists
+          // responseStarted=true, recovery stops the turn fail-closed and
+          // the terminal ProviderFailure settlement puts the Work behind the
+          // same-revision readmission hold, which by contract stays blocked
+          // across ticks and restarts until the user retries.
+          beforeResponse: async (call) => {
+            const available = new Set(
+              call.tools
+                .map((tool) => tool.function?.name)
+                .filter((name): name is string => name !== undefined),
+            );
+            if (!available.has("read") || probeArmed) return undefined;
+            await new Promise<void>((resolveHold) => {
+              const deadline = Date.now() + 30_000;
+              const poll = () => {
+                if (probeArmed || Date.now() >= deadline) resolveHold();
+                else setTimeout(poll, 50);
+              };
+              poll();
+            });
+            return undefined;
+          },
           reply: (call) => {
             const context = JSON.stringify(call.messages);
             const available = new Set(
@@ -1211,8 +1240,33 @@ describe("AgentLoop and P4 tool intent process crash", () => {
             artifactRefs: [],
           });
           expect(targetReadToolCalls).toBe(1);
-          expect(targetProviderCalls).toBeLessThanOrEqual(2);
-          if (targetProviderCalls === 2) {
+          // The read executed exactly once, which is the no-duplicate-effect
+          // oracle this scenario owns. The Work loop's remaining turns after
+          // the committed ExpectedFailure observation are contract-bounded
+          // idle chats (MAX_TURNS) that each carry the failure evidence in
+          // their request, exactly like the Success variants' post-read
+          // turns; a raw armed-turn ceiling races them. Count instead the
+          // proposal-shaped Work turns — the ones whose request does not
+          // yet carry the committed failure evidence — and require exactly
+          // one: the turn that proposed the read.
+          const expectedFailureEvidenceInRequest = (message: {
+            readonly role?: string;
+            readonly content?: string;
+          }): boolean =>
+            message.role === "tool" &&
+            message.content?.includes(
+              "filesystem target could not be resolved or accessed inside the sandbox",
+            ) === true;
+          expect(
+            fixture.providerCalls
+              .slice(targetProviderCallStart)
+              .filter(
+                (call) =>
+                  call.tools.some((tool) => tool.function?.name === "read") &&
+                  !call.messages.some(expectedFailureEvidenceInRequest),
+              ),
+          ).toHaveLength(1);
+          if (targetProviderCalls >= 2) {
             expect(latestToolResult).toContain(
               "filesystem target could not be resolved or accessed inside the sandbox",
             );
