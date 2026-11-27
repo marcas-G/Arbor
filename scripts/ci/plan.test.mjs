@@ -222,7 +222,10 @@ test("shadow summaries report without changing behavior", () => {
   assert.match(overall, /policy digest/i);
 
   const shard = shardSummaryMarkdown(plan, 3, FUNCTIONAL_SHARD_TOTAL);
-  assert.match(shard, new RegExp(`functional shard 3/${FUNCTIONAL_SHARD_TOTAL}`));
+  assert.match(
+    shard,
+    new RegExp(`functional shard 3/${FUNCTIONAL_SHARD_TOTAL}`),
+  );
   assert.match(
     shard,
     /this job ran the \*\*full\*\* shard; no test was skipped/i,
