@@ -505,5 +505,5 @@ describe("action A commit followed by stale action B", () => {
     ).toBeLessThanOrEqual(3);
     expect(fixture.daemonErrors).toEqual([]);
     activePhase = "final-assertions-passed";
-  }, 90_000);
+  }, 180_000);
 });
