@@ -278,6 +278,10 @@ export const ModelDecisionServiceLive = (
                       : { loopStepFence: input.loopStepFence }),
                     tx,
                     sessions,
+                    // E09/Gate C C2: the reasoning-attachment blob write requires
+                    // the blob store; without it every reasoning response would
+                    // fail closed as ReasoningRoundTripBindingUnavailable.
+                    blobs,
                     now: input.now,
                     ...(options.qualificationProbe === undefined
                       ? {}
