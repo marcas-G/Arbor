@@ -90,6 +90,18 @@ jobs:
       - name: Source-size transition gate
         run: node scripts/governance/check-source-lines.mjs --baseline "${{ steps.comparison_base.outputs.sha }}"
 
+      # Independent Web checks from the AGENTS.md release gate: the root
+      # Vitest config excludes apps/web entirely, so without these steps CI
+      # exercises no Web typecheck, build, or unit tests.
+      - name: Web typecheck
+        run: pnpm --filter @arbor/web typecheck
+
+      - name: Web build
+        run: pnpm --filter @arbor/web build
+
+      - name: Web unit tests
+        run: pnpm --filter @arbor/web test
+
       - name: Coverage
         run: pnpm test:coverage
 

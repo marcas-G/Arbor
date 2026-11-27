@@ -41,7 +41,9 @@ const before = git(["status", "--porcelain", "-z"]);
 // baseline tree and HEAD and paths differing from HEAD in the index/working
 // tree (staged new files included, like check-source-lines enumerating the
 // index). File content is read from the working tree so a local run reviews
-// staged and unstaged work.
+// staged and unstaged work. Without --baseline the scan is strict: the whole
+// tracked tree, every line — never a silent empty set. A bare default call
+// that scanned nothing would be unconditionally green and carry no evidence.
 const diffPaths = baseline
   ? [
       ...git([
@@ -53,12 +55,11 @@ const diffPaths = baseline
       ]).split("\0"),
       ...git(["diff", "--name-only", "--no-renames", "-z", "HEAD"]).split("\0"),
     ].filter(Boolean)
-  : fullScan
-    ? git(["ls-files", "-z"]).split("\0").filter(Boolean)
-    : [];
+  : git(["ls-files", "-z"]).split("\0").filter(Boolean);
+const wholeFile = baseline === null;
 const changedSourcePaths = [...new Set(diffPaths)]
   .filter((path) => isSourcePath(path) && !isOutOfScope(path))
-  .filter((path) => fullScan || existsSync(join(root, path)))
+  .filter((path) => wholeFile || existsSync(join(root, path)))
   .sort();
 
 // Legacy inventory exempted from the path category (never the line categories:
@@ -98,8 +99,9 @@ for (const path of changedSourcePaths) {
   let addedLines;
   try {
     // Working tree (or HEAD when unchanged locally) versus the baseline tree:
-    // the hunk heads describe every line the branch adds.
-    if (fullScan) {
+    // the hunk heads describe every line the branch adds. Strict/full mode
+    // has no baseline, so every line of the file is reviewed.
+    if (wholeFile) {
       addedLines = new Set(
         Array.from({ length: lineTexts.length }, (_, index) => index + 1),
       );

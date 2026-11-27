@@ -14,7 +14,6 @@ const mixedFiles = new Set([
   "apps/single-workspace/test/real-provider-conversation.test.ts",
   "apps/web/test/session.test.tsx",
   "tests/scenario-7/acceptance.test.ts",
-  "tests/p10-acceptance.test.ts",
   "tests/acceptance.test.ts",
   "tests/region-encoding.test.ts",
   "tests/security-performance.test.ts",
@@ -30,18 +29,8 @@ const mixedReasons = new Map([
     "The suite mixes direct session-storage component behavior with user-facing navigation/session transitions.",
   ],
   [
-    "SQLite formation/governance stories share the file with direct model-contract/program probes.",
-  ],
-  [
     "tests/scenario-7/acceptance.test.ts",
     "Database-backed deliverable/dependency stories share the file with direct matcher and replay probes.",
-  ],
-  [
-    "SQLite verification/acceptance lifecycle stories share the file with direct domain and program-contract probes.",
-  ],
-  [
-    "tests/p10-acceptance.test.ts",
-    "Application/read-model integration stories share the file with mechanical source/contract assertions.",
   ],
   [
     "tests/acceptance.test.ts",
@@ -61,6 +50,11 @@ const unknownFiles = new Set([
   "tests/convergence/result-record.test.ts",
   "tests/harness.test.ts",
   "tests/closure.test.ts",
+  // Mechanical halves split out of the former mixed p9/p10 acceptance
+  // suites (B5): they inspect source trees, checklists and contracts
+  // rather than exercising a runtime capability path.
+  "tests/scenario-9/mechanical-checklist.test.ts",
+  "tests/scenario-10/mechanical.test.ts",
   ...[
     "d0-contract-guardrails.test.ts",
     "dependency-pins.test.ts",
