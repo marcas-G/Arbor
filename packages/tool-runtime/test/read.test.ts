@@ -1,46 +1,22 @@
 import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import type { ToolExecutionContext, ToolIntent } from "@arbor/ports";
 import { it } from "@effect/vitest";
 import { Effect } from "effect";
 import { describe, expect } from "vitest";
 import { readExecutor } from "../src/index.js";
+import { executeFsTool, fsToolSandbox } from "./fs-tool-harness.js";
 
 const root = mkdtempSync(join(tmpdir(), "arbor-read-"));
 writeFileSync(join(root, "a.txt"), "hello world");
-
-const intent = (argumentsJson: string): ToolIntent => ({
-  callRef: "c",
-  toolName: "read",
-  toolVersion: "2",
-  argumentsJson,
-  invocationId: "tin_x" as never,
-  approvalId: null,
-});
-const context = {} as ToolExecutionContext;
-const sandbox = {
-  handleId: "s",
-  rootPath: root,
-  mounts: [
-    {
-      ref: "workspace",
-      rootPath: root,
-      region: { resourceSpaceId: "filesystem", normalizedRegion: {} },
-      access: "ReadOnly" as const,
-    },
-  ],
-  writableRegions: [],
-};
+const sandbox = fsToolSandbox(root, "ReadOnly");
 
 const executeRead = (argumentsJson: string) =>
-  readExecutor.execute({
-    intent: intent(argumentsJson),
-    definition: {} as never,
-    context,
+  executeFsTool(
+    readExecutor,
+    { toolName: "read", toolVersion: "2", argumentsJson },
     sandbox,
-    regions: [],
-  });
+  );
 
 describe("read tool", () => {
   it.effect("reads a bounded slice within the sandbox", () =>

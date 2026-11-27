@@ -104,6 +104,25 @@ const owner: ConversationCheckpointOwner = {
   updatedAt: "2026-10-17T00:00:00.000Z",
 };
 
+const currentExecution = {
+  executionId: currentExecutionId,
+  projectId,
+  workspaceId,
+  sessionId: "ses_current" as never,
+  binding: {
+    _tag: "WorkspaceExecution",
+    workspaceId,
+    episode: {
+      _tag: "ConversationResponseEpisode",
+      messageId: currentMessageId as never,
+      responseJobRevision: 0,
+    },
+  },
+  admittedAt: "2026-10-17T00:00:00.000Z",
+  stopRequestedAt: null,
+  state: { status: "Active", settlement: null },
+} as Execution;
+
 describe("Conversation checkpoint blob-before-owner commit", () => {
   it("generates a stable composite ProviderTurnId and binds it exactly in the manifest", async () => {
     const composite = conversationCheckpointProviderTurnId(
@@ -112,36 +131,11 @@ describe("Conversation checkpoint blob-before-owner commit", () => {
       "Summary",
       2,
     );
-    expect(composite).toBe(
-      conversationCheckpointProviderTurnId(
-        String(currentExecutionId),
-        3,
-        "Summary",
-        2,
-      ),
-    );
     expect(String(composite)).toBe(
       `ptn_${currentExecutionId}_3_conversation_compact_2`,
     );
 
-    const execution = {
-      executionId: currentExecutionId,
-      projectId,
-      workspaceId,
-      sessionId: "ses_current" as never,
-      binding: {
-        _tag: "WorkspaceExecution",
-        workspaceId,
-        episode: {
-          _tag: "ConversationResponseEpisode",
-          messageId: currentMessageId as never,
-          responseJobRevision: 0,
-        },
-      },
-      admittedAt: "2026-10-17T00:00:00.000Z",
-      stopRequestedAt: null,
-      state: { status: "Active", settlement: null },
-    } as Execution;
+    const execution = currentExecution;
     let capturedManifest: Record<string, unknown> | undefined;
     let capturedRequest: unknown;
     const sequence: Array<string> = [];
@@ -258,24 +252,7 @@ describe("Conversation checkpoint blob-before-owner commit", () => {
   });
 
   it("ends the ProviderTurn lease bracket on provider failure and preserves its cause", async () => {
-    const execution = {
-      executionId: currentExecutionId,
-      projectId,
-      workspaceId,
-      sessionId: "ses_current" as never,
-      binding: {
-        _tag: "WorkspaceExecution",
-        workspaceId,
-        episode: {
-          _tag: "ConversationResponseEpisode",
-          messageId: currentMessageId as never,
-          responseJobRevision: 0,
-        },
-      },
-      admittedAt: "2026-10-17T00:00:00.000Z",
-      stopRequestedAt: null,
-      state: { status: "Active", settlement: null },
-    } as Execution;
+    const execution = currentExecution;
     const providerFailure = {
       _tag: "ProviderFailure" as const,
       kind: "ProviderUnavailable" as const,
@@ -361,24 +338,7 @@ describe("Conversation checkpoint blob-before-owner commit", () => {
   });
 
   it("leaves an allowed orphan Summary Blob when the owner CAS fails", async () => {
-    const execution = {
-      executionId: currentExecutionId,
-      projectId,
-      workspaceId,
-      sessionId: "ses_current" as never,
-      binding: {
-        _tag: "WorkspaceExecution",
-        workspaceId,
-        episode: {
-          _tag: "ConversationResponseEpisode",
-          messageId: currentMessageId as never,
-          responseJobRevision: 0,
-        },
-      },
-      admittedAt: "2026-10-17T00:00:00.000Z",
-      stopRequestedAt: null,
-      state: { status: "Active", settlement: null },
-    } as Execution;
+    const execution = currentExecution;
     const currentResponseJob = {
       messageId: currentMessageId as never,
       projectId,

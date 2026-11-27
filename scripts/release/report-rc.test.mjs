@@ -23,7 +23,7 @@ test("RC contract contains only conservative, explicit evidence statuses", async
     (item) => item.id === "recovery-pending-cases",
   );
   assert.equal(recovery.status, "OPEN");
-  assert.ok(recovery.evidence.includes("planning/testing/manifest.json"));
+  assert.ok(recovery.evidence.includes("tests/manifest.json"));
   assert.equal(
     recovery.evidence.filter((entry) =>
       entry.startsWith("tests/functional/process/"),

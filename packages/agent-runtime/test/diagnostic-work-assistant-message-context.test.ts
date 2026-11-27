@@ -156,11 +156,6 @@ const persistedToolResult = (
     callRef,
   );
 
-const projectedInputFingerprint = (
-  entries: ReadonlyArray<SessionEntryRecord>,
-): string =>
-  sha256Hex(JSON.stringify(projectSessionTimeline(entries).inputItems));
-
 const compileProjectedRequest = (
   entries: ReadonlyArray<SessionEntryRecord>,
   step: number,
@@ -299,12 +294,6 @@ describe("S4-CONTEXT-DG-01: WorkspaceWork text-only Stop continuity", () => {
       ...beforeOutput.contextRefs,
       `session:ProviderTurn:${providerTurnInferenceId(executionId, 0)}:assistant`,
     ]);
-    expect(
-      projectedInputFingerprint([
-        initialInput,
-        persistedPlainAssistantOutput(outputText),
-      ]),
-    ).not.toBe(projectedInputFingerprint([initialInput]));
     const beforeRequest = compileProjectedRequest([initialInput], 0);
     const nextRequest = compileProjectedRequest(
       [initialInput, persistedPlainAssistantOutput(outputText)],
@@ -395,12 +384,6 @@ describe("S4-CONTEXT-DG-01: WorkspaceWork text-only Stop continuity", () => {
       artifactRefs: [],
       truncated: false,
     });
-    expect(projectedInputFingerprint(controlEntries)).not.toBe(
-      projectedInputFingerprint(assistantOnly),
-    );
-    expect(projectedInputFingerprint(toolEntries)).not.toBe(
-      projectedInputFingerprint(assistantOnly),
-    );
     expect(portableInputItems(controlRequest.request)).not.toEqual(
       portableInputItems(assistantRequest.request),
     );

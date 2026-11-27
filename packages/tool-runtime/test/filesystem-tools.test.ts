@@ -9,11 +9,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ToolExecutionContext, ToolIntent } from "@arbor/ports";
 import { it } from "@effect/vitest";
 import { Effect } from "effect";
 import { afterAll, describe, expect } from "vitest";
-import { globExecutor, grepExecutor, writeExecutor } from "../src/index.js";
+import { globExecutor, writeExecutor } from "../src/index.js";
+import { executeFsTool, fsToolSandbox } from "./fs-tool-harness.js";
 
 const root = mkdtempSync(join(tmpdir(), "arbor-filesystem-tools-"));
 const extraRoots: string[] = [];
@@ -25,42 +25,18 @@ mkdirSync(join(root, "src"));
 writeFileSync(join(root, "src", "main.ts"), "const answer = 42;\n");
 writeFileSync(join(root, "src", "notes.md"), "answer appears here\n");
 
-const context = {} as ToolExecutionContext;
-const sandbox = {
-  handleId: "s",
-  rootPath: root,
-  mounts: [
-    {
-      ref: "workspace",
-      rootPath: root,
-      region: { resourceSpaceId: "filesystem", normalizedRegion: {} },
-      access: "ReadWrite" as const,
-    },
-  ],
-  writableRegions: [],
-};
-
-const intent = (toolName: string, argumentsJson: string): ToolIntent => ({
-  callRef: "c",
-  toolName,
-  toolVersion: "1",
-  argumentsJson,
-  invocationId: "tin_x" as never,
-  approvalId: null,
-});
+const sandbox = fsToolSandbox(root, "ReadWrite");
 
 const execute = (
-  executor: typeof writeExecutor | typeof globExecutor | typeof grepExecutor,
+  executor: typeof writeExecutor | typeof globExecutor,
   toolName: string,
   input: unknown,
 ) =>
-  executor.execute({
-    intent: intent(toolName, JSON.stringify(input)),
-    definition: {} as never,
-    context,
+  executeFsTool(
+    executor,
+    { toolName, toolVersion: "1", argumentsJson: JSON.stringify(input) },
     sandbox,
-    regions: [],
-  });
+  );
 
 describe.runIf(process.platform === "linux")(
   "filesystem discovery and write tools",
@@ -91,28 +67,10 @@ describe.runIf(process.platform === "linux")(
     );
 
     it.effect(
-      "rejects writes outside the selected mount and through a symlink parent",
-      () =>
-        Effect.gen(function* () {
-          const outside = mkdtempSync(
-            join(tmpdir(), "arbor-filesystem-outside-"),
-          );
-          extraRoots.push(outside);
-          symlinkSync(outside, join(root, "escape"), "dir");
-          const traversal = yield* execute(writeExecutor, "write", {
-            target: { mount: "workspace", path: "../outside.txt" },
-            content: "no",
-          });
-          const symlink = yield* execute(writeExecutor, "write", {
-            target: { mount: "workspace", path: "escape/file.txt" },
-            content: "no",
-          });
-          expect(traversal.settlement._tag).toBe("ExpectedFailure");
-          expect(symlink.settlement._tag).toBe("ExpectedFailure");
-        }),
-    );
-
-    it.effect(
+      // Out-of-mount and parent-symlink write rejection is covered by
+      // filesystem-boundaries.test.ts ("does not read or overwrite another
+      // workspace through final or parent symlinks") with the same write
+      // path plus the read tools and content assertions.
       "finds files with bounded globbing without traversing symlink directories",
       () =>
         Effect.gen(function* () {
@@ -133,26 +91,9 @@ describe.runIf(process.platform === "linux")(
         }),
     );
 
-    it.effect(
-      "searches text with regex and returns mount-relative locations",
-      () =>
-        Effect.gen(function* () {
-          const result = yield* execute(grepExecutor, "grep", {
-            target: { mount: "workspace", path: "." },
-            query: "answer\\s*=\\s*42",
-          });
-          expect(result.settlement._tag).toBe("Success");
-          const output = JSON.parse(result.observation.text) as {
-            matches: Array<{ path: string; line: number; column: number }>;
-          };
-          expect(output.matches).toEqual([
-            expect.objectContaining({
-              path: "src/main.ts",
-              line: 1,
-              column: 7,
-            }),
-          ]);
-        }),
-    );
+    // Regex search with mount-relative line/column/text results is covered
+    // by filesystem-boundaries.test.ts ("keeps concurrent same-path writes…"
+    // for root-targeted search and "searches a selected directory relative
+    // to it…" for the exact match shape).
   },
 );

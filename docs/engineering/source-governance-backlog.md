@@ -226,8 +226,12 @@ shows parallel-resource flakes for the same four files both with and
 without these changes (verified via stash) — pre-existing contention
 (audit item R05), not regressions.
 
-Deferred on purpose: vitest config relocation to `tests/configs/`
-(config-relative path semantics need per-file verification while CI is
-mid-run on the current layouts); ~1.5k lines of unwired application
+Landed since: vitest/Playwright config relocation to `tests/configs/`
+plus `tests/manifest.json`/`tests/impact-map.json` (config-relative path
+semantics verified per file: Vitest globs and setup files resolve against
+the invocation root, so they were left root-relative; Playwright resolves
+against the config directory, so its internal paths moved with it).
+
+Still deferred on purpose: ~1.5k lines of unwired application
 modules (owner decision); FNV-1a approval digest → sha256 (touches the
 approval UI binding chain).

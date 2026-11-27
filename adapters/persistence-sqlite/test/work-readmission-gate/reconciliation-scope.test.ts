@@ -24,24 +24,43 @@ import {
 } from "./support.js";
 
 describe("WorkReadmissionGateStore", () => {
-  it("fails closed when ReconciliationEscalated aggregate and payload bind different Executions", () =>
-    runDb(
-      Effect.gen(function* () {
-        yield* seed();
-        yield* seedOtherWorkspaceExecution;
-        yield* appendReconciliationEvent(executionId, otherExecutionId);
-        const exit = yield* Effect.exit(query());
-        expect(exit._tag).toBe("Failure");
-        if (exit._tag === "Failure") {
-          expect(JSON.stringify(exit.cause)).toContain(
-            '"reasonCode":"SourceEventExecutionMismatch"',
-          );
-          expect(JSON.stringify(exit.cause)).toContain(
-            `"executionId":"${executionId}"`,
-          );
-        }
-      }),
-    ));
+  it.each([
+    {
+      label: "aggregate and payload bind different Executions",
+      aggregate: executionId,
+      payload: otherExecutionId,
+    },
+    {
+      label: "payload binds this Workspace but aggregate_ref points elsewhere",
+      aggregate: otherExecutionId,
+      payload: executionId,
+    },
+    {
+      label: "in-scope event omits its Execution binding",
+      aggregate: executionId,
+      payload: undefined,
+    },
+  ] as const)(
+    "fails closed when ReconciliationEscalated %s",
+    ({ aggregate, payload }) =>
+      runDb(
+        Effect.gen(function* () {
+          yield* seed();
+          yield* seedOtherWorkspaceExecution;
+          yield* appendReconciliationEvent(aggregate, payload);
+          const exit = yield* Effect.exit(query());
+          expect(exit._tag).toBe("Failure");
+          if (exit._tag === "Failure") {
+            expect(JSON.stringify(exit.cause)).toContain(
+              '"reasonCode":"SourceEventExecutionMismatch"',
+            );
+            expect(JSON.stringify(exit.cause)).toContain(
+              `"executionId":"${executionId}"`,
+            );
+          }
+        }),
+      ),
+  );
 
   it("does not let a B/C mismatch block A, while each referenced Workspace fails closed", () =>
     runDb(
@@ -74,42 +93,48 @@ describe("WorkReadmissionGateStore", () => {
       }),
     ));
 
-  it("fails closed when a ReconciliationEscalated payload binds this Workspace but aggregate_ref points elsewhere", () =>
-    runDb(
-      Effect.gen(function* () {
-        yield* seed();
-        yield* seedOtherWorkspaceExecution;
-        yield* appendReconciliationEvent(otherExecutionId, executionId);
-        const exit = yield* Effect.exit(query());
-        expect(exit._tag).toBe("Failure");
-        if (exit._tag === "Failure") {
-          expect(JSON.stringify(exit.cause)).toContain(
-            '"reasonCode":"SourceEventExecutionMismatch"',
-          );
-          expect(JSON.stringify(exit.cause)).toContain(
-            `"executionId":"${executionId}"`,
-          );
-        }
-      }),
-    ));
-
-  it("fails closed when ReconciliationEscalated payload points to a missing Execution", () =>
-    runDb(
-      Effect.gen(function* () {
-        yield* seed();
-        yield* appendReconciliationEvent(
-          executionId,
-          "exe_018f2b3c-4d5e-7abc-8def-0123456789ff",
-        );
-        const exit = yield* Effect.exit(query());
-        expect(exit._tag).toBe("Failure");
-        if (exit._tag === "Failure") {
-          expect(JSON.stringify(exit.cause)).toContain(
-            '"reasonCode":"SourceExecutionMissing"',
-          );
-        }
-      }),
-    ));
+  it.each([
+    {
+      label: "payload points to a missing Execution",
+      aggregate: executionId,
+      payload: "exe_018f2b3c-4d5e-7abc-8def-0123456789ff",
+      expectedId: "exe_018f2b3c-4d5e-7abc-8def-0123456789ff",
+    },
+    {
+      label: "both identities match but the Execution is missing",
+      aggregate: "exe_018f2b3c-4d5e-7abc-8def-0123456789fe",
+      payload: "exe_018f2b3c-4d5e-7abc-8def-0123456789fe",
+      expectedId: "exe_018f2b3c-4d5e-7abc-8def-0123456789fe",
+    },
+    {
+      label:
+        "aggregate Execution is missing but payload binds the requested Workspace",
+      aggregate: "exe_018f2b3c-4d5e-7abc-8def-0123456789fd",
+      payload: executionId,
+      expectedId: undefined,
+    },
+  ] as const)(
+    "fails closed with SourceExecutionMissing when ReconciliationEscalated %s",
+    ({ aggregate, payload, expectedId }) =>
+      runDb(
+        Effect.gen(function* () {
+          yield* seed();
+          yield* appendReconciliationEvent(aggregate, payload);
+          const exit = yield* Effect.exit(query());
+          expect(exit._tag).toBe("Failure");
+          if (exit._tag === "Failure") {
+            expect(JSON.stringify(exit.cause)).toContain(
+              '"reasonCode":"SourceExecutionMissing"',
+            );
+            if (expectedId !== undefined) {
+              expect(JSON.stringify(exit.cause)).toContain(
+                `"executionId":"${expectedId}"`,
+              );
+            }
+          }
+        }),
+      ),
+  );
 
   it("lets unrelated A skip aggregate B with a missing payload identity, while B rejects it", () =>
     runDb(
@@ -152,44 +177,6 @@ describe("WorkReadmissionGateStore", () => {
         if (inB._tag === "Failure") {
           expect(JSON.stringify(inB.cause)).toContain(
             '"reasonCode":"SourceProjectMismatch"',
-          );
-        }
-      }),
-    ));
-
-  it("fails closed when both ReconciliationEscalated identities match but the Execution is missing", () =>
-    runDb(
-      Effect.gen(function* () {
-        yield* seed();
-        const missingExecutionId = "exe_018f2b3c-4d5e-7abc-8def-0123456789fe";
-        yield* appendReconciliationEvent(
-          missingExecutionId,
-          missingExecutionId,
-        );
-        const exit = yield* Effect.exit(query());
-        expect(exit._tag).toBe("Failure");
-        if (exit._tag === "Failure") {
-          expect(JSON.stringify(exit.cause)).toContain(
-            '"reasonCode":"SourceExecutionMissing"',
-          );
-          expect(JSON.stringify(exit.cause)).toContain(
-            `"executionId":"${missingExecutionId}"`,
-          );
-        }
-      }),
-    ));
-
-  it("fails closed when aggregate Execution is missing but payload binds the requested Workspace", () =>
-    runDb(
-      Effect.gen(function* () {
-        yield* seed();
-        const missingExecutionId = "exe_018f2b3c-4d5e-7abc-8def-0123456789fd";
-        yield* appendReconciliationEvent(missingExecutionId, executionId);
-        const exit = yield* Effect.exit(query());
-        expect(exit._tag).toBe("Failure");
-        if (exit._tag === "Failure") {
-          expect(JSON.stringify(exit.cause)).toContain(
-            '"reasonCode":"SourceExecutionMissing"',
           );
         }
       }),
@@ -265,21 +252,6 @@ describe("WorkReadmissionGateStore", () => {
       }),
     ));
 
-  it("fails closed when an in-scope ReconciliationEscalated event omits its Execution binding", () =>
-    runDb(
-      Effect.gen(function* () {
-        yield* seed();
-        yield* appendReconciliationEvent(executionId);
-        const exit = yield* Effect.exit(query());
-        expect(exit._tag).toBe("Failure");
-        if (exit._tag === "Failure") {
-          expect(JSON.stringify(exit.cause)).toContain(
-            '"reasonCode":"SourceEventExecutionMismatch"',
-          );
-        }
-      }),
-    ));
-
   it("ignores a valid ReconciliationEscalated event whose exact Execution belongs to another Workspace", () =>
     runDb(
       Effect.gen(function* () {
@@ -287,27 +259,6 @@ describe("WorkReadmissionGateStore", () => {
         yield* seedOtherWorkspaceExecution;
         yield* appendReconciliationEvent(otherExecutionId, otherExecutionId);
         expect(Option.isNone(yield* query())).toBe(true);
-      }),
-    ));
-
-  it("scopes a missing ReconciliationEscalated payload identity to its aggregate Workspace", () =>
-    runDb(
-      Effect.gen(function* () {
-        yield* seed();
-        yield* seedOtherWorkspaceExecution;
-        yield* appendReconciliationEvent(otherExecutionId);
-        expect(
-          Option.isNone(yield* queryTarget(projectId, workspaceId, workId)),
-        ).toBe(true);
-        const inB = yield* Effect.exit(
-          queryTarget(projectId, otherWorkspaceId, otherWorkId),
-        );
-        expect(inB._tag).toBe("Failure");
-        if (inB._tag === "Failure") {
-          expect(JSON.stringify(inB.cause)).toContain(
-            '"reasonCode":"SourceEventExecutionMismatch"',
-          );
-        }
       }),
     ));
 

@@ -2,78 +2,47 @@ import {
   canonicalizeRecoveryBindingV1,
   recoveryBindingV1Digest,
   type ToolReconciliationProfile,
-  ToolRuntimePort,
   verifyRecoveryBindingV1,
 } from "@arbor/ports";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import {
   executionId,
-  intent,
   invocationId,
+  mustNotExecuteShellExecutor,
   p39NotOccurredRetryCase,
 } from "./support.js";
-import { app } from "./support-app.js";
-import type { PipelineTrace } from "./support-harness.js";
+import {
+  retryApp,
+  runShellRetry,
+  runShellRetryMatched,
+} from "./support-app.js";
+import {
+  newTrace,
+  type PipelineTrace,
+  retryHarness,
+} from "./support-harness.js";
 
 describe("tool runtime pipeline", () => {
   it("reconciles against the persisted scope before denying a changed current resource boundary", async () => {
     const retry = p39NotOccurredRetryCase("ResourceSnapshotChanged");
     const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
+      ...newTrace(),
       retryAttemptNumbers: [0],
       workspaceBoundaryAddresses: [{ _tag: "GitWorktree", path: "/repo/b" }],
       workspaceRevisionSequence: [1, 1],
-      reconciliationRetry: {
-        profile: retry.profile,
-        verifiedBinding: retry.verifiedBinding,
-        attempt: retry.attempt,
-        authority: retry.authority,
-        result: retry.result,
-        factId: retry.factId,
-        settlementEvidence: retry.settlementEvidence,
-      },
+      reconciliationRetry: retryHarness(retry),
     };
-    const result = await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          const runtime = yield* ToolRuntimePort;
-          return yield* runtime.invoke(
-            {
-              ...intent(retry.argumentsJson),
-              toolName: "shell",
-              toolVersion: "2",
-              invocationId,
-              approvalId: null,
-            } as never,
-            retry.context,
-          );
-        }),
-        app(
-          false,
-          {
-            name: "shell",
-            write: true,
-            requiresApproval: () => false,
-            execute: () =>
-              Effect.die(
-                new Error("a stale P39 resource boundary must not execute"),
-              ),
-          },
-          {},
-          trace,
-          undefined,
-          false,
-          retry.prior,
-          "rev",
-          trace.reconciliationRetry,
+    const result = await runShellRetry(
+      retryApp(
+        mustNotExecuteShellExecutor(
+          "a stale P39 resource boundary must not execute",
         ),
+        trace,
+        retry.prior,
       ),
+      retry.context,
+      retry.argumentsJson,
     );
 
     expect(result).toEqual(retry.settlementEvidence.observation);
@@ -107,65 +76,21 @@ describe("tool runtime pipeline", () => {
   it("emits the delayed reconciliation fence-rejection probe and preserves the failure", async () => {
     const retry = p39NotOccurredRetryCase("ResourceSnapshotChanged");
     const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
+      ...newTrace(),
       retryAttemptNumbers: [0],
       rejectFenceAfterReconciliation: true,
-      reconciliationRetry: {
-        profile: retry.profile,
-        verifiedBinding: retry.verifiedBinding,
-        attempt: retry.attempt,
-        authority: retry.authority,
-        result: retry.result,
-        factId: retry.factId,
-        settlementEvidence: retry.settlementEvidence,
-      },
+      reconciliationRetry: retryHarness(retry),
     };
-    const outcome = await Effect.runPromise(
-      Effect.provide(
-        Effect.match(
-          Effect.gen(function* () {
-            const runtime = yield* ToolRuntimePort;
-            return yield* runtime.invoke(
-              {
-                ...intent(retry.argumentsJson),
-                toolName: "shell",
-                toolVersion: "2",
-                invocationId,
-                approvalId: null,
-              } as never,
-              retry.context,
-            );
-          }),
-          {
-            onFailure: (cause) => ({ _tag: "Failure" as const, cause }),
-            onSuccess: (value) => ({ _tag: "Success" as const, value }),
-          },
+    const outcome = await runShellRetryMatched(
+      retryApp(
+        mustNotExecuteShellExecutor(
+          "a stale reconciliation result must not execute",
         ),
-        app(
-          false,
-          {
-            name: "shell",
-            write: true,
-            requiresApproval: () => false,
-            execute: () =>
-              Effect.die(
-                new Error("a stale reconciliation result must not execute"),
-              ),
-          },
-          {},
-          trace,
-          undefined,
-          false,
-          retry.prior,
-          "rev",
-          trace.reconciliationRetry,
-        ),
+        trace,
+        retry.prior,
       ),
+      retry.context,
+      retry.argumentsJson,
     );
 
     expect(outcome).toMatchObject({
@@ -197,20 +122,9 @@ describe("tool runtime pipeline", () => {
     async (tamper) => {
       const retry = p39NotOccurredRetryCase("ResourceSnapshotChanged");
       const trace: PipelineTrace = {
-        noEffectDenials: [],
-        events: [],
-        approvalConsumer: null,
-        intentWrites: 0,
-        effectAdmissions: 0,
-        approvalConsumes: 0,
+        ...newTrace(),
         reconciliationRetry: {
-          profile: retry.profile,
-          verifiedBinding: retry.verifiedBinding,
-          attempt: retry.attempt,
-          authority: retry.authority,
-          result: retry.result,
-          factId: retry.factId,
-          settlementEvidence: retry.settlementEvidence,
+          ...retryHarness(retry),
           ...(tamper === "binding"
             ? {
                 bindingOverride: (() => {
@@ -244,51 +158,26 @@ describe("tool runtime pipeline", () => {
             }
           : retry.prior;
       let executorCalls = 0;
-      const outcome = await Effect.runPromise(
-        Effect.provide(
-          Effect.match(
-            Effect.gen(function* () {
-              const runtime = yield* ToolRuntimePort;
-              return yield* runtime.invoke(
-                {
-                  ...intent(retry.argumentsJson),
-                  toolName: "shell",
-                  toolVersion: "2",
-                  invocationId,
-                  approvalId: null,
-                } as never,
-                retry.context,
-              );
-            }),
-            {
-              onFailure: (cause) => ({ _tag: "Failure" as const, cause }),
-              onSuccess: (value) => ({ _tag: "Success" as const, value }),
+      const outcome = await runShellRetryMatched(
+        retryApp(
+          {
+            name: "shell",
+            write: true,
+            requiresApproval: () => false,
+            execute: () => {
+              executorCalls += 1;
+              return Effect.succeed({
+                settlement: { _tag: "Success" as const },
+                observation: { text: "should not run", truncated: false },
+                resultRef: null,
+              });
             },
-          ),
-          app(
-            false,
-            {
-              name: "shell",
-              write: true,
-              requiresApproval: () => false,
-              execute: () => {
-                executorCalls += 1;
-                return Effect.succeed({
-                  settlement: { _tag: "Success" as const },
-                  observation: { text: "should not run", truncated: false },
-                  resultRef: null,
-                });
-              },
-            },
-            {},
-            trace,
-            undefined,
-            false,
-            tamperedPrior,
-            "rev",
-            trace.reconciliationRetry,
-          ),
+          },
+          trace,
+          tamperedPrior,
         ),
+        retry.context,
+        retry.argumentsJson,
       );
 
       expect(outcome._tag).toBe("Failure");
@@ -319,69 +208,33 @@ describe("tool runtime pipeline", () => {
           : {}),
       };
       const trace: PipelineTrace = {
-        noEffectDenials: [],
-        events: [],
-        approvalConsumer: null,
-        intentWrites: 0,
-        effectAdmissions: 0,
-        approvalConsumes: 0,
+        ...newTrace(),
         reconciliationRetry: {
-          profile: retry.profile,
+          ...retryHarness(retry),
           registryProfileOverride: currentProfile,
-          verifiedBinding: retry.verifiedBinding,
-          attempt: retry.attempt,
-          authority: retry.authority,
-          result: retry.result,
-          factId: retry.factId,
-          settlementEvidence: retry.settlementEvidence,
         },
       };
       let executorCalls = 0;
-      const outcome = await Effect.runPromise(
-        Effect.provide(
-          Effect.match(
-            Effect.gen(function* () {
-              const runtime = yield* ToolRuntimePort;
-              return yield* runtime.invoke(
-                {
-                  ...intent(retry.argumentsJson),
-                  toolName: "shell",
-                  toolVersion: "2",
-                  invocationId,
-                  approvalId: null,
-                } as never,
-                retry.context,
-              );
-            }),
-            {
-              onFailure: (cause) => ({ _tag: "Failure" as const, cause }),
-              onSuccess: (value) => ({ _tag: "Success" as const, value }),
+      const outcome = await runShellRetryMatched(
+        retryApp(
+          {
+            name: "shell",
+            write: true,
+            requiresApproval: () => false,
+            execute: () => {
+              executorCalls += 1;
+              return Effect.succeed({
+                settlement: { _tag: "Success" as const },
+                observation: { text: "must not execute", truncated: false },
+                resultRef: null,
+              });
             },
-          ),
-          app(
-            false,
-            {
-              name: "shell",
-              write: true,
-              requiresApproval: () => false,
-              execute: () => {
-                executorCalls += 1;
-                return Effect.succeed({
-                  settlement: { _tag: "Success" as const },
-                  observation: { text: "must not execute", truncated: false },
-                  resultRef: null,
-                });
-              },
-            },
-            {},
-            trace,
-            undefined,
-            false,
-            retry.prior,
-            "rev",
-            trace.reconciliationRetry,
-          ),
+          },
+          trace,
+          retry.prior,
         ),
+        retry.context,
+        retry.argumentsJson,
       );
 
       expect(outcome).toEqual({

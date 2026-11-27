@@ -3,7 +3,7 @@
 // shadow mode (docs/engineering/ci-architecture.md, "Impact analysis").
 //
 // Reuses the checked test-impact planner (scripts/testing/plan-test-impact.mjs
-// + planning/testing/impact-map.json) and the functional shard inventory
+// + tests/impact-map.json) and the functional shard inventory
 // (scripts/testing/functional-shard.mjs) to emit an auditable CI Plan for a
 // base..head diff. The plan is uploaded as a workflow artifact; the
 // functional lanes read it in SHADOW MODE — every lane still runs its
@@ -34,7 +34,7 @@
 //                   packages/agent-runtime / packages/execution-runtime
 //                   → core (unit) full + functional smoke+risk-selected
 //                     (smoke group + the crash-sentinels family from
-//                     planning/testing/manifest.json)
+//                     tests/manifest.json)
 //   4. web          every changed path is docs, **/*.md, or under apps/web
 //                   → web checks + functional-ui (browser suite)
 //   5. unclassified anything the policy cannot confidently classify —
@@ -71,10 +71,10 @@ import { planTestImpact } from "../testing/plan-test-impact.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const manifest = JSON.parse(
-  readFileSync(join(root, "planning/testing/manifest.json"), "utf8"),
+  readFileSync(join(root, "tests/manifest.json"), "utf8"),
 );
 const impactMapSha256 = createHash("sha256")
-  .update(readFileSync(join(root, "planning/testing/impact-map.json")))
+  .update(readFileSync(join(root, "tests/impact-map.json")))
   .digest("hex");
 
 // Must mirror the functional matrix width in .github/workflows/ci.yml.

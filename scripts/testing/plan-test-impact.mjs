@@ -8,7 +8,7 @@ import { globToRegExp } from "./check-manifest.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const impactMap = JSON.parse(
-  readFileSync(resolve(root, "planning/testing/impact-map.json"), "utf8"),
+  readFileSync(resolve(root, "tests/impact-map.json"), "utf8"),
 );
 
 const normalize = (path) => path.replaceAll("\\", "/").replace(/^\.\//, "");

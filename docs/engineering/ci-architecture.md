@@ -11,7 +11,7 @@ test:coverage); three overlapping build paths; 10-file Vitest batches
 serialize ~51 process launches; **no independent Web checks** (unit,
 typecheck, build absent from CI); full functional journey on every PR;
 impact-map exists (scripts/testing/plan-test-impact.mjs +
-planning/testing/impact-map.json) but unused by CI; upstream failure
+tests/impact-map.json) but unused by CI; upstream failure
 masks downstream results (health reports "coverage missing" instead of
 the real fault).
 

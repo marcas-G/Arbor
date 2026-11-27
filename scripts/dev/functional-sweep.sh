@@ -17,7 +17,7 @@ for ((s=0; s<N; s++)); do
     PART=("${FILES[@]:START:PER}")
     [ ${#PART[@]} -eq 0 ] && exit 0
     TMPDIR="$RWT" TEMP="$RWT" TMP="$RWT" \
-      pnpm vitest run "${PART[@]}" --config vitest.functional.config.ts \
+      pnpm vitest run "${PART[@]}" --config tests/configs/vitest.functional.config.ts \
       > "$DIR/run.log" 2>&1
     echo "exit=$?" > "$DIR/exit"
   ) &

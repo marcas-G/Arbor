@@ -14,7 +14,7 @@ import {
   workspaceId,
 } from "./support.js";
 import { app, run, runFailure } from "./support-app.js";
-import type { PipelineTrace } from "./support-harness.js";
+import { newTrace, type PipelineTrace } from "./support-harness.js";
 
 describe("tool runtime pipeline", () => {
   it("settles a post-claim effect-gate denial without opening the executor", async () => {
@@ -87,12 +87,7 @@ describe("tool runtime pipeline", () => {
       resumeEffectGate = resolve;
     });
     const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
+      ...newTrace(),
       afterAuthorityResolved: async () => {
         signalAuthorityResolved();
         await effectGateResumed;

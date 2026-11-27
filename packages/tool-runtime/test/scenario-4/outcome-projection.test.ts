@@ -13,7 +13,7 @@ import {
   workspaceId,
 } from "./support.js";
 import { app, run } from "./support-app.js";
-import type { PipelineTrace } from "./support-harness.js";
+import { newTrace, type PipelineTrace } from "./support-harness.js";
 
 describe("tool runtime pipeline", () => {
   it("returns ExpectedFailure on invalid input", async () => {
@@ -22,14 +22,7 @@ describe("tool runtime pipeline", () => {
   });
 
   it("returns Denied when admission denies", async () => {
-    const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
-    };
+    const trace: PipelineTrace = newTrace();
     const result = await run(
       app(true, okExecutor, {}, trace),
       '{"target":{"mount":"workspace","path":"."}}',
@@ -85,14 +78,7 @@ describe("tool runtime pipeline", () => {
       requiresApproval: () => true,
       execute: okExecutor.execute,
     };
-    const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
-    };
+    const trace: PipelineTrace = newTrace();
     const result = await run(
       app(false, approvalExecutor, {}, trace),
       '{"target":{"mount":"workspace","path":"."}}',
@@ -125,14 +111,7 @@ describe("tool runtime pipeline", () => {
       requiresApproval: () => true,
       execute: okExecutor.execute,
     };
-    const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
-    };
+    const trace: PipelineTrace = newTrace();
     const result = await run(
       app(false, approvalExecutor, {}, trace),
       '{"target":{"mount":"workspace","path":"."}}',
@@ -180,14 +159,7 @@ describe("tool runtime pipeline", () => {
       expiresAt: "2999-01-01T00:00:00.000Z",
       consumedBy: invocationId,
     };
-    const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
-    };
+    const trace: PipelineTrace = newTrace();
     const result = await run(
       app(false, approvalExecutor, {}, trace, approval),
       argumentsJson,
@@ -225,14 +197,7 @@ describe("tool runtime pipeline", () => {
       expiresAt: "2999-01-01T00:00:00.000Z",
       consumedBy: invocationId,
     };
-    const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
-    };
+    const trace: PipelineTrace = newTrace();
     const otherInvocationId = parse(ToolInvocationId)(
       "tin_018f2b3c-4d5e-7abc-8def-0123456789a2",
     );

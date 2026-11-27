@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "configuredSuites": {
     "functionalVitest": {
-      "config": "vitest.functional.config.ts",
+      "config": "tests/configs/vitest.functional.config.ts",
       "include": [
         "tests/capability/black-box/s1-s4-public-api.test.ts",
         "tests/functional/process/**/*.functional.test.ts",
@@ -10,7 +10,7 @@
       ]
     },
     "functionalUi": {
-      "config": "playwright.functional.config.ts",
+      "config": "tests/configs/playwright.functional.config.ts",
       "testDir": "tests/functional/ui",
       "extension": ".spec.ts"
     }
@@ -52,9 +52,7 @@
       "tests/functional/process/provider-success-ah3.functional.test.ts",
       "tests/functional/process/provider-failure-ah4.functional.test.ts"
     ],
-    "package": [
-      "tests/functional/package/clean-checkout.functional.test.ts"
-    ],
+    "package": ["tests/functional/package/clean-checkout.functional.test.ts"],
     "functionalVitest": [
       "tests/capability/black-box/s1-s4-public-api.test.ts",
       "tests/functional/package/clean-checkout.functional.test.ts",
@@ -179,59 +177,44 @@
   "profiles": {
     "quick": {
       "description": "L1 focused module tests and type checks; not functional release qualification.",
-      "groups": [
-        "quick"
-      ],
+      "groups": ["quick"],
       "build": true,
       "webTypecheck": true,
       "completeCoverage": false
     },
     "smoke": {
       "description": "S1-S4, selected public journeys, and safe daemon-startup handshake; not the complete public journey suite.",
-      "groups": [
-        "smoke"
-      ],
+      "groups": ["smoke"],
       "build": true,
       "completeCoverage": false
     },
     "crash-sentinels": {
       "description": "Curated crash, lease, and provider handoff sentinel files only; this profile does not qualify all AH10 handlers or AH1-AH19 coverage.",
-      "groups": [
-        "crashSentinels"
-      ],
+      "groups": ["crashSentinels"],
       "build": true,
       "completeCoverage": false
     },
     "package": {
       "description": "Clean checkout/package boundary qualification.",
-      "groups": [
-        "package"
-      ],
+      "groups": ["package"],
       "build": true,
       "completeCoverage": false
     },
     "ui": {
       "description": "All configured functional browser files.",
-      "groups": [
-        "functionalUi"
-      ],
+      "groups": ["functionalUi"],
       "build": true,
       "completeCoverage": false
     },
     "process": {
       "description": "All configured functional Vitest files, without the browser suite.",
-      "groups": [
-        "functionalVitest"
-      ],
+      "groups": ["functionalVitest"],
       "build": true,
       "completeCoverage": false
     },
     "release": {
       "description": "Complete configured functional Vitest and Playwright inventory; cache disabled and retries zero.",
-      "groups": [
-        "functionalVitest",
-        "functionalUi"
-      ],
+      "groups": ["functionalVitest", "functionalUi"],
       "build": true,
       "completeCoverage": true,
       "cache": "never",
@@ -239,10 +222,7 @@
     },
     "all": {
       "description": "Alias profile for the complete functional inventory.",
-      "groups": [
-        "functionalVitest",
-        "functionalUi"
-      ],
+      "groups": ["functionalVitest", "functionalUi"],
       "build": true,
       "completeCoverage": true,
       "cache": "never",

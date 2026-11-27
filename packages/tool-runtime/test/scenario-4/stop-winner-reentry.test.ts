@@ -11,7 +11,7 @@ import {
   workspaceId,
 } from "./support.js";
 import { app, run } from "./support-app.js";
-import type { PipelineTrace } from "./support-harness.js";
+import { newTrace, type PipelineTrace } from "./support-harness.js";
 
 describe("tool runtime pipeline", () => {
   it("runs the pipeline and returns Success", async () => {
@@ -95,12 +95,7 @@ describe("tool runtime pipeline", () => {
         resultRef: null,
       };
       const trace: PipelineTrace = {
-        noEffectDenials: [],
-        events: [],
-        approvalConsumer: null,
-        intentWrites: 0,
-        effectAdmissions: 0,
-        approvalConsumes: 0,
+        ...newTrace(),
         existingInvocationAfterStop: existing,
         p40WinnerEvidence: evidence,
         stopAtEffectAdmission: true,
@@ -139,12 +134,7 @@ describe("tool runtime pipeline", () => {
       resultRef: null,
     };
     const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
+      ...newTrace(),
       existingInvocationAfterStop: deniedRecord,
       stopAtEffectAdmission: true,
     };
@@ -180,12 +170,7 @@ describe("tool runtime pipeline", () => {
       resultRef: null,
     };
     const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
+      ...newTrace(),
       existingInvocationAfterStop: existing,
       stopAtEffectAdmission: true,
     };

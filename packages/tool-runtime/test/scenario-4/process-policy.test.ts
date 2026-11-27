@@ -18,7 +18,7 @@ import {
   workspaceId,
 } from "./support.js";
 import { app, run } from "./support-app.js";
-import type { PipelineTrace } from "./support-harness.js";
+import { newTrace, type PipelineTrace } from "./support-harness.js";
 
 describe("tool runtime pipeline", () => {
   it("parks an unexpired process policy from an earlier Workspace authorization before effect admission", async () => {
@@ -27,12 +27,7 @@ describe("tool runtime pipeline", () => {
       "action-p4-stale-workspace-authorization",
     );
     const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
+      ...newTrace(),
       resolvedEnvironmentRevisionSequence: [
         "rev-exact",
         "rev-exact",
@@ -95,12 +90,7 @@ describe("tool runtime pipeline", () => {
   it("parks the same bound invocation when process policy is absent, before effect admission", async () => {
     const p39Case = p39ApprovedCase("c7", "action-p4-policy-required");
     const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
+      ...newTrace(),
       resolvedEnvironmentRevisionSequence: [
         "rev-exact",
         "rev-exact",
@@ -137,12 +127,7 @@ describe("tool runtime pipeline", () => {
 
   it("rejects an episode-mismatched policy before provider execution", async () => {
     const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
+      ...newTrace(),
       sandboxCapabilities: [sandboxCapability("bwrap", "Supported", "0.8.0")],
     };
     const policy = processPolicy(processEpisode);
@@ -169,12 +154,7 @@ describe("tool runtime pipeline", () => {
     "rejects %s before the SandboxProcessPort run seam",
     async (caseName) => {
       const trace: PipelineTrace = {
-        noEffectDenials: [],
-        events: [],
-        approvalConsumer: null,
-        intentWrites: 0,
-        effectAdmissions: 0,
-        approvalConsumes: 0,
+        ...newTrace(),
         sandboxCapabilities: [
           {
             ...sandboxCapability("bwrap", "Supported", "0.8.0"),
@@ -229,12 +209,7 @@ describe("tool runtime pipeline", () => {
 
   it("parks only after exact intent/binding, then reuses that NotAdmitted action when lazy policy appears", async () => {
     const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
+      ...newTrace(),
       sandboxCapabilities: [sandboxCapability("bwrap", "Supported", "0.8.0")],
       persistSandboxInvocations: true,
       resolvedEnvironmentRevisionSequence: [
@@ -370,12 +345,7 @@ describe("tool runtime pipeline", () => {
       observation,
     };
     const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
+      ...newTrace(),
       sandboxCapabilities: [
         sandboxCapability("bwrap", "Experimental", "0.8.0"),
       ],
@@ -498,12 +468,7 @@ describe("tool runtime pipeline", () => {
     "rejects a %s-mismatched policy before provider execution",
     async (mismatch) => {
       const trace: PipelineTrace = {
-        noEffectDenials: [],
-        events: [],
-        approvalConsumer: null,
-        intentWrites: 0,
-        effectAdmissions: 0,
-        approvalConsumes: 0,
+        ...newTrace(),
         sandboxCapabilities: [sandboxCapability("bwrap", "Supported", "0.8.0")],
       };
       const policy = processPolicy(processEpisode);

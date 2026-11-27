@@ -4,7 +4,7 @@ import {
   makeWorkExecutionFixture,
   makeWorkFixture,
   makeWorkspaceFixture,
-} from "../../testkit/dist/index.js";
+} from "../../../packages/testkit/src/index.js";
 import { assembleWorkContext } from "../src/work-context.js";
 
 describe("WorkContextAssembler", () => {

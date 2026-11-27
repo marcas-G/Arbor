@@ -1,6 +1,6 @@
 # Test profiles
 
-`planning/testing/manifest.json` is the checked inventory for the configured functional test files. `pnpm test:manifest` verifies that its 62 functional Vitest paths and 6 UI paths still match the committed Vitest and Playwright configuration.
+`tests/manifest.json` is the checked inventory for the configured functional test files. `pnpm test:manifest` verifies that its 62 functional Vitest paths and 6 UI paths still match the committed Vitest and Playwright configuration.
 
 | Command | Selected inventory | Coverage claim |
 |---|---|---|

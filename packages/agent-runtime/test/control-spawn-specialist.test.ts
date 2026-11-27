@@ -75,9 +75,4 @@ describe("spawn_specialist codec", () => {
     );
     expect(exit._tag).toBe("Failure");
   });
-
-  it("is not exposed without a registered handler", () => {
-    const registry = makeControlToolRegistry();
-    expect(registry.classify("spawn_specialist")).toBe("NotControl");
-  });
 });

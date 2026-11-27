@@ -265,115 +265,79 @@ describe("/ legacy-adoption immutable failure facts", () => {
     }
   });
 
-  it("rejects stale generations before writing any fact or event", async () => {
-    const fixture = createCurrentSchemaCase();
-    try {
-      await seed(fixture.databaseFilename);
-      const exit = await Effect.runPromiseExit(
-        Effect.scoped(
-          Effect.provide(
-            Effect.gen(function* () {
-              const tx = yield* TransactionPort;
-              const store = yield* RecoveryAttentionFactStore;
-              if (store.recordLegacyAdoptionFailure === undefined)
-                throw new Error("AH14 fact writer unavailable");
-              return yield* tx.transact(
-                store.recordLegacyAdoptionFailure(input(0)),
-              );
-            }),
-            makeApp(fixture.databaseFilename),
-          ),
-        ),
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-      const db = new (await import("node:sqlite")).DatabaseSync(
-        fixture.databaseFilename,
-        { readOnly: true },
-      );
+  it.each([
+    { label: "stale generations", generation: 0, expireLease: false },
+    {
+      label: "an expired current generation",
+      generation: 1,
+      expireLease: true,
+    },
+  ] as const)(
+    "rejects %s before writing any fact or event",
+    async ({ generation, expireLease }) => {
+      const fixture = createCurrentSchemaCase();
       try {
-        expect(
-          db
-            .prepare(
-              "SELECT COUNT(*) AS count FROM legacy_adoption_attention_facts",
-            )
-            .get(),
-        ).toEqual({ count: 0 });
-        expect(
-          db
-            .prepare(
-              "SELECT COUNT(*) AS count FROM domain_events WHERE event_type = 'LegacyAdoptionEvidenceEscalated'",
-            )
-            .get(),
-        ).toEqual({ count: 0 });
-      } finally {
-        db.close();
-      }
-    } finally {
-      fixture.cleanup();
-    }
-  });
-
-  it("rejects an expired current generation before reading or writing evidence", async () => {
-    const fixture = createCurrentSchemaCase();
-    try {
-      await seed(fixture.databaseFilename);
-      await Effect.runPromise(
-        Effect.scoped(
-          Effect.provide(
-            Effect.gen(function* () {
-              const sql = yield* SqlClient;
-              yield* sql.unsafe(
-                "UPDATE execution_leases SET expires_at = '2026-10-16T00:00:00.000Z' WHERE execution_id = ?",
-                [executionId],
-              );
-            }),
-            layer({ filename: fixture.databaseFilename }),
+        await seed(fixture.databaseFilename);
+        if (expireLease) {
+          await Effect.runPromise(
+            Effect.scoped(
+              Effect.provide(
+                Effect.gen(function* () {
+                  const sql = yield* SqlClient;
+                  yield* sql.unsafe(
+                    "UPDATE execution_leases SET expires_at = '2026-10-16T00:00:00.000Z' WHERE execution_id = ?",
+                    [executionId],
+                  );
+                }),
+                layer({ filename: fixture.databaseFilename }),
+              ),
+            ),
+          );
+        }
+        const exit = await Effect.runPromiseExit(
+          Effect.scoped(
+            Effect.provide(
+              Effect.gen(function* () {
+                const tx = yield* TransactionPort;
+                const store = yield* RecoveryAttentionFactStore;
+                if (store.recordLegacyAdoptionFailure === undefined)
+                  throw new Error("AH14 fact writer unavailable");
+                return yield* tx.transact(
+                  store.recordLegacyAdoptionFailure(input(generation)),
+                );
+              }),
+              makeApp(fixture.databaseFilename),
+            ),
           ),
-        ),
-      );
-      const exit = await Effect.runPromiseExit(
-        Effect.scoped(
-          Effect.provide(
-            Effect.gen(function* () {
-              const tx = yield* TransactionPort;
-              const store = yield* RecoveryAttentionFactStore;
-              if (store.recordLegacyAdoptionFailure === undefined)
-                throw new Error("AH14 fact writer unavailable");
-              return yield* tx.transact(
-                store.recordLegacyAdoptionFailure(input()),
-              );
-            }),
-            makeApp(fixture.databaseFilename),
-          ),
-        ),
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-      const db = new (await import("node:sqlite")).DatabaseSync(
-        fixture.databaseFilename,
-        { readOnly: true },
-      );
-      try {
-        expect(
-          db
-            .prepare(
-              "SELECT COUNT(*) AS count FROM legacy_adoption_attention_facts",
-            )
-            .get(),
-        ).toEqual({ count: 0 });
-        expect(
-          db
-            .prepare(
-              "SELECT COUNT(*) AS count FROM domain_events WHERE event_type = 'LegacyAdoptionEvidenceEscalated'",
-            )
-            .get(),
-        ).toEqual({ count: 0 });
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        const db = new (await import("node:sqlite")).DatabaseSync(
+          fixture.databaseFilename,
+          { readOnly: true },
+        );
+        try {
+          expect(
+            db
+              .prepare(
+                "SELECT COUNT(*) AS count FROM legacy_adoption_attention_facts",
+              )
+              .get(),
+          ).toEqual({ count: 0 });
+          expect(
+            db
+              .prepare(
+                "SELECT COUNT(*) AS count FROM domain_events WHERE event_type = 'LegacyAdoptionEvidenceEscalated'",
+              )
+              .get(),
+          ).toEqual({ count: 0 });
+        } finally {
+          db.close();
+        }
       } finally {
-        db.close();
+        fixture.cleanup();
       }
-    } finally {
-      fixture.cleanup();
-    }
-  });
+    },
+  );
 
   it("keeps Attention active and writes no resolution when any exact action proof is absent", async () => {
     const fixture = createCurrentSchemaCase();

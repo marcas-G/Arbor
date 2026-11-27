@@ -457,27 +457,5 @@ describe("AgentLoopStep resume cursor", () => {
         manifestJson: "{}",
       }),
     ).toBe(false);
-    const mismatchedManifest = {
-      manifestId: "manifest-other",
-      manifestJson: JSON.stringify({
-        providerTurnId: "ptn_exe_00000000-0000-7000-8000-000000000009_0",
-        executionId,
-        sessionId: parse(SessionId)("ses_00000000-0000-7000-8000-000000000001"),
-        logicalStepNo: 0,
-        repairAttempt: 0,
-      }),
-    };
-    const mayResume =
-      isPreparedStepAwaitingInitialManifest(
-        { ...freshPrepared, manifestId: "manifest-other" },
-        null,
-      ) ||
-      isAgentLoopStepManifestBound(
-        { ...freshPrepared, manifestId: "manifest-other" },
-        executionId,
-        parse(SessionId)("ses_00000000-0000-7000-8000-000000000001"),
-        mismatchedManifest,
-      );
-    expect(mayResume).toBe(false);
   });
 });

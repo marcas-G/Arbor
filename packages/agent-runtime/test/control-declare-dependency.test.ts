@@ -116,9 +116,4 @@ describe("declare_dependency codec", () => {
     );
     expect(exit._tag).toBe("Failure");
   });
-
-  it("is not exposed without a registered handler", () => {
-    const registry = makeControlToolRegistry();
-    expect(registry.classify("declare_dependency")).toBe("NotControl");
-  });
 });

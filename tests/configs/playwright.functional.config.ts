@@ -1,14 +1,15 @@
 import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
-  globalSetup: "./tests/functional/support/schema44-playwright-global-setup.ts",
-  testDir: "./tests/functional/ui",
+  globalSetup:
+    "../../tests/functional/support/schema44-playwright-global-setup.ts",
+  testDir: "../../tests/functional/ui",
   fullyParallel: false,
   workers: 1,
   retries: 0,
   timeout: 90_000,
   reporter: [["list"]],
-  outputDir: ".functional-test-results",
+  outputDir: "../../.functional-test-results",
   use: {
     headless: true,
     trace: "retain-on-failure",

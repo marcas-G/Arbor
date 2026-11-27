@@ -155,6 +155,40 @@ export interface MutableState {
 
 export type HarnessRetry = NonNullable<PipelineTrace["reconciliationRetry"]>;
 
+/** Fresh mandatory trace state — the baseline every pipeline test extends
+ * with its scenario deltas (cross-file fixture convergence for the split
+ * scenario-4 files). */
+export const newTrace = (): PipelineTrace => ({
+  noEffectDenials: [],
+  events: [],
+  approvalConsumer: null,
+  intentWrites: 0,
+  effectAdmissions: 0,
+  approvalConsumes: 0,
+});
+
+/** The standard reconciliation-retry wiring from a retry fixture: the
+ * seven-field block every P39 replay test repeated verbatim. */
+export const retryHarness = (fixture: {
+  readonly profile: ToolReconciliationProfile;
+  readonly verifiedBinding: NonNullable<
+    ReturnType<typeof verifyRecoveryBindingV1>
+  >;
+  readonly attempt: SelectedP39EffectAttempt;
+  readonly authority: import("@arbor/ports").InvocationAuthority;
+  readonly result: ToolReconciliationResult;
+  readonly factId: string;
+  readonly settlementEvidence: ToolObservationEvidence;
+}): HarnessRetry => ({
+  profile: fixture.profile,
+  verifiedBinding: fixture.verifiedBinding,
+  attempt: fixture.attempt,
+  authority: fixture.authority,
+  result: fixture.result,
+  factId: fixture.factId,
+  settlementEvidence: fixture.settlementEvidence,
+});
+
 export const sandboxDeps = (
   faults: PipelineFaults,
   trace: PipelineTrace | undefined,
