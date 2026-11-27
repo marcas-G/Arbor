@@ -10,10 +10,7 @@ import {
 import { planTestImpact } from "./plan-test-impact.mjs";
 
 const manifest = JSON.parse(
-  readFileSync(
-    new URL("../../planning/testing/manifest.json", import.meta.url),
-    "utf8",
-  ),
+  readFileSync(new URL("../../tests/manifest.json", import.meta.url), "utf8"),
 );
 
 test("checked-in profile inventory matches the configured functional suites", () => {

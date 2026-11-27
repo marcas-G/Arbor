@@ -78,7 +78,7 @@ describe("release-functional clean committed checkout", () => {
           "vitest",
           "run",
           "--config",
-          "vitest.functional.config.ts",
+          "tests/configs/vitest.functional.config.ts",
           "tests/capability/black-box/s1-s4-public-api.test.ts",
         ],
         checkout,
