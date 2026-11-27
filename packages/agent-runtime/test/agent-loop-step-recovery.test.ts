@@ -217,7 +217,6 @@ describe("overflow replacement AgentLoopStep manifest binding", () => {
         settled: settled(),
       }),
     ).toEqual([]);
-    expect(bound({})).toBe(true);
   });
 
   it("rejects step, manifest, receipt, and unsettled-result mismatches", () => {

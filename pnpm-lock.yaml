@@ -589,6 +589,10 @@ importers:
       effect:
         specifier: 4.0.0-rc.115
         version: 4.0.0-rc.115
+    devDependencies:
+      '@arbor/testkit':
+        specifier: workspace:*
+        version: link:../testkit
 
   packages/api-contracts:
     dependencies:

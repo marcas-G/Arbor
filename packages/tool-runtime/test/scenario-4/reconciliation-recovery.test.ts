@@ -23,7 +23,7 @@ import {
   workspaceId,
 } from "./support.js";
 import { app, runShell } from "./support-app.js";
-import type { PipelineTrace } from "./support-harness.js";
+import { newTrace, type PipelineTrace } from "./support-harness.js";
 
 describe("tool runtime pipeline", () => {
   it.each(["NotOccurred", "Occurred", "StillUnknown"] as const)(
@@ -289,12 +289,7 @@ describe("tool runtime pipeline", () => {
       resultRef: null,
     };
     const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
+      ...newTrace(),
       profilelessLegacyInvocation: legacy,
     };
     let executorCalls = 0;
@@ -337,12 +332,7 @@ describe("tool runtime pipeline", () => {
     async (denialReasonCode) => {
       const retry = p39NotOccurredRetryCase(denialReasonCode);
       const trace: PipelineTrace = {
-        noEffectDenials: [],
-        events: [],
-        approvalConsumer: null,
-        intentWrites: 0,
-        effectAdmissions: 0,
-        approvalConsumes: 0,
+        ...newTrace(),
         retryAttemptNumbers: [0],
         reconciliationRetry: {
           profile: retry.profile,

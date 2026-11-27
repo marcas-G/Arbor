@@ -1,49 +1,30 @@
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ToolExecutionContext, ToolIntent } from "@arbor/ports";
 import { it } from "@effect/vitest";
 import { Effect } from "effect";
 import { describe, expect } from "vitest";
 import { patchExecutor } from "../src/index.js";
+import { executeFsTool, fsToolSandbox } from "./fs-tool-harness.js";
 
 const root = mkdtempSync(join(tmpdir(), "arbor-patch-"));
 const file = join(root, "a.txt");
 writeFileSync(file, "line1\nline2\nline3");
-
-const intent = (argumentsJson: string): ToolIntent => ({
-  callRef: "c",
-  toolName: "patch",
-  toolVersion: "2",
-  argumentsJson,
-  invocationId: "tin_x" as never,
-  approvalId: null,
-});
-const context = {} as ToolExecutionContext;
-const sandbox = {
-  handleId: "s",
-  rootPath: root,
-  mounts: [
-    {
-      ref: "workspace",
-      rootPath: root,
-      region: { resourceSpaceId: "filesystem", normalizedRegion: {} },
-      access: "ReadWrite" as const,
-    },
-  ],
-  writableRegions: [],
-};
+const sandbox = fsToolSandbox(root, "ReadWrite");
 
 const executePatch = (unifiedDiff: string, path = "a.txt") =>
-  patchExecutor.execute({
-    intent: intent(
-      JSON.stringify({ target: { mount: "workspace", path }, unifiedDiff }),
-    ),
-    definition: {} as never,
-    context,
+  executeFsTool(
+    patchExecutor,
+    {
+      toolName: "patch",
+      toolVersion: "2",
+      argumentsJson: JSON.stringify({
+        target: { mount: "workspace", path },
+        unifiedDiff,
+      }),
+    },
     sandbox,
-    regions: [],
-  });
+  );
 
 describe("patch tool", () => {
   it.effect("applies a unified diff", () =>

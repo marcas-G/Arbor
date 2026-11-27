@@ -8,30 +8,9 @@ import {
   SessionId,
   WorkspaceId,
 } from "@arbor/domain";
-import {
-  type ControlBasis,
-  ModelContext,
-  TurnProfileResolver,
-} from "@arbor/model-context";
-import {
-  BlobStorePort,
-  ConversationAttemptStore,
-  ConversationCheckpointStore,
-  ConversationResponseJobStore,
-  DecisionRequestStore,
-  ExecutionRepository,
-  HumanMessageStore,
-  LocalPlanStore,
-  ModelCapabilityPort,
-  ProviderRuntime,
-  RecoveryAttentionFactStore,
-  SessionRepository,
-  TransactionPort,
-  WorkRepository,
-  WorkspaceKnowledgePort,
-  WorkspacePlacementPort,
-  WorkspaceRepository,
-} from "@arbor/ports";
+import type { ControlBasis } from "@arbor/model-context";
+import { ModelCapabilityPort } from "@arbor/ports";
+import { modelDecisionServiceUnitDependencies } from "@arbor/testkit";
 import { Effect, Layer } from "effect";
 import { describe, expect, it, vi } from "vitest";
 import { ControlBasisResolver } from "../src/control-basis-resolver.js";
@@ -53,7 +32,64 @@ vi.mock("../src/model-output-journal.js", () => ({
   recordAcceptedModelOutput: decisionMocks.journal,
 }));
 
-const unused = <Service>(): Service => ({}) as Service;
+const capabilityLayer = (onResolve: () => void) =>
+  Layer.succeed(ModelCapabilityPort, {
+    resolve: () =>
+      Effect.sync(() => {
+        onResolve();
+        return {
+          modelRef: "model-a",
+          family: "test",
+          contextWindow: 8_000,
+          outputCeiling: 512,
+          toolProtocol: "json",
+        };
+      }),
+  });
+
+const fixtures = (suffix: string) => {
+  const executionId = parse(ExecutionId)(
+    `exe_00000000-0000-7000-8000-0000000003${suffix}`,
+  );
+  const workspaceId = parse(WorkspaceId)(
+    `ws_00000000-0000-7000-8000-0000000003${suffix}`,
+  );
+  const episode = {
+    _tag: "InboxEpisode" as const,
+    entryKey: `model-decision-service-test-${suffix}`,
+    inputKind: "TestInput",
+  };
+  const execution: Execution = {
+    executionId,
+    projectId: parse(ProjectId)(
+      `prj_00000000-0000-7000-8000-0000000003${suffix}`,
+    ),
+    workspaceId,
+    binding: {
+      _tag: "WorkspaceExecution" as const,
+      workspaceId,
+      episode,
+    },
+    sessionId: parse(SessionId)(
+      `ses_00000000-0000-7000-8000-0000000003${suffix}`,
+    ),
+    admittedAt: "2026-11-26T00:00:00.000Z",
+    stopRequestedAt: null,
+    state: { status: "Active", settlement: null },
+  };
+  const agentExecutionState: AgentExecutionState = {
+    executionId,
+    episode,
+    wakeReason: { _tag: "WorkSelected" },
+    currentMode: "execute",
+    activeSkillRefs: [],
+    turnNo: 0,
+    recentDirectiveRefs: [],
+    recentActionFingerprints: [],
+    updatedAt: "2026-11-26T00:00:00.000Z",
+  };
+  return { executionId, execution, agentExecutionState };
+};
 
 describe("ModelDecisionService", () => {
   it("binds one execution, resolves its capability once, and re-reads its ControlBasis", async () => {
@@ -67,84 +103,23 @@ describe("ModelDecisionService", () => {
       environmentRevision: "5",
       authorizationDigest: "digest",
     };
-    const dependencies = Layer.mergeAll(
-      Layer.succeed(ModelContext, unused()),
-      Layer.succeed(ProviderRuntime, unused()),
-      Layer.succeed(ModelCapabilityPort, {
-        resolve: () =>
-          Effect.sync(() => {
-            capabilityResolutions += 1;
-            return {
-              modelRef: "model-a",
-              family: "test",
-              contextWindow: 8_000,
-              outputCeiling: 512,
-              toolProtocol: "json",
-            };
-          }),
+    const { executionId, execution, agentExecutionState } = fixtures("01");
+    const layer = Layer.provide(
+      ModelDecisionServiceLive(),
+      modelDecisionServiceUnitDependencies({
+        modelCapability: capabilityLayer(() => {
+          capabilityResolutions += 1;
+        }),
+        controlBasisResolver: Layer.succeed(
+          ControlBasisResolver,
+          () => () =>
+            Effect.sync(() => {
+              controlBasisReads += 1;
+              return controlBasis;
+            }),
+        ),
       }),
-      Layer.succeed(
-        ControlBasisResolver,
-        () => () =>
-          Effect.sync(() => {
-            controlBasisReads += 1;
-            return controlBasis;
-          }),
-      ),
-      Layer.succeed(SessionRepository, unused()),
-      Layer.succeed(TransactionPort, unused()),
-      Layer.succeed(ConversationCheckpointStore, unused()),
-      Layer.succeed(BlobStorePort, unused()),
-      Layer.succeed(TurnProfileResolver, unused()),
-      Layer.succeed(WorkRepository, unused()),
-      Layer.succeed(DecisionRequestStore, unused()),
-      Layer.succeed(WorkspaceRepository, unused()),
-      Layer.succeed(LocalPlanStore, unused()),
-      Layer.succeed(WorkspaceKnowledgePort, unused()),
-      Layer.succeed(WorkspacePlacementPort, unused()),
-      Layer.succeed(RecoveryAttentionFactStore, unused()),
-      Layer.succeed(HumanMessageStore, unused()),
-      Layer.succeed(ConversationResponseJobStore, unused()),
-      Layer.succeed(ConversationAttemptStore, unused()),
-      Layer.succeed(ExecutionRepository, unused()),
     );
-    const layer = Layer.provide(ModelDecisionServiceLive(), dependencies);
-    const executionId = parse(ExecutionId)(
-      "exe_00000000-0000-7000-8000-000000000301",
-    );
-    const workspaceId = parse(WorkspaceId)(
-      "ws_00000000-0000-7000-8000-000000000301",
-    );
-    const episode = {
-      _tag: "InboxEpisode" as const,
-      entryKey: "model-decision-service-test",
-      inputKind: "TestInput",
-    };
-    const execution: Execution = {
-      executionId,
-      projectId: parse(ProjectId)("prj_00000000-0000-7000-8000-000000000301"),
-      workspaceId,
-      binding: {
-        _tag: "WorkspaceExecution" as const,
-        workspaceId,
-        episode,
-      },
-      sessionId: parse(SessionId)("ses_00000000-0000-7000-8000-000000000301"),
-      admittedAt: "2026-11-26T00:00:00.000Z",
-      stopRequestedAt: null,
-      state: { status: "Active", settlement: null },
-    };
-    const agentExecutionState: AgentExecutionState = {
-      executionId,
-      episode,
-      wakeReason: { _tag: "WorkSelected" },
-      currentMode: "execute",
-      activeSkillRefs: [],
-      turnNo: 0,
-      recentDirectiveRefs: [],
-      recentActionFingerprints: [],
-      updatedAt: "2026-11-26T00:00:00.000Z",
-    };
 
     const result = await Effect.runPromise(
       Effect.gen(function* () {
@@ -185,38 +160,7 @@ describe("ModelDecisionService", () => {
     const sequence: Array<string> = [];
     let capabilityResolutions = 0;
     const cancellationSignal = new AbortController().signal;
-    const executionId = parse(ExecutionId)(
-      "exe_00000000-0000-7000-8000-000000000302",
-    );
-    const workspaceId = parse(WorkspaceId)(
-      "ws_00000000-0000-7000-8000-000000000302",
-    );
-    const episode = {
-      _tag: "InboxEpisode" as const,
-      entryKey: "model-decision-service-ready-test",
-      inputKind: "TestInput",
-    };
-    const execution: Execution = {
-      executionId,
-      projectId: parse(ProjectId)("prj_00000000-0000-7000-8000-000000000302"),
-      workspaceId,
-      binding: { _tag: "WorkspaceExecution", workspaceId, episode },
-      sessionId: parse(SessionId)("ses_00000000-0000-7000-8000-000000000302"),
-      admittedAt: "2026-11-26T00:00:00.000Z",
-      stopRequestedAt: null,
-      state: { status: "Active", settlement: null },
-    };
-    const agentExecutionState: AgentExecutionState = {
-      executionId,
-      episode,
-      wakeReason: { _tag: "WorkSelected" },
-      currentMode: "execute",
-      activeSkillRefs: [],
-      turnNo: 0,
-      recentDirectiveRefs: [],
-      recentActionFingerprints: [],
-      updatedAt: "2026-11-26T00:00:00.000Z",
-    };
+    const { executionId, execution, agentExecutionState } = fixtures("02");
     const preparedTurn = {
       request: {
         modelRef: "model-a",
@@ -285,43 +229,15 @@ describe("ModelDecisionService", () => {
     );
     const layer = Layer.provide(
       ModelDecisionServiceLive(),
-      Layer.mergeAll(
-        Layer.succeed(ModelContext, unused()),
-        Layer.succeed(ProviderRuntime, unused()),
-        Layer.succeed(ModelCapabilityPort, {
-          resolve: () =>
-            Effect.sync(() => {
-              capabilityResolutions += 1;
-              return {
-                modelRef: "model-a",
-                family: "test",
-                contextWindow: 8_000,
-                outputCeiling: 512,
-                toolProtocol: "json",
-              };
-            }),
+      modelDecisionServiceUnitDependencies({
+        modelCapability: capabilityLayer(() => {
+          capabilityResolutions += 1;
         }),
-        Layer.succeed(
+        controlBasisResolver: Layer.succeed(
           ControlBasisResolver,
           () => () => Effect.succeed(preparedTurn.manifest.controlBasis),
         ),
-        Layer.succeed(SessionRepository, unused()),
-        Layer.succeed(TransactionPort, unused()),
-        Layer.succeed(ConversationCheckpointStore, unused()),
-        Layer.succeed(BlobStorePort, unused()),
-        Layer.succeed(TurnProfileResolver, unused()),
-        Layer.succeed(WorkRepository, unused()),
-        Layer.succeed(DecisionRequestStore, unused()),
-        Layer.succeed(WorkspaceRepository, unused()),
-        Layer.succeed(LocalPlanStore, unused()),
-        Layer.succeed(WorkspaceKnowledgePort, unused()),
-        Layer.succeed(WorkspacePlacementPort, unused()),
-        Layer.succeed(RecoveryAttentionFactStore, unused()),
-        Layer.succeed(HumanMessageStore, unused()),
-        Layer.succeed(ConversationResponseJobStore, unused()),
-        Layer.succeed(ConversationAttemptStore, unused()),
-        Layer.succeed(ExecutionRepository, unused()),
-      ),
+      }),
     );
 
     const result = await Effect.runPromise(

@@ -1,10 +1,10 @@
-import { describe, expect, it } from "vitest";
 import {
   makeExecutionBoundFixture,
   makeWorkExecutionFixture,
   makeWorkFixture,
   makeWorkspaceFixture,
-} from "../../testkit/dist/index.js";
+} from "@arbor/testkit";
+import { describe, expect, it } from "vitest";
 import { assembleWorkContext } from "../src/work-context.js";
 
 describe("WorkContextAssembler", () => {

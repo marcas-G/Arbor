@@ -1,32 +1,12 @@
+import { Principal, parse } from "@arbor/domain";
 import {
-  Actor,
-  ExecutionId,
-  Principal,
-  ProjectId,
-  parse,
-  SessionId,
-  ToolInvocationId,
-  WorkspaceId,
-} from "@arbor/domain";
-import {
-  Clock,
   type ExecutableApprovalBinding,
   type ExecutableApprovalRecord,
   ExecutableApprovalStore,
   type ExecutableApprovalStoreService,
   type InvocationApproval,
-  ProjectEnvironmentPort,
-  ResourceAdmission,
-  SandboxPort,
-  type ToolDefinition,
-  ToolDefinitionStore,
-  type ToolExecutionContext,
-  type ToolInvocationRecord,
   ToolInvocationStore,
   ToolRuntimePort,
-  TransactionPort,
-  TransactionScope,
-  WorkspaceRepository,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { describe, expect, it } from "vitest";
@@ -36,73 +16,21 @@ import {
   type ToolExecutor,
   ToolRuntimeLive,
 } from "../src/index.js";
-
-const workspaceId = parse(WorkspaceId)(
-  "ws_018f2b3c-4d5e-7abc-8def-0123456789a1",
-);
-const executionId = parse(ExecutionId)(
-  "exe_018f2b3c-4d5e-7abc-8def-0123456789a1",
-);
-const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
-const sessionId = parse(SessionId)("ses_018f2b3c-4d5e-7abc-8def-0123456789a1");
-const principal = parse(Principal)("worker:a");
-const actor = parse(Actor)("worker:a");
-const invocationId = parse(ToolInvocationId)(
-  "tin_018f2b3c-4d5e-7abc-8def-0123456789a1",
-);
-const approvalId = "iap_018f2b3c-4d5e-7abc-8def-0123456789a1";
-const argumentsJson = "{}";
-
-const toolDefinition: ToolDefinition = {
-  name: "read",
-  version: "1",
-  hash: "read-v1",
-  description: "Read a value.",
-  inputSchemaJson: JSON.stringify({ type: "object" }),
-  resultSchemaJson: JSON.stringify({ type: "object" }),
-  capabilityMetadata: [],
-  sideEffectSemantics: "Idempotent",
-  source: "Builtin",
-};
-
-const intent = {
-  callRef: "call-ah7-approval",
-  toolName: "read",
-  toolVersion: "1",
-  argumentsJson,
-  invocationId,
+import {
+  approvalContext,
+  approvalExecutionId,
   approvalId,
-} as const;
+  approvalIntent,
+  approvalInvocationId,
+  approvalPipelineDeps,
+  approvalProjectId,
+  approvalWorkspaceId,
+  pendingInvocationRecord,
+} from "./approval-support.js";
 
-const context: ToolExecutionContext = {
-  executionId,
-  workspaceId,
-  sessionId,
-  projectId,
-  actor,
-  authenticatedPrincipal: principal,
-  authority: {
-    principal,
-    workspaceId,
-    executionId,
-    toolName: "read",
-    toolVersion: "1",
-    sourceRevision: "fixture-authority-revision",
-    resourceSpaceIds: [],
-    allowedCapabilities: [],
-    controlBasisDigest: "basis-ah7",
-    expiresAt: "2999-01-01T00:00:00.000Z",
-    delegationDepth: 0,
-  },
-  controlBasisDigest: "basis-ah7",
-  executionFence: {
-    executionId,
-    workerId: "worker:p4-approval-reentry",
-    workerIncarnationId: "incarnation:p4-approval-reentry",
-    fencingGeneration: 0 as never,
-  },
-  requestedAt: "2026-10-05T00:00:00.000Z",
-};
+const intent = approvalIntent();
+const context = approvalContext;
+const invocationId = approvalInvocationId;
 
 const consumedApproval: InvocationApproval = {
   approvalId,
@@ -113,23 +41,6 @@ const consumedApproval: InvocationApproval = {
   controlBasisDigest: context.controlBasisDigest,
   expiresAt: "2999-01-01T00:00:00.000Z",
   consumedBy: invocationId,
-};
-
-const pendingInvocation: ToolInvocationRecord = {
-  invocationId,
-  executionId,
-  workspaceId,
-  toolName: "read",
-  toolVersion: "1",
-  sideEffectSemantics: "Idempotent",
-  argumentsJson,
-  resolvedRegions: [],
-  approvalId,
-  effectAdmissionState: "NotAdmitted",
-  intentAt: "2026-10-05T00:00:00.000Z",
-  settledAt: null,
-  settlement: null,
-  resultRef: null,
 };
 
 describe("exact approval recovery for the same ToolInvocationId", () => {
@@ -168,71 +79,24 @@ describe("exact approval recovery for the same ToolInvocationId", () => {
       },
     };
 
-    const tx = Layer.succeed(TransactionPort, {
-      transact: <A, E, R>(body: Effect.Effect<A, E, R | TransactionScope>) =>
-        Effect.provideService(body, TransactionScope, {
-          session: { id: "approval-reentry" },
-        }),
+    const deps = approvalPipelineDeps({
+      sandboxHandleId: "sandbox-ah7",
+      environmentRevision: "env-ah7",
+      now: "2026-10-05T00:00:00.000Z",
     });
-    const deps = Layer.mergeAll(
-      tx,
-      Layer.succeed(ToolDefinitionStore, {
-        definition: () => Effect.succeed(Option.some(toolDefinition)),
-        all: () => Effect.succeed([toolDefinition]),
-      }),
-      Layer.succeed(SandboxPort, {
-        open: () =>
-          Effect.succeed({
-            handleId: "sandbox-ah7",
-            rootPath: "/repo",
-            writableRegions: [],
-          }),
-        close: () => Effect.void,
-      }),
-      Layer.succeed(ResourceAdmission, {
-        admit: () => Effect.succeed({ _tag: "Admitted" as const }),
-      }),
-      Layer.succeed(ProjectEnvironmentPort, {
-        resolve: (_targetProjectId, addresses) =>
-          Effect.succeed({
-            regions: addresses.map((address) => ({
-              resourceSpaceId: "filesystem",
-              normalizedRegion: address,
-            })),
-            observedEnvironmentRevision: "env-ah7",
-          }),
-      }),
-      Layer.succeed(WorkspaceRepository, {
-        findById: (id: WorkspaceId) => {
-          expect(id).toBe(workspaceId);
-          return Effect.succeed(
-            Option.some({
-              projectId,
-              resourceBoundaryRevision: 0,
-              resourceBoundary: {
-                addresses: [{ _tag: "GitWorktree" as const, path: "/repo" }],
-              },
-            }),
-          );
-        },
-      } as never),
-      Layer.succeed(Clock, {
-        now: () => Effect.succeed("2026-10-05T00:00:00.000Z"),
-      }),
+    const dependencies = Layer.mergeAll(
+      deps,
       Layer.succeed(ToolInvocationStore, {
         recordIntent: () => {
           intentWrites += 1;
           return Effect.succeed("Recorded" as const);
         },
-        settle: (id: ToolInvocationRecord["invocationId"]) => {
+        settle: (id: typeof invocationId) => {
           expect(id).toBe(invocationId);
           settlementWrites += 1;
           return Effect.succeed(true);
         },
-        consumeApproval: (
-          _id: string,
-          consumer: ToolInvocationRecord["invocationId"],
-        ) => {
+        consumeApproval: (_id: string, consumer: typeof invocationId) => {
           approvalConsumeAttempts += 1;
           expect(consumer).toBe(invocationId);
           // The durable approval row is already consumed by this exact
@@ -243,16 +107,16 @@ describe("exact approval recovery for the same ToolInvocationId", () => {
         recordNoEffectInterruption: () => Effect.succeed(false),
         admitEffect: () => Effect.succeed({ _tag: "Admitted" as const }),
         findApproval: () => Effect.succeed(Option.some(consumedApproval)),
-        findById: (id: ToolInvocationRecord["invocationId"]) => {
+        findById: (id: typeof invocationId) => {
           expect(id).toBe(invocationId);
-          return Effect.succeed(Option.some(pendingInvocation));
+          return Effect.succeed(Option.some(pendingInvocationRecord()));
         },
-        findUnsettled: () => Effect.succeed([pendingInvocation]),
+        findUnsettled: () => Effect.succeed([pendingInvocationRecord()]),
       } as never),
     );
     const app = Layer.mergeAll(
-      deps,
-      Layer.provide(ToolRuntimeLive([executor]), deps),
+      dependencies,
+      Layer.provide(ToolRuntimeLive([executor]), dependencies),
     );
 
     const result = await Effect.runPromise(
@@ -275,10 +139,11 @@ describe("exact approval recovery for the same ToolInvocationId", () => {
   it("replays the Runtime approvalId after claim commit and before effect admission", async () => {
     const runtimeApprovalId = "eap_p4_same_invocation";
     const p38Intent = { ...intent, approvalId: runtimeApprovalId };
+    const principal = parse(Principal)("worker:a");
     const binding: ExecutableApprovalBinding = {
-      projectId,
-      workspaceId,
-      executionId,
+      projectId: approvalProjectId,
+      workspaceId: approvalWorkspaceId,
+      executionId: approvalExecutionId,
       logicalStepNo: 4,
       repairAttempt: 0,
       actionIndex: 0,
@@ -286,9 +151,9 @@ describe("exact approval recovery for the same ToolInvocationId", () => {
       subject: principal,
       callRef: intent.callRef,
       toolInvocationId: invocationId,
-      toolName: toolDefinition.name,
-      toolVersion: toolDefinition.version,
-      sideEffectSemantics: toolDefinition.sideEffectSemantics,
+      toolName: "read",
+      toolVersion: "1",
+      sideEffectSemantics: "Idempotent",
       argumentsJson: intent.argumentsJson,
       actionDigest: actionDigestOf(intent),
       targetResourceSpaceIds: [],
@@ -311,16 +176,14 @@ describe("exact approval recovery for the same ToolInvocationId", () => {
       consumedAt: null,
       consumedBy: null,
     };
-    const executableContext: ToolExecutionContext = {
+    const executableContext = {
       ...context,
       authority: {
-        ...(context.authority as NonNullable<
-          ToolExecutionContext["authority"]
-        >),
+        ...context.authority,
         sourceRevision: "authority-revision-p38",
       },
       executionFence: {
-        executionId,
+        executionId: approvalExecutionId,
         workerId: "worker-p38",
         workerIncarnationId: "incarnation-p38",
         fencingGeneration: 7 as never,
@@ -331,8 +194,8 @@ describe("exact approval recovery for the same ToolInvocationId", () => {
         state: "Approved",
         binding,
       },
-    };
-    let recorded: ToolInvocationRecord | undefined;
+    } as typeof context;
+    let recorded: import("@arbor/ports").ToolInvocationRecord | undefined;
     let intentApprovalId: string | null = null;
     let consumeCalls = 0;
     let executorCalls = 0;
@@ -354,12 +217,6 @@ describe("exact approval recovery for the same ToolInvocationId", () => {
         });
       },
     };
-    const tx = Layer.succeed(TransactionPort, {
-      transact: <A, E, R>(body: Effect.Effect<A, E, R | TransactionScope>) =>
-        Effect.provideService(body, TransactionScope, {
-          session: { id: "p38-approval-reentry" },
-        }),
-    });
     const p38Approvals: ExecutableApprovalStoreService = {
       findByActionKey: () => Effect.succeed(Option.none()),
       findById: () => Effect.succeed(Option.some(approval)),
@@ -410,8 +267,8 @@ describe("exact approval recovery for the same ToolInvocationId", () => {
         return Effect.succeed("Recorded" as const);
       },
       settle: (
-        _id: ToolInvocationRecord["invocationId"],
-        settlement: ToolInvocationRecord["settlement"],
+        _id: typeof invocationId,
+        settlement: import("@arbor/ports").ToolInvocationRecord["settlement"],
       ) => {
         settlementCalls += 1;
         if (recorded !== undefined && settlement !== null) {
@@ -442,49 +299,10 @@ describe("exact approval recovery for the same ToolInvocationId", () => {
         Effect.succeed(recorded === undefined ? [] : [recorded]),
     };
     const dependencies = Layer.mergeAll(
-      tx,
-      Layer.succeed(ToolDefinitionStore, {
-        definition: () => Effect.succeed(Option.some(toolDefinition)),
-        all: () => Effect.succeed([toolDefinition]),
-      }),
-      Layer.succeed(SandboxPort, {
-        open: () =>
-          Effect.succeed({
-            handleId: "sandbox-p38",
-            rootPath: "/repo",
-            writableRegions: [],
-          }),
-        close: () => Effect.void,
-      }),
-      Layer.succeed(ResourceAdmission, {
-        admit: () => Effect.succeed({ _tag: "Admitted" as const }),
-      }),
-      Layer.succeed(ProjectEnvironmentPort, {
-        resolve: (_targetProjectId, addresses) =>
-          Effect.succeed({
-            regions: addresses.map((address) => ({
-              resourceSpaceId: "filesystem",
-              normalizedRegion: address,
-            })),
-            observedEnvironmentRevision: "env-p38",
-          }),
-      }),
-      Layer.succeed(WorkspaceRepository, {
-        findById: (id: WorkspaceId) => {
-          expect(id).toBe(workspaceId);
-          return Effect.succeed(
-            Option.some({
-              projectId,
-              resourceBoundaryRevision: 0,
-              resourceBoundary: {
-                addresses: [{ _tag: "GitWorktree" as const, path: "/repo" }],
-              },
-            }),
-          );
-        },
-      } as never),
-      Layer.succeed(Clock, {
-        now: () => Effect.succeed("2026-10-05T00:00:02.000Z"),
+      approvalPipelineDeps({
+        sandboxHandleId: "sandbox-p38",
+        environmentRevision: "env-p38",
+        now: "2026-10-05T00:00:02.000Z",
       }),
       Layer.succeed(ToolInvocationStore, toolInvocations as never),
       Layer.succeed(ExecutableApprovalStore, p38Approvals),

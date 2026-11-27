@@ -12,25 +12,25 @@ const invocation = (argumentsJson: string): ToolInvocation => ({
   argumentsJson,
 });
 
+const claimCompletionHandler = {
+  action: "ClaimCompletion" as const,
+  handle: () =>
+    Effect.succeed({
+      _tag: "Settle" as const,
+      settlement: {
+        _tag: "Completed" as const,
+        result: {
+          _tag: "CompletionClaimed" as const,
+          workRevision: 0 as never,
+          claimRef: "c",
+        },
+      },
+    }),
+};
+
 describe("claim_completion codec (49 §126-136)", () => {
   it("decodes a well-formed claim", async () => {
-    const registry = makeControlToolRegistry([
-      {
-        action: "ClaimCompletion",
-        handle: () =>
-          Effect.succeed({
-            _tag: "Settle" as const,
-            settlement: {
-              _tag: "Completed" as const,
-              result: {
-                _tag: "CompletionClaimed" as const,
-                workRevision: 0 as never,
-                claimRef: "c",
-              },
-            },
-          }),
-      },
-    ]);
+    const registry = makeControlToolRegistry([claimCompletionHandler]);
     const decoded = await Effect.runPromise(
       registry.decode(
         invocation(JSON.stringify({ claim: "feature shipped and verified" })),
@@ -42,40 +42,22 @@ describe("claim_completion codec (49 §126-136)", () => {
     });
   });
 
-  it("rejects a missing claim", async () => {
-    const registry = makeControlToolRegistry();
-    const result = await Effect.runPromise(
-      Effect.result(registry.decode(invocation(JSON.stringify({})))),
-    );
-    expect(result._tag).toBe("Failure");
-  });
-
-  it("rejects an empty claim", async () => {
-    const registry = makeControlToolRegistry();
-    const result = await Effect.runPromise(
-      Effect.result(registry.decode(invocation(JSON.stringify({ claim: "" })))),
-    );
-    expect(result._tag).toBe("Failure");
-  });
-
-  it("rejects unknown keys (closed object)", async () => {
-    const registry = makeControlToolRegistry();
-    const result = await Effect.runPromise(
-      Effect.result(
-        registry.decode(
-          invocation(JSON.stringify({ claim: "done", workRevision: 3 })),
-        ),
-      ),
-    );
-    expect(result._tag).toBe("Failure");
-  });
-
-  it("rejects malformed JSON", async () => {
-    const registry = makeControlToolRegistry();
-    const result = await Effect.runPromise(
-      Effect.result(registry.decode(invocation("not json"))),
-    );
-    expect(result._tag).toBe("Failure");
+  it("rejects a missing, empty, unknown-key or malformed claim through the codec", async () => {
+    // Handler registered so decode reaches the claim codec: a handler-less
+    // registry fails earlier at the UnknownControlTool name gate, which is
+    // covered by i0-control-registry (exact visible-definition list).
+    const registry = makeControlToolRegistry([claimCompletionHandler]);
+    for (const argumentsJson of [
+      JSON.stringify({}),
+      JSON.stringify({ claim: "" }),
+      JSON.stringify({ claim: "done", workRevision: 3 }),
+      "not json",
+    ]) {
+      const result = await Effect.runPromise(
+        Effect.result(registry.decode(invocation(argumentsJson))),
+      );
+      expect(result._tag, argumentsJson).toBe("Failure");
+    }
   });
 
   it("is not exposed without a registered handler (no placeholder)", async () => {
@@ -88,23 +70,7 @@ describe("claim_completion codec (49 §126-136)", () => {
   });
 
   it("is exposed once a ClaimCompletion handler is registered", async () => {
-    const registry = makeControlToolRegistry([
-      {
-        action: "ClaimCompletion",
-        handle: () =>
-          Effect.succeed({
-            _tag: "Settle" as const,
-            settlement: {
-              _tag: "Completed" as const,
-              result: {
-                _tag: "CompletionClaimed" as const,
-                workRevision: 0 as never,
-                claimRef: "c",
-              },
-            },
-          }),
-      },
-    ]);
+    const registry = makeControlToolRegistry([claimCompletionHandler]);
     expect(registry.classify("claim_completion")).toBe("Control");
     const visible = await Effect.runPromise(registry.visibleDefinitions());
     const tool = visible.find(

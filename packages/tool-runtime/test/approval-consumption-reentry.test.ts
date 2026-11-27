@@ -1,28 +1,10 @@
+import type { ToolInvocationId } from "@arbor/domain";
 import {
-  Actor,
-  ExecutionId,
-  Principal,
-  ProjectId,
-  parse,
-  SessionId,
-  ToolInvocationId,
-  WorkspaceId,
-} from "@arbor/domain";
-import {
-  Clock,
   type InvocationApproval,
-  ProjectEnvironmentPort,
-  ResourceAdmission,
   SandboxPort,
-  type ToolDefinition,
-  ToolDefinitionStore,
-  type ToolExecutionContext,
-  type ToolInvocationRecord,
   ToolInvocationStore,
   ToolRuntimePort,
-  TransactionPort,
   TransactionScope,
-  WorkspaceRepository,
 } from "@arbor/ports";
 import { Effect, Layer, Option } from "effect";
 import { describe, expect, it } from "vitest";
@@ -31,73 +13,17 @@ import {
   type ToolExecutor,
   ToolRuntimeLive,
 } from "../src/index.js";
-
-const workspaceId = parse(WorkspaceId)(
-  "ws_018f2b3c-4d5e-7abc-8def-0123456789a1",
-);
-const executionId = parse(ExecutionId)(
-  "exe_018f2b3c-4d5e-7abc-8def-0123456789a1",
-);
-const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
-const sessionId = parse(SessionId)("ses_018f2b3c-4d5e-7abc-8def-0123456789a1");
-const principal = parse(Principal)("worker:ah7-approval-reentry");
-const actor = parse(Actor)("worker:ah7-approval-reentry");
-const invocationId = parse(ToolInvocationId)(
-  "tin_018f2b3c-4d5e-7abc-8def-0123456789a1",
-);
-const approvalId = "iap_018f2b3c-4d5e-7abc-8def-0123456789a1";
-const argumentsJson = "{}";
-
-const definition: ToolDefinition = {
-  name: "read",
-  version: "1",
-  hash: "read-v1",
-  description: "Read a bounded value.",
-  inputSchemaJson: JSON.stringify({ type: "object" }),
-  resultSchemaJson: JSON.stringify({ type: "object" }),
-  capabilityMetadata: [],
-  sideEffectSemantics: "Idempotent",
-  source: "Builtin",
-};
-
-const intent = {
-  callRef: "call-ah7-approval-reentry",
-  toolName: "read",
-  toolVersion: "1",
-  argumentsJson,
-  invocationId,
+import {
+  approvalContext,
   approvalId,
-} as const;
+  approvalIntent,
+  approvalInvocationId,
+  approvalPipelineDeps,
+} from "./approval-support.js";
 
-const context: ToolExecutionContext = {
-  executionId,
-  workspaceId,
-  sessionId,
-  projectId,
-  actor,
-  authenticatedPrincipal: principal,
-  authority: {
-    principal,
-    workspaceId,
-    executionId,
-    toolName: "read",
-    toolVersion: "1",
-    sourceRevision: "fixture-authority-revision",
-    resourceSpaceIds: [],
-    allowedCapabilities: [],
-    controlBasisDigest: "ah7-approval-basis",
-    expiresAt: "2999-01-01T00:00:00.000Z",
-    delegationDepth: 0,
-  },
-  controlBasisDigest: "ah7-approval-basis",
-  executionFence: {
-    executionId,
-    workerId: "worker:ah7-approval-reentry",
-    workerIncarnationId: "incarnation:ah7-approval-reentry",
-    fencingGeneration: 0 as never,
-  },
-  requestedAt: "2026-10-06T00:00:00.000Z",
-};
+const intent = approvalIntent();
+const context = approvalContext;
+const invocationId = approvalInvocationId;
 
 describe("exact approval reentry before the tool effect", () => {
   it("reuses the consumed approval and recorded intent after a pre-effect interruption", async () => {
@@ -111,7 +37,7 @@ describe("exact approval reentry before the tool effect", () => {
       expiresAt: "2999-01-01T00:00:00.000Z",
       consumedBy: null,
     };
-    let invocation: ToolInvocationRecord | undefined;
+    let invocation: import("@arbor/ports").ToolInvocationRecord | undefined;
     let sandboxOpenCalls = 0;
     let executorCalls = 0;
     let intentWrites = 0;
@@ -134,65 +60,29 @@ describe("exact approval reentry before the tool effect", () => {
       },
     };
     const dependencies = Layer.mergeAll(
-      Layer.succeed(TransactionPort, {
-        transact: <A, E, R>(
-          body: Effect.Effect<A, E, R | TransactionScope>,
-        ) => {
-          const transactionId = `ah7-approval-reentry-${claimTransactions.length + 1}`;
-          return Effect.provideService(body, TransactionScope, {
-            session: { id: transactionId },
-          });
-        },
-      }),
-      Layer.succeed(ToolDefinitionStore, {
-        definition: () => Effect.succeed(Option.some(definition)),
-        all: () => Effect.succeed([definition]),
-      }),
-      Layer.succeed(SandboxPort, {
-        open: () => {
-          sandboxOpenCalls += 1;
-          return sandboxOpenCalls === 1
-            ? Effect.fail({
-                _tag: "SandboxError" as const,
-                cause: "injected interruption before executor attempt",
-              })
-            : Effect.succeed({
-                handleId: "ah7-sandbox",
-                rootPath: "/repo",
-                writableRegions: [],
-              });
-        },
-        close: () => Effect.void,
-      }),
-      Layer.succeed(ResourceAdmission, {
-        admit: () => Effect.succeed({ _tag: "Admitted" as const }),
-      }),
-      Layer.succeed(ProjectEnvironmentPort, {
-        resolve: () =>
-          Effect.succeed({
-            regions: [],
-            observedEnvironmentRevision: "ah7-env",
-          }),
-      }),
-      Layer.succeed(WorkspaceRepository, {
-        findById: (id: WorkspaceId) => {
-          expect(id).toBe(workspaceId);
-          return Effect.succeed(
-            Option.some({
-              projectId,
-              resourceBoundaryRevision: 0,
-              resourceBoundary: {
-                addresses: [{ _tag: "GitWorktree" as const, path: "/repo" }],
-              },
-            }),
-          );
-        },
-      } as never),
-      Layer.succeed(Clock, {
-        now: () => Effect.succeed("2026-10-06T00:00:00.000Z"),
+      approvalPipelineDeps({
+        sandboxHandleId: "ah7-sandbox",
+        environmentRevision: "ah7-env",
+        now: "2026-10-06T00:00:00.000Z",
+        sandboxPort: Layer.succeed(SandboxPort, {
+          open: () => {
+            sandboxOpenCalls += 1;
+            return sandboxOpenCalls === 1
+              ? Effect.fail({
+                  _tag: "SandboxError" as const,
+                  cause: "injected interruption before executor attempt",
+                })
+              : Effect.succeed({
+                  handleId: "ah7-sandbox",
+                  rootPath: "/repo",
+                  writableRegions: [],
+                });
+          },
+          close: () => Effect.void,
+        }),
       }),
       Layer.succeed(ToolInvocationStore, {
-        recordIntent: (record: ToolInvocationRecord) =>
+        recordIntent: (record: import("@arbor/ports").ToolInvocationIntent) =>
           Effect.gen(function* () {
             const transaction = yield* TransactionScope;
             claimTransactions.push(transaction.session.id);
@@ -207,9 +97,11 @@ describe("exact approval reentry before the tool effect", () => {
             return "Recorded" as const;
           }),
         settle: (
-          id: ToolInvocationRecord["invocationId"],
+          id: ToolInvocationId,
           settledAt: string,
-          settlement: NonNullable<ToolInvocationRecord["settlement"]>,
+          settlement: NonNullable<
+            import("@arbor/ports").ToolInvocationRecord["settlement"]
+          >,
           resultRef: string | null,
         ) => {
           expect(id).toBe(invocationId);

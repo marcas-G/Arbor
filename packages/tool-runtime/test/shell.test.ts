@@ -241,7 +241,6 @@ describe("shell tool + policy", () => {
       );
 
       expect(result.settlement._tag).toBe("Success");
-      expect(captured).toBeDefined();
       if (captured === undefined)
         throw new Error("process port was not called");
       const env = captured;

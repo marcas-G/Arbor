@@ -1,6 +1,5 @@
 import {
   type CanonicalResourceRegion,
-  type Project,
   parse,
   WorkspaceId,
 } from "@arbor/domain";
@@ -183,6 +182,4 @@ describe("validate-only resource admission", () => {
       reason: "active effective ownership claims overlap",
     });
   });
-
-  void ({} as Project);
 });
