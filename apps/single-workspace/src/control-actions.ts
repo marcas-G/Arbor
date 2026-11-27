@@ -447,9 +447,13 @@ const makeSingleWorkspaceControlActionHandlersLayer = (
                       projects: projects.value,
                       workspaces,
                       listWorkspaceIdsByProject: (projectId) =>
-                        tx.transact(
-                          workspaces.listWorkspaceIdsByProject(projectId),
-                        ),
+                        workspaces.listWorkspaceIdsByProject(
+                          projectId,
+                        ) as Effect.Effect<
+                          ReadonlyArray<import("@arbor/domain").WorkspaceId>,
+                          unknown,
+                          never
+                        >,
                       works,
                       proposals,
                       fulfillments: fulfillments.value,
@@ -457,7 +461,7 @@ const makeSingleWorkspaceControlActionHandlersLayer = (
                       tx,
                     },
                     request,
-                  ),
+                  ) as Effect.Effect<boolean, unknown, never>,
               }
             : {}),
           ...(Option.isSome(placement) ? { placement: placement.value } : {}),

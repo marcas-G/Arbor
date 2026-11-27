@@ -2,8 +2,8 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    globalSetup: ["./tests/support/p39-windows-global-setup.ts"],
-    setupFiles: ["./tests/support/p39-windows-test-setup.ts"],
+    globalSetup: ["./tests/support/windows-global-setup.ts"],
+    setupFiles: ["./tests/support/windows-test-setup.ts"],
     testTimeout: 30_000,
     // Prefer reliability on the constrained Windows host; performance tuning
     // is deferred. Functional, architecture, and Web suites use separate

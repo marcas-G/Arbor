@@ -20,7 +20,7 @@ import {
   isP9SandboxUnavailableTerminal,
   postDecisionExpectedFailureProbeForInvocation,
   readP9OutcomeSourceForProbe,
-} from "./p9-oracle.js";
+} from "./oracle.js";
 import {
   child,
   decodeToolObservation,

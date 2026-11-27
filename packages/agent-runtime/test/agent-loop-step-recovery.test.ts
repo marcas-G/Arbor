@@ -9,7 +9,7 @@ import {
   fnv1aHash,
   isP20OverflowReplacementManifestBound,
   p20OverflowReplacementManifestBindingFailures,
-  resolveP20OverflowReplacementChain,
+  resolveOverflowReplacementChain,
 } from "../src/agent-loop-step-recovery.js";
 
 const executionId = "exe_018f2b3c-4d5e-7abc-8def-0123456789f2";
@@ -126,7 +126,7 @@ const settled = (): SettledProviderTurnResult =>
   }) as unknown as SettledProviderTurnResult;
 
 const chain = () => {
-  const resolved = resolveP20OverflowReplacementChain(
+  const resolved = resolveOverflowReplacementChain(
     links(),
     identity,
     inferenceId,
@@ -141,7 +141,7 @@ const bound = (input: {
   persistedManifest?: ReturnType<typeof manifest> | null;
   result?: SettledProviderTurnResult;
 }) => {
-  const p20Chain = resolveP20OverflowReplacementChain(
+  const p20Chain = resolveOverflowReplacementChain(
     input.links ?? links(),
     identity,
     inferenceId,
@@ -161,7 +161,7 @@ const bound = (input: {
   );
 };
 
-describe("P20 overflow replacement AgentLoopStep manifest binding", () => {
+describe("overflow replacement AgentLoopStep manifest binding", () => {
   it("resolves one exact contiguous inference-compaction-replacement chain", () => {
     expect(chain()).toMatchObject({
       inference: { providerTurnId: inferenceId, role: "Inference" },
@@ -201,7 +201,7 @@ describe("P20 overflow replacement AgentLoopStep manifest binding", () => {
     ];
     for (const candidate of cases) {
       expect(
-        resolveP20OverflowReplacementChain(candidate, identity, inferenceId),
+        resolveOverflowReplacementChain(candidate, identity, inferenceId),
       ).toBeUndefined();
     }
   });

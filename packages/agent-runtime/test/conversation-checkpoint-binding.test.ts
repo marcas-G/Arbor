@@ -4,7 +4,7 @@ import { conversationCheckpointBindingUse } from "../src/checkpoint/conversation
 const fingerprint = `p16fp_${"a".repeat(64)}`;
 const opaqueRef = "provider-native:opaque-old-state";
 
-describe("AH19 Conversation checkpoint provider binding", () => {
+describe("Conversation checkpoint provider binding", () => {
   it("reuses ProviderNative only for exact binding and supported operation", () => {
     expect(
       conversationCheckpointBindingUse({

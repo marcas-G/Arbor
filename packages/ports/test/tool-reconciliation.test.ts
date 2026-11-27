@@ -34,7 +34,7 @@ const proof: ReconciliationProofRef = {
   },
 };
 
-describe("P39 exact-attempt reconciliation proof boundary", () => {
+describe("exact-attempt reconciliation proof boundary", () => {
   it("accepts a final, exact, scoped NotOccurred proof", () => {
     const result: ToolReconciliationResult = { _tag: "NotOccurred", proof };
     expect(validateToolReconciliationResult(request, result)).toBe(true);

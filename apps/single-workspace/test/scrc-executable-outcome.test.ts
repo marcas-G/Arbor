@@ -72,7 +72,7 @@ describe("SCRC executable outcome taxonomy", () => {
     });
   });
 
-  it("preserves typed sandbox unavailability for P9 instead of mapping it to a generic failure", () => {
+  it("preserves typed sandbox unavailability for instead of mapping it to a generic failure", () => {
     const outcome = {
       _tag: "SandboxProviderUnavailable" as const,
       projectId: "prj_test" as never,
@@ -110,7 +110,7 @@ describe("SCRC executable outcome taxonomy", () => {
     });
   });
 
-  it("reconstructs the exact P9 binding from persisted ExpectedFailure proof", () => {
+  it("reconstructs the exact binding from persisted ExpectedFailure proof", () => {
     const expectedFailure = {
       _tag: "ExpectedFailure" as const,
       observation: {
@@ -188,7 +188,7 @@ describe("SCRC executable outcome taxonomy", () => {
     });
   });
 
-  it("keeps a final P39 NotOccurred result as a failed sourced observation with its distinct P4 Artifact", () => {
+  it("keeps a final NotOccurred result as a failed sourced observation with its distinct Artifact", () => {
     expect(
       toExecutableOutcome({
         _tag: "ReconciledNoEffect",

@@ -7,7 +7,7 @@ import {
   createP39PrivateTestFile,
   makeP39PrivateTestDirectory,
   removeP39PrivateTestDirectory,
-} from "../../support/p39-windows-deployment-test.js";
+} from "../../support/windows-deployment-qualification.js";
 import { providerResponseMatchesSelector } from "./provider-response-gate.mjs";
 import {
   armProviderResponseGate,

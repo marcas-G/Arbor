@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { join, resolve } from "node:path";
-import { p39WindowsTestEnvironment } from "../../support/p39-windows-deployment-test.js";
+import { windowsTestEnvironment } from "../../support/windows-deployment-qualification.js";
 import {
   childExitDiagnostic,
   childHasExited,
@@ -698,7 +698,7 @@ export const startProductionFixture = async (input: {
     const requestedPort = isFirstDaemon ? 0 : httpPort;
     const daemonEnv: NodeJS.ProcessEnv = {
       ...process.env,
-      ...p39WindowsTestEnvironment(),
+      ...windowsTestEnvironment(),
       ARBOR_DB: databaseFile,
       ARBOR_HTTP_PORT: String(requestedPort),
       ARBOR_HTTP_HOST: "127.0.0.1",
@@ -953,7 +953,7 @@ export const startProductionFixture = async (input: {
       const additionalErrors: string[] = [];
       const daemonEnv: NodeJS.ProcessEnv = {
         ...process.env,
-        ...p39WindowsTestEnvironment(),
+        ...windowsTestEnvironment(),
         ARBOR_DB: databaseFile,
         ARBOR_HTTP_PORT: String(additionalPort),
         ARBOR_HTTP_HOST: "127.0.0.1",

@@ -303,7 +303,7 @@ its exact transient P4 terminal outcome. Policy stale is not a provider fact.
 
 P10's SandboxPolicyStatusViewPort reads current P1 decision/command result,
 P9 fact/queue and, only for the short pre-materialization window, P4's explicit
-read-only P4SandboxOutcomeReadPort in one read transaction/effective-facts
+read-only SandboxOutcomeReadPort in one read transaction/effective-facts
 barrier. P10 never opens P4 private stores. Exact current terminal provider
 unavailable outcome + matching current decision/active Execution + no
 committed P9 fact/queue yet yields HTTP 503 on that existing POST, with the

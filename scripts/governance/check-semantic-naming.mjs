@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -20,8 +20,15 @@ const git = (args) =>
   });
 
 const args = process.argv.slice(2);
-if (args.length !== 0 && (args.length !== 2 || args[0] !== "--baseline")) {
-  throw new Error("Usage: check-semantic-naming.mjs [--baseline <commit>]");
+const fullScan = args.length === 1 && args[0] === "--full";
+if (
+  !fullScan &&
+  args.length !== 0 &&
+  (args.length !== 2 || args[0] !== "--baseline")
+) {
+  throw new Error(
+    "Usage: check-semantic-naming.mjs [--baseline <commit>] [--full]",
+  );
 }
 const baseline =
   args.length === 2
@@ -46,9 +53,12 @@ const diffPaths = baseline
       ]).split("\0"),
       ...git(["diff", "--name-only", "--no-renames", "-z", "HEAD"]).split("\0"),
     ].filter(Boolean)
-  : [];
+  : fullScan
+    ? git(["ls-files", "-z"]).split("\0").filter(Boolean)
+    : [];
 const changedSourcePaths = [...new Set(diffPaths)]
   .filter((path) => isSourcePath(path) && !isOutOfScope(path))
+  .filter((path) => fullScan || existsSync(join(root, path)))
   .sort();
 
 // Legacy inventory exempted from the path category (never the line categories:
@@ -73,10 +83,10 @@ const findings = [];
 const errors = [];
 for (const path of changedSourcePaths) {
   const pathFinding = pathViolation(path);
-  if (pathFinding && !baselinePathExemptions.has(path)) {
+  if (pathFinding && (fullScan || !baselinePathExemptions.has(path))) {
     findings.push({ category: "path", path, evidence: path });
   }
-  if (!pathFinding && baselinePathExemptions.has(path)) continue;
+  if (!fullScan && !pathFinding && baselinePathExemptions.has(path)) continue;
   let content;
   try {
     content = readFileSync(join(root, path), "utf8");
@@ -89,26 +99,32 @@ for (const path of changedSourcePaths) {
   try {
     // Working tree (or HEAD when unchanged locally) versus the baseline tree:
     // the hunk heads describe every line the branch adds.
-    const diff = git([
-      "diff",
-      "--no-color",
-      "-U0",
-      "--no-renames",
-      baseline,
-      "--",
-      path,
-    ]);
-    addedLines = new Set(
-      diff
-        .split(/\r?\n/u)
-        .filter((line) => line.startsWith("@@"))
-        .flatMap((header) => {
-          const plus = header.slice(header.indexOf("+") + 1);
-          const start = Number(plus.split(",")[0].split(" ")[0]);
-          const count = Number((plus.split(",")[1] ?? "").split(" ")[0]) || 1;
-          return Array.from({ length: count }, (_, index) => start + index);
-        }),
-    );
+    if (fullScan) {
+      addedLines = new Set(
+        Array.from({ length: lineTexts.length }, (_, index) => index + 1),
+      );
+    } else {
+      const diff = git([
+        "diff",
+        "--no-color",
+        "-U0",
+        "--no-renames",
+        baseline,
+        "--",
+        path,
+      ]);
+      addedLines = new Set(
+        diff
+          .split(/\r?\n/u)
+          .filter((line) => line.startsWith("@@"))
+          .flatMap((header) => {
+            const plus = header.slice(header.indexOf("+") + 1);
+            const start = Number(plus.split(",")[0].split(" ")[0]);
+            const count = Number((plus.split(",")[1] ?? "").split(" ")[0]) || 1;
+            return Array.from({ length: count }, (_, index) => start + index);
+          }),
+      );
+    }
   } catch (error) {
     errors.push({ path, error: String(error) });
     continue;
@@ -151,7 +167,7 @@ console.log(
   JSON.stringify(
     {
       schema: "arbor/semantic-naming/v1",
-      mode: baseline === null ? "strict" : "transition",
+      mode: fullScan ? "full" : baseline === null ? "strict" : "transition",
       baseline,
       head,
       dirty: Boolean(before),

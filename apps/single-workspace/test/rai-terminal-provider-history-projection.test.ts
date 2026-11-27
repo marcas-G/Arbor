@@ -23,7 +23,7 @@ import {
   it,
 } from "vitest";
 import { P10_ATTENTION_CONSUMER_ID } from "../../../adapters/persistence-sqlite/src/index.js";
-import { insertWorkRow } from "../../../tests/support/p10-fixture.js";
+import { insertWorkRow } from "../../../tests/support/fixture-support.js";
 import { createCurrentSchemaTestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import { buildSingleWorkspaceLayer } from "../src/index.js";
 
@@ -316,7 +316,7 @@ const readViews = () =>
   });
 
 describe("RAI-DG-02 production terminal history projection", () => {
-  it("projects one earliest witness from 200 real chains and keeps the P2 hold across P10 ACK, reads, and restart-equivalent wiring", async () => {
+  it("projects one earliest witness from 200 real chains and keeps the hold across ACK, reads, and restart-equivalent wiring", async () => {
     if (database === undefined) throw new Error("fresh database missing");
     const filename = database.databaseFilename;
 

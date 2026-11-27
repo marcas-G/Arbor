@@ -15,7 +15,7 @@ const invocation = (
   argumentsJson,
 });
 
-describe("MAC-P2 workspace placement controls", () => {
+describe("MAC-workspace placement controls", () => {
   it("decodes bounded list and exact read refs", async () => {
     const listed = await Effect.runPromise(
       decodeControlInvocation(

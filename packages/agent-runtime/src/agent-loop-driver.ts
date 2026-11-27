@@ -12,10 +12,10 @@ import {
   type ExecutionDriverError,
   ExecutionDriverPort,
   InboxProjectionStore,
-  P39RecoveryEvidenceStore,
   type PortableOperationKind,
   type ProviderCancellationSignal,
   ProviderTurnStore,
+  RecoveryEvidenceStore,
   type RuntimeSafetyGateService,
   type RuntimeSafetyObservation,
   SessionRepository,
@@ -38,9 +38,9 @@ import type { ControlActionAuthorizerService } from "./control-authorization.js"
 import { foldAgentLoopStepCompletionError } from "./decision/errors.js";
 import { toExecutionDriverError } from "./execution-driver-failure.js";
 import { ModelDecisionService } from "./model-decision-service.js";
-import { providerTurnSafetyFingerprint } from "./p12-safety-identity.js";
 import type { AgentLoopQualificationProbe } from "./qualification-probe.js";
 import { selectPendingInputPromotions } from "./safe-input-drain.js";
+import { providerTurnSafetyFingerprint } from "./safety-identity.js";
 import { settlementProposal } from "./settlement-proposal.js";
 
 export {
@@ -78,7 +78,7 @@ export const AgentLoopDriverLive = (
   | ConversationCheckpointStore
   | DecisionRequestStore
   | ToolInvocationStore
-  | P39RecoveryEvidenceStore
+  | RecoveryEvidenceStore
   | Clock
 > =>
   Layer.effect(
@@ -101,7 +101,7 @@ export const AgentLoopDriverLive = (
       const inputPromotion = yield* InputPromotionService;
       const tx = yield* TransactionPort;
       const invocationStore = yield* ToolInvocationStore;
-      const p39Recovery = yield* P39RecoveryEvidenceStore;
+      const p39Recovery = yield* RecoveryEvidenceStore;
       const loopStepStoreOption =
         yield* Effect.serviceOption(AgentLoopStepStore);
       const providerTurnStoreOption =

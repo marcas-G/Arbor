@@ -32,7 +32,7 @@ import {
   type SandboxProviderQualificationEntryV1,
   sandboxEnforcementRuleSetV1ForProvider,
 } from "../../../packages/domain/src/index.js";
-import { setP39PrivateWindowsAcl } from "../../support/p39-windows-deployment-test.js";
+import { setPrivateWindowsAcl } from "../../support/windows-deployment-qualification.js";
 
 const hash = (value: string | Uint8Array) =>
   createHash("sha256").update(value).digest("hex");
@@ -365,9 +365,9 @@ const writePair = (
 ) => {
   const temporary = `${filename}.next`;
   writeFileSync(temporary, JSON.stringify(value), { mode: 0o600 });
-  setP39PrivateWindowsAcl(temporary, "file");
+  setPrivateWindowsAcl(temporary, "file");
   renameSync(temporary, filename);
-  setP39PrivateWindowsAcl(filename, "file");
+  setPrivateWindowsAcl(filename, "file");
 };
 
 export const writeSandboxPolicyV3TestPair = (
@@ -377,7 +377,7 @@ export const writeSandboxPolicyV3TestPair = (
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const filename = join(directory, "v3-source.json");
   writePair(filename, pair);
-  setP39PrivateWindowsAcl(directory, "directory");
+  setPrivateWindowsAcl(directory, "directory");
   return filename;
 };
 
@@ -548,6 +548,6 @@ export const installSandboxPolicyV3SyntheticArtifacts = (
       ...paths,
       control: win32.join(paths.testControlRoot, "control-token.artifact"),
     },
-    setP39PrivateWindowsAcl,
+    setPrivateWindowsAcl,
   );
 };

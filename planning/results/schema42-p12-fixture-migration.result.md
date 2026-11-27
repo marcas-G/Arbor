@@ -19,7 +19,7 @@ The pending view cases authenticate the non-loopback listener when exercising
 unauthenticated requests and verify that an unconfigured wildcard listener is
 rejected before serving traffic. P39 ACL helper subprocesses have a bounded
 30-second timeout. Ordinary test cleanup refuses to remove the invocation
-TEMP root or any ancestor; only `p39-windows-global-setup.ts` removes that root
+TEMP root or any ancestor; only `windows-global-setup.ts` removes that root
 at global teardown.
 
 ## Static verification

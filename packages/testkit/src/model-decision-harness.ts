@@ -40,7 +40,7 @@ import { FixedSecretStoreLive } from "./secret-store.js";
 
 /**
  * Model-decision harness (test-effectiveness B3): the shared assembly that
- * made `tests/p11-controlbasis.test.ts` boot the full driver stack (~110
+ * made `tests/controlbasis.test.ts` boot the full driver stack (~110
  * lines per file) to reach `ModelDecisionService`. A test states only its
  * deltas — the fake-provider turn scripts and the control handlers — and
  * receives the composed app layer plus the recorded `ControlBasis` values

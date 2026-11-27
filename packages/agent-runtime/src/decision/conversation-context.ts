@@ -27,7 +27,7 @@ import { Effect, Option } from "effect";
 import { type ModelDecisionOutcome, safetyStop } from "../agent-loop-policy.js";
 import {
   isP20OverflowReplacementManifestBound,
-  resolveP20OverflowReplacementChain,
+  resolveOverflowReplacementChain,
 } from "../agent-loop-step-recovery.js";
 import { conversationCheckpointBindingUse } from "../checkpoint/conversation/binding.js";
 import { runConversationCheckpointCompaction } from "../checkpoint/conversation/compaction.js";
@@ -481,7 +481,7 @@ export const loadConversationDecisionContext = (
         const p20Links = yield* tx.transact(
           loopSteps.listProviderTurnLinks(pinnedStep.identity),
         );
-        const p20Chain = resolveP20OverflowReplacementChain(
+        const p20Chain = resolveOverflowReplacementChain(
           p20Links,
           pinnedStep.identity,
           String(pinnedStep.providerTurnId),

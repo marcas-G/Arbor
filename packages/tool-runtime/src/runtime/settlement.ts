@@ -2,7 +2,7 @@ import type {
   ArtifactServiceService,
   CanonicalToolObservation,
   ClockService,
-  P39RecoveryEvidenceStoreService,
+  RecoveryEvidenceStoreService,
   SelectedP39RecoveryEvidence,
   ToolExecutionContext,
   ToolIntent,
@@ -41,7 +41,7 @@ export const settleToolOutcome = (
   tx: TransactionPortService,
   clock: ClockService,
   store: ToolInvocationStoreService,
-  p39RecoveryEvidence: Option.Option<P39RecoveryEvidenceStoreService>,
+  p39RecoveryEvidence: Option.Option<RecoveryEvidenceStoreService>,
   observationEvidence: Option.Option<ToolObservationEvidenceStoreService>,
   artifactService: Option.Option<ArtifactServiceService>,
   findInvocationFenced: Replay["findInvocationFenced"],
@@ -82,7 +82,7 @@ export const settleToolOutcome = (
         });
       if (Option.isNone(p39RecoveryEvidence)) {
         return yield* rejectUnverifiedSelection({
-          _tag: "P39RecoveryEvidenceStoreUnavailable",
+          _tag: "RecoveryEvidenceStoreUnavailable",
         });
       }
       if (
@@ -111,7 +111,7 @@ export const settleToolOutcome = (
         }
         if (Option.isNone(selectedRead.value)) {
           return yield* rejectUnverifiedSelection({
-            _tag: "P39SelectedRecoveryEvidenceMissing",
+            _tag: "SelectedRecoveryEvidenceMissing",
           });
         }
         const selected = selectedRead.value.value;
@@ -124,7 +124,7 @@ export const settleToolOutcome = (
           })
         ) {
           return yield* rejectUnverifiedSelection({
-            _tag: "P39SelectedRecoveryEvidenceMismatch",
+            _tag: "SelectedRecoveryEvidenceMismatch",
           });
         }
         authenticatedRecoveryEvidence = selected;

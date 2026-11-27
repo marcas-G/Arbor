@@ -6,8 +6,8 @@ import {
   encodeSandboxOperatorPolicyConfigV1,
 } from "@arbor/domain";
 import {
-  validateP39ProtectedDirectory,
-  validateP39ProtectedFile,
+  validateProtectedDirectory,
+  validateProtectedFile,
 } from "@arbor/persistence-sqlite";
 import {
   SANDBOX_ENV_ALLOWLIST,
@@ -135,8 +135,8 @@ const exactProtectedOperatorConfig = (input: CliArguments) => {
       !configLstat.isFile() ||
       configLstat.dev !== rootStat.dev ||
       configLstat.nlink !== 1n ||
-      !validateP39ProtectedDirectory(root) ||
-      !validateP39ProtectedFile(configPath)
+      !validateProtectedDirectory(root) ||
+      !validateProtectedFile(configPath)
     )
       fail("SANDBOX_AUTHORITY_PROVISION_CONFIG_PROTECTION_INVALID");
     if (

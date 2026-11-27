@@ -33,7 +33,6 @@ import {
   FormationFulfillmentStore,
   FormationProposalStore,
   MessageStore,
-  P4SandboxOutcomeReadPort,
   ProjectionQueryPort,
   ProjectRepository,
   ProviderTurnStore,
@@ -41,6 +40,7 @@ import {
   RecoveryAttentionFactStore,
   RetryVerificationOriginRepository,
   RunnableWorkSource,
+  SandboxOutcomeReadPort,
   SandboxPolicyCandidateBoundaryReadPort,
   SandboxPolicyDecisionStore,
   type SandboxPolicyRequirement,
@@ -342,7 +342,7 @@ const projectionQueryService = (
       CurrentSandboxAuthoritySnapshotPort,
     );
     const p4SandboxOutcomeReadPort = yield* Effect.serviceOption(
-      P4SandboxOutcomeReadPort,
+      SandboxOutcomeReadPort,
     );
     const sandboxUnavailableStore = yield* Effect.serviceOption(
       SandboxProviderUnavailableStore,

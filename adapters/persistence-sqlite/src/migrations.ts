@@ -1,3 +1,7 @@
+import { P43_BLOCKED_WORKEPISODE_MIGRATION } from "./blocked-workepisode-migration.js";
+import { P53_CANONICAL_OWNERSHIP_CARVEOUTS_MIGRATION } from "./canonical-ownership-carveouts-migration.js";
+import { P48_AH19_CONVERSATION_CHECKPOINT_OWNER_MIGRATION } from "./conversation-checkpoint-owner-migration.js";
+import { P47_AH14_LEGACY_ADOPTION_ATTENTION_MIGRATION } from "./legacy-adoption-attention-migration.js";
 import type { MigrationFile } from "./migrate.js";
 import {
   P38_MIGRATIONS,
@@ -8,18 +12,14 @@ import {
   P44_APPROVAL_REJECTED_NO_EFFECT_DENIAL_MIGRATION,
   P54_NATIVE_PROCESS_MODE_NO_EFFECT_DENIAL_MIGRATION,
 } from "./migrations/v40-v44-v54-observation-guards.js";
-import { P42_PROJECT_RESOURCE_SOURCE_MIGRATION } from "./p42-project-resource-source-migration.js";
-import { P43_BLOCKED_WORKEPISODE_MIGRATION } from "./p43-blocked-workepisode-migration.js";
-import { P45_RETRY_VERIFICATION_ORIGIN_MIGRATION } from "./p45-retry-verification-origin-migration.js";
-import { P46_VERIFICATION_EVIDENCE_SNAPSHOT_MIGRATION } from "./p46-verification-evidence-snapshot-migration.js";
-import { P47_AH14_LEGACY_ADOPTION_ATTENTION_MIGRATION } from "./p47-ah14-legacy-adoption-attention-migration.js";
-import { P48_AH19_CONVERSATION_CHECKPOINT_OWNER_MIGRATION } from "./p48-ah19-conversation-checkpoint-owner-migration.js";
-import { P49_SANDBOX_POLICY_AND_GRANT_PROVENANCE_MIGRATION } from "./p49-sandbox-policy-and-grant-provenance-migration.js";
-import { P50_SANDBOX_PROVIDER_UNAVAILABLE_FACT_MIGRATION } from "./p50-sandbox-provider-unavailable-fact-migration.js";
-import { P51_VERIFICATION_V2_CONSUMER_RECONCILIATION_MIGRATION } from "./p51-verification-v2-consumer-reconciliation-migration.js";
-import { P52_WORK_CONTRACT_REVISION_MIGRATION } from "./p52-work-contract-revision-migration.js";
-import { P53_CANONICAL_OWNERSHIP_CARVEOUTS_MIGRATION } from "./p53-canonical-ownership-carveouts-migration.js";
-import { P57_WORKSPACE_SANDBOX_AUTHORIZATION_MIGRATION } from "./p57-workspace-sandbox-authorization-migration.js";
+import { P42_PROJECT_RESOURCE_SOURCE_MIGRATION } from "./project-resource-source-migration.js";
+import { P45_RETRY_VERIFICATION_ORIGIN_MIGRATION } from "./retry-verification-origin-migration.js";
+import { P49_SANDBOX_POLICY_AND_GRANT_PROVENANCE_MIGRATION } from "./sandbox-policy-and-grant-provenance-migration.js";
+import { P50_SANDBOX_PROVIDER_UNAVAILABLE_FACT_MIGRATION } from "./sandbox-provider-unavailable-fact-migration.js";
+import { P46_VERIFICATION_EVIDENCE_SNAPSHOT_MIGRATION } from "./verification-evidence-snapshot-migration.js";
+import { P51_VERIFICATION_V2_CONSUMER_RECONCILIATION_MIGRATION } from "./verification-v2-consumer-reconciliation-migration.js";
+import { P52_WORK_CONTRACT_REVISION_MIGRATION } from "./work-contract-revision-migration.js";
+import { P57_WORKSPACE_SANDBOX_AUTHORIZATION_MIGRATION } from "./workspace-sandbox-authorization-migration.js";
 
 export * from "./migrations/v01-v10.js";
 export * from "./migrations/v11-v20.js";

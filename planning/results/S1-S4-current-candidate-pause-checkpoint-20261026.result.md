@@ -709,7 +709,7 @@ the sole P39 test-budget change. The resumed Vitest segment passed 38 files /
 99 tests; Playwright passed 6 files / 10 tests. Runner compatibility was
 `true (compatible)`, and all 75 selected files are present in `passedFiles`.
 The diff `e78a914e..8055669d` contains only
-`tests/functional/process/p39-maintenance-writer-exclusion.functional.test.ts`;
+`tests/functional/process/maintenance-writer-exclusion.functional.test.ts`;
 there is no production-code delta.
 
 ### Closure statement and boundaries

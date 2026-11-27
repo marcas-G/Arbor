@@ -27,19 +27,18 @@ const skippedDirectories = new Set([
   "tests",
   "__tests__",
 ]);
-const p39SpawnModule =
-  "adapters/persistence-sqlite/src/p39-windows-security.ts";
+const p39SpawnModule = "adapters/persistence-sqlite/src/windows-security.ts";
 const trustedLocalSpawnModule =
   "adapters/sandbox-local/src/trusted-local-process.ts";
 const nativePosixSpawnModule = "adapters/sandbox-native-posix/src/index.ts";
 const windowsNativeBuildModule =
   "adapters/sandbox-windows/scripts/build-native-host.mjs";
 const p39QueryCallers = new Set([
-  "adapters/persistence-sqlite/src/p39-report-database.ts",
-  "adapters/persistence-sqlite/src/p39-windows-security.ts",
+  "adapters/persistence-sqlite/src/report-database.ts",
+  "adapters/persistence-sqlite/src/windows-security.ts",
 ]);
 const p39ValidationCallers = new Set([
-  "adapters/persistence-sqlite/src/p39-writer-lock.ts",
+  "adapters/persistence-sqlite/src/database-writer-lock.ts",
 ]);
 const forbiddenNativeModuleFragment =
   /\b(?:child_process|worker_threads|vm)\b/iu;
@@ -377,7 +376,7 @@ const scanSource = (source: string, path: string): ReadonlyArray<string> => {
     const fixedQuery = hasSequence(values, [
       "executor",
       "(",
-      "P39_WINDOWS_POWERSHELL_EXECUTABLE",
+      "WINDOWS_POWERSHELL_EXECUTABLE",
       ",",
       "[",
       "-NoProfile",
@@ -393,7 +392,7 @@ const scanSource = (source: string, path: string): ReadonlyArray<string> => {
     const fixedTimeout = hasSequence(values, [
       "timeout",
       ":",
-      "P39_WINDOWS_SECURITY_QUERY_TIMEOUT_MS",
+      "WINDOWS_SECURITY_QUERY_TIMEOUT_MS",
     ]);
     const fixedProcessExecutor = hasSequence(values, [
       "execFileSync",
@@ -418,7 +417,7 @@ const scanSource = (source: string, path: string): ReadonlyArray<string> => {
     const fixedAtomicMove = hasSequence(values, [
       "execFileSync",
       "(",
-      "P39_WINDOWS_POWERSHELL_EXECUTABLE",
+      "WINDOWS_POWERSHELL_EXECUTABLE",
       ",",
       "[",
       "-NoProfile",
@@ -437,7 +436,7 @@ const scanSource = (source: string, path: string): ReadonlyArray<string> => {
       ",",
       "timeout",
       ":",
-      "P39_WINDOWS_SECURITY_QUERY_TIMEOUT_MS",
+      "WINDOWS_SECURITY_QUERY_TIMEOUT_MS",
       ",",
       "windowsHide",
       ":",
@@ -610,10 +609,7 @@ describe("SandboxProcessPort architecture boundary", () => {
     expect(
       callCount(
         readFileSync(
-          join(
-            repoRoot,
-            "adapters/persistence-sqlite/src/p39-report-database.ts",
-          ),
+          join(repoRoot, "adapters/persistence-sqlite/src/report-database.ts"),
           "utf8",
         ),
         "executeP39WindowsSecurityQuery",
@@ -623,8 +619,8 @@ describe("SandboxProcessPort architecture boundary", () => {
       .filter((file) => {
         const source = readFileSync(file, "utf8");
         return (
-          source.includes("validateP39WindowsProtectedPaths") &&
-          source.includes('from "./p39-windows-security.js"')
+          source.includes("validateWindowsProtectedPaths") &&
+          source.includes('from "./windows-security.js"')
         );
       })
       .map(normalized)
@@ -633,17 +629,20 @@ describe("SandboxProcessPort architecture boundary", () => {
     expect(
       callCount(
         readFileSync(
-          join(repoRoot, "adapters/persistence-sqlite/src/p39-writer-lock.ts"),
+          join(
+            repoRoot,
+            "adapters/persistence-sqlite/src/database-writer-lock.ts",
+          ),
           "utf8",
         ),
-        "validateP39WindowsProtectedPaths",
+        "validateWindowsProtectedPaths",
       ),
     ).toBe(1);
     const source = readFileSync(join(repoRoot, p39SpawnModule), "utf8");
     const normalizedSource = source.replace(/\r\n?/gu, "\n");
     expect(
       createHash("sha256").update(normalizedSource, "utf8").digest("hex"),
-    ).toBe("da129df2c462af35cd8133463d902fc6614db63cdafd91d2c151e08ecb3483f5");
+    ).toBe("795210aac171e8dbeffff3b0b1d90817a152c3b2fb5900620b293dae51d35cb6");
     expect(
       hasSequence(
         tokenize(source).map(({ value }) => value),
@@ -735,14 +734,14 @@ describe("SandboxProcessPort architecture boundary", () => {
       .map(normalized)
       .sort();
     expect(moveCallers).toEqual([
-      "adapters/persistence-sqlite/src/p39-windows-security.ts",
+      "adapters/persistence-sqlite/src/windows-security.ts",
       "apps/single-workspace/src/sandbox-authority-provisioning-file-store.ts",
     ]);
     const source = readFileSync(join(repoRoot, p39SpawnModule), "utf8");
     const normalizedSource = source.replace(/\r\n?/gu, "\n");
     expect(
       createHash("sha256").update(normalizedSource, "utf8").digest("hex"),
-    ).toBe("da129df2c462af35cd8133463d902fc6614db63cdafd91d2c151e08ecb3483f5");
+    ).toBe("795210aac171e8dbeffff3b0b1d90817a152c3b2fb5900620b293dae51d35cb6");
     expect(
       hasSequence(
         tokenize(source).map(({ value }) => value),

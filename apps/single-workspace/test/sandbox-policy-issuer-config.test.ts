@@ -61,7 +61,7 @@ const sourceFor = (
   readSandboxAuthorityHighWater: () => Effect.succeed(highWaterJson),
 });
 
-describe("P5 SandboxAuthorityBundleV1", () => {
+describe("SandboxAuthorityBundleV1", () => {
   it.effect(
     "validates canonical bundle/high-water and returns one immutable snapshot",
     () =>

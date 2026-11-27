@@ -23,7 +23,7 @@ import {
   workspaceId,
 } from "./support.js";
 
-describe("P2 WorkReadmissionGateStore", () => {
+describe("WorkReadmissionGateStore", () => {
   it("fails closed when ReconciliationEscalated aggregate and payload bind different Executions", () =>
     runDb(
       Effect.gen(function* () {

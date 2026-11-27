@@ -1,6 +1,6 @@
 import type {
   ClockService,
-  P39RecoveryEvidenceStoreService,
+  RecoveryEvidenceStoreService,
   SandboxProcessPolicyResolution,
   ToolAuthorityResolverService,
   ToolDefinition,
@@ -41,7 +41,7 @@ export const admitNewEffect = (
   prior: Option.Option<ToolInvocationRecord>,
   retryAdmitted: boolean,
   p39BindingEnabled: boolean,
-  p39Recovery: Option.Option<P39RecoveryEvidenceStoreService>,
+  p39Recovery: Option.Option<RecoveryEvidenceStoreService>,
   authorityResolver: Option.Option<ToolAuthorityResolverService>,
   tx: TransactionPortService,
   clock: ClockService,

@@ -124,7 +124,7 @@ const dependencies = () => ({
   failure: (cause: unknown) => cause as never,
 });
 
-describe("P3 explicit Blocked disposition", () => {
+describe("explicit Blocked disposition", () => {
   it("binds exact TerminalRejected + Denied action to its pinned manifest and runtime Inbox sequence", async () => {
     const settlement = await Effect.runPromise(
       makeBlockedSettlement(

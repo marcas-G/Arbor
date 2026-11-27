@@ -5,7 +5,7 @@
 Base: `f56dd869` (`docs: record P41 integration full-check results`).
 
 Legacy P2/P3/P6/P9 runtime fixtures now share
-`tests/support/p41-optional-test-services.ts`. It composes the existing typed
+`tests/support/optional-test-services.ts`. It composes the existing typed
 SQLite `RecoveryAttentionFactStore` and `AttentionProjectionStore` adapters
 against each fixture's existing schema. Those fixtures do not apply migration
 0041, so the adapter readiness check reports the Submitted Decision source as

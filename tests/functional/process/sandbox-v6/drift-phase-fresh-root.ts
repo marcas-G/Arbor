@@ -14,9 +14,9 @@ import {
 } from "../../support/public-client.js";
 import {
   isP9SandboxUnavailableTerminal,
-  type P4OutcomeProbe,
+  type OutcomeProbe,
   readP9OutcomeSourceForProbe,
-} from "./p9-oracle.js";
+} from "./oracle.js";
 import {
   child,
   decodeToolObservation,
@@ -55,7 +55,7 @@ export const v6ePhaseFirstOutcome = async (
           event.invocationId === firstInvocationId,
       );
       if (p4Outcome === undefined) return undefined;
-      const probe = p4Outcome as unknown as P4OutcomeProbe;
+      const probe = p4Outcome as unknown as OutcomeProbe;
       return {
         probe,
         source: readP9OutcomeSourceForProbe(fixture.databaseFile, probe),

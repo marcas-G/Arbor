@@ -52,7 +52,7 @@ const event = {
   },
 } as unknown as DomainEvent<unknown>;
 
-describe("P6 WorkBlocked atomic consumer apply", () => {
+describe("WorkBlocked atomic consumer apply", () => {
   it.effect(
     "uses the sequenced Parent Inbox API and releases only advanced bound waits",
     () =>

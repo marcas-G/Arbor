@@ -20,7 +20,7 @@ import { removeFunctionalFixtureDirectory } from "../../../functional/support/sc
 import {
   createP39PrivateTestFile,
   makeP39PrivateTestDirectory,
-} from "../../../support/p39-windows-deployment-test.js";
+} from "../../../support/windows-deployment-qualification.js";
 import { isChatCompletionsPath } from "../provider-capture-path.js";
 import {
   advertisedToolNames,

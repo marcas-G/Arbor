@@ -187,7 +187,7 @@ describe("APW-1 AnyProducer evidence query", () => {
     ).resolves.toBe(false);
   });
 
-  it("requires a same-Project P7-matching persisted Deliverable", async () => {
+  it("requires a same-Project -matching persisted Deliverable", async () => {
     const dependencies = baseDependencies({
       works: {
         listByWorkspace: (workspace: unknown) =>

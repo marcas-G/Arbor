@@ -10,17 +10,21 @@ import { Effect } from "effect";
  * are versioned text artifacts with a dual version header: contractRevision
  * pins the mandatory-clause contract; textVersion + textHash pin the text. */
 
-export type P6ProgramFamilyId =
+export type AgentPromptProgramFamilyId =
   | "p6-formation"
   | "p6-communication"
   | "p6-bootstrap"
   | "p6-human-steer";
 
 /** P8-010: the two Program families P8 owns (P8 `02` §4 / `05` §2). */
-export type P8ProgramFamilyId = "p8-verification" | "p8-query-inspection";
+export type VerificationProgramFamilyId =
+  | "p8-verification"
+  | "p8-query-inspection";
 
 /** Every family id served by the shared program infrastructure. */
-export type ProgramFamilyId = P6ProgramFamilyId | P8ProgramFamilyId;
+export type ProgramFamilyId =
+  | AgentPromptProgramFamilyId
+  | VerificationProgramFamilyId;
 
 export interface ProgramRegistryEntry {
   readonly familyId: ProgramFamilyId;

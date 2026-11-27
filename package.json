@@ -48,6 +48,7 @@
     "check": "pnpm lint && pnpm typecheck && pnpm architecture && pnpm test && pnpm --filter @arbor/web typecheck && pnpm --filter @arbor/web build && pnpm --filter @arbor/web test",
     "check:source-lines": "node scripts/governance/check-source-lines.mjs",
     "check:naming": "node scripts/governance/check-semantic-naming.mjs",
+    "check:naming:full": "node scripts/governance/check-semantic-naming.mjs --full",
     "test:source-lines": "node --test scripts/governance/source-lines-lib.test.mjs",
     "test:naming": "node --test scripts/governance/semantic-naming-lib.test.mjs"
   },

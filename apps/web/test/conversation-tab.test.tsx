@@ -248,7 +248,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("P14-005 conversation tab", () => {
+describe("conversation tab", () => {
   it("root workspace (parentWorkspaceId === null) renders the composer", async () => {
     installFetch({
       tree: rootTree,

@@ -9,6 +9,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { backup, DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import {
+  databaseWriterLockFilename,
   layer,
   type MigrationFile,
   makeLegacyCurrentWorkContractRevision,
@@ -40,13 +41,12 @@ import {
   P55_SESSION_CAUSAL_PROVENANCE_MIGRATION,
   P56_LINUX_WORKSPACE_NETWORK_V2_MIGRATION,
   P57_WORKSPACE_SANDBOX_AUTHORIZATION_MIGRATION,
-  p39WriterLockFilename,
   preflightVerificationEvidenceSnapshot,
   runMigrations,
   runP39SqliteMaintenance,
   runP39SqliteMaintenanceWithPermit,
   splitStatements,
-  validateP39ProtectedDirectory,
+  validateProtectedDirectory,
 } from "@arbor/persistence-sqlite";
 import { canonicalWorkContractJson, sha256Hex } from "@arbor/ports";
 import { Effect } from "effect";
@@ -220,7 +220,7 @@ const findP39FailureCode = (
   }
   const fields = cause as Record<string, unknown>;
   if (
-    fields._tag === "P39MaintenanceFailure" &&
+    fields._tag === "MaintenanceFailure" &&
     typeof fields.code === "string" &&
     /^P39_[A-Z0-9_]{1,72}$/u.test(fields.code)
   ) {
@@ -233,7 +233,7 @@ const findP39FailureCode = (
     };
   }
   if (
-    fields._tag === "P39UnsupportedDeploymentDiagnostic" &&
+    fields._tag === "UnsupportedDeploymentDiagnostic" &&
     typeof fields.reasonCode === "string" &&
     /^P39_[A-Z0-9_]{1,72}$/u.test(fields.reasonCode)
   ) {
@@ -498,7 +498,7 @@ const validatePathSet = (
     const targetIdentity = existingPathIdentity(targetPath);
     const reportIdentity = existingPathIdentity(reportPath);
     const manifestIdentity = existingPathIdentity(manifestPath);
-    const lockPath = p39WriterLockFilename(targetPath);
+    const lockPath = databaseWriterLockFilename(targetPath);
     if (typeof lockPath !== "string")
       throw new SchemaUpgradeRefusal(
         `P39 writer lock path is unsupported: ${lockPath.code}`,
@@ -687,7 +687,7 @@ const verifySourcePrefixSchema = async (
     join(dirname(filename), ".arbor-schema-prefix-check-"),
   );
   try {
-    if (!validateP39ProtectedDirectory(directory))
+    if (!validateProtectedDirectory(directory))
       throw new SchemaUpgradeRefusal(
         "source-prefix verification directory failed the P39 protected ACL/local-volume checks",
       );
@@ -813,7 +813,7 @@ const createOrCopyTarget = async (
   }
   const target = existingPathIdentity(paths.targetPath);
   const report = reserveNewFile(paths.reportPath);
-  const lockPath = p39WriterLockFilename(target.canonicalPath);
+  const lockPath = databaseWriterLockFilename(target.canonicalPath);
   if (typeof lockPath !== "string")
     throw new SchemaUpgradeRefusal(
       `P39 writer lock path is unsupported: ${lockPath.code}`,
@@ -1350,7 +1350,7 @@ const validateDescriptorPin = (version: number): void => {
   if (version === 46) {
     const sourcePath = resolve(
       process.cwd(),
-      "adapters/persistence-sqlite/src/p46-verification-evidence-snapshot-migration.ts",
+      "adapters/persistence-sqlite/src/verification-evidence-snapshot-migration.ts",
     );
     const sourceHash = sha256Hex(readFileSync(sourcePath, "utf8"));
     if (sourceHash !== PINNED_P46_PREFLIGHT_SOURCE_SHA256)
@@ -1362,7 +1362,7 @@ const validateDescriptorPin = (version: number): void => {
   if (version === 51) {
     const sourcePath = resolve(
       process.cwd(),
-      "adapters/persistence-sqlite/src/p51-verification-v2-consumer-reconciliation-migration.ts",
+      "adapters/persistence-sqlite/src/verification-v2-consumer-reconciliation-migration.ts",
     );
     const sourceHash = sha256Hex(
       readFileSync(sourcePath, "utf8").replace(/\r\n/gu, "\n"),
@@ -1376,7 +1376,7 @@ const validateDescriptorPin = (version: number): void => {
   if (version === 52) {
     const sourcePath = resolve(
       process.cwd(),
-      "adapters/persistence-sqlite/src/p52-work-contract-revision-migration.ts",
+      "adapters/persistence-sqlite/src/work-contract-revision-migration.ts",
     );
     const sourceHash = sha256Hex(
       readFileSync(sourcePath, "utf8").replace(/\r\n/gu, "\n"),
@@ -1455,7 +1455,7 @@ const previewCommittedPrefixes = async (
   );
   let database: DatabaseSync | undefined;
   try {
-    if (!validateP39ProtectedDirectory(directory))
+    if (!validateProtectedDirectory(directory))
       throw new SchemaUpgradeRefusal(
         "private schema preview directory failed the P39 protected ACL/local-volume checks",
       );

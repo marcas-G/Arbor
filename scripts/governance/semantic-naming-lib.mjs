@@ -18,7 +18,7 @@ export const PATH_PATTERN = /(^|[-_/])(p|ah)[0-9]{1,3}([-_/]|\.test\.|$)/u;
 
 /**
  * New exported-ish symbol declarations carrying a planning code:
- * P39WriterLockClient, AH7RecoveryProbe, P4SandboxOutcomeReadPort.
+ * DatabaseWriterLockClient, AH7RecoveryProbe, SandboxOutcomeReadPort.
  * A declaration continues with `=`, `{`, `(`, a `|` union member or a line
  * end — import-list entries (`,` or `}` after the identifier) and bare
  * references are not declarations. A letter must follow the digits so that

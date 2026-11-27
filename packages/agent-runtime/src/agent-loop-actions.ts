@@ -33,7 +33,7 @@ import { checkFreshness, requirementForAction } from "./freshness.js";
 import {
   agentActionSafetyFingerprint,
   isDurableSuccessfulActionProgress,
-} from "./p12-safety-identity.js";
+} from "./safety-identity.js";
 
 export { makeBlockedSettlement } from "./agent-loop-actions/blocked-settlement.js";
 export type {

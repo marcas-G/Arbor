@@ -39,8 +39,8 @@ const runId = `q-${layer}-${new Date().toISOString()}-${randomUUID().slice(0, 8)
 if (layer === "L1" || layer === "L2") {
   const suite =
     layer === "L1"
-      ? "tests/provider-qualification/p16-gate-c-l1-contracts.test.ts"
-      : "tests/provider-qualification/p16-gate-c-l2.test.ts";
+      ? "tests/provider-qualification/gate-c-l1-contracts.test.ts"
+      : "tests/provider-qualification/gate-c-l2.test.ts";
   const vitest = spawnSync("npx", ["vitest", "run", suite], {
     cwd: root,
     stdio: "inherit",

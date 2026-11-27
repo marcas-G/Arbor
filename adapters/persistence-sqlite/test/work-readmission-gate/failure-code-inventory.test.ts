@@ -16,7 +16,7 @@ import {
   workspaceId,
 } from "./support.js";
 
-describe("P2 WorkReadmissionGateStore", () => {
+describe("WorkReadmissionGateStore", () => {
   it("recognizes every closed DeliverReplay and AssignWork binding failure code", () =>
     runDb(
       Effect.gen(function* () {

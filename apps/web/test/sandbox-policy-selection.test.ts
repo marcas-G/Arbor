@@ -54,7 +54,7 @@ const commandContext = {
   networkDestinations: ["https://b.example", "https://a.example"],
 };
 
-describe("V6 selected sandbox candidate → existing P1 command mapping", () => {
+describe("V6 selected sandbox candidate → existing command mapping", () => {
   it("copies only the selected OS candidate digest and registry tuple", () => {
     const mapped = decideSandboxPolicyPayloadFromCandidate({
       ...commandContext,

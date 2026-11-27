@@ -34,7 +34,7 @@ const appLayer = () => {
   );
 };
 
-describe("SQLite P11 WorktreeStore", () => {
+describe("SQLite WorktreeStore", () => {
   it.effect(
     "reads exact active and retired managed bindings by Workspace",
     () =>

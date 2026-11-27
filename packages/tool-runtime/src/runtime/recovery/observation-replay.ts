@@ -7,7 +7,7 @@ import {
   type CanonicalToolObservation,
   type ClockService,
   canonicalArgumentsDigestV1,
-  type P39RecoveryEvidenceStoreService,
+  type RecoveryEvidenceStoreService,
   type SandboxProcessPolicyResolution,
   type SelectedP39RecoveryEvidence,
   type ToolDefinition,
@@ -36,7 +36,7 @@ export const makeObservationReplay = (
   store: ToolInvocationStoreService,
   observationEvidence: Option.Option<ToolObservationEvidenceStoreService>,
   replayAttentionFacts: Option.Option<ToolObservationReplayAttentionFactStoreService>,
-  p39RecoveryEvidence: Option.Option<P39RecoveryEvidenceStoreService>,
+  p39RecoveryEvidence: Option.Option<RecoveryEvidenceStoreService>,
 ) => {
   const replayFailureCode = (
     cause: unknown,

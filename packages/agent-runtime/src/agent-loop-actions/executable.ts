@@ -7,11 +7,11 @@ import type {
 } from "@arbor/ports";
 import { Effect } from "effect";
 import { safetyStop, stopRequestedSettlement } from "../agent-loop-policy.js";
-import { isDurableSuccessfulActionProgress } from "../p12-safety-identity.js";
 import {
   recoveryBindingIdentityFor,
   recoveryBindingPolicyRevisionsFor,
 } from "../recovery-binding-source.js";
+import { isDurableSuccessfulActionProgress } from "../safety-identity.js";
 import {
   actionRejectionObservation,
   isLeaseFencingRejected,

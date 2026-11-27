@@ -136,7 +136,7 @@ export class SandboxProviderUnavailableAttentionQueue extends Context.Service<
   SandboxProviderUnavailableAttentionQueueService
 >()("arbor/SandboxProviderUnavailableAttentionQueue") {}
 
-export type P4SandboxUnavailableObservationV1 =
+export type SandboxUnavailableObservationV1 =
   import("./tool-observation-evidence.js").SandboxProviderUnavailableObservationV1 & {
     readonly invocationId: string;
     readonly executionId: ExecutionId;
@@ -146,18 +146,18 @@ export type P4SandboxUnavailableObservationV1 =
 
 /** Read-only bridge for the short interval after exact P4 terminal evidence
  * commits but before P9 materializes its immutable fact and queue row. */
-export interface P4SandboxOutcomeReadPortService {
+export interface SandboxOutcomeReadPortService {
   readonly findUnavailableByExecutionAndRevision: (
     executionId: ExecutionId,
     policyRevision: number,
   ) => Effect.Effect<
-    ReadonlyArray<P4SandboxUnavailableObservationV1>,
+    ReadonlyArray<SandboxUnavailableObservationV1>,
     ToolObservationEvidenceStoreError,
     TransactionScope
   >;
 }
 
-export class P4SandboxOutcomeReadPort extends Context.Service<
-  P4SandboxOutcomeReadPort,
-  P4SandboxOutcomeReadPortService
->()("arbor/P4SandboxOutcomeReadPort") {}
+export class SandboxOutcomeReadPort extends Context.Service<
+  SandboxOutcomeReadPort,
+  SandboxOutcomeReadPortService
+>()("arbor/SandboxOutcomeReadPort") {}

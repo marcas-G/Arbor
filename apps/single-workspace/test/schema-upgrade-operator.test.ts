@@ -25,11 +25,6 @@ import {
 import { Effect } from "effect";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  createP39PrivateTestFile,
-  makeP39PrivateTestDirectory,
-  removeP39PrivateTestDirectory,
-} from "../../../tests/support/p39-windows-deployment-test.js";
-import {
   createCurrentSchemaTestDatabase,
   createSchema42TestDatabase,
   createSchema44TestDatabaseFactory,
@@ -38,6 +33,11 @@ import {
   type Schema44TestDatabase,
   type Schema44TestDatabaseFactory,
 } from "../../../tests/support/schema44-database.js";
+import {
+  createP39PrivateTestFile,
+  makeP39PrivateTestDirectory,
+  removeP39PrivateTestDirectory,
+} from "../../../tests/support/windows-deployment-qualification.js";
 import {
   formatSchemaUpgradeCliFailure,
   parseSchemaUpgradeArguments,
@@ -409,7 +409,7 @@ const withReadOnlyTarget = (
   }
 };
 
-describe("offline P39–P57 schema-upgrade CLI", () => {
+describe("offline –schema-upgrade CLI", () => {
   it("loops through short manifest writes and never flushes a stalled append", () => {
     const bytes = Buffer.from("append-only-record\n", "utf8");
     let output = Buffer.alloc(0);
@@ -446,18 +446,18 @@ describe("offline P39–P57 schema-upgrade CLI", () => {
 
   it("renders structured CLI failures without object dumps, paths, or secrets", () => {
     const message = formatSchemaUpgradeCliFailure({
-      _tag: "P39MaintenanceFailure",
+      _tag: "MaintenanceFailure",
       code: "P39_WRITER_LOCK_ACQUIRE_FAILED",
       cause: {
-        _tag: "P39WriterLockFailure",
+        _tag: "DatabaseWriterLockFailure",
         code: "P39_WRITER_LOCK_ACQUIRE_FAILED",
         reasonCode: "SQLITE_BUSY",
         message: "secret=not-for-output C:\\private\\db.sqlite",
       },
     });
     expect(message).toBe(
-      "P39MaintenanceFailure/P39_WRITER_LOCK_ACQUIRE_FAILED: " +
-        "P39WriterLockFailure/P39_WRITER_LOCK_ACQUIRE_FAILED/SQLITE_BUSY",
+      "MaintenanceFailure/P39_WRITER_LOCK_ACQUIRE_FAILED: " +
+        "DatabaseWriterLockFailure/P39_WRITER_LOCK_ACQUIRE_FAILED/SQLITE_BUSY",
     );
     expect(message).not.toContain("[object Object]");
     expect(message).not.toContain("private");
@@ -899,7 +899,7 @@ describe("offline P39–P57 schema-upgrade CLI", () => {
     CLI_PROCESS_TIMEOUT_MS,
   );
 
-  it("creates a P57 fresh target without accepting a source", async () => {
+  it("creates a fresh target without accepting a source", async () => {
     const directory = makeP39PrivateTestDirectory(
       process.cwd(),
       ".schema-upgrade-fresh-",
@@ -1238,7 +1238,7 @@ describe("offline P39–P57 schema-upgrade CLI", () => {
     600_000,
   );
 
-  it("upgrades an exact schema-51 source through P52 backfill and accepts schema-57 exact no-op", async () => {
+  it("upgrades an exact schema-51 source through backfill and accepts schema-57 exact no-op", async () => {
     const directory = makeP39PrivateTestDirectory(
       process.cwd(),
       ".schema-upgrade-50-noop-",

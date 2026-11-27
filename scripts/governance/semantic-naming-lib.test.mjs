@@ -15,10 +15,10 @@ test("path rule matches the historical p/ah planning-code shapes", () => {
   for (const path of [
     "tests/ah99-fake.test.ts",
     "tests/p3-driver.test.ts",
-    "tests/p10/actions.test.ts",
-    "packages/agent-runtime/src/p12-safety-identity.ts",
-    "adapters/persistence-sqlite/src/p39-maintenance.ts",
-    "tests/functional/support/ah19-conversation-native-owner-fixture.ts",
+    "tests/scenario-10/actions.test.ts",
+    "packages/agent-runtime/src/safety-identity.ts",
+    "adapters/persistence-sqlite/src/maintenance.ts",
+    "tests/functional/support/conversation-native-owner-fixture.ts",
   ])
     assert.equal(PATH_PATTERN.test(path), true, path);
   for (const path of [
@@ -47,14 +47,11 @@ test("symbol rule matches planning-coded declarations only", () => {
   const constDecl = "const ";
   const fnDecl = "function ";
   for (const [line, symbol] of [
-    [
-      `${head}P39WriterLockClient extends Context.Service<`,
-      "P39WriterLockClient",
-    ],
+    [`${head}WriterLockClient extends Context.Service<`, "WriterLockClient"],
     [`${iface}AH7RecoveryProbe {`, "AH7RecoveryProbe"],
     [
-      `${typeDecl}P4SandboxUnavailableObservationV1 =`,
-      "P4SandboxUnavailableObservationV1",
+      `${typeDecl}SandboxUnavailableObservationV1 =`,
+      "SandboxUnavailableObservationV1",
     ],
     [
       `${constDecl}P10AfterDeliverAttentionConsumerCommit = 1;`,
@@ -68,8 +65,8 @@ test("symbol rule matches planning-coded declarations only", () => {
     "export const schemaV57 = Schema.Struct({});",
     "function digest(input: string) { return sha256(input); }",
     "export class WriterLockClient {",
-    "import type { P39WriterLockFailure } from './p39-writer-lock.js';",
-    "  type P39MaintenanceFailure,",
+    "import type { WriterLockFailure } from './p39-writer-lock.js';",
+    "  type MaintenanceFailure,",
   ])
     assert.equal(symbolViolation(line), null, line);
 });
@@ -88,16 +85,15 @@ test("number exemption accepts protocol, algorithm and version numerals", () => 
     NUMBER_EXEMPT_PATTERN.test("ConversationCheckpointSourceManifestV1"),
     true,
   );
-  assert.equal(NUMBER_EXEMPT_PATTERN.test("P39WriterLockClient"), false);
-  assert.equal(NUMBER_EXEMPT_PATTERN.test("AH7RecoveryProbe"), false);
+  assert.equal(NUMBER_EXEMPT_PATTERN.test("WriterLockClient"), false);
+  assert.equal(NUMBER_EXEMPT_PATTERN.test("RecoveryProbe"), false);
   // The planning code wins over a trailing version suffix.
-  const versioned = [
-    "export type ",
-    "P4SandboxUnavailableObservationV1 =",
-  ].join("");
+  const versioned = ["export type ", "SandboxUnavailableObservationV1 ="].join(
+    "",
+  );
   assert.equal(
     symbolViolation(versioned)?.symbol,
-    "P4SandboxUnavailableObservationV1",
+    "SandboxUnavailableObservationV1",
   );
 });
 

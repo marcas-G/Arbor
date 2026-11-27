@@ -11,7 +11,7 @@ import {
   type ClockService,
   type CommittedSandboxPolicyDecisionV1,
   type CurrentSandboxAuthoritySnapshotPortService,
-  type P39RecoveryEvidenceStoreService,
+  type RecoveryEvidenceStoreService,
   type SandboxPolicyDecisionStoreService,
   type SandboxPolicyRequirementReadPortService,
   type SandboxProviderUnavailableStoreService,
@@ -105,7 +105,7 @@ export const checkExecutionPolicyBeforeDispatch = (
   workspaceAuthorizations: Option.Option<WorkspaceSandboxAuthorizationStoreService>,
   policyWorkspaces: Option.Option<WorkspaceRepositoryService>,
   attentionProjection: Option.Option<AttentionProjectionStoreService>,
-  p39RecoveryEvidence: Option.Option<P39RecoveryEvidenceStoreService>,
+  p39RecoveryEvidence: Option.Option<RecoveryEvidenceStoreService>,
   sandboxUnavailableStore: Option.Option<SandboxProviderUnavailableStoreService>,
 ) =>
   Effect.gen(function* () {

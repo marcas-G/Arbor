@@ -23,7 +23,7 @@ import {
   waitForMarker,
 } from "./support.js";
 
-test("P12 exact replay activates restored path online in the same daemon", async () => {
+test("exact replay activates restored path online in the same daemon", async () => {
   const markerDirectory = mkdtempSync(
     join(tmpdir(), "arbor-f21-online-replay-"),
   );

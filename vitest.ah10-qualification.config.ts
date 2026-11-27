@@ -2,14 +2,14 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    globalSetup: ["./tests/support/p39-windows-global-setup.ts"],
-    setupFiles: ["./tests/support/p39-windows-test-setup.ts"],
+    globalSetup: ["./tests/support/windows-global-setup.ts"],
+    setupFiles: ["./tests/support/windows-test-setup.ts"],
     include: [
-      "tests/functional/process/ah10-child/committed-receipts.functional.test.ts",
-      "tests/functional/process/ah10-child/corrupt-binding-attention.functional.test.ts",
-      "tests/functional/process/ah10-child/legacy-upgrade.functional.test.ts",
-      "tests/functional/process/ah10-child/target-degradation.functional.test.ts",
-      "tests/functional/process/ah10-p10-attention-materialization.functional.test.ts",
+      "tests/functional/process/child/committed-receipts.functional.test.ts",
+      "tests/functional/process/child/corrupt-binding-attention.functional.test.ts",
+      "tests/functional/process/child/legacy-upgrade.functional.test.ts",
+      "tests/functional/process/child/target-degradation.functional.test.ts",
+      "tests/functional/process/attention-materialization.functional.test.ts",
     ],
     exclude: ["**/node_modules/**"],
     testTimeout: 180_000,

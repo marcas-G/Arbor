@@ -96,9 +96,9 @@ try {
   // Ship those exact audit inputs; never bypass the pins in a distribution.
   const provenanceFiles = [
     "apps/single-workspace/src/retry-verification-origin-backfill.ts",
-    "adapters/persistence-sqlite/src/p46-verification-evidence-snapshot-migration.ts",
-    "adapters/persistence-sqlite/src/p51-verification-v2-consumer-reconciliation-migration.ts",
-    "adapters/persistence-sqlite/src/p52-work-contract-revision-migration.ts",
+    "adapters/persistence-sqlite/src/verification-evidence-snapshot-migration.ts",
+    "adapters/persistence-sqlite/src/verification-v2-consumer-reconciliation-migration.ts",
+    "adapters/persistence-sqlite/src/work-contract-revision-migration.ts",
   ];
   for (const name of provenanceFiles) {
     mkdirSync(dirname(join(bundle, name)), { recursive: true });

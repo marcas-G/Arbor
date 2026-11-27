@@ -27,8 +27,8 @@ import {
 import type { SandboxAuthorityLoadErrorV1 } from "@arbor/domain";
 import {
   moveP39ProtectedFileAtomically,
-  validateP39ProtectedDirectory,
-  validateP39ProtectedFile,
+  validateProtectedDirectory,
+  validateProtectedFile,
 } from "@arbor/persistence-sqlite";
 import {
   SandboxAuthorityProvisioningStore,
@@ -145,7 +145,7 @@ export const makeSandboxAuthorityProvisioningFileStore = (
       const forensic = resolve(paths.forensicDirectory);
       if (
         !hasNoReparsePath(root, "directory") ||
-        !validateP39ProtectedDirectory(root)
+        !validateProtectedDirectory(root)
       )
         throw fileStoreError("ProtectedRootInvalid");
       if (
@@ -159,14 +159,11 @@ export const makeSandboxAuthorityProvisioningFileStore = (
         !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(paths.sourceIdentity)
       )
         throw fileStoreError("SourceIdentityInvalid");
-      if (
-        !hasNoReparsePath(source, "file") ||
-        !validateP39ProtectedFile(source)
-      )
+      if (!hasNoReparsePath(source, "file") || !validateProtectedFile(source))
         throw fileStoreError("SourcePathInvalid");
       if (
         !hasNoReparsePath(highWater, "file") ||
-        !validateP39ProtectedFile(highWater)
+        !validateProtectedFile(highWater)
       )
         throw fileStoreError("HighWaterPathInvalid");
       if (!exactPosixMode(root, 0o700))
@@ -188,7 +185,7 @@ export const makeSandboxAuthorityProvisioningFileStore = (
         !existsSync(forensic) ||
         !hasNoReparsePath(forensic, "directory") ||
         statSync(forensic, { bigint: true }).dev !== rootDevice ||
-        !validateP39ProtectedDirectory(forensic) ||
+        !validateProtectedDirectory(forensic) ||
         !exactPosixMode(forensic, 0o700)
       )
         throw fileStoreError("ForensicDirectoryInvalid");
@@ -215,7 +212,7 @@ export const makeSandboxAuthorityProvisioningFileStore = (
         if (
           !hasNoReparsePath(temporary, "file") ||
           statSync(temporary, { bigint: true }).dev !== rootDevice ||
-          !validateP39ProtectedFile(temporary) ||
+          !validateProtectedFile(temporary) ||
           !exactPosixMode(temporary, 0o600)
         )
           return false;
@@ -235,7 +232,7 @@ export const makeSandboxAuthorityProvisioningFileStore = (
         return (
           moved &&
           hasNoReparsePath(target, "file") &&
-          validateP39ProtectedFile(target) &&
+          validateProtectedFile(target) &&
           exactPosixMode(target, 0o600) &&
           readFileSync(target, "utf8") === exactBytes
         );
@@ -246,8 +243,8 @@ export const makeSandboxAuthorityProvisioningFileStore = (
             if (
               !hasNoReparsePath(root, "directory") ||
               !hasNoReparsePath(source, "file") ||
-              !validateP39ProtectedDirectory(root) ||
-              !validateP39ProtectedFile(source)
+              !validateProtectedDirectory(root) ||
+              !validateProtectedFile(source)
             )
               throw new Error("source protection changed");
             const canonicalJson = readFileSync(source, "utf8");
@@ -266,8 +263,8 @@ export const makeSandboxAuthorityProvisioningFileStore = (
             if (
               !hasNoReparsePath(root, "directory") ||
               !hasNoReparsePath(highWater, "file") ||
-              !validateP39ProtectedDirectory(root) ||
-              !validateP39ProtectedFile(highWater)
+              !validateProtectedDirectory(root) ||
+              !validateProtectedFile(highWater)
             )
               throw new Error("high-water protection changed");
             return readFileSync(highWater, "utf8");
@@ -281,7 +278,7 @@ export const makeSandboxAuthorityProvisioningFileStore = (
           result(() => {
             if (
               !hasNoReparsePath(forensic, "directory") ||
-              !validateP39ProtectedDirectory(forensic)
+              !validateProtectedDirectory(forensic)
             )
               throw new Error("audit directory protection changed");
             if (!existsSync(auditFile)) {
@@ -290,7 +287,7 @@ export const makeSandboxAuthorityProvisioningFileStore = (
             }
             if (
               !hasNoReparsePath(auditFile, "file") ||
-              !validateP39ProtectedFile(auditFile) ||
+              !validateProtectedFile(auditFile) ||
               !exactPosixMode(auditFile, 0o600)
             )
               throw new Error("audit file protection changed");
@@ -308,9 +305,9 @@ export const makeSandboxAuthorityProvisioningFileStore = (
           result(() => {
             if (
               !hasNoReparsePath(forensic, "directory") ||
-              !validateP39ProtectedDirectory(forensic) ||
+              !validateProtectedDirectory(forensic) ||
               !hasNoReparsePath(auditFile, "file") ||
-              !validateP39ProtectedFile(auditFile) ||
+              !validateProtectedFile(auditFile) ||
               !exactPosixMode(auditFile, 0o600)
             )
               throw new Error("audit protection changed");
@@ -328,13 +325,13 @@ export const makeSandboxAuthorityProvisioningFileStore = (
             const filename = join(forensic, `${evidenceId}.raw`);
             if (
               !hasNoReparsePath(forensic, "directory") ||
-              !validateP39ProtectedDirectory(forensic)
+              !validateProtectedDirectory(forensic)
             )
               throw new Error("forensic directory protection changed");
             if (!existsSync(filename)) atomicCreateOnly(filename, exactBytes);
             if (
               !hasNoReparsePath(filename, "file") ||
-              !validateP39ProtectedFile(filename) ||
+              !validateProtectedFile(filename) ||
               !exactPosixMode(filename, 0o600) ||
               readFileSync(filename, "utf8") !== exactBytes
             )
@@ -349,7 +346,7 @@ export const makeSandboxAuthorityProvisioningFileStore = (
             if (!existsSync(filename)) return undefined;
             if (
               !hasNoReparsePath(filename, "file") ||
-              !validateP39ProtectedFile(filename) ||
+              !validateProtectedFile(filename) ||
               !exactPosixMode(filename, 0o600)
             )
               throw new Error("forensic evidence protection changed");
@@ -361,7 +358,7 @@ export const makeSandboxAuthorityProvisioningFileStore = (
             if (digest === undefined) throw new Error("evidence ref malformed");
             if (
               !hasNoReparsePath(forensic, "directory") ||
-              !validateP39ProtectedDirectory(forensic)
+              !validateProtectedDirectory(forensic)
             )
               throw new Error("forensic directory protection changed");
             for (const name of readdirSync(forensic)) {
@@ -373,7 +370,7 @@ export const makeSandboxAuthorityProvisioningFileStore = (
               const filename = join(forensic, name);
               if (
                 !hasNoReparsePath(filename, "file") ||
-                !validateP39ProtectedFile(filename) ||
+                !validateProtectedFile(filename) ||
                 !exactPosixMode(filename, 0o600)
               )
                 throw new Error("forensic evidence protection changed");
@@ -389,8 +386,8 @@ export const makeSandboxAuthorityProvisioningFileStore = (
         if (
           !hasNoReparsePath(root, "directory") ||
           !hasNoReparsePath(target, "file") ||
-          !validateP39ProtectedDirectory(root) ||
-          !validateP39ProtectedFile(target)
+          !validateProtectedDirectory(root) ||
+          !validateProtectedFile(target)
         )
           return false;
         const targetDevice = statSync(target, { bigint: true }).dev;
@@ -409,7 +406,7 @@ export const makeSandboxAuthorityProvisioningFileStore = (
         if (
           !hasNoReparsePath(temporary, "file") ||
           statSync(temporary, { bigint: true }).dev !== targetDevice ||
-          !validateP39ProtectedFile(temporary) ||
+          !validateProtectedFile(temporary) ||
           !exactPosixMode(temporary, 0o600)
         ) {
           // The unique temporary has no authority and is deliberately left
@@ -427,7 +424,7 @@ export const makeSandboxAuthorityProvisioningFileStore = (
         if (!moved) return false;
         return (
           hasNoReparsePath(target, "file") &&
-          validateP39ProtectedFile(target) &&
+          validateProtectedFile(target) &&
           exactPosixMode(target, 0o600) &&
           readFileSync(target, "utf8") === exactBytes
         );

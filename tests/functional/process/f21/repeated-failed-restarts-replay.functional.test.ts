@@ -6,7 +6,7 @@ import { expect, test } from "vitest";
 import { startProductionFixture } from "../../support/production-fixture.js";
 import { makeEnvelope } from "./support.js";
 
-test("P12 keeps one Pending Attention across repeated failed restarts then exact replay activates once", async () => {
+test("keeps one Pending Attention across repeated failed restarts then exact replay activates once", async () => {
   const fixture = await startProductionFixture({
     admitWorkspaceDirectory: true,
     reply: () => ({ _tag: "Text", text: "No model call expected" }),

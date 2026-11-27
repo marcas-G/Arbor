@@ -23,7 +23,7 @@ afterEach(async () => {
   for (const fixture of fixtures.splice(0)) await fixture.stop();
 });
 
-describe("AH4 terminal Provider failure to SettlementProposed", () => {
+describe("terminal Provider failure to SettlementProposed", () => {
   for (const boundary of [
     "AH4BeforeSettlementProposal",
     "AH4AfterSettlementProposal",

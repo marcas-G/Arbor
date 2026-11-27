@@ -64,7 +64,7 @@ import {
   AssignWorkTargetBindingRepositoryLive,
   AttentionPollStoreLive,
   type AttentionProjectionQualificationProbe,
-  acquireP39RuntimeWriterPermit,
+  acquireRuntimeWriterPermit,
   ClockLive,
   CommandStoreLive,
   CompletionHoldReadLive,
@@ -81,6 +81,8 @@ import {
   DeliverableRepositoryLive,
   DependencyRepositoryLive,
   DomainEventJournalLive,
+  databaseWriterLockFilename,
+  databaseWriterLockLayer,
   EnvironmentRevisionStoreLive,
   EvidenceRepositoryLive,
   ExecutableApprovalStoreLive,
@@ -100,14 +102,12 @@ import {
   makeTransactionPortLive,
   OwnershipWriteServiceLive,
   OwnershipWriteServiceWithQualificationProbe,
-  P4SandboxOutcomeReadPortLive,
   P12_MIGRATIONS,
   P16_MIGRATIONS,
   P17_MIGRATIONS,
   P20_MIGRATIONS,
   P21_MIGRATIONS,
   P22_MIGRATIONS,
-  type P39RecoveryBindingQualificationProbe,
   PermissionGrantRepositoryLive,
   ProjectDirectoryLive,
   ProjectionStoreLive,
@@ -116,16 +116,16 @@ import {
   ProviderDeploymentBreakerLive,
   ProviderTurnStoreLive,
   p39UnsupportedDeployment,
-  p39WriterLockFilename,
-  p39WriterLockLayer,
-  prepareP39PrimaryDatabasePath,
+  preparePrimaryDatabasePath,
   RecordEnvironmentChangeLive,
   type RecoveryAttentionFactQualificationProbe,
+  type RecoveryBindingQualificationProbe,
   ResourceOwnershipRepositoryLive,
   RetryVerificationOriginRepositoryLive,
   RuntimeClockLive,
-  releaseP39WriterPermit,
+  releaseDatabaseWriterPermit,
   runMigrations,
+  SandboxOutcomeReadPortLive,
   SandboxPolicyDecisionStoreLive,
   SandboxPolicyRequirementReadPortLive,
   SandboxProviderUnavailableAttentionQueueLive,
@@ -487,7 +487,7 @@ export interface SingleWorkspaceConfig {
   /** Test-only catalog visibility diagnostic; ordinary startup leaves absent. */
   readonly executableToolQualificationProbe?: ExecutableToolHandlerQualificationProbe;
   /** Test-only P39 claim branch trace; ordinary startup leaves absent. */
-  readonly p39RecoveryBindingQualificationProbe?: P39RecoveryBindingQualificationProbe;
+  readonly p39RecoveryBindingQualificationProbe?: RecoveryBindingQualificationProbe;
   /** Test-only process-local observation of P1 sandbox preparation stages. */
   readonly sandboxPolicyDecisionPreparationQualificationProbe?: SandboxPolicyDecisionPreparationQualificationProbe;
   readonly providerQualificationProbe?: ProviderRuntimeConfig["qualificationProbe"];
@@ -600,7 +600,7 @@ const buildSingleWorkspaceLayerInternal = (
   const preparedDatabase =
     config.databaseFile === ":memory:"
       ? undefined
-      : prepareP39PrimaryDatabasePath(config.databaseFile);
+      : preparePrimaryDatabasePath(config.databaseFile);
   try {
     config.startupDiagnosticProbe?.("p39.layer-path-validation.after");
   } catch {
@@ -926,7 +926,7 @@ const buildSingleWorkspaceLayerInternal = (
       infra,
     ),
     Layer.provide(ToolObservationEvidenceStoreLive, infra),
-    Layer.provide(P4SandboxOutcomeReadPortLive, infra),
+    Layer.provide(SandboxOutcomeReadPortLive, infra),
     Layer.provide(ArtifactMetadataRepositoryLive, infra),
     Layer.provide(WorkWaitStoreLive, infra),
     Layer.provide(SchedulerTimerStoreLive, infra),
@@ -1502,13 +1502,13 @@ const buildSingleWorkspaceLayerInternal = (
           // Test-only startup diagnostics are non-authoritative.
         }
         if (preparedDatabase !== undefined) {
-          const lock = p39WriterLockFilename(primaryDatabaseFilename);
+          const lock = databaseWriterLockFilename(primaryDatabaseFilename);
           if (
             typeof lock !== "string" ||
             lock !== preparedDatabase.writerLockFilename
           ) {
             return yield* Effect.die({
-              _tag: "P39MaintenanceFailure",
+              _tag: "MaintenanceFailure",
               code: "P39_UNSUPPORTED_DEPLOYMENT",
             });
           }
@@ -1550,11 +1550,11 @@ const buildSingleWorkspaceLayerInternal = (
   }
   const p39WriterPermit = Layer.provide(
     Layer.effectDiscard(
-      Effect.acquireRelease(acquireP39RuntimeWriterPermit(), (permit) =>
-        releaseP39WriterPermit(permit).pipe(Effect.orDie),
+      Effect.acquireRelease(acquireRuntimeWriterPermit(), (permit) =>
+        releaseDatabaseWriterPermit(permit).pipe(Effect.orDie),
       ),
     ),
-    p39WriterLockLayer(preparedDatabase.writerLockFilename),
+    databaseWriterLockLayer(preparedDatabase.writerLockFilename),
   );
   const p39StartupGate = Layer.provide(currentSchemaGate, p39WriterPermit);
   return Layer.provide(

@@ -26,7 +26,7 @@ import {
   p7SeedCommandId,
   p7SeedProject,
   runP7,
-} from "./support/p7-app.js";
+} from "./support/consumer-harness.js";
 
 const principal = parse(Principal)("user:gov");
 const executionId = parse(ExecutionId)(
@@ -191,7 +191,7 @@ const sqlEventCount = Effect.gen(function* () {
   return Number(rows[0]?.count);
 });
 
-describe("P2 recovery command identity", () => {
+describe("recovery command identity", () => {
   it("derives stable, valid UUIDv7 CommandIds for both deterministic recovery branches", async () => {
     const completion = await exerciseRecoveryBranch("completion");
     const stop = await exerciseRecoveryBranch("stop");

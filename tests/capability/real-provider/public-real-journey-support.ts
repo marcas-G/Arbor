@@ -24,7 +24,7 @@ import {
   createP39PrivateTestFile,
   makeP39PrivateTestDirectory,
   removeP39PrivateTestDirectory,
-} from "../../support/p39-windows-deployment-test.js";
+} from "../../support/windows-deployment-qualification.js";
 import { readProviderCaptures } from "./provider-response-gate.js";
 import type {
   CapturedProviderToolCall,

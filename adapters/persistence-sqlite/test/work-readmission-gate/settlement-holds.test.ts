@@ -15,7 +15,7 @@ import {
   workspaceId,
 } from "./support.js";
 
-describe("P2 WorkReadmissionGateStore", () => {
+describe("WorkReadmissionGateStore", () => {
   it("holds the exact Work revision after a persisted sandbox-provider-unavailable fact", () =>
     runDb(
       Effect.gen(function* () {
@@ -109,7 +109,7 @@ describe("P2 WorkReadmissionGateStore", () => {
       }),
     ));
 
-  it("derives a hold from the P9 fact and its exact event witness without waiting for settlement", () =>
+  it("derives a hold from the fact and its exact event witness without waiting for settlement", () =>
     runDb(
       Effect.gen(function* () {
         yield* seed();

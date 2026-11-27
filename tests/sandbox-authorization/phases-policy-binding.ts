@@ -5,7 +5,7 @@ import {
   layer,
   runMigrations,
 } from "../../adapters/persistence-sqlite/src/index.js";
-import { P57_WORKSPACE_SANDBOX_AUTHORIZATION_MIGRATION } from "../../adapters/persistence-sqlite/src/p57-workspace-sandbox-authorization-migration.js";
+import { P57_WORKSPACE_SANDBOX_AUTHORIZATION_MIGRATION } from "../../adapters/persistence-sqlite/src/workspace-sandbox-authorization-migration.js";
 import { AuthorityResolverPort } from "../../packages/application/src/authority-resolver.js";
 import type { BindWorkspaceSandboxPolicyPayload } from "../../packages/application/src/commands/bind-workspace-sandbox-policy.js";
 import type { DecideSandboxPolicyPreparation } from "../../packages/application/src/commands/decide-sandbox-policy.js";

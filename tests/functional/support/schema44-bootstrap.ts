@@ -30,13 +30,13 @@ import {
 } from "../../../adapters/persistence-sqlite/src/index.js";
 import { backfillRetryVerificationOrigins } from "../../../apps/single-workspace/src/retry-verification-origin-backfill.js";
 import {
-  removeP39PrivateTestDirectory,
-  setP39PrivateWindowsAcl,
-} from "../../support/p39-windows-deployment-test.js";
-import {
   createSchema44TestDatabase,
   type Schema44TestDatabase,
 } from "../../support/schema44-database.js";
+import {
+  removeP39PrivateTestDirectory,
+  setPrivateWindowsAcl,
+} from "../../support/windows-deployment-qualification.js";
 
 const manifestEnvironmentKey = "ARBOR_FUNCTIONAL_SCHEMA44_MANIFEST";
 const manifestFilename = "schema44-manifest.json";
@@ -65,7 +65,7 @@ export const createFunctionalSchema44Template = async (): Promise<
   let template: Schema44TestDatabase | undefined;
   let cleaned = false;
   try {
-    setP39PrivateWindowsAcl(root, "directory");
+    setPrivateWindowsAcl(root, "directory");
     template = await createSchema44TestDatabase({
       prefix: "template-",
       parentDirectory: root,
@@ -78,7 +78,7 @@ export const createFunctionalSchema44Template = async (): Promise<
     };
     const path = join(root, manifestFilename);
     writeFileSync(path, JSON.stringify(manifest), { mode: 0o600 });
-    setP39PrivateWindowsAcl(path, "file");
+    setPrivateWindowsAcl(path, "file");
     process.env[manifestEnvironmentKey] = path;
   } catch (error) {
     template?.cleanup();
@@ -154,9 +154,9 @@ export const replaceFunctionalFixtureWithSchema48Source = async (
   const databaseFile = join(directory, "arbor-functional.db");
   const reportFile = join(directory, "arbor-functional-p39-report.db");
   copyFileSync(manifest.primary, databaseFile, 0);
-  setP39PrivateWindowsAcl(databaseFile, "file");
+  setPrivateWindowsAcl(databaseFile, "file");
   copyFileSync(manifest.report, reportFile, 0);
-  setP39PrivateWindowsAcl(reportFile, "file");
+  setPrivateWindowsAcl(reportFile, "file");
   const database = new DatabaseSync(databaseFile);
   try {
     database.exec("PRAGMA foreign_keys = ON; BEGIN IMMEDIATE");
@@ -412,7 +412,7 @@ export const createFunctionalFixtureDirectory = (): string => {
   const manifest = readManifest();
   const directory = mkdtempSync(join(manifest.root, "fixture-"));
   try {
-    setP39PrivateWindowsAcl(directory, "directory");
+    setPrivateWindowsAcl(directory, "directory");
     return directory;
   } catch (cause) {
     removeP39PrivateTestDirectory(directory);

@@ -16,7 +16,7 @@ import {
   grantTrustedLocalP11Permission,
   initializeTrustedLocalP11Worktree,
   readCommittedTrustedLocalP11Snapshot,
-} from "../../../functional/support/trusted-local-p11-fixture.js";
+} from "../../../functional/support/trusted-local-fixture.js";
 import {
   armProviderResponseGate,
   captureWorkspaceSnapshot,

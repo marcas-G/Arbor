@@ -4,8 +4,8 @@ import {
   type ClockService,
   type ExecutableApprovalStoreService,
   executableApprovalBindingMatches,
-  type P39RecoveryEvidenceStoreService,
   type RecoveryBindingV1,
+  type RecoveryEvidenceStoreService,
   type ResourceAdmissionService,
   reconciliationFactId,
   type ToolAuthorityResolverService,
@@ -79,7 +79,7 @@ export const reconcileAdmittedInvocation = (
   clock: ClockService,
   store: ToolInvocationStoreService,
   admission: ResourceAdmissionService,
-  p39Recovery: Option.Option<P39RecoveryEvidenceStoreService>,
+  p39Recovery: Option.Option<RecoveryEvidenceStoreService>,
   reconciliationPort: Option.Option<ToolReconciliationPortService>,
   reconciliationFacts: Option.Option<ToolReconciliationFactStoreService>,
   observationEvidence: Option.Option<ToolObservationEvidenceStoreService>,
@@ -266,7 +266,7 @@ export const reconcileAdmittedInvocation = (
               );
               if (fact.factId !== factId) {
                 return yield* Effect.fail({
-                  _tag: "P39ReconciliationFactIdentityMismatch",
+                  _tag: "ReconciliationFactIdentityMismatch",
                 });
               }
 
@@ -497,7 +497,7 @@ export const reconcileAdmittedInvocation = (
             operationalFailure(
               "SettlementJournal",
               String(intent.invocationId),
-            )({ _tag: "P39ReconciliationFactIdentityMismatch" }),
+            )({ _tag: "ReconciliationFactIdentityMismatch" }),
           );
         }
         recoveredToolOutcome = {
@@ -594,7 +594,7 @@ export const reconcileAdmittedInvocation = (
           operationalFailure(
             "SettlementJournal",
             String(intent.invocationId),
-          )({ _tag: "P39ReconciliationFactIdentityMismatch" }),
+          )({ _tag: "ReconciliationFactIdentityMismatch" }),
         );
       }
       pendingReconciliation = {

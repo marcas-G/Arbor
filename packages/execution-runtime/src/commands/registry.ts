@@ -19,7 +19,7 @@ import {
 import { makeSettleExecutionHandler } from "./settle-execution.js";
 import { makeStopExecutionHandler } from "./stop-execution.js";
 
-export interface P2CommandDependencies {
+export interface ExecutionCommandDependencies {
   readonly projects: import("@arbor/ports").ProjectRepositoryService;
   readonly workspaces: import("@arbor/ports").WorkspaceRepositoryService;
   readonly sessions: import("@arbor/ports").SessionRepositoryService;
@@ -47,7 +47,7 @@ export interface P2CommandDependencies {
 }
 
 export const makeP2CommandHandlers = (
-  dependencies: P2CommandDependencies,
+  dependencies: ExecutionCommandDependencies,
 ): ReadonlyArray<CommandHandler<unknown, unknown>> => {
   const executableApprovals = dependencies.executableApprovals ?? {
     // Test/legacy compositions without the P38 port fail closed on Stop;

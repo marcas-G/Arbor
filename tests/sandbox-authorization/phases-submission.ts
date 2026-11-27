@@ -4,7 +4,7 @@ import {
   layer,
   runMigrations,
 } from "../../adapters/persistence-sqlite/src/index.js";
-import { P57_WORKSPACE_SANDBOX_AUTHORIZATION_MIGRATION } from "../../adapters/persistence-sqlite/src/p57-workspace-sandbox-authorization-migration.js";
+import { P57_WORKSPACE_SANDBOX_AUTHORIZATION_MIGRATION } from "../../adapters/persistence-sqlite/src/workspace-sandbox-authorization-migration.js";
 import { buildSingleWorkspaceLayer } from "../../apps/single-workspace/src/composition.js";
 import { makeExternalSubmissionFromServices } from "../../apps/single-workspace/src/transport/composition.js";
 import { ProjectionQueryPort } from "../../packages/ports/src/index.js";

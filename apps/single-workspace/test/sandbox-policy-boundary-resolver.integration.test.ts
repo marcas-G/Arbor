@@ -17,7 +17,7 @@ const workspaceId = parse(WorkspaceId)(
   "ws_018f2b3c-4d5e-7abc-8def-0123456789a1",
 );
 
-describe("P11 resolver → complete sandbox boundary integration", () => {
+describe("resolver → complete sandbox boundary integration", () => {
   it.effect(
     "uses resolver-normalized alias sets for relative and dot-segment paths",
     () =>

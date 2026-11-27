@@ -111,7 +111,7 @@ const read = (input: {
   );
 };
 
-describe("V6 complete P11 candidate boundary read", () => {
+describe("V6 complete candidate boundary read", () => {
   it("pins one complete observation, exact ownership records and primary worktree", async () => {
     const claims = [
       {
@@ -138,7 +138,7 @@ describe("V6 complete P11 candidate boundary read", () => {
     expect(result.observationCalls).toBe(1);
   });
 
-  it("uses the authoritative GitWorktree binding when P11 collapses a FileTree alias", async () => {
+  it("uses the authoritative GitWorktree binding when collapses a FileTree alias", async () => {
     const fileTreeAddress = {
       _tag: "FileTree" as const,
       path: address.path,

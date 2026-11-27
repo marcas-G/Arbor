@@ -8,35 +8,35 @@ const root = join(import.meta.dirname, "..", "..");
 const historicalSchemaFixtureOwners = [
   // Migration descriptors and exact predecessor-prefix qualification.
   "adapters/persistence-sqlite/test/native-os-sandbox-storage-migration.test.ts",
-  "adapters/persistence-sqlite/test/p40-observation-store-gates.test.ts",
-  "adapters/persistence-sqlite/test/p41-submitted-decision-binding-storage.test.ts",
-  "adapters/persistence-sqlite/test/p42-project-resource-source-migration.test.ts",
-  "adapters/persistence-sqlite/test/p43-work-blocker-store.test.ts",
-  "adapters/persistence-sqlite/test/p44-approval-rejected-no-effect-migration.test.ts",
-  "adapters/persistence-sqlite/test/p45-retry-verification-origin-migration.test.ts",
-  "adapters/persistence-sqlite/test/p47-ah14-legacy-adoption-attention-migration.test.ts",
-  "adapters/persistence-sqlite/test/p48-ah19-conversation-checkpoint-owner-migration.test.ts",
-  "adapters/persistence-sqlite/test/p51-verification-v2-consumer-reconciliation-migration.test.ts",
-  "adapters/persistence-sqlite/test/p56-linux-network-compatibility.test.ts",
+  "adapters/persistence-sqlite/test/observation-store-gates.test.ts",
+  "adapters/persistence-sqlite/test/submitted-decision-binding-storage.test.ts",
+  "adapters/persistence-sqlite/test/project-resource-source-migration.test.ts",
+  "adapters/persistence-sqlite/test/work-blocker-store.test.ts",
+  "adapters/persistence-sqlite/test/approval-rejected-no-effect-migration.test.ts",
+  "adapters/persistence-sqlite/test/retry-verification-origin-migration.test.ts",
+  "adapters/persistence-sqlite/test/legacy-adoption-attention-migration.test.ts",
+  "adapters/persistence-sqlite/test/conversation-checkpoint-owner-migration.test.ts",
+  "adapters/persistence-sqlite/test/verification-v2-consumer-reconciliation-migration.test.ts",
+  "adapters/persistence-sqlite/test/linux-network-compatibility.test.ts",
   "adapters/persistence-sqlite/test/sandbox-policy-grant-provenance-repository.test.ts",
   "adapters/persistence-sqlite/test/verification-signal-reconciliation-store.test.ts",
   "adapters/persistence-sqlite/test/schema42-database-fixture.test.ts",
   "adapters/persistence-sqlite/test/schema44-database-fixture.test.ts",
-  "apps/single-workspace/test/p6-inbox-rebuild-fixture-child.test.ts",
+  "apps/single-workspace/test/inbox-rebuild-fixture-child.test.ts",
   // P6 is an exact historical schema-48 operator; its shared template is not
   // an ordinary current-runtime fixture.
-  "apps/single-workspace/test/p6-inbox-rebuild.test.ts",
+  "apps/single-workspace/test/inbox-rebuild-operator.test.ts",
   "apps/single-workspace/test/retry-verification-origin-backfill.test.ts",
   "apps/single-workspace/test/schema-upgrade-operator.test.ts",
-  "tests/functional/process/ah10-child/support-legacy-image.ts",
+  "tests/functional/process/child/support-legacy-image.ts",
   "tests/functional/support/schema44-bootstrap.ts",
   // Explicit legacy/fail-closed replay qualification.
-  "adapters/persistence-sqlite/test/p40-observation-schema44-fail-closed.test.ts",
-  "tests/p4-schema44-profileless-shell2-recovery.test.ts",
+  "adapters/persistence-sqlite/test/observation-schema44-fail-closed.test.ts",
+  "tests/schema44-profileless-shell2-recovery.test.ts",
   "tests/sandbox-authorization/support.ts",
   // The runtime schema gate deliberately manufactures old versions to reject
   // them and explicitly upgrades 48 -> current in its positive control.
-  "apps/single-workspace/test/p38-runtime-schema-boundary.test.ts",
+  "apps/single-workspace/test/runtime-schema-boundary.test.ts",
 ] as const;
 
 const fixtureInfrastructure = new Set([

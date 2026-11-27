@@ -1,8 +1,8 @@
 import type { ToolInvocationId } from "@arbor/domain";
 import {
   canonicalizeRecoveryBindingV1,
-  P39RecoveryEvidenceStore,
   type RecoveryBindingV1,
+  RecoveryEvidenceStore,
   recoveryBindingV1Digest,
   type SelectedP39EffectAttempt,
   TransactionScope,
@@ -103,7 +103,7 @@ interface DeniedUnboundRow {
   readonly binding_invocation_id: string | null;
 }
 
-export type P39RecoveryBindingClaimBranch =
+export type RecoveryBindingClaimBranch =
   | "CreatedAtEmpty"
   | "CanonicalizationFailed"
   | "ExistingBindingRowInvalid"
@@ -113,7 +113,7 @@ export type P39RecoveryBindingClaimBranch =
   | "Attempt0AlreadyExists"
   | "BoundTransitionMismatch";
 
-interface P39RecoveryBindingClaimProbeIdentity {
+interface RecoveryBindingClaimProbeIdentity {
   readonly executionId: string;
   readonly invocationId: string;
   readonly providerTurnId: string;
@@ -127,26 +127,26 @@ interface P39RecoveryBindingClaimProbeIdentity {
   readonly approvalId: string | null;
 }
 
-export type P39RecoveryBindingQualificationProbe = (
+export type RecoveryBindingQualificationProbe = (
   event:
-    | (P39RecoveryBindingClaimProbeIdentity & {
+    | (RecoveryBindingClaimProbeIdentity & {
         readonly boundary: "P4P39BindClaimBranch";
-        readonly branch: P39RecoveryBindingClaimBranch;
+        readonly branch: RecoveryBindingClaimBranch;
       })
-    | (P39RecoveryBindingClaimProbeIdentity & {
+    | (RecoveryBindingClaimProbeIdentity & {
         readonly boundary: "P4P39ClaimBeforeCommit";
       }),
 ) => Promise<void>;
 
 export const makeP39RecoveryEvidenceStoreLive = (
-  qualificationProbe?: P39RecoveryBindingQualificationProbe,
-): Layer.Layer<P39RecoveryEvidenceStore, never, SqlClient> =>
+  qualificationProbe?: RecoveryBindingQualificationProbe,
+): Layer.Layer<RecoveryEvidenceStore, never, SqlClient> =>
   Layer.effect(
-    P39RecoveryEvidenceStore,
+    RecoveryEvidenceStore,
     Effect.gen(function* () {
       const sql = yield* SqlClient;
       const failure = repositoryFailure(
-        "P39RecoveryEvidenceStore",
+        "RecoveryEvidenceStore",
         "find-selected",
       );
       const run = <A>(effect: Effect.Effect<A, SqlError>) =>
@@ -155,7 +155,7 @@ export const makeP39RecoveryEvidenceStoreLive = (
       const corrupt = (reason: string) =>
         Effect.fail(
           persistenceCorruption(
-            "P39RecoveryEvidenceStore",
+            "RecoveryEvidenceStore",
             "find-selected",
             reason,
           ),
@@ -163,7 +163,7 @@ export const makeP39RecoveryEvidenceStoreLive = (
 
       const corruptClaim = (
         binding: RecoveryBindingV1,
-        branch: P39RecoveryBindingClaimBranch,
+        branch: RecoveryBindingClaimBranch,
         reason: string,
       ) =>
         Effect.gen(function* () {
@@ -285,7 +285,7 @@ export const makeP39RecoveryEvidenceStoreLive = (
             .pipe(
               Effect.mapError(
                 repositoryFailure(
-                  "P39RecoveryEvidenceStore",
+                  "RecoveryEvidenceStore",
                   "find-terminal-unbound-denial",
                 ),
               ),
@@ -310,7 +310,7 @@ export const makeP39RecoveryEvidenceStoreLive = (
           ) {
             return yield* Effect.fail(
               persistenceCorruption(
-                "P39RecoveryEvidenceStore",
+                "RecoveryEvidenceStore",
                 "find-terminal-unbound-denial",
                 "DeniedUnbound row has binding, reconciliation, or settlement fields outside its closed shape",
               ),
@@ -322,7 +322,7 @@ export const makeP39RecoveryEvidenceStoreLive = (
           });
         });
 
-      return P39RecoveryEvidenceStore.of({
+      return RecoveryEvidenceStore.of({
         bindClaim: (input: { binding: RecoveryBindingV1; createdAt: string }) =>
           Effect.gen(function* () {
             yield* TransactionScope;
@@ -912,4 +912,4 @@ export const makeP39RecoveryEvidenceStoreLive = (
   );
 
 /** Default production/test layer without diagnostic behavior. */
-export const P39RecoveryEvidenceStoreLive = makeP39RecoveryEvidenceStoreLive();
+export const RecoveryEvidenceStoreLive = makeP39RecoveryEvidenceStoreLive();

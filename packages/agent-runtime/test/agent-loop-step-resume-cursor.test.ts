@@ -78,7 +78,7 @@ const exhaustedRepairDisposition = {
   },
 } as const;
 
-describe("P9 AgentLoopStep resume cursor", () => {
+describe("AgentLoopStep resume cursor", () => {
   it("starts a fresh Execution at step zero", () => {
     expect(selectInitialAgentLoopStepCursor([])).toEqual({
       logicalStepNo: 0,

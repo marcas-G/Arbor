@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { SHELL_DEFINITION } from "../src/catalog.js";
 import { recoveryBindingToolDefinitionHashV1 } from "../src/runtime.js";
 
-describe("P39 ToolDefinition hash projection", () => {
+describe("ToolDefinition hash projection", () => {
   it("stores a SHA-256 of the stable definition token in RecoveryBindingV1", () => {
     const hash = recoveryBindingToolDefinitionHashV1(SHELL_DEFINITION);
 

@@ -2,7 +2,7 @@ import { release } from "node:os";
 import { describe, expect, it } from "vitest";
 import { sandboxPolicyCurrentHostV1 } from "../src/current-sandbox-authority-snapshot-port.js";
 
-describe("P5 trusted current-host tuple identity", () => {
+describe("trusted current-host tuple identity", () => {
   it("uses the fixed process.platform family mapping and os.release build", () => {
     const osFamily =
       process.platform === "linux"

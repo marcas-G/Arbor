@@ -94,7 +94,7 @@ const resolve = (value: AuthorityDecisionInput) =>
     return yield* resolver.resolve(value);
   }).pipe(Effect.provide(AuthorityResolverPortLive));
 
-describe("P12 sandbox GrantPermission issuer authority", () => {
+describe("sandbox GrantPermission issuer authority", () => {
   it.effect(
     "authorizes only the exact configured human issuer for an active exact Execution",
     () =>
@@ -169,7 +169,7 @@ describe("P12 sandbox GrantPermission issuer authority", () => {
   );
 });
 
-describe("P12 DecideSandboxPolicy CAPA preflight", () => {
+describe("DecideSandboxPolicy CAPA preflight", () => {
   const decisionInput = (overrides: Record<string, unknown> = {}) => {
     const decisionPayload = {
       projectId,
