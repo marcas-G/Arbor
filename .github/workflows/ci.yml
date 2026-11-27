@@ -45,7 +45,7 @@ jobs:
     # selection would have skipped in their step summaries. Planner
     # failures degrade to a conservative full-selection plan so lane
     # obligations never depend on this job's logic.
-    runs-on: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local') && 'ubuntu-24.04' || 'arbor-ci' }}
+    runs-on: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && 'ubuntu-24.04' || 'arbor-ci' }}
     container:
       image: node:24.21.0-bookworm
       options: --user 1000:1000 --cpus=2 --memory=8g
@@ -93,7 +93,7 @@ jobs:
     # artifacts — lint, types, architecture boundaries, manifests and the
     # naming ratchet. ~4 minutes; failures localize here without waiting
     # for the long lanes.
-    runs-on: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local') && 'ubuntu-24.04' || 'arbor-ci' }}
+    runs-on: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && 'ubuntu-24.04' || 'arbor-ci' }}
     container:
       image: node:24.21.0-bookworm
       options: --user 1000:1000 --cpus=2 --memory=8g
@@ -157,7 +157,7 @@ jobs:
 
   unit:
     # Build once, then core tests + the source-size ratchet + coverage.
-    runs-on: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local') && 'ubuntu-24.04' || 'arbor-ci' }}
+    runs-on: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && 'ubuntu-24.04' || 'arbor-ci' }}
     container:
       image: node:24.21.0-bookworm
       options: --user 1000:1000 --cpus=3 --memory=8g
@@ -231,7 +231,7 @@ jobs:
     # while 6-8 concurrent shards stay inside the CPU budget. The hosted
     # baseline measured 9-31 min per 6-way shard, so balance matters as
     # much as width.
-    runs-on: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local') && 'ubuntu-24.04' || 'arbor-ci' }}
+    runs-on: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && 'ubuntu-24.04' || 'arbor-ci' }}
     container:
       image: node:24.21.0-bookworm
       # Functional shards run one test file at a time but each bootstraps a
@@ -306,7 +306,7 @@ jobs:
     # The six Playwright browser specs. Kept out of the shards (which run
     # only .functional.test.ts and need no browser). The Microsoft apt
     # mirror 403s transiently on self-hosted runners — one retry.
-    runs-on: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local') && 'ubuntu-24.04' || 'arbor-ci' }}
+    runs-on: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && 'ubuntu-24.04' || 'arbor-ci' }}
     container:
       # Locally built from node:24.21.0-bookworm + Chromium libs + the
       # 1.63.0 browser build (MCR pulls stall on this host); served by the
@@ -406,7 +406,7 @@ jobs:
     # run summary and the uploaded snapshot.
     needs: [static, unit, functional, functional-ui, web]
     if: always()
-    runs-on: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local') && 'ubuntu-24.04' || 'arbor-ci' }}
+    runs-on: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && 'ubuntu-24.04' || 'arbor-ci' }}
     container:
       image: node:24.21.0-bookworm
       options: --user 1000:1000 --cpus=2 --memory=8g
