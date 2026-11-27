@@ -959,6 +959,12 @@ describe("real daemon SelectCurrentWork generation takeover", () => {
     expect(assignmentsSent).toBe(true);
     expect(waitSent).toBe(true);
     expect(selectionProviderCalls).toBe(1);
+    const observationsForExecution = (rows: ReturnType<typeof readRows>) =>
+      rows.observations.filter((observation) =>
+        observation.source_ref.startsWith(
+          `observation_${oldAction.executionId}_`,
+        ),
+      );
 
     const staged = await waitForPublic(
       async () => readRows(fixture.databaseFile),
@@ -1106,13 +1112,14 @@ describe("real daemon SelectCurrentWork generation takeover", () => {
         observation_source_ref: null,
       }),
     ]);
-    const terminalStep = committedBeforeCrash.steps.filter(
-      (step) =>
-        step.execution_id === oldAction.executionId &&
-        step.logical_step_no === 0 &&
-        step.repair_attempt === 0 &&
-        step.provider_turn_id === oldAction.providerTurnId,
-    );
+    const isTargetStep = (
+      step: ReturnType<typeof readRows>["steps"][number],
+    ): boolean =>
+      step.execution_id === oldAction.executionId &&
+      step.logical_step_no === 0 &&
+      step.repair_attempt === 0 &&
+      step.provider_turn_id === oldAction.providerTurnId;
+    const terminalStep = committedBeforeCrash.steps.filter(isTargetStep);
     expect(terminalStep).toEqual([
       expect.objectContaining({
         state: "ActionsInProgress",
@@ -1120,13 +1127,7 @@ describe("real daemon SelectCurrentWork generation takeover", () => {
         settlement_json: null,
       }),
     ]);
-    expect(
-      committedBeforeCrash.observations.filter((observation) =>
-        observation.source_ref.startsWith(
-          `observation_${oldAction.executionId}_`,
-        ),
-      ),
-    ).toHaveLength(0);
+    expect(observationsForExecution(committedBeforeCrash)).toHaveLength(0);
     expect(
       committedBeforeCrash.events.filter(
         (event) =>
@@ -1139,7 +1140,6 @@ describe("real daemon SelectCurrentWork generation takeover", () => {
     const workIdsBeforeCrash = committedBeforeCrash.works.map(
       (work) => work.work_id,
     );
-    const executionCountBeforeCrash = committedBeforeCrash.executions.length;
 
     await fixture.crash();
     const afterOldKill = readRows(fixture.databaseFile);
@@ -1150,26 +1150,12 @@ describe("real daemon SelectCurrentWork generation takeover", () => {
         (action) => action.logical_action_id === oldAction.logicalActionId,
       ),
     ).toMatchObject({ state: "Pending", observation_source_ref: null });
-    expect(
-      afterOldKill.steps.find(
-        (step) =>
-          step.execution_id === oldAction.executionId &&
-          step.logical_step_no === 0 &&
-          step.repair_attempt === 0 &&
-          step.provider_turn_id === oldAction.providerTurnId,
-      ),
-    ).toMatchObject({
+    expect(afterOldKill.steps.find(isTargetStep)).toMatchObject({
       state: "ActionsInProgress",
       next_action_index: 0,
       settlement_json: null,
     });
-    expect(
-      afterOldKill.observations.filter((observation) =>
-        observation.source_ref.startsWith(
-          `observation_${oldAction.executionId}_`,
-        ),
-      ),
-    ).toHaveLength(0);
+    expect(observationsForExecution(afterOldKill)).toHaveLength(0);
     const expiredLease =
       await expireExecutionLeaseAfterOwnerExitForQualification({
         databaseFile: fixture.databaseFile,
@@ -1204,6 +1190,8 @@ describe("real daemon SelectCurrentWork generation takeover", () => {
       45_000,
     );
     expect(newLease?.fencingGeneration).toBe(1);
+    const gen1TakeoverDiagnostics = (rows: ReturnType<typeof readRows>) =>
+      `failure=${JSON.stringify(failedSettlementForExecution(rows, oldAction.executionId))}; targetStep=${JSON.stringify(rows.steps.filter((step) => step.execution_id === oldAction.executionId))}; targetAction=${JSON.stringify(rows.actions.filter((action) => action.execution_id === oldAction.executionId))}; targetObservations=${JSON.stringify(rows.observations.filter((observation) => observation.source_ref.startsWith(`observation_${oldAction.executionId}_`)))}; decision=${JSON.stringify(rows.decisions.filter((decision) => decision.decision_id === request.decision_id))}; targetLease=${JSON.stringify(rows.leases.find((lease) => lease.execution_id === oldAction.executionId))}; newDaemon=${newDaemon.daemonErrors.join(" | ")}; probeEvents=${JSON.stringify(events.filter((event) => event.executionId === oldAction.executionId))}`;
     const gen1ActionIntent = await waitForPublic(
       async () => ({
         rows: readRows(fixture.databaseFile),
@@ -1221,18 +1209,14 @@ describe("real daemon SelectCurrentWork generation takeover", () => {
         failedSettlementForExecution(rows, oldAction.executionId) !== undefined,
       30_000,
     ).catch((error: unknown) => {
-      const rows = readRows(fixture.databaseFile);
-      const failure = failedSettlementForExecution(rows, oldAction.executionId);
       throw new Error(
-        `AH10 gen1 did not resume SelectCurrentWork after Committed receipt: ${error instanceof Error ? error.message : String(error)}; failure=${JSON.stringify(failure)}; targetStep=${JSON.stringify(rows.steps.filter((step) => step.execution_id === oldAction.executionId))}; targetAction=${JSON.stringify(rows.actions.filter((action) => action.execution_id === oldAction.executionId))}; targetObservations=${JSON.stringify(rows.observations.filter((observation) => observation.source_ref.startsWith(`observation_${oldAction.executionId}_`)))}; decision=${JSON.stringify(rows.decisions.filter((decision) => decision.decision_id === request.decision_id))}; targetLease=${JSON.stringify(rows.leases.find((lease) => lease.execution_id === oldAction.executionId))}; newDaemon=${newDaemon.daemonErrors.join(" | ")}; probeEvents=${JSON.stringify(events.filter((event) => event.executionId === oldAction.executionId))}`,
+        `AH10 gen1 did not resume SelectCurrentWork after Committed receipt: ${error instanceof Error ? error.message : String(error)}; ${gen1TakeoverDiagnostics(readRows(fixture.databaseFile))}`,
       );
     });
     const newAction = gen1ActionIntent.action;
     if (newAction === undefined) {
-      const rows = gen1ActionIntent.rows;
-      const failure = failedSettlementForExecution(rows, oldAction.executionId);
       throw new Error(
-        `AH10 gen1 abandoned the pinned SelectCurrentWork action after the committed receipt: failure=${JSON.stringify(failure)}; targetStep=${JSON.stringify(rows.steps.filter((step) => step.execution_id === oldAction.executionId))}; targetAction=${JSON.stringify(rows.actions.filter((action) => action.execution_id === oldAction.executionId))}; targetObservations=${JSON.stringify(rows.observations.filter((observation) => observation.source_ref.startsWith(`observation_${oldAction.executionId}_`)))}; decision=${JSON.stringify(rows.decisions.filter((decision) => decision.decision_id === request.decision_id))}; targetLease=${JSON.stringify(rows.leases.find((lease) => lease.execution_id === oldAction.executionId))}; newDaemon=${newDaemon.daemonErrors.join(" | ")}; probeEvents=${JSON.stringify(events.filter((event) => event.executionId === oldAction.executionId))}`,
+        `AH10 gen1 abandoned the pinned SelectCurrentWork action after the committed receipt: ${gen1TakeoverDiagnostics(gen1ActionIntent.rows)}`,
       );
     }
     expect(newAction?.providerTurnId).toBe(oldAction.providerTurnId);
@@ -1261,13 +1245,7 @@ describe("real daemon SelectCurrentWork generation takeover", () => {
         const decisionEpisode = rows.executions.find(
           (execution) => execution.execution_id === oldAction.executionId,
         );
-        const settledStep = rows.steps.find(
-          (step) =>
-            step.execution_id === oldAction.executionId &&
-            step.logical_step_no === 0 &&
-            step.repair_attempt === 0 &&
-            step.provider_turn_id === oldAction.providerTurnId,
-        );
+        const settledStep = rows.steps.find(isTargetStep);
         return (
           action?.state === "Applied" &&
           action.observation_source_ref !== null &&
@@ -1315,13 +1293,7 @@ describe("real daemon SelectCurrentWork generation takeover", () => {
         request.decision_id,
       ),
     ).toBe(true);
-    const recoveredStep = recovered.steps.filter(
-      (step) =>
-        step.execution_id === oldAction.executionId &&
-        step.logical_step_no === 0 &&
-        step.repair_attempt === 0 &&
-        step.provider_turn_id === oldAction.providerTurnId,
-    );
+    const recoveredStep = recovered.steps.filter(isTargetStep);
     expect(recoveredStep).toEqual([
       expect.objectContaining({
         state: "SettlementProposed",
@@ -1341,7 +1313,27 @@ describe("real daemon SelectCurrentWork generation takeover", () => {
         request.decision_id,
       ),
     ).toHaveLength(1);
-    expect(recovered.executions).toHaveLength(executionCountBeforeCrash);
+    // The takeover must not create a replacement Execution: the recovered
+    // DecisionEpisode keeps the pre-crash identity (asserted above), and every
+    // execution beyond the pre-crash set must be the scheduler's designed
+    // §7.6 continuation — a WorkEpisode bound to the selected Work after the
+    // decision settles. Anything else (a second DecisionEpisode, a re-admitted
+    // pre-crash episode, an unexpected binding) is a replacement violation.
+    const preCrashExecutionIds = new Set(
+      committedBeforeCrash.executions.map((row) => row.execution_id),
+    );
+    expect(
+      recovered.executions.filter(
+        (row) =>
+          (row.episode_kind === "DecisionEpisode" &&
+            row.execution_id !== oldAction.executionId) ||
+          (!preCrashExecutionIds.has(row.execution_id) &&
+            !(
+              row.episode_kind === "WorkEpisode" &&
+              row.episode_ref === selectedWorkId
+            )),
+      ),
+    ).toEqual([]);
     expect(recovered.works.map((work) => work.work_id).sort()).toEqual(
       [...workIdsBeforeCrash].sort(),
     );
