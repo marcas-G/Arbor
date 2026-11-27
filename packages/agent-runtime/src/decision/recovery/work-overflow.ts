@@ -32,12 +32,13 @@ import {
   type SummaryCompactionInput,
 } from "../../compaction-coordinator.js";
 import type { ModelDecisionDependencies } from "../contract.js";
+import type { WorkOverflowError } from "./errors.js";
 import type { OverflowRecoveryState } from "./overflow-state.js";
 import { recoverSettledSummaryOverflow } from "./settled-summary-overflow.js";
 
 type WorkOverflowDependencies = Pick<
   ModelDecisionDependencies,
-  "input" | "capability" | "tx" | "sessions" | "options" | "failure" | "now"
+  "input" | "capability" | "tx" | "sessions" | "options" | "now"
 > & {
   readonly loopSteps: AgentLoopStepStoreService;
   readonly loopStepFence: AgentLoopStepFence;
@@ -80,7 +81,7 @@ export const recoverWorkOverflow = (
       ExecutionDriverError
     >;
   },
-): Effect.Effect<WorkOverflowResult, ExecutionDriverError> => {
+): Effect.Effect<WorkOverflowResult, WorkOverflowError> => {
   const {
     input,
     capability,
@@ -90,7 +91,6 @@ export const recoverWorkOverflow = (
     providerTurns,
     sessions,
     options,
-    failure,
     now,
   } = dependencies;
   const {
@@ -146,9 +146,9 @@ export const recoverWorkOverflow = (
         input.execution.executionId,
         turn,
       );
-      const currentSession = yield* tx
-        .transact(sessions.findById(input.execution.sessionId))
-        .pipe(Effect.mapError(failure));
+      const currentSession = yield* tx.transact(
+        sessions.findById(input.execution.sessionId),
+      );
       if (
         inference.providerTurnId !== loopStep.providerTurnId ||
         inference.executionId !== input.execution.executionId ||
@@ -157,9 +157,9 @@ export const recoverWorkOverflow = (
         Option.isNone(currentSession) ||
         currentSession.value.contextEpoch !== inference.contextEpoch
       ) {
-        return yield* Effect.fail(
-          failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-        );
+        return yield* Effect.fail<WorkOverflowError>({
+          _tag: "AgentLoopStepReplayBindingMismatch",
+        });
       }
       const [compactionReceipt, replacementReceipt] = yield* Effect.all(
         [
@@ -171,47 +171,45 @@ export const recoverWorkOverflow = (
           ),
         ],
         { concurrency: 1 },
-      ).pipe(Effect.mapError(failure));
+      );
       if (
         compactionReceipt._tag !== "NotFound" ||
         replacementReceipt._tag !== "NotFound"
       ) {
-        return yield* Effect.fail(
-          failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-        );
+        return yield* Effect.fail<WorkOverflowError>({
+          _tag: "AgentLoopStepReplayBindingMismatch",
+        });
       }
-      yield* tx
-        .transact(
-          Effect.gen(function* () {
-            const createdAt = yield* now();
-            yield* loopSteps.ensureProviderTurnLink(
-              {
-                identity: loopStepIdentity,
-                overflowOrdinal: 0,
-                role: "Inference",
-                providerTurnId: activeLoopStep.providerTurnId,
-                contextEpoch: inference.contextEpoch,
-                state: "SettledFailure",
-                createdAt,
-              },
-              loopStepFence,
-            );
-            yield* loopSteps.ensureProviderTurnLink(
-              {
-                identity: loopStepIdentity,
-                overflowOrdinal: 0,
-                role: "OverflowCompaction",
-                providerTurnId: compactionProviderTurnId,
-                predecessorProviderTurnId: activeLoopStep.providerTurnId,
-                contextEpoch: inference.contextEpoch,
-                state: "Prepared",
-                createdAt,
-              },
-              loopStepFence,
-            );
-          }),
-        )
-        .pipe(Effect.mapError(failure));
+      yield* tx.transact(
+        Effect.gen(function* () {
+          const createdAt = yield* now();
+          yield* loopSteps.ensureProviderTurnLink(
+            {
+              identity: loopStepIdentity,
+              overflowOrdinal: 0,
+              role: "Inference",
+              providerTurnId: activeLoopStep.providerTurnId,
+              contextEpoch: inference.contextEpoch,
+              state: "SettledFailure",
+              createdAt,
+            },
+            loopStepFence,
+          );
+          yield* loopSteps.ensureProviderTurnLink(
+            {
+              identity: loopStepIdentity,
+              overflowOrdinal: 0,
+              role: "OverflowCompaction",
+              providerTurnId: compactionProviderTurnId,
+              predecessorProviderTurnId: activeLoopStep.providerTurnId,
+              contextEpoch: inference.contextEpoch,
+              state: "Prepared",
+              createdAt,
+            },
+            loopStepFence,
+          );
+        }),
+      );
       replayPersistedContextLimit = true;
     } else {
       if (inferenceLinks.length > 0 || compactionLinks.length > 0) {
@@ -237,9 +235,9 @@ export const recoverWorkOverflow = (
             ],
           )
         ) {
-          return yield* Effect.fail(
-            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-          );
+          return yield* Effect.fail<WorkOverflowError>({
+            _tag: "AgentLoopStepReplayBindingMismatch",
+          });
         }
         const [inferenceReceipt, compactionReceipt, compactionManifest] =
           yield* Effect.all(
@@ -255,7 +253,7 @@ export const recoverWorkOverflow = (
               ),
             ],
             { concurrency: 1 },
-          ).pipe(Effect.mapError(failure));
+          );
         if (
           inferenceReceipt._tag !== "SettledFailure" ||
           inferenceReceipt.failureKind !== "ContextLimitExceeded" ||
@@ -263,9 +261,9 @@ export const recoverWorkOverflow = (
           inferenceReceipt.turn.sessionId !== input.execution.sessionId ||
           inferenceReceipt.turn.contextEpoch !== inferenceLink.contextEpoch
         ) {
-          return yield* Effect.fail(
-            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-          );
+          return yield* Effect.fail<WorkOverflowError>({
+            _tag: "AgentLoopStepReplayBindingMismatch",
+          });
         }
         if (
           compactionReceipt._tag === "NotFound" ||
@@ -278,9 +276,9 @@ export const recoverWorkOverflow = (
           const existingNativeCompaction =
             existingCompactionTurn?.outputContractRef ===
             "provider-native-compaction-v1";
-          const currentSession = yield* tx
-            .transact(sessions.findById(input.execution.sessionId))
-            .pipe(Effect.mapError(failure));
+          const currentSession = yield* tx.transact(
+            sessions.findById(input.execution.sessionId),
+          );
           if (
             (compactionReceipt._tag === "NotFound" &&
               compactionManifest !== null) ||
@@ -303,9 +301,9 @@ export const recoverWorkOverflow = (
             Number(currentSession.value.contextEpoch) !==
               Number(compactionLink.contextEpoch)
           ) {
-            return yield* Effect.fail(
-              failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-            );
+            return yield* Effect.fail<WorkOverflowError>({
+              _tag: "AgentLoopStepReplayBindingMismatch",
+            });
           }
           if (existingNativeCompaction) {
             const nativeFrontier =
@@ -334,11 +332,9 @@ export const recoverWorkOverflow = (
                 currentBindingFingerprint ||
               nativeFrontier.request.modelRef !== capability.modelRef
             ) {
-              return yield* Effect.fail(
-                failure({
-                  _tag: "AgentLoopStepReplayBindingMismatch",
-                }),
-              );
+              return yield* Effect.fail<WorkOverflowError>({
+                _tag: "AgentLoopStepReplayBindingMismatch",
+              });
             }
             resumeOverflowNativeCompaction = true;
             resumeOverflowNativeCompactionInput = {
@@ -369,9 +365,9 @@ export const recoverWorkOverflow = (
             compactionManifest === null ||
             compactionManifest.manifestJson !== compactionReceipt.manifestJson
           ) {
-            return yield* Effect.fail(
-              failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-            );
+            return yield* Effect.fail<WorkOverflowError>({
+              _tag: "AgentLoopStepReplayBindingMismatch",
+            });
           }
           let nativeManifest: Record<string, unknown>;
           try {
@@ -383,15 +379,15 @@ export const recoverWorkOverflow = (
               manifest === null ||
               Array.isArray(manifest)
             ) {
-              return yield* Effect.fail(
-                failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-              );
+              return yield* Effect.fail<WorkOverflowError>({
+                _tag: "AgentLoopStepReplayBindingMismatch",
+              });
             }
             nativeManifest = manifest as Record<string, unknown>;
           } catch {
-            return yield* Effect.fail(
-              failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-            );
+            return yield* Effect.fail<WorkOverflowError>({
+              _tag: "AgentLoopStepReplayBindingMismatch",
+            });
           }
           const nativeFrontier = decodeUniqueNativePortableFrontier(
             compactionManifest.manifestJson,
@@ -436,18 +432,18 @@ export const recoverWorkOverflow = (
             nativeContinuationStates.length !== 1 ||
             nativeContinuationStates[0]?._tag !== "ContinuationState"
           ) {
-            return yield* Effect.fail(
-              failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-            );
+            return yield* Effect.fail<WorkOverflowError>({
+              _tag: "AgentLoopStepReplayBindingMismatch",
+            });
           }
           const nativeStateRef = nativeContinuationStates[0].stateRef;
-          const currentSession = yield* tx
-            .transact(sessions.findById(input.execution.sessionId))
-            .pipe(Effect.mapError(failure));
+          const currentSession = yield* tx.transact(
+            sessions.findById(input.execution.sessionId),
+          );
           if (Option.isNone(currentSession)) {
-            return yield* Effect.fail(
-              failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-            );
+            return yield* Effect.fail<WorkOverflowError>({
+              _tag: "AgentLoopStepReplayBindingMismatch",
+            });
           }
           const currentEpoch = Number(currentSession.value.contextEpoch);
           const compactionEpoch = Number(compactionLink.contextEpoch);
@@ -455,13 +451,11 @@ export const recoverWorkOverflow = (
             currentEpoch !== compactionEpoch &&
             currentEpoch !== compactionEpoch + 1
           ) {
-            return yield* Effect.fail(
-              failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-            );
+            return yield* Effect.fail<WorkOverflowError>({
+              _tag: "AgentLoopStepReplayBindingMismatch",
+            });
           }
-          const recentEntries = yield* tx
-            .transact(readExecutionTimeline())
-            .pipe(Effect.mapError(failure));
+          const recentEntries = yield* tx.transact(readExecutionTimeline());
           const nativeCheckpointEntries = recentEntries.filter(
             (entry) =>
               entry.source?.kind === "CompactionTurn" &&
@@ -490,9 +484,9 @@ export const recoverWorkOverflow = (
                 )?.bindingFingerprint !==
                   nativeManifest.resolvedModelBindingFingerprint))
           ) {
-            return yield* Effect.fail(
-              failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-            );
+            return yield* Effect.fail<WorkOverflowError>({
+              _tag: "AgentLoopStepReplayBindingMismatch",
+            });
           }
           const bindingMatches =
             providerNativeSupported &&
@@ -535,7 +529,7 @@ export const recoverWorkOverflow = (
                         qualificationProbe: options.qualificationProbe,
                       }),
                 },
-              ).pipe(Effect.mapError(failure));
+              );
               replacementEpoch = Number(committed.newEpoch);
             } else {
               replacementEpoch = compactionEpoch + 1;
@@ -566,7 +560,7 @@ export const recoverWorkOverflow = (
                 fence: loopStepFence,
               },
               compactionDependencies,
-            ).pipe(Effect.mapError(failure));
+            );
             if ("_tag" in compacted) {
               return {
                 _tag: "Complete" as const,
@@ -588,17 +582,17 @@ export const recoverWorkOverflow = (
               replacementEpoch !==
               currentEpoch + (currentEpoch === compactionEpoch ? 1 : 0)
             ) {
-              return yield* Effect.fail(
-                failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-              );
+              return yield* Effect.fail<WorkOverflowError>({
+                _tag: "AgentLoopStepReplayBindingMismatch",
+              });
             }
             const existingReplacement = providerTurnLinks.filter(
               (link) => link.role === "OverflowReplacement",
             );
             if (existingReplacement.length > 1) {
-              return yield* Effect.fail(
-                failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-              );
+              return yield* Effect.fail<WorkOverflowError>({
+                _tag: "AgentLoopStepReplayBindingMismatch",
+              });
             }
             const existingReplacementLink = existingReplacement[0];
             if (existingReplacementLink !== undefined) {
@@ -610,30 +604,26 @@ export const recoverWorkOverflow = (
                 Number(existingReplacementLink.contextEpoch) !==
                   replacementEpoch
               ) {
-                return yield* Effect.fail(
-                  failure({
-                    _tag: "AgentLoopStepReplayBindingMismatch",
-                  }),
-                );
+                return yield* Effect.fail<WorkOverflowError>({
+                  _tag: "AgentLoopStepReplayBindingMismatch",
+                });
               }
             } else {
-              yield* tx
-                .transact(
-                  loopSteps.ensureProviderTurnLink(
-                    {
-                      identity: loopStepIdentity,
-                      overflowOrdinal: 0,
-                      role: "OverflowReplacement",
-                      providerTurnId: replacementProviderTurnId,
-                      predecessorProviderTurnId: compactionLink.providerTurnId,
-                      contextEpoch: parse(ContextEpochNumber)(replacementEpoch),
-                      state: "Prepared",
-                      createdAt: yield* now(),
-                    },
-                    loopStepFence,
-                  ),
-                )
-                .pipe(Effect.mapError(failure));
+              yield* tx.transact(
+                loopSteps.ensureProviderTurnLink(
+                  {
+                    identity: loopStepIdentity,
+                    overflowOrdinal: 0,
+                    role: "OverflowReplacement",
+                    providerTurnId: replacementProviderTurnId,
+                    predecessorProviderTurnId: compactionLink.providerTurnId,
+                    contextEpoch: parse(ContextEpochNumber)(replacementEpoch),
+                    state: "Prepared",
+                    createdAt: yield* now(),
+                  },
+                  loopStepFence,
+                ),
+              );
             }
             overflowRecoveryAttempt = 1;
             overflowReplacementProviderTurnId = replacementProviderTurnId;
@@ -651,9 +641,9 @@ export const recoverWorkOverflow = (
             overflow: recoveryState(),
           });
         } else {
-          return yield* Effect.fail(
-            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-          );
+          return yield* Effect.fail<WorkOverflowError>({
+            _tag: "AgentLoopStepReplayBindingMismatch",
+          });
         }
       }
     }

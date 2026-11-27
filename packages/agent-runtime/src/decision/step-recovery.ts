@@ -28,7 +28,6 @@ type StepRecoveryDependencies = Pick<
   | "providerTurns"
   | "sessions"
   | "options"
-  | "failure"
   | "now"
   | "conversationCheckpoints"
 >;
@@ -75,7 +74,6 @@ export const recoverDecisionStep = (
     providerTurns,
     sessions,
     options,
-    failure,
     now,
   } = dependencies;
   const {
@@ -188,7 +186,6 @@ export const recoverDecisionStep = (
                 loopSteps,
                 loopStepFence,
                 providerTurns,
-                failure,
                 now,
                 ...(dependencies.conversationCheckpoints === undefined
                   ? {}
@@ -220,7 +217,6 @@ export const recoverDecisionStep = (
               providerTurns,
               sessions,
               options,
-              failure,
               now,
             },
             {

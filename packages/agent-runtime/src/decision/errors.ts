@@ -21,6 +21,7 @@ import type { runConversationCheckpointCompaction } from "../checkpoint/conversa
 import type { ConversationCheckpointProjectionResult } from "../checkpoint/conversation/projection.js";
 import type {
   commitRecoveredNativeCompaction,
+  commitRecoveredSummaryCompaction,
   runCompaction,
   runSummaryCompaction,
 } from "../compaction-coordinator.js";
@@ -42,6 +43,13 @@ export interface AgentLoopStepReplayBindingMismatch {
 export interface ConversationCheckpointStoreUnavailable {
   readonly _tag: "ConversationCheckpointStoreUnavailable";
   readonly executionId: ExecutionId;
+}
+
+/** Shared tagged invariant of the provider-invocation and overflow-recovery
+ * phases: the conversation checkpoint runtime dependencies are absent for an
+ * execution whose episode requires them. */
+export interface ConversationCheckpointRuntimeUnavailable {
+  readonly _tag: "ConversationCheckpointRuntimeUnavailable";
 }
 
 export interface ConversationResponseJobNotCurrent {
@@ -198,16 +206,23 @@ export type ModelOutputJournalError =
 
 /** `recoverDecisionStep`: the Prepared-step find-or-create, the exhausted
  * repair `OutputRejected -> SettlementProposed` transition, the settled-result
- * chain read and the provider-turn link listing. `ExecutionDriverError` flows
- * in from the still-driver-typed overflow sub-phases
- * (`recoverConversationOverflow` / `recoverWorkOverflow`). */
+ * chain read and the overflow sub-phases (`recoverConversationOverflow` /
+ * `recoverWorkOverflow` / `recoverSettledSummaryOverflow`, whose members are
+ * flattened here). `ExecutionDriverError` flows in from the already-folded
+ * `loadWorkCompactionPinning` callback through the work overflow phase. */
 export type StepRecoveryError =
   | AgentLoopStepInvariantConflict
   | AgentLoopStepStoreError
   | AgentLoopStepReplayBindingMismatch
+  | ConversationCheckpointRuntimeUnavailable
+  | ConversationCheckpointStoreError
+  | Effect.Error<ReturnType<typeof commitRecoveredNativeCompaction>>
+  | Effect.Error<ReturnType<typeof commitRecoveredSummaryCompaction>>
+  | Effect.Error<ReturnType<typeof runSummaryCompaction>>
   | ExecutionDriverError
   | LeaseFencingRejected
   | ProviderFailure
+  | SessionRepositoryError
   | TransactionOperationalFailure;
 
 export const foldAgentLoopStepCompletionError = (

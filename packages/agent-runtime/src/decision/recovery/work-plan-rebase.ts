@@ -26,6 +26,7 @@ import {
   type SummaryCompactionInput,
 } from "../../compaction-coordinator.js";
 import type { ModelDecisionDependencies } from "../contract.js";
+import type { WorkPlanRebaseError } from "./errors.js";
 import type { OverflowRecoveryState } from "./overflow-state.js";
 
 type WorkPlanRebaseDependencies = Pick<
@@ -38,7 +39,6 @@ type WorkPlanRebaseDependencies = Pick<
   | "loopStepFence"
   | "providerTurns"
   | "options"
-  | "failure"
   | "now"
 >;
 
@@ -82,7 +82,7 @@ export const rebaseWorkPlanCheckpoint = (
     readonly compactionAttempts: number;
     readonly overflow: OverflowRecoveryState;
   },
-): Effect.Effect<WorkPlanRebaseResult, ExecutionDriverError> => {
+): Effect.Effect<WorkPlanRebaseResult, WorkPlanRebaseError> => {
   const {
     input,
     capability,
@@ -92,7 +92,6 @@ export const rebaseWorkPlanCheckpoint = (
     loopStepFence,
     providerTurns,
     options,
-    failure,
     now,
   } = dependencies;
   const {
@@ -116,9 +115,9 @@ export const rebaseWorkPlanCheckpoint = (
       replayPersistedContextLimit,
     } = phase.overflow;
     if (providerTurns === undefined || loopStepFence === undefined) {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<WorkPlanRebaseError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
     let nativeProviderTurnId: ProviderTurnId;
     try {
@@ -126,9 +125,9 @@ export const rebaseWorkPlanCheckpoint = (
         nativeCheckpoint.providerTurnId,
       );
     } catch {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<WorkPlanRebaseError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
     const [nativeManifestRow, nativeReceipt] = yield* Effect.all(
       [
@@ -136,7 +135,7 @@ export const rebaseWorkPlanCheckpoint = (
         tx.transact(providerTurns.findSettledResult(nativeProviderTurnId)),
       ],
       { concurrency: 1 },
-    ).pipe(Effect.mapError(failure));
+    );
     if (
       nativeManifestRow === null ||
       nativeReceipt._tag !== "SettledSuccess" ||
@@ -146,9 +145,9 @@ export const rebaseWorkPlanCheckpoint = (
       nativeReceipt.turn.sessionId !== input.execution.sessionId ||
       nativeReceipt.manifestJson !== nativeManifestRow.manifestJson
     ) {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<WorkPlanRebaseError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
     const nativeFrontier = decodeUniqueNativePortableFrontier(
       nativeManifestRow.manifestJson,
@@ -185,9 +184,9 @@ export const rebaseWorkPlanCheckpoint = (
           item.implementation === "ProviderNative",
       )
     ) {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<WorkPlanRebaseError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
     const postCheckpointEntries = recentSessionEntries.filter(
       (entry) => entry.sequence > nativeCheckpoint.sequence,
@@ -200,9 +199,9 @@ export const rebaseWorkPlanCheckpoint = (
       reasoningAttachmentBlobs,
     );
     if (postCheckpointProjection.nativeCheckpoint !== undefined) {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<WorkPlanRebaseError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
     const portableContextRefs = [
       ...nativeFrontier.contextRefs,
@@ -212,9 +211,9 @@ export const rebaseWorkPlanCheckpoint = (
       portableContextRefs.length === 0 ||
       new Set(portableContextRefs).size !== portableContextRefs.length
     ) {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<WorkPlanRebaseError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
     const rebuiltFrontier = {
       firstSequence: nativeFrontier.inputFrontier.firstSequence,
@@ -228,9 +227,9 @@ export const rebaseWorkPlanCheckpoint = (
       rebuiltFrontier.lastSequence !== null &&
       rebuiltFrontier.lastSequence < rebuiltFrontier.firstSequence
     ) {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<WorkPlanRebaseError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
     const [stepProviderLinks, sourceSession] = yield* Effect.all(
       [
@@ -240,11 +239,11 @@ export const rebaseWorkPlanCheckpoint = (
         tx.transact(sessions.findById(input.execution.sessionId)),
       ],
       { concurrency: 1 },
-    ).pipe(Effect.mapError(failure));
+    );
     if (Option.isNone(sourceSession)) {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<WorkPlanRebaseError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
     const isOverflowNativeCheckpoint = stepProviderLinks.some(
       (link) =>
@@ -256,9 +255,9 @@ export const rebaseWorkPlanCheckpoint = (
       ...postCheckpointProjection.inputItems,
     ];
     if (loopStep === undefined) {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<WorkPlanRebaseError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
     const rebuilt = yield* runSummaryCompaction(
       {
@@ -283,7 +282,7 @@ export const rebaseWorkPlanCheckpoint = (
         fence: loopStepFence,
       },
       compactionDependencies,
-    ).pipe(Effect.mapError(failure));
+    );
     if ("_tag" in rebuilt) {
       return {
         _tag: "Complete" as const,
@@ -294,9 +293,9 @@ export const rebaseWorkPlanCheckpoint = (
       Number(rebuilt.newEpoch) !==
       Number(sourceSession.value.contextEpoch) + 1
     ) {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<WorkPlanRebaseError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
     if (isOverflowNativeCheckpoint) {
       const replacementProviderTurnId = makeOverflowReplacementProviderTurnId(
@@ -307,9 +306,9 @@ export const rebaseWorkPlanCheckpoint = (
         (link) => link.role === "OverflowReplacement",
       );
       if (existingReplacement.length > 1) {
-        return yield* Effect.fail(
-          failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-        );
+        return yield* Effect.fail<WorkPlanRebaseError>({
+          _tag: "AgentLoopStepReplayBindingMismatch",
+        });
       }
       const priorReplacement = existingReplacement[0];
       if (priorReplacement !== undefined) {
@@ -318,35 +317,31 @@ export const rebaseWorkPlanCheckpoint = (
           priorReplacement.predecessorProviderTurnId !== nativeProviderTurnId ||
           Number(priorReplacement.contextEpoch) !== Number(rebuilt.newEpoch)
         ) {
-          return yield* Effect.fail(
-            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-          );
+          return yield* Effect.fail<WorkPlanRebaseError>({
+            _tag: "AgentLoopStepReplayBindingMismatch",
+          });
         }
       } else {
         if (loopSteps === undefined) {
-          return yield* Effect.fail(
-            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-          );
+          return yield* Effect.fail<WorkPlanRebaseError>({
+            _tag: "AgentLoopStepReplayBindingMismatch",
+          });
         }
-        yield* tx
-          .transact(
-            loopSteps.ensureProviderTurnLink(
-              {
-                identity: loopStepIdentity,
-                overflowOrdinal: 0,
-                role: "OverflowReplacement",
-                providerTurnId: replacementProviderTurnId,
-                predecessorProviderTurnId: nativeProviderTurnId,
-                contextEpoch: parse(ContextEpochNumber)(
-                  Number(rebuilt.newEpoch),
-                ),
-                state: "Prepared",
-                createdAt: yield* now(),
-              },
-              loopStepFence,
-            ),
-          )
-          .pipe(Effect.mapError(failure));
+        yield* tx.transact(
+          loopSteps.ensureProviderTurnLink(
+            {
+              identity: loopStepIdentity,
+              overflowOrdinal: 0,
+              role: "OverflowReplacement",
+              providerTurnId: replacementProviderTurnId,
+              predecessorProviderTurnId: nativeProviderTurnId,
+              contextEpoch: parse(ContextEpochNumber)(Number(rebuilt.newEpoch)),
+              state: "Prepared",
+              createdAt: yield* now(),
+            },
+            loopStepFence,
+          ),
+        );
       }
       overflowRecoveryAttempt = 1;
       overflowReplacementProviderTurnId = replacementProviderTurnId;

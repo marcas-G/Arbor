@@ -15,7 +15,6 @@ import type {
   AgentLoopStepProviderTurnLink,
   AgentLoopStepRecord,
   AgentLoopStepStoreService,
-  ExecutionDriverError,
   ProviderTurnStoreService,
   SessionEntryRecord,
 } from "@arbor/ports";
@@ -28,10 +27,11 @@ import {
 import { hasValidCompiledInferenceRequestHash } from "../../agent-loop-step-recovery.js";
 import type { ModelDecisionDependencies } from "../contract.js";
 import type { DecisionCursor } from "../startup-recovery.js";
+import type { CommittedRebaseStepError } from "./errors.js";
 
 type CommittedRebaseDependencies = Pick<
   ModelDecisionDependencies,
-  "input" | "capability" | "tx" | "options" | "failure" | "now"
+  "input" | "capability" | "tx" | "options" | "now"
 > & {
   readonly loopSteps: AgentLoopStepStoreService;
   readonly loopStepFence: AgentLoopStepFence;
@@ -60,7 +60,7 @@ export const recoverCommittedRebaseStep = (
     readonly recentSessionEntries: ReadonlyArray<SessionEntryRecord>;
     readonly decodedProviderTurnId: (value: unknown) => ProviderTurnId | null;
   },
-): Effect.Effect<CommittedRebaseResult, ExecutionDriverError> => {
+): Effect.Effect<CommittedRebaseResult, CommittedRebaseStepError> => {
   const {
     input,
     capability,
@@ -69,7 +69,6 @@ export const recoverCommittedRebaseStep = (
     loopStepFence,
     providerTurns,
     options,
-    failure,
     now,
   } = dependencies;
   const {
@@ -110,9 +109,9 @@ export const recoverCommittedRebaseStep = (
         const outputTurnId = decodedProviderTurnId(outputProviderTurnId);
         const replacementLink = replacementLinks[0];
         if (outputTurnId === null) {
-          return yield* Effect.fail(
-            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-          );
+          return yield* Effect.fail<CommittedRebaseStepError>({
+            _tag: "AgentLoopStepReplayBindingMismatch",
+          });
         }
         const outputIdentityChecks = {
           sequence: outputSequence !== undefined && outputHash !== undefined,
@@ -161,9 +160,9 @@ export const recoverCommittedRebaseStep = (
                 }) ?? Promise.resolve(),
             );
           }
-          return yield* Effect.fail(
-            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-          );
+          return yield* Effect.fail<CommittedRebaseStepError>({
+            _tag: "AgentLoopStepReplayBindingMismatch",
+          });
         }
         const [outputResult, outputManifest] = yield* Effect.all(
           [
@@ -171,7 +170,7 @@ export const recoverCommittedRebaseStep = (
             tx.transact(providerTurns.findManifestByTurn(outputTurnId)),
           ],
           { concurrency: 1 },
-        ).pipe(Effect.mapError(failure));
+        );
         const outputResultChecks = {
           success: outputResult._tag === "SettledSuccess",
           version:
@@ -224,14 +223,14 @@ export const recoverCommittedRebaseStep = (
                 }) ?? Promise.resolve(),
             );
           }
-          return yield* Effect.fail(
-            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-          );
+          return yield* Effect.fail<CommittedRebaseStepError>({
+            _tag: "AgentLoopStepReplayBindingMismatch",
+          });
         }
         if (outputResult._tag !== "SettledSuccess" || outputManifest === null) {
-          return yield* Effect.fail(
-            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-          );
+          return yield* Effect.fail<CommittedRebaseStepError>({
+            _tag: "AgentLoopStepReplayBindingMismatch",
+          });
         }
         let outputManifestJson: Record<string, unknown>;
         try {
@@ -241,15 +240,15 @@ export const recoverCommittedRebaseStep = (
             parsed === null ||
             Array.isArray(parsed)
           ) {
-            return yield* Effect.fail(
-              failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-            );
+            return yield* Effect.fail<CommittedRebaseStepError>({
+              _tag: "AgentLoopStepReplayBindingMismatch",
+            });
           }
           outputManifestJson = parsed as Record<string, unknown>;
         } catch {
-          return yield* Effect.fail(
-            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-          );
+          return yield* Effect.fail<CommittedRebaseStepError>({
+            _tag: "AgentLoopStepReplayBindingMismatch",
+          });
         }
         const outputManifestChecks = {
           providerTurn:
@@ -294,14 +293,14 @@ export const recoverCommittedRebaseStep = (
                 }) ?? Promise.resolve(),
             );
           }
-          return yield* Effect.fail(
-            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-          );
+          return yield* Effect.fail<CommittedRebaseStepError>({
+            _tag: "AgentLoopStepReplayBindingMismatch",
+          });
         }
         const decodedOutput = decodeTurn(outputResult.canonicalEvents);
-        const sourceActions = yield* tx
-          .transact(loopSteps.listActions(sourceStep.identity))
-          .pipe(Effect.mapError(failure));
+        const sourceActions = yield* tx.transact(
+          loopSteps.listActions(sourceStep.identity),
+        );
         const decodedOutputChecks = {
           decoded: decodedOutput.ok,
           noActions: sourceActions.length === 0,
@@ -340,14 +339,14 @@ export const recoverCommittedRebaseStep = (
                 }) ?? Promise.resolve(),
             );
           }
-          return yield* Effect.fail(
-            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-          );
+          return yield* Effect.fail<CommittedRebaseStepError>({
+            _tag: "AgentLoopStepReplayBindingMismatch",
+          });
         }
         if (!decodedOutput.ok) {
-          return yield* Effect.fail(
-            failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-          );
+          return yield* Effect.fail<CommittedRebaseStepError>({
+            _tag: "AgentLoopStepReplayBindingMismatch",
+          });
         }
         if (
           decodedOutput.output.toolInvocations.length === 0 &&
@@ -378,25 +377,23 @@ export const recoverCommittedRebaseStep = (
                       reason: "terminal inbox identity missing",
                     },
                   };
-          yield* tx
-            .transact(
-              loopSteps.transition(
-                {
-                  identity: sourceStep.identity,
-                  expectedRevision: sourceStep.revision,
-                  expectedState: "StepEffectsCommitted",
-                  next: {
-                    ...sourceStep,
-                    state: "SettlementProposed",
-                    settlement,
-                    revision: sourceStep.revision + 1,
-                    updatedAt: yield* now(),
-                  },
+          yield* tx.transact(
+            loopSteps.transition(
+              {
+                identity: sourceStep.identity,
+                expectedRevision: sourceStep.revision,
+                expectedState: "StepEffectsCommitted",
+                next: {
+                  ...sourceStep,
+                  state: "SettlementProposed",
+                  settlement,
+                  revision: sourceStep.revision + 1,
+                  updatedAt: yield* now(),
                 },
-                loopStepFence,
-              ),
-            )
-            .pipe(Effect.mapError(failure));
+              },
+              loopStepFence,
+            ),
+          );
           return {
             _tag: "Complete" as const,
             outcome: { _tag: "Settle" as const, settlement },
@@ -409,9 +406,9 @@ export const recoverCommittedRebaseStep = (
         loopStepFence === undefined ||
         turn + 1 >= MAX_TURNS
       ) {
-        return yield* Effect.fail(
-          failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-        );
+        return yield* Effect.fail<CommittedRebaseStepError>({
+          _tag: "AgentLoopStepReplayBindingMismatch",
+        });
       }
       const successorIdentity = {
         executionId: sourceStep.identity.executionId,
@@ -424,44 +421,42 @@ export const recoverCommittedRebaseStep = (
       );
       const successorUpdatedAt = yield* now();
       const predecessorUpdatedAt = yield* now();
-      yield* tx
-        .transact(
-          Effect.gen(function* () {
-            yield* loopSteps.transition(
-              {
-                identity: sourceStep.identity,
-                expectedRevision: sourceStep.revision,
-                expectedState: "StepEffectsCommitted",
-                next: {
-                  ...sourceStep,
-                  state: "NextStepReady",
-                  successor: {
-                    ...successorIdentity,
-                    providerTurnId: successorProviderTurnId,
-                  },
-                  nextStepReason: "Continue",
-                  revision: sourceStep.revision + 1,
-                  updatedAt: predecessorUpdatedAt,
+      yield* tx.transact(
+        Effect.gen(function* () {
+          yield* loopSteps.transition(
+            {
+              identity: sourceStep.identity,
+              expectedRevision: sourceStep.revision,
+              expectedState: "StepEffectsCommitted",
+              next: {
+                ...sourceStep,
+                state: "NextStepReady",
+                successor: {
+                  ...successorIdentity,
+                  providerTurnId: successorProviderTurnId,
                 },
+                nextStepReason: "Continue",
+                revision: sourceStep.revision + 1,
+                updatedAt: predecessorUpdatedAt,
               },
-              loopStepFence,
-            );
-            yield* loopSteps.ensureSuccessor(
-              sourceStep.identity,
-              {
-                identity: successorIdentity,
-                predecessor: sourceStep.identity,
-                providerTurnId: successorProviderTurnId,
-                state: "Prepared",
-                nextActionIndex: 0,
-                revision: 0,
-                updatedAt: successorUpdatedAt,
-              },
-              loopStepFence,
-            );
-          }),
-        )
-        .pipe(Effect.mapError(failure));
+            },
+            loopStepFence,
+          );
+          yield* loopSteps.ensureSuccessor(
+            sourceStep.identity,
+            {
+              identity: successorIdentity,
+              predecessor: sourceStep.identity,
+              providerTurnId: successorProviderTurnId,
+              state: "Prepared",
+              nextActionIndex: 0,
+              revision: 0,
+              updatedAt: successorUpdatedAt,
+            },
+            loopStepFence,
+          );
+        }),
+      );
       if (options.qualificationProbe !== undefined) {
         yield* Effect.promise(
           () =>
@@ -488,9 +483,9 @@ export const recoverCommittedRebaseStep = (
         logicalStepNo: sourceSuccessor.logicalStepNo,
         repairAttempt: sourceSuccessor.repairAttempt,
       };
-      const successorOption = yield* tx
-        .transact(loopSteps.find(successorIdentity))
-        .pipe(Effect.mapError(failure));
+      const successorOption = yield* tx.transact(
+        loopSteps.find(successorIdentity),
+      );
       const successorRecord = Option.isSome(successorOption)
         ? successorOption.value
         : undefined;
@@ -530,9 +525,9 @@ export const recoverCommittedRebaseStep = (
         );
       }
       if (Object.values(successorChecks).some((valid) => !valid)) {
-        return yield* Effect.fail(
-          failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-        );
+        return yield* Effect.fail<CommittedRebaseStepError>({
+          _tag: "AgentLoopStepReplayBindingMismatch",
+        });
       }
       if (options.qualificationProbe !== undefined) {
         yield* Effect.promise(

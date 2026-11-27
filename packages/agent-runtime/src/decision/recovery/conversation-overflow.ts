@@ -10,18 +10,18 @@ import type {
   AgentLoopStepProviderTurnLink,
   AgentLoopStepRecord,
   AgentLoopStepStoreService,
-  ExecutionDriverError,
   ProviderTurnStoreService,
   SettledProviderTurnResult,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { isValidOverflowCompactionLinkPair } from "../../agent-loop-step-recovery.js";
 import type { ModelDecisionDependencies } from "../contract.js";
+import type { ConversationOverflowError } from "./errors.js";
 import type { OverflowRecoveryState } from "./overflow-state.js";
 
 type ConversationOverflowDependencies = Pick<
   ModelDecisionDependencies,
-  "input" | "capability" | "tx" | "conversationCheckpoints" | "failure" | "now"
+  "input" | "capability" | "tx" | "conversationCheckpoints" | "now"
 > & {
   readonly loopSteps: AgentLoopStepStoreService;
   readonly loopStepFence: AgentLoopStepFence;
@@ -48,7 +48,7 @@ export const recoverConversationOverflow = (
   },
 ): Effect.Effect<
   { readonly _tag: "Restart"; readonly overflow: OverflowRecoveryState },
-  ExecutionDriverError
+  ConversationOverflowError
 > => {
   const {
     input,
@@ -57,7 +57,6 @@ export const recoverConversationOverflow = (
     loopSteps,
     loopStepFence,
     providerTurns,
-    failure,
     now,
   } = dependencies;
   const {
@@ -91,19 +90,15 @@ export const recoverConversationOverflow = (
       dependencies.conversationCheckpoints === undefined ||
       loopStepFence === undefined
     ) {
-      return yield* Effect.fail(
-        failure({
-          _tag: "ConversationCheckpointRuntimeUnavailable",
-        }),
-      );
+      return yield* Effect.fail<ConversationOverflowError>({
+        _tag: "ConversationCheckpointRuntimeUnavailable",
+      });
     }
-    const ownerOption = yield* tx
-      .transact(
-        dependencies.conversationCheckpoints.findOwner(
-          input.execution.workspaceId,
-        ),
-      )
-      .pipe(Effect.mapError(failure));
+    const ownerOption = yield* tx.transact(
+      dependencies.conversationCheckpoints.findOwner(
+        input.execution.workspaceId,
+      ),
+    );
     const owner = Option.isSome(ownerOption) ? ownerOption.value : undefined;
     const ownerEpoch = Number(owner?.contextEpoch ?? 0);
     const inference = originalInference.turn;
@@ -115,9 +110,9 @@ export const recoverConversationOverflow = (
       ownerEpoch < Number(inference.contextEpoch) ||
       ownerEpoch > Number(inference.contextEpoch) + 1
     ) {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<ConversationOverflowError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
     const nativeSupported =
       capability.portableRequestCompatibility?.operationKinds.includes(
@@ -126,9 +121,9 @@ export const recoverConversationOverflow = (
     let linkedCompactionProviderTurnId: ProviderTurnId;
     if (providerTurnLinks.length === 0) {
       if (ownerEpoch !== Number(inference.contextEpoch)) {
-        return yield* Effect.fail(
-          failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-        );
+        return yield* Effect.fail<ConversationOverflowError>({
+          _tag: "AgentLoopStepReplayBindingMismatch",
+        });
       }
       const compactionProviderTurnId = nativeSupported
         ? providerTurnNativeCompactionId(
@@ -156,48 +151,46 @@ export const recoverConversationOverflow = (
           ),
         ],
         { concurrency: 1 },
-      ).pipe(Effect.mapError(failure));
+      );
       if (
         compactionReceipt._tag !== "NotFound" ||
         replacementReceipt._tag !== "NotFound"
       ) {
-        return yield* Effect.fail(
-          failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-        );
+        return yield* Effect.fail<ConversationOverflowError>({
+          _tag: "AgentLoopStepReplayBindingMismatch",
+        });
       }
       linkedCompactionProviderTurnId = compactionProviderTurnId;
-      yield* tx
-        .transact(
-          Effect.gen(function* () {
-            const createdAt = yield* now();
-            yield* loopSteps.ensureProviderTurnLink(
-              {
-                identity: loopStepIdentity,
-                overflowOrdinal: 0,
-                role: "Inference",
-                providerTurnId: activeLoopStep.providerTurnId,
-                contextEpoch: inference.contextEpoch,
-                state: "SettledFailure",
-                createdAt,
-              },
-              loopStepFence,
-            );
-            yield* loopSteps.ensureProviderTurnLink(
-              {
-                identity: loopStepIdentity,
-                overflowOrdinal: 0,
-                role: "OverflowCompaction",
-                providerTurnId: compactionProviderTurnId,
-                predecessorProviderTurnId: activeLoopStep.providerTurnId,
-                contextEpoch: inference.contextEpoch,
-                state: "Prepared",
-                createdAt,
-              },
-              loopStepFence,
-            );
-          }),
-        )
-        .pipe(Effect.mapError(failure));
+      yield* tx.transact(
+        Effect.gen(function* () {
+          const createdAt = yield* now();
+          yield* loopSteps.ensureProviderTurnLink(
+            {
+              identity: loopStepIdentity,
+              overflowOrdinal: 0,
+              role: "Inference",
+              providerTurnId: activeLoopStep.providerTurnId,
+              contextEpoch: inference.contextEpoch,
+              state: "SettledFailure",
+              createdAt,
+            },
+            loopStepFence,
+          );
+          yield* loopSteps.ensureProviderTurnLink(
+            {
+              identity: loopStepIdentity,
+              overflowOrdinal: 0,
+              role: "OverflowCompaction",
+              providerTurnId: compactionProviderTurnId,
+              predecessorProviderTurnId: activeLoopStep.providerTurnId,
+              contextEpoch: inference.contextEpoch,
+              state: "Prepared",
+              createdAt,
+            },
+            loopStepFence,
+          );
+        }),
+      );
     } else {
       const inferenceLink = inferenceLinks[0];
       const compactionLink = compactionLinks[0];
@@ -226,9 +219,9 @@ export const recoverConversationOverflow = (
         ) ||
         Number(compactionLink.contextEpoch) !== Number(inference.contextEpoch)
       ) {
-        return yield* Effect.fail(
-          failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-        );
+        return yield* Effect.fail<ConversationOverflowError>({
+          _tag: "AgentLoopStepReplayBindingMismatch",
+        });
       }
       linkedCompactionProviderTurnId = compactionLink.providerTurnId;
     }
@@ -237,9 +230,9 @@ export const recoverConversationOverflow = (
         owner?.producerProviderTurnId !== linkedCompactionProviderTurnId ||
         owner.producerExecutionId !== input.execution.executionId
       ) {
-        return yield* Effect.fail(
-          failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-        );
+        return yield* Effect.fail<ConversationOverflowError>({
+          _tag: "AgentLoopStepReplayBindingMismatch",
+        });
       }
       const replacementProviderTurnId = makeOverflowReplacementProviderTurnId(
         input.execution.executionId,
@@ -253,49 +246,45 @@ export const recoverConversationOverflow = (
             linkedCompactionProviderTurnId ||
           Number(existingReplacement.contextEpoch) !== ownerEpoch)
       ) {
-        return yield* Effect.fail(
-          failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-        );
+        return yield* Effect.fail<ConversationOverflowError>({
+          _tag: "AgentLoopStepReplayBindingMismatch",
+        });
       }
-      yield* tx
-        .transact(
-          loopSteps.ensureProviderTurnLink(
-            {
-              identity: loopStepIdentity,
-              overflowOrdinal: 0,
-              role: "OverflowReplacement",
-              providerTurnId: replacementProviderTurnId,
-              predecessorProviderTurnId: linkedCompactionProviderTurnId,
-              contextEpoch: owner.contextEpoch,
-              state: "Prepared",
-              createdAt: yield* now(),
-            },
-            loopStepFence,
-          ),
-        )
-        .pipe(Effect.mapError(failure));
+      yield* tx.transact(
+        loopSteps.ensureProviderTurnLink(
+          {
+            identity: loopStepIdentity,
+            overflowOrdinal: 0,
+            role: "OverflowReplacement",
+            providerTurnId: replacementProviderTurnId,
+            predecessorProviderTurnId: linkedCompactionProviderTurnId,
+            contextEpoch: owner.contextEpoch,
+            state: "Prepared",
+            createdAt: yield* now(),
+          },
+          loopStepFence,
+        ),
+      );
       overflowReplacementProviderTurnId = replacementProviderTurnId;
       overflowRecoveryAttempt = 1;
       return { _tag: "Restart" as const, overflow: recoveryState() };
     }
     if (ownerEpoch !== Number(inference.contextEpoch)) {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<ConversationOverflowError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
     if (replacementLinks.length !== 0) {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<ConversationOverflowError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
-    const compactionManifest = yield* tx
-      .transact(
-        providerTurns.findManifestByTurn(linkedCompactionProviderTurnId),
-      )
-      .pipe(Effect.mapError(failure));
-    const compactionReceipt = yield* tx
-      .transact(providerTurns.findSettledResult(linkedCompactionProviderTurnId))
-      .pipe(Effect.mapError(failure));
+    const compactionManifest = yield* tx.transact(
+      providerTurns.findManifestByTurn(linkedCompactionProviderTurnId),
+    );
+    const compactionReceipt = yield* tx.transact(
+      providerTurns.findSettledResult(linkedCompactionProviderTurnId),
+    );
     const existingContract =
       compactionReceipt._tag === "Unsettled" ||
       compactionReceipt._tag === "SettledSuccess" ||
@@ -303,9 +292,9 @@ export const recoverConversationOverflow = (
         ? compactionReceipt.turn.outputContractRef
         : undefined;
     if (compactionManifest !== null && compactionReceipt._tag === "NotFound") {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<ConversationOverflowError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
     resumeOverflowNativeCompaction =
       existingContract === "provider-native-compaction-v1" ||

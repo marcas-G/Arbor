@@ -1,4 +1,9 @@
-import { executionEpisode, type Work, workEpisode } from "@arbor/domain";
+import {
+  executionEpisode,
+  type Work,
+  type Workspace,
+  workEpisode,
+} from "@arbor/domain";
 import {
   LocalPlanStore,
   type PortableInputItem,
@@ -7,10 +12,11 @@ import {
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import type { ModelDecisionDependencies } from "../contract.js";
+import type { DecisionWorkspaceContextError } from "./errors.js";
 
 type WorkspaceContextDependencies = Pick<
   ModelDecisionDependencies,
-  "input" | "tx" | "workspaces" | "works" | "failure"
+  "input" | "tx" | "workspaces" | "works"
 >;
 
 /** Read the bound workspace, accepted knowledge, placement and work plan.
@@ -18,8 +24,18 @@ type WorkspaceContextDependencies = Pick<
 export const loadDecisionWorkspaceContext = (
   dependencies: WorkspaceContextDependencies,
   placementExecution: boolean,
-) => {
-  const { input, tx, workspaces, works, failure } = dependencies;
+): Effect.Effect<
+  {
+    readonly workspace: Option.Some<Workspace>;
+    readonly currentWork: Work | null;
+    readonly inputItems: PortableInputItem[];
+    readonly messageContextRefs: string[];
+    readonly localPlanScope: boolean;
+  },
+  DecisionWorkspaceContextError,
+  LocalPlanStore | WorkspaceKnowledgePort | WorkspacePlacementPort
+> => {
+  const { input, tx, workspaces, works } = dependencies;
   return Effect.gen(function* () {
     // E05 sink: these capabilities belong to this module alone; they are
     // acquired from the environment instead of travelling through the
@@ -30,21 +46,19 @@ export const loadDecisionWorkspaceContext = (
     const inputItems: PortableInputItem[] = [];
     const messageContextRefs: string[] = [];
     let localPlanScope = false;
-    const workspace = yield* tx
-      .transact(workspaces.findById(input.execution.workspaceId))
-      .pipe(Effect.mapError(failure));
+    const workspace = yield* tx.transact(
+      workspaces.findById(input.execution.workspaceId),
+    );
     if (Option.isNone(workspace)) {
-      return yield* Effect.fail(
-        failure({
-          _tag: "WorkspaceContextMissing",
-          workspaceId: input.execution.workspaceId,
-        }),
-      );
+      return yield* Effect.fail<DecisionWorkspaceContextError>({
+        _tag: "WorkspaceContextMissing",
+        workspaceId: input.execution.workspaceId,
+      });
     }
     {
-      const knowledge = yield* workspaceKnowledge
-        .load(input.execution.workspaceId)
-        .pipe(Effect.mapError(failure));
+      const knowledge = yield* workspaceKnowledge.load(
+        input.execution.workspaceId,
+      );
       if (knowledge.entries.length > 0) {
         inputItems.push({
           _tag: "ContextUpdate",
@@ -63,9 +77,9 @@ export const loadDecisionWorkspaceContext = (
       }
     }
     if (placementExecution) {
-      const placement = yield* workspacePlacement
-        .list({ rootWorkspaceId: input.execution.workspaceId })
-        .pipe(Effect.mapError(failure));
+      const placement = yield* workspacePlacement.list({
+        rootWorkspaceId: input.execution.workspaceId,
+      });
       inputItems.push({
         _tag: "ContextUpdate",
         sourceRef: `workspace-placement:${input.execution.workspaceId}`,
@@ -86,23 +100,19 @@ export const loadDecisionWorkspaceContext = (
     let currentWork: Work | null = null;
     const boundWork = workEpisode(input.execution);
     if (boundWork !== null) {
-      const work = yield* tx
-        .transact(works.findById(boundWork.workId))
-        .pipe(Effect.mapError(failure));
+      const work = yield* tx.transact(works.findById(boundWork.workId));
       if (Option.isNone(work)) {
-        return yield* Effect.fail(
-          failure({
-            _tag: "WorkContextMissing",
-            workId: boundWork.workId,
-          }),
-        );
+        return yield* Effect.fail<DecisionWorkspaceContextError>({
+          _tag: "WorkContextMissing",
+          workId: boundWork.workId,
+        });
       }
       currentWork = work.value;
       if (executionEpisode(input.execution)?._tag === "WorkEpisode") {
         localPlanScope = true;
-        const plan = yield* tx
-          .transact(localPlans.findByWork(boundWork.workId))
-          .pipe(Effect.mapError(failure));
+        const plan = yield* tx.transact(
+          localPlans.findByWork(boundWork.workId),
+        );
         if (
           Option.isSome(plan) &&
           plan.value.targetWorkRevision === currentWork.revision

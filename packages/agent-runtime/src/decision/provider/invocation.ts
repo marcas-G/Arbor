@@ -36,6 +36,7 @@ import type { AgentStepContext } from "../../step-context.js";
 import type { ModelDecisionDependencies } from "../contract.js";
 import type { ConversationDecisionContextResult } from "../conversation-context.js";
 import type { OverflowRecoveryState } from "../recovery/overflow-state.js";
+import type { ProviderInvocationError } from "./errors.js";
 import {
   type ProviderDecisionResult,
   processSuccessfulProviderResult,
@@ -53,7 +54,6 @@ type InvocationDependencies = Pick<
   | "options"
   | "admitProviderTurn"
   | "completeProviderTurn"
-  | "failure"
   | "now"
   | "conversationCheckpoints"
   | "blobs"
@@ -89,7 +89,7 @@ export const invokePreparedProviderTurn = (
       settlement: ExecutionSettlement,
     ) => Effect.Effect<ModelDecisionOutcome, ExecutionDriverError>;
   },
-): Effect.Effect<ProviderDecisionResult, ExecutionDriverError> => {
+): Effect.Effect<ProviderDecisionResult, ProviderInvocationError> => {
   const {
     input,
     capability,
@@ -101,7 +101,6 @@ export const invokePreparedProviderTurn = (
     options,
     admitProviderTurn,
     completeProviderTurn,
-    failure,
     now,
   } = dependencies;
   const {
@@ -204,26 +203,24 @@ export const invokePreparedProviderTurn = (
         const overflowSteps = loopSteps;
         const observedAt = yield* now();
         if (providerTurns !== undefined) {
-          const existingTurn = yield* tx
-            .transact(providerTurns.findUnsettledByTurn(providerTurnId))
-            .pipe(Effect.mapError(failure));
+          const existingTurn = yield* tx.transact(
+            providerTurns.findUnsettledByTurn(providerTurnId),
+          );
           if (existingTurn !== null) {
-            yield* tx
-              .transact(
-                Effect.gen(function* () {
-                  yield* providerTurns.failTurn(providerTurnId, observedAt);
-                  if (options.qualificationProbe !== undefined) {
-                    yield* Effect.promise(async () => {
-                      await options.qualificationProbe?.({
-                        boundary: "AH18BeforeInferenceFailTurnCommit",
-                        executionId: String(input.execution.executionId),
-                        providerTurnId: String(providerTurnId),
-                      });
+            yield* tx.transact(
+              Effect.gen(function* () {
+                yield* providerTurns.failTurn(providerTurnId, observedAt);
+                if (options.qualificationProbe !== undefined) {
+                  yield* Effect.promise(async () => {
+                    await options.qualificationProbe?.({
+                      boundary: "AH18BeforeInferenceFailTurnCommit",
+                      executionId: String(input.execution.executionId),
+                      providerTurnId: String(providerTurnId),
                     });
-                  }
-                }),
-              )
-              .pipe(Effect.mapError(failure));
+                  });
+                }
+              }),
+            );
           }
         }
         const nativeSupported =
@@ -247,45 +244,43 @@ export const invokePreparedProviderTurn = (
             executionId: String(input.execution.executionId),
             providerTurnId: String(compactionProviderTurnId),
           };
-          yield* tx
-            .transact(
-              Effect.gen(function* () {
-                yield* overflowSteps.ensureProviderTurnLink(
-                  {
-                    identity: overflowStep.identity,
-                    overflowOrdinal: 0,
-                    role: "Inference",
-                    providerTurnId,
-                    contextEpoch: stepContext.contextEpoch,
-                    state: "SettledFailure",
-                    createdAt: observedAt,
-                  },
-                  overflowFence,
-                );
-                yield* overflowSteps.ensureProviderTurnLink(
-                  {
-                    identity: overflowStep.identity,
-                    overflowOrdinal: 0,
-                    role: "OverflowCompaction",
-                    providerTurnId: compactTurnId,
-                    predecessorProviderTurnId: providerTurnId,
-                    contextEpoch: stepContext.contextEpoch,
-                    state: "Prepared",
-                    createdAt: observedAt,
-                  },
-                  overflowFence,
-                );
-                if (options.qualificationProbe !== undefined) {
-                  yield* Effect.promise(async () => {
-                    await options.qualificationProbe?.({
-                      boundary: "AH18BeforeOverflowLinksCommit",
-                      ...linkProbeIdentity,
-                    });
+          yield* tx.transact(
+            Effect.gen(function* () {
+              yield* overflowSteps.ensureProviderTurnLink(
+                {
+                  identity: overflowStep.identity,
+                  overflowOrdinal: 0,
+                  role: "Inference",
+                  providerTurnId,
+                  contextEpoch: stepContext.contextEpoch,
+                  state: "SettledFailure",
+                  createdAt: observedAt,
+                },
+                overflowFence,
+              );
+              yield* overflowSteps.ensureProviderTurnLink(
+                {
+                  identity: overflowStep.identity,
+                  overflowOrdinal: 0,
+                  role: "OverflowCompaction",
+                  providerTurnId: compactTurnId,
+                  predecessorProviderTurnId: providerTurnId,
+                  contextEpoch: stepContext.contextEpoch,
+                  state: "Prepared",
+                  createdAt: observedAt,
+                },
+                overflowFence,
+              );
+              if (options.qualificationProbe !== undefined) {
+                yield* Effect.promise(async () => {
+                  await options.qualificationProbe?.({
+                    boundary: "AH18BeforeOverflowLinksCommit",
+                    ...linkProbeIdentity,
                   });
-                }
-              }),
-            )
-            .pipe(Effect.mapError(failure));
+                });
+              }
+            }),
+          );
           if (options.qualificationProbe !== undefined) {
             yield* Effect.promise(async () => {
               await options.qualificationProbe?.({
@@ -305,11 +300,9 @@ export const invokePreparedProviderTurn = (
                 dependencies.blobs === undefined ||
                 providerTurns === undefined
               ) {
-                return yield* Effect.fail(
-                  failure({
-                    _tag: "ConversationCheckpointRuntimeUnavailable",
-                  }),
-                );
+                return yield* Effect.fail<ProviderInvocationError>({
+                  _tag: "ConversationCheckpointRuntimeUnavailable",
+                });
               }
               const sources = [
                 ...conversationProjection.coveredAnswered,
@@ -354,7 +347,7 @@ export const invokePreparedProviderTurn = (
                   blobs: dependencies.blobs,
                   tx,
                 },
-              ).pipe(Effect.mapError(failure));
+              );
             })
           : yield* runCompaction(
               {
@@ -384,7 +377,7 @@ export const invokePreparedProviderTurn = (
                 nativeSupported,
               },
               compactionDependencies,
-            ).pipe(Effect.mapError(failure));
+            );
         if ("_tag" in compacted) {
           return yield* proposeSettlement(safetyStop("RuntimeSafetyStop"));
         }
@@ -393,23 +386,21 @@ export const invokePreparedProviderTurn = (
             input.execution.executionId,
             turn,
           );
-        yield* tx
-          .transact(
-            overflowSteps.ensureProviderTurnLink(
-              {
-                identity: overflowStep.identity,
-                overflowOrdinal: 0,
-                role: "OverflowReplacement",
-                providerTurnId: overflowReplacementProviderTurnId,
-                predecessorProviderTurnId: compacted.providerTurnId,
-                contextEpoch: compacted.newEpoch,
-                state: "Prepared",
-                createdAt: yield* now(),
-              },
-              overflowFence,
-            ),
-          )
-          .pipe(Effect.mapError(failure));
+        yield* tx.transact(
+          overflowSteps.ensureProviderTurnLink(
+            {
+              identity: overflowStep.identity,
+              overflowOrdinal: 0,
+              role: "OverflowReplacement",
+              providerTurnId: overflowReplacementProviderTurnId,
+              predecessorProviderTurnId: compacted.providerTurnId,
+              contextEpoch: compacted.newEpoch,
+              state: "Prepared",
+              createdAt: yield* now(),
+            },
+            overflowFence,
+          ),
+        );
         overflowRecoveryAttempt = 1;
         replayPersistedContextLimit = false;
         return {
@@ -424,7 +415,7 @@ export const invokePreparedProviderTurn = (
           providerFailureSettlement(providerResult.cause),
         );
       }
-      return yield* Effect.fail(failure(providerResult.cause));
+      return yield* Effect.fail(providerResult.cause);
     }
     return yield* processSuccessfulProviderResult(dependencies, {
       turn,
