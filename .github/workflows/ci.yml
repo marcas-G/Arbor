@@ -137,14 +137,11 @@ jobs:
       - name: Build
         run: pnpm build
 
-      - name: Core tests
-        run: pnpm test
+      - name: Core tests with coverage (single pass, plan PR 3)
+        run: pnpm test:coverage
 
       - name: Source-size transition gate
         run: node scripts/governance/check-source-lines.mjs --baseline "${{ steps.comparison_base.outputs.sha }}"
-
-      - name: Coverage
-        run: pnpm test:coverage
 
       - name: Upload coverage
         if: always()
@@ -155,10 +152,16 @@ jobs:
           path: coverage/
 
   functional:
-    # The daemon-boot release journey. Build + browser, then the
-    # serialized functional lane.
+    # The daemon-boot release journey, sharded (plan PR 3): round-robin
+    # over the sorted file list so heavy multi-restart families spread
+    # evenly; each shard is an isolated runner and runs serially inside.
     runs-on: ubuntu-24.04
-    timeout-minutes: 75
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+    name: functional (${{ matrix.shard }}/6)
     steps:
       - name: Checkout full history
         uses: actions/checkout@v4
@@ -182,7 +185,7 @@ jobs:
       - name: Prepare isolated local temp directory
         shell: bash
         run: |
-          ci_tmp="$GITHUB_WORKSPACE/.ci-tmp"
+          ci_tmp="$GITHUB_WORKSPACE/.ci-tmp/shard-${{ matrix.shard }}"
           mkdir -p "$ci_tmp"
           chmod 700 "$ci_tmp"
           echo "TMPDIR=$ci_tmp" >> "$GITHUB_ENV"
@@ -198,8 +201,12 @@ jobs:
       - name: Install functional UI browser
         run: pnpm exec playwright install --with-deps chromium
 
-      - name: Functional release journey
-        run: pnpm test:functional
+      - name: Functional release journey (shard ${{ matrix.shard }}/6)
+        run: |
+          set -e
+          mapfile -t FILES < <(node scripts/testing/functional-shard.mjs ${{ matrix.shard }} 6)
+          echo "running ${#FILES[@]} files"
+          pnpm vitest run "${FILES[@]}" --config vitest.functional.config.ts
 
   health:
     # Post-lane aggregation: audit + the health snapshot over the unit
