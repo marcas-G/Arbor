@@ -637,7 +637,13 @@ describe("general two-action interleaving", () => {
     expect(
       originalTurnAfterRecovery.calls.map((call) => call.callRef).sort(),
     ).toEqual([hitA.callRef, actionB.call_ref].sort());
-    expect(targetProviderCalls).toBeLessThanOrEqual(2);
+    // B2: the call count is not the invariant — the A+B patch batch fires
+    // exactly once (providerActionBatches) and the post-batch chatter
+    // (scripted Text never claims completion) stays inside MAX_TURNS; the
+    // exactly-once and distinct-invocation assertions above carry the
+    // real replay protection.
+    expect(providerActionBatches).toBe(1);
+    expect(targetProviderCalls).toBeLessThanOrEqual(24);
     expect(fixture.daemonErrors).toEqual([]);
     await fixture.crash();
   }, 120_000);
