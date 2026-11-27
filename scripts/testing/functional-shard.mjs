@@ -12,7 +12,13 @@ import { join } from "node:path";
 const root = new URL("../..", import.meta.url).pathname;
 const index = Number(process.argv[2]);
 const total = Number(process.argv[3]);
-if (!Number.isInteger(index) || !Number.isInteger(total) || index < 1 || total < 1 || index > total) {
+if (
+  !Number.isInteger(index) ||
+  !Number.isInteger(total) ||
+  index < 1 ||
+  total < 1 ||
+  index > total
+) {
   console.error("usage: functional-shard.mjs <index 1..total> <total>");
   process.exit(2);
 }
