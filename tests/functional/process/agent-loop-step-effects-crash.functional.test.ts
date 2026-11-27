@@ -457,8 +457,15 @@ describe("Observation to StepEffectsCommitted process crash", () => {
         );
       });
       activePhase = "step-effects-committed-successor-ready";
-      const recoveredTargetActions = recovered.actions.filter(
-        (action) => action.execution_id === hit.executionId,
+      const recoveredCrashedStepActions = recovered.actions.filter(
+        (action) =>
+          action.execution_id === hit.executionId &&
+          action.logical_step_no === 0,
+      );
+      const recoveredSuccessorActions = recovered.actions.filter(
+        (action) =>
+          action.execution_id === hit.executionId &&
+          Number(action.logical_step_no ?? -1) > 0,
       );
       const recoveredTargetInvocations = recovered.toolInvocations.filter(
         (invocation) => invocation.execution_id === hit.executionId,
@@ -469,7 +476,16 @@ describe("Observation to StepEffectsCommitted process crash", () => {
       const recoveredTargetArtifacts = recovered.artifacts.filter((artifact) =>
         killedTargetInvocationIds.has(artifact.invocation_id),
       );
-      expect(recoveredTargetActions).toEqual(killedTargetActions);
+      expect(recoveredCrashedStepActions).toEqual(killedTargetActions);
+      // The resumed successor may already have parked itself in its Manual
+      // wait by the time the poll observes step 1 — that is legitimate
+      // successor progress, never a replay of the crashed step's read.
+      expect(
+        recoveredSuccessorActions.every(
+          (action) =>
+            action.action_kind === "wait" && action.state === "Applied",
+        ),
+      ).toBe(true);
       expect(recoveredTargetInvocations).toEqual(killedTargetInvocations);
       expect(recoveredTargetResults).toEqual(killedTargetResults);
       expect(recoveredTargetArtifacts).toEqual(killedTargetArtifacts);
