@@ -27,6 +27,10 @@ import type {
 import { PROVIDER_REASONING_ATTACHMENT_MEDIA_TYPE } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import type { ModelDecisionOutcome } from "./agent-loop-policy.js";
+import {
+  foldDecisionSessionContextError,
+  foldDecisionWorkspaceContextError,
+} from "./decision/context/errors.js";
 import { loadDecisionSessionContext } from "./decision/context/session.js";
 import { loadDecisionWorkspaceContext } from "./decision/context/workspace.js";
 import type { ModelDecisionDependencies } from "./decision/contract.js";
@@ -37,9 +41,18 @@ import {
   foldStartupRecoveryError,
   foldStepRecoveryError,
 } from "./decision/errors.js";
+import { foldTurnPreparationError } from "./decision/preparation/errors.js";
 import { prepareTurnForDecision } from "./decision/preparation/turn.js";
+import {
+  foldProviderInvocationError,
+  foldProviderReplayError,
+} from "./decision/provider/errors.js";
 import { invokePreparedProviderTurn } from "./decision/provider/invocation.js";
 import { replayPreparedProviderTurn } from "./decision/provider/replay.js";
+import {
+  foldNativeCheckpointRecoveryError,
+  foldWorkPlanRebaseError,
+} from "./decision/recovery/errors.js";
 import { recoverNativeCheckpointContext } from "./decision/recovery/native-rebase.js";
 import type { OverflowRecoveryState } from "./decision/recovery/overflow-state.js";
 import { rebaseWorkPlanCheckpoint } from "./decision/recovery/work-plan-rebase.js";
@@ -325,7 +338,7 @@ export const runModelDecision = (
         reasoningProjectionBinding,
         loadReasoningAttachmentBlobs,
         readExecutionTimeline,
-      });
+      }).pipe(Effect.mapError(foldDecisionSessionContextError));
       if (sessionContext._tag === "Complete") return sessionContext.outcome;
       const {
         recentSessionEntries,
@@ -361,7 +374,7 @@ export const runModelDecision = (
           compactionAttempts,
           overflow,
         },
-      );
+      ).pipe(Effect.mapError(foldNativeCheckpointRecoveryError));
       if (nativeRecovery._tag === "Complete") return nativeRecovery.outcome;
       turn = nativeRecovery.cursor.turn;
       repairAttempt = nativeRecovery.cursor.repairAttempt;
@@ -371,7 +384,7 @@ export const runModelDecision = (
       const workspaceContext = yield* loadDecisionWorkspaceContext(
         dependencies,
         placementExecution,
-      );
+      ).pipe(Effect.mapError(foldDecisionWorkspaceContextError));
       const { workspace, currentWork, localPlanScope } = workspaceContext;
       inputItems.push(...workspaceContext.inputItems);
       messageContextRefs.push(...workspaceContext.messageContextRefs);
@@ -395,7 +408,7 @@ export const runModelDecision = (
           proposeSettlement,
           compactionAttempts,
           overflow,
-        });
+        }).pipe(Effect.mapError(foldWorkPlanRebaseError));
         if (planRebase._tag === "Complete") return planRebase.outcome;
         compactionAttempts = planRebase.compactionAttempts;
         overflow = planRebase.overflow;
@@ -423,7 +436,7 @@ export const runModelDecision = (
         providerNativeSupported,
         compactionDependencies,
         proposeSettlement,
-      });
+      }).pipe(Effect.mapError(foldTurnPreparationError));
       if (turnPreparation._tag === "Restart") {
         compactionAttempts = turnPreparation.compactionAttempts;
         overflow = turnPreparation.overflow;
@@ -436,7 +449,7 @@ export const runModelDecision = (
         preparation,
         conversationExecution,
         replayPersistedContextLimit: overflow.replayPersistedContextLimit,
-      });
+      }).pipe(Effect.mapError(foldProviderReplayError));
       if (replay._tag !== "Proceed") return replay;
       loopStep = replay.loopStep;
       const invocation = yield* invokePreparedProviderTurn(dependencies, {
@@ -456,7 +469,7 @@ export const runModelDecision = (
         compactionDependencies,
         compactionWorkPinning,
         proposeSettlement,
-      });
+      }).pipe(Effect.mapError(foldProviderInvocationError));
       if (invocation._tag !== "Restart") return invocation;
       overflow = invocation.overflow;
       repairAttempt = invocation.repairAttempt;

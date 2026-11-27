@@ -16,10 +16,11 @@ import { Effect, Option } from "effect";
 import type { decodeUniqueNativePortableFrontier } from "../../checkpoint/native-evidence.js";
 import type { ModelDecisionDependencies } from "../contract.js";
 import type { DecisionCursor } from "../startup-recovery.js";
+import type { NativePortableFrontierError } from "./errors.js";
 
 type PortableFrontierDependencies = Pick<
   ModelDecisionDependencies,
-  "input" | "tx" | "options" | "failure"
+  "input" | "tx" | "options"
 > & {
   readonly loopSteps: AgentLoopStepStoreService;
   readonly providerTurns: ProviderTurnStoreService;
@@ -54,8 +55,7 @@ export const reconstructNativePortableFrontier = (
     readonly reasoningAttachmentBlobs: ReadonlyMap<string, Uint8Array>;
   },
 ) => {
-  const { input, tx, loopSteps, providerTurns, options, failure } =
-    dependencies;
+  const { input, tx, loopSteps, providerTurns, options } = dependencies;
   const {
     nativeCheckpoint,
     nativeCheckpointIsInherited,
@@ -75,18 +75,16 @@ export const reconstructNativePortableFrontier = (
   } = phase;
   return Effect.gen(function* () {
     let { turn, repairAttempt } = phase.cursor;
-    const sourceLinkOption = yield* tx
-      .transact(
-        loopSteps.findProviderTurnLinkByProviderTurnId(nativeProviderTurnId),
-      )
-      .pipe(Effect.mapError(failure));
-    const nativeManifest = yield* tx
-      .transact(providerTurns.findManifestByTurn(nativeProviderTurnId))
-      .pipe(Effect.mapError(failure));
+    const sourceLinkOption = yield* tx.transact(
+      loopSteps.findProviderTurnLinkByProviderTurnId(nativeProviderTurnId),
+    );
+    const nativeManifest = yield* tx.transact(
+      providerTurns.findManifestByTurn(nativeProviderTurnId),
+    );
     if (nativeManifest === null) {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<NativePortableFrontierError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
     let nativeManifestValue: Record<string, unknown>;
     try {
@@ -96,15 +94,15 @@ export const reconstructNativePortableFrontier = (
         parsed === null ||
         Array.isArray(parsed)
       ) {
-        return yield* Effect.fail(
-          failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-        );
+        return yield* Effect.fail<NativePortableFrontierError>({
+          _tag: "AgentLoopStepReplayBindingMismatch",
+        });
       }
       nativeManifestValue = parsed as Record<string, unknown>;
     } catch {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<NativePortableFrontierError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
     const sourceIdentityValue = nativeManifestValue.sourceAgentLoopStep;
     const sourceIdentity =
@@ -153,9 +151,9 @@ export const reconstructNativePortableFrontier = (
           sourceLink.predecessorProviderTurnId === undefined)) ||
       sourceIdentity?.providerTurnId === undefined
     ) {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<NativePortableFrontierError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
     if (
       sourceIdentity.executionId !== expectedCheckpointOwnerExecutionId ||
@@ -163,22 +161,22 @@ export const reconstructNativePortableFrontier = (
       sourceIdentity.logicalStepNo !== sourceStepIdentity.logicalStepNo ||
       sourceIdentity.repairAttempt !== sourceStepIdentity.repairAttempt
     ) {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<NativePortableFrontierError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
-    const sourceStepOption = yield* tx
-      .transact(loopSteps.find(sourceStepIdentity))
-      .pipe(Effect.mapError(failure));
+    const sourceStepOption = yield* tx.transact(
+      loopSteps.find(sourceStepIdentity),
+    );
     if (!Option.isSome(sourceStepOption)) {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<NativePortableFrontierError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
     const sourceStep = sourceStepOption.value;
-    const sourceStepLinks = yield* tx
-      .transact(loopSteps.listProviderTurnLinks(sourceStepIdentity))
-      .pipe(Effect.mapError(failure));
+    const sourceStepLinks = yield* tx.transact(
+      loopSteps.listProviderTurnLinks(sourceStepIdentity),
+    );
     const inferenceLinks = sourceStepLinks.filter(
       (link) => link.role === "Inference",
     );
@@ -204,16 +202,14 @@ export const reconstructNativePortableFrontier = (
           (sourceInferenceLink !== undefined &&
             sourceInferenceLink.providerTurnId !== sourceStep.providerTurnId))
     ) {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<NativePortableFrontierError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
     if (sourceLink !== undefined && sourceInferenceLink !== undefined) {
-      const sourceInferenceResult = yield* tx
-        .transact(
-          providerTurns.findSettledResult(sourceInferenceLink.providerTurnId),
-        )
-        .pipe(Effect.mapError(failure));
+      const sourceInferenceResult = yield* tx.transact(
+        providerTurns.findSettledResult(sourceInferenceLink.providerTurnId),
+      );
       if (
         sourceInferenceResult._tag !== "SettledFailure" ||
         sourceInferenceResult.turn.providerTurnId !==
@@ -224,9 +220,9 @@ export const reconstructNativePortableFrontier = (
         sourceInferenceResult.turn.sessionId !== input.execution.sessionId ||
         sourceInferenceResult.turn.contextEpoch !== sourceLink.contextEpoch
       ) {
-        return yield* Effect.fail(
-          failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-        );
+        return yield* Effect.fail<NativePortableFrontierError>({
+          _tag: "AgentLoopStepReplayBindingMismatch",
+        });
       }
     }
     // The Native Manifest carries the exact source identity for ordinary
@@ -272,13 +268,13 @@ export const reconstructNativePortableFrontier = (
       );
     }
     if (nativeManifest === null) {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<NativePortableFrontierError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
-    const nativeReceipt = yield* tx
-      .transact(providerTurns.findSettledResult(nativeProviderTurnId))
-      .pipe(Effect.mapError(failure));
+    const nativeReceipt = yield* tx.transact(
+      providerTurns.findSettledResult(nativeProviderTurnId),
+    );
     if (options.qualificationProbe !== undefined) {
       yield* Effect.promise(
         () =>
@@ -301,9 +297,9 @@ export const reconstructNativePortableFrontier = (
       nativeReceipt.turn.contextEpoch !== nativeCheckpoint.fromEpoch ||
       nativeReceipt.manifestJson !== nativeManifest.manifestJson
     ) {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<NativePortableFrontierError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
     let nativeManifestJson: Record<string, unknown>;
     let nativeRequest: Record<string, unknown>;
@@ -320,16 +316,16 @@ export const reconstructNativePortableFrontier = (
         requestValue === null ||
         Array.isArray(requestValue)
       ) {
-        return yield* Effect.fail(
-          failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-        );
+        return yield* Effect.fail<NativePortableFrontierError>({
+          _tag: "AgentLoopStepReplayBindingMismatch",
+        });
       }
       nativeManifestJson = manifestValue as Record<string, unknown>;
       nativeRequest = requestValue as Record<string, unknown>;
     } catch {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<NativePortableFrontierError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
     const nativeInputFrontier = nativeManifestJson.inputFrontier as
       | {
@@ -460,9 +456,9 @@ export const reconstructNativePortableFrontier = (
       nativeContinuationRefs.length !== 1 ||
       nativeContinuationRefs[0]?.stateRef !== nativeCheckpoint.opaqueItemRef
     ) {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<NativePortableFrontierError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
     if (options.qualificationProbe !== undefined) {
       yield* Effect.promise(
@@ -486,9 +482,9 @@ export const reconstructNativePortableFrontier = (
       reasoningAttachmentBlobs,
     );
     if (postCheckpointProjection.nativeCheckpoint !== undefined) {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<NativePortableFrontierError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
     const portableContextRefs = [
       ...(nativeContextRefs as ReadonlyArray<string>),
@@ -498,9 +494,9 @@ export const reconstructNativePortableFrontier = (
       portableContextRefs.length === 0 ||
       new Set(portableContextRefs).size !== portableContextRefs.length
     ) {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<NativePortableFrontierError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
     const firstSequence =
       typeof nativeInputFrontier.firstSequence === "number"
@@ -517,9 +513,9 @@ export const reconstructNativePortableFrontier = (
         lastSequence !== null &&
         lastSequence < firstSequence)
     ) {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<NativePortableFrontierError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
     const portableItems = [
       ...(nativeInputItems as ReadonlyArray<PortableInputItem>),

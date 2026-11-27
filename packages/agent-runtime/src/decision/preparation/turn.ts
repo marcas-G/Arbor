@@ -32,6 +32,7 @@ import type { ModelDecisionDependencies } from "../contract.js";
 import type { ConversationDecisionContextResult } from "../conversation-context.js";
 import type { OverflowRecoveryState } from "../recovery/overflow-state.js";
 import { resumePinnedOverflowCompaction } from "../recovery/resume-overflow-compaction.js";
+import type { TurnPreparationError } from "./errors.js";
 import {
   assembleDecisionInstructions,
   type CompactionWorkPinning,
@@ -50,7 +51,6 @@ type PreparationDependencies = Pick<
   | "turnProfileResolver"
   | "decisionRequests"
   | "options"
-  | "failure"
   | "now"
   | "conversationCheckpoints"
   | "blobs"
@@ -105,7 +105,7 @@ export const prepareTurnForDecision = (
       settlement: ExecutionSettlement,
     ) => Effect.Effect<ModelDecisionOutcome, ExecutionDriverError>;
   },
-): Effect.Effect<PreparationResult, ExecutionDriverError> => {
+): Effect.Effect<PreparationResult, TurnPreparationError> => {
   const {
     input,
     agentBinding,
@@ -114,7 +114,6 @@ export const prepareTurnForDecision = (
     loopStepFence,
     turnProfileResolver,
     options,
-    failure,
   } = dependencies;
   const {
     turn,
@@ -174,12 +173,10 @@ export const prepareTurnForDecision = (
       proposeSettlement,
     });
     if (resumed._tag !== "Proceed") return resumed;
-    const turnProfile = yield* turnProfileResolver
-      .resolve({
-        execution: input.execution,
-        conversation: conversationExecution && conversationMessages.length > 0,
-      })
-      .pipe(Effect.mapError(failure));
+    const turnProfile = yield* turnProfileResolver.resolve({
+      execution: input.execution,
+      conversation: conversationExecution && conversationMessages.length > 0,
+    });
     const workExecutionLoopFragments = workExecutionLoopFragmentsFor(
       turnProfile.purpose,
     );
@@ -253,7 +250,7 @@ export const prepareTurnForDecision = (
           },
         });
       }
-      return yield* Effect.fail(failure(prepared.cause));
+      return yield* Effect.fail<TurnPreparationError>(prepared.cause);
     }
     const preparation = prepared.value;
 
@@ -262,12 +259,10 @@ export const prepareTurnForDecision = (
     }
     if (preparation._tag === "NeedsCompaction") {
       if (loopStepFence === undefined) {
-        return yield* Effect.fail(
-          failure({
-            _tag: "CompactionFenceUnavailable",
-            executionId: input.execution.executionId,
-          }),
-        );
+        return yield* Effect.fail<TurnPreparationError>({
+          _tag: "CompactionFenceUnavailable",
+          executionId: input.execution.executionId,
+        });
       }
       if (compactionAttempts >= 1) {
         return yield* proposeSettlement(safetyStop("CompactionNoGain"));
@@ -305,7 +300,7 @@ export const prepareTurnForDecision = (
           nativeSupported,
         },
         compactionDependencies,
-      ).pipe(Effect.mapError(failure));
+      );
       if ("_tag" in compacted) {
         return yield* proposeSettlement(safetyStop("RuntimeSafetyStop"));
       }

@@ -10,7 +10,6 @@ import {
 import type {
   AgentLoopStepRecord,
   ExecutionActivity,
-  ExecutionDriverError,
   ProviderRunResult,
 } from "@arbor/ports";
 import { Effect } from "effect";
@@ -22,6 +21,7 @@ import {
 import { decideRepair } from "../../repair.js";
 import type { ModelDecisionDependencies } from "../contract.js";
 import type { OverflowRecoveryState } from "../recovery/overflow-state.js";
+import type { ProviderResultError } from "./errors.js";
 
 type ResultDependencies = Pick<
   ModelDecisionDependencies,
@@ -32,7 +32,6 @@ type ResultDependencies = Pick<
   | "providerTurns"
   | "options"
   | "completeProviderTurn"
-  | "failure"
   | "now"
 >;
 
@@ -62,7 +61,7 @@ export const processSuccessfulProviderResult = (
     readonly conversationExecution: boolean;
     readonly overflow: OverflowRecoveryState;
   },
-): Effect.Effect<ProviderDecisionResult, ExecutionDriverError> => {
+): Effect.Effect<ProviderDecisionResult, ProviderResultError> => {
   const {
     input,
     tx,
@@ -71,7 +70,6 @@ export const processSuccessfulProviderResult = (
     providerTurns,
     options,
     completeProviderTurn,
-    failure,
     now,
   } = dependencies;
   const {
@@ -94,9 +92,7 @@ export const processSuccessfulProviderResult = (
       const settled =
         providerTurns === undefined
           ? undefined
-          : yield* tx
-              .transact(providerTurns.findSettledResult(providerTurnId))
-              .pipe(Effect.mapError(failure));
+          : yield* tx.transact(providerTurns.findSettledResult(providerTurnId));
       if (
         settled?._tag === "SettledSuccess" &&
         options.qualificationProbe !== undefined
@@ -109,28 +105,26 @@ export const processSuccessfulProviderResult = (
             }) ?? Promise.resolve(),
         );
       }
-      loopStep = yield* tx
-        .transact(
-          loopSteps.transition(
-            {
-              identity: loopStep.identity,
-              expectedRevision: loopStep.revision,
-              expectedState: "Prepared",
-              next: {
-                ...loopStep,
-                ...(settled?._tag === "SettledSuccess"
-                  ? { manifestId: settled.manifestId }
-                  : {}),
-                state: "ProviderResultAvailable",
-                decoderVersion: "decode-turn-v1",
-                revision: loopStep.revision + 1,
-                updatedAt: yield* now(),
-              },
+      loopStep = yield* tx.transact(
+        loopSteps.transition(
+          {
+            identity: loopStep.identity,
+            expectedRevision: loopStep.revision,
+            expectedState: "Prepared",
+            next: {
+              ...loopStep,
+              ...(settled?._tag === "SettledSuccess"
+                ? { manifestId: settled.manifestId }
+                : {}),
+              state: "ProviderResultAvailable",
+              decoderVersion: "decode-turn-v1",
+              revision: loopStep.revision + 1,
+              updatedAt: yield* now(),
             },
-            loopStepFence,
-          ),
-        )
-        .pipe(Effect.mapError(failure));
+          },
+          loopStepFence,
+        ),
+      );
       if (options.qualificationProbe !== undefined) {
         yield* Effect.promise(
           () =>
@@ -182,28 +176,26 @@ export const processSuccessfulProviderResult = (
         loopStep.state === "ProviderResultAvailable"
       ) {
         const rejectedStep = loopStep;
-        const outputRejected = yield* tx
-          .transact(
-            loopSteps.transition(
-              {
-                identity: rejectedStep.identity,
-                expectedRevision: rejectedStep.revision,
-                expectedState: "ProviderResultAvailable",
-                next: {
-                  ...rejectedStep,
-                  state: "OutputRejected",
-                  repairDisposition: {
-                    _tag: "Exhausted",
-                    settlement: repair.settlement,
-                  },
-                  revision: rejectedStep.revision + 1,
-                  updatedAt: yield* now(),
+        const outputRejected = yield* tx.transact(
+          loopSteps.transition(
+            {
+              identity: rejectedStep.identity,
+              expectedRevision: rejectedStep.revision,
+              expectedState: "ProviderResultAvailable",
+              next: {
+                ...rejectedStep,
+                state: "OutputRejected",
+                repairDisposition: {
+                  _tag: "Exhausted",
+                  settlement: repair.settlement,
                 },
+                revision: rejectedStep.revision + 1,
+                updatedAt: yield* now(),
               },
-              loopStepFence,
-            ),
-          )
-          .pipe(Effect.mapError(failure));
+            },
+            loopStepFence,
+          ),
+        );
         if (
           repair.settlement._tag === "Failed" &&
           options.qualificationProbe !== undefined
@@ -216,25 +208,23 @@ export const processSuccessfulProviderResult = (
               }) ?? Promise.resolve(),
           );
         }
-        yield* tx
-          .transact(
-            loopSteps.transition(
-              {
-                identity: outputRejected.identity,
-                expectedRevision: outputRejected.revision,
-                expectedState: "OutputRejected",
-                next: {
-                  ...outputRejected,
-                  state: "SettlementProposed",
-                  settlement: repair.settlement,
-                  revision: outputRejected.revision + 1,
-                  updatedAt: yield* now(),
-                },
+        yield* tx.transact(
+          loopSteps.transition(
+            {
+              identity: outputRejected.identity,
+              expectedRevision: outputRejected.revision,
+              expectedState: "OutputRejected",
+              next: {
+                ...outputRejected,
+                state: "SettlementProposed",
+                settlement: repair.settlement,
+                revision: outputRejected.revision + 1,
+                updatedAt: yield* now(),
               },
-              loopStepFence,
-            ),
-          )
-          .pipe(Effect.mapError(failure));
+            },
+            loopStepFence,
+          ),
+        );
         if (
           repair.settlement._tag === "Failed" &&
           options.qualificationProbe !== undefined
@@ -267,50 +257,48 @@ export const processSuccessfulProviderResult = (
         turn,
         repairAttempt + 1,
       );
-      yield* tx
-        .transact(
-          Effect.gen(function* () {
-            yield* loopSteps.transition(
-              {
-                identity: rejectedStep.identity,
-                expectedRevision: rejectedStep.revision,
-                expectedState: "ProviderResultAvailable",
-                next: {
-                  ...rejectedStep,
-                  state: "OutputRejected",
-                  repairDisposition: {
-                    _tag: "Retry",
-                    successor: {
-                      ...successorIdentity,
-                      providerTurnId: successorProviderTurnId,
-                    },
-                  },
+      yield* tx.transact(
+        Effect.gen(function* () {
+          yield* loopSteps.transition(
+            {
+              identity: rejectedStep.identity,
+              expectedRevision: rejectedStep.revision,
+              expectedState: "ProviderResultAvailable",
+              next: {
+                ...rejectedStep,
+                state: "OutputRejected",
+                repairDisposition: {
+                  _tag: "Retry",
                   successor: {
                     ...successorIdentity,
                     providerTurnId: successorProviderTurnId,
                   },
-                  revision: rejectedStep.revision + 1,
-                  updatedAt: yield* now(),
                 },
-              },
-              loopStepFence,
-            );
-            yield* loopSteps.ensureSuccessor(
-              rejectedStep.identity,
-              {
-                identity: successorIdentity,
-                predecessor: rejectedStep.identity,
-                providerTurnId: successorProviderTurnId,
-                state: "Prepared",
-                nextActionIndex: 0,
-                revision: 0,
+                successor: {
+                  ...successorIdentity,
+                  providerTurnId: successorProviderTurnId,
+                },
+                revision: rejectedStep.revision + 1,
                 updatedAt: yield* now(),
               },
-              loopStepFence,
-            );
-          }),
-        )
-        .pipe(Effect.mapError(failure));
+            },
+            loopStepFence,
+          );
+          yield* loopSteps.ensureSuccessor(
+            rejectedStep.identity,
+            {
+              identity: successorIdentity,
+              predecessor: rejectedStep.identity,
+              providerTurnId: successorProviderTurnId,
+              state: "Prepared",
+              nextActionIndex: 0,
+              revision: 0,
+              updatedAt: yield* now(),
+            },
+            loopStepFence,
+          );
+        }),
+      );
     }
     return {
       _tag: "Restart" as const,

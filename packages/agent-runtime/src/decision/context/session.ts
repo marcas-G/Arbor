@@ -30,6 +30,7 @@ import {
 import { makeAgentStepContext } from "../../step-context.js";
 import type { ModelDecisionDependencies } from "../contract.js";
 import type { ConversationDecisionContextResult } from "../conversation-context.js";
+import type { DecisionSessionContextError } from "./errors.js";
 
 type SessionContextDependencies = Pick<
   ModelDecisionDependencies,
@@ -39,7 +40,6 @@ type SessionContextDependencies = Pick<
   | "loopSteps"
   | "loopStepFence"
   | "providerTurns"
-  | "failure"
   | "now"
 >;
 
@@ -75,16 +75,8 @@ export const loadDecisionSessionContext = (
     >;
   },
 ) => {
-  const {
-    input,
-    tx,
-    sessions,
-    loopSteps,
-    loopStepFence,
-    providerTurns,
-    failure,
-    now,
-  } = dependencies;
+  const { input, tx, sessions, loopSteps, loopStepFence, providerTurns, now } =
+    dependencies;
   const {
     turn,
     repairAttempt,
@@ -111,12 +103,8 @@ export const loadDecisionSessionContext = (
     // conversation on an unrelated invocation. Start from an empty Session
     // projection; answered HumanMessages + the claimed message are the sole
     // conversation continuity source.
-    const recentTimeline = yield* tx
-      .transact(readExecutionTimeline())
-      .pipe(Effect.mapError(failure));
-    const typedTimeline = yield* tx
-      .transact(sessions.supportsTypedTimeline())
-      .pipe(Effect.mapError(failure));
+    const recentTimeline = yield* tx.transact(readExecutionTimeline());
+    const typedTimeline = yield* tx.transact(sessions.supportsTypedTimeline());
     const workBinding = workEpisode(input.execution);
     const conversationTimeline = (entries: ReadonlyArray<SessionEntryRecord>) =>
       entries.filter(
@@ -146,9 +134,7 @@ export const loadDecisionSessionContext = (
       projectionDecision._tag === "Blocked" &&
       projectionDecision.reason === "UnresolvedInvocation" &&
       loopStepFence !== undefined &&
-      (yield* tx
-        .transact(sessions.supportsTypedTimeline())
-        .pipe(Effect.mapError(failure)))
+      (yield* tx.transact(sessions.supportsTypedTimeline()))
     ) {
       const unresolved = projectionDecision.callRefs.map((callRef) => {
         const matchingEntries = recentSessionEntries.filter(
@@ -201,9 +187,9 @@ export const loadDecisionSessionContext = (
           (entry): entry is NonNullable<typeof entry> => entry !== undefined,
         )
       ) {
-        const repairSession = yield* tx
-          .transact(sessions.findById(input.execution.sessionId))
-          .pipe(Effect.mapError(failure));
+        const repairSession = yield* tx.transact(
+          sessions.findById(input.execution.sessionId),
+        );
         if (Option.isNone(repairSession)) {
           return {
             _tag: "Complete" as const,
@@ -234,27 +220,23 @@ export const loadDecisionSessionContext = (
             truncated: false,
             artifactRefs: [],
           };
-          yield* tx
-            .transact(
-              sessions.appendItemIdempotent(
-                input.execution.sessionId,
-                {
-                  item,
-                  contextEpoch: repairSession.value.contextEpoch,
-                  source: {
-                    kind: "SessionFrontierRepair",
-                    ref: `session-frontier-repair:v1:${input.execution.executionId}:${invocation.originatingProviderTurnId}:${repairIdentity}`,
-                  },
-                  contentHash: sha256Hex(JSON.stringify(item)),
+          yield* tx.transact(
+            sessions.appendItemIdempotent(
+              input.execution.sessionId,
+              {
+                item,
+                contextEpoch: repairSession.value.contextEpoch,
+                source: {
+                  kind: "SessionFrontierRepair",
+                  ref: `session-frontier-repair:v1:${input.execution.executionId}:${invocation.originatingProviderTurnId}:${repairIdentity}`,
                 },
-                loopStepFence,
-              ),
-            )
-            .pipe(Effect.mapError(failure));
+                contentHash: sha256Hex(JSON.stringify(item)),
+              },
+              loopStepFence,
+            ),
+          );
         }
-        recentSessionEntries = yield* tx
-          .transact(readExecutionTimeline())
-          .pipe(Effect.mapError(failure));
+        recentSessionEntries = yield* tx.transact(readExecutionTimeline());
         if (conversationExecution) {
           recentSessionEntries = conversationTimeline(recentSessionEntries);
         } else if (workBinding !== null && typedTimeline) {
@@ -278,9 +260,7 @@ export const loadDecisionSessionContext = (
     if (projectionDecision._tag === "Blocked") {
       const settledForRecovery =
         loopStep !== undefined && providerTurns !== undefined
-          ? yield* tx
-              .transact(providerTurns.findSettledResult(providerTurnId))
-              .pipe(Effect.mapError(failure))
+          ? yield* tx.transact(providerTurns.findSettledResult(providerTurnId))
           : undefined;
       if (settledForRecovery?._tag === "SettledSuccess") {
         const lastClosed = projectionDecision.closedFrontier.lastSequence;
@@ -305,25 +285,23 @@ export const loadDecisionSessionContext = (
           loopStepFence !== undefined &&
           loopStep.state === "Prepared"
         ) {
-          yield* tx
-            .transact(
-              loopSteps.transition(
-                {
-                  identity: loopStep.identity,
-                  expectedRevision: loopStep.revision,
-                  expectedState: "Prepared",
-                  next: {
-                    ...loopStep,
-                    state: "SettlementProposed",
-                    settlement,
-                    revision: loopStep.revision + 1,
-                    updatedAt: yield* now(),
-                  },
+          yield* tx.transact(
+            loopSteps.transition(
+              {
+                identity: loopStep.identity,
+                expectedRevision: loopStep.revision,
+                expectedState: "Prepared",
+                next: {
+                  ...loopStep,
+                  state: "SettlementProposed",
+                  settlement,
+                  revision: loopStep.revision + 1,
+                  updatedAt: yield* now(),
                 },
-                loopStepFence,
-              ),
-            )
-            .pipe(Effect.mapError(failure));
+              },
+              loopStepFence,
+            ),
+          );
         }
         return {
           _tag: "Complete" as const,
@@ -333,16 +311,14 @@ export const loadDecisionSessionContext = (
     } else {
       sessionProjection = projectionDecision.projection;
     }
-    const sessionRecord = yield* tx
-      .transact(sessions.findById(input.execution.sessionId))
-      .pipe(Effect.mapError(failure));
+    const sessionRecord = yield* tx.transact(
+      sessions.findById(input.execution.sessionId),
+    );
     if (Option.isNone(sessionRecord)) {
-      return yield* Effect.fail(
-        failure({
-          _tag: "SessionContextMissing",
-          sessionId: input.execution.sessionId,
-        }),
-      );
+      return yield* Effect.fail<DecisionSessionContextError>({
+        _tag: "SessionContextMissing",
+        sessionId: input.execution.sessionId,
+      });
     }
     const stepContext = makeAgentStepContext({
       logicalStepNo: turn,
@@ -415,9 +391,9 @@ export const loadDecisionSessionContext = (
         nativeCheckpoint.providerTurnId,
       );
       if (nativeProviderTurnId !== null) {
-        const nativeManifest = yield* tx
-          .transact(providerTurns.findManifestByTurn(nativeProviderTurnId))
-          .pipe(Effect.mapError(failure));
+        const nativeManifest = yield* tx.transact(
+          providerTurns.findManifestByTurn(nativeProviderTurnId),
+        );
         const ownerExecutionId =
           nativeManifest === null
             ? undefined

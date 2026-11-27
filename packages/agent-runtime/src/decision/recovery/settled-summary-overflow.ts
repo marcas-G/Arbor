@@ -8,18 +8,18 @@ import type {
   AgentLoopStepIdentity,
   AgentLoopStepProviderTurnLink,
   AgentLoopStepStoreService,
-  ExecutionDriverError,
   SettledProviderTurnResult,
 } from "@arbor/ports";
 import { sha256Hex } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import { commitRecoveredSummaryCompaction } from "../../compaction-coordinator.js";
 import type { ModelDecisionDependencies } from "../contract.js";
+import type { SettledSummaryOverflowError } from "./errors.js";
 import type { OverflowRecoveryState } from "./overflow-state.js";
 
 type SummaryRecoveryDependencies = Pick<
   ModelDecisionDependencies,
-  "input" | "capability" | "tx" | "sessions" | "options" | "failure" | "now"
+  "input" | "capability" | "tx" | "sessions" | "options" | "now"
 > & {
   readonly loopSteps: AgentLoopStepStoreService;
   readonly loopStepFence: AgentLoopStepFence;
@@ -47,7 +47,7 @@ export const recoverSettledSummaryOverflow = (
   },
 ): Effect.Effect<
   { readonly _tag: "Restart"; readonly overflow: OverflowRecoveryState },
-  ExecutionDriverError
+  SettledSummaryOverflowError
 > => {
   const {
     input,
@@ -55,7 +55,6 @@ export const recoverSettledSummaryOverflow = (
     tx,
     sessions,
     options,
-    failure,
     now,
     loopSteps,
     loopStepFence,
@@ -82,9 +81,9 @@ export const recoverSettledSummaryOverflow = (
       compactionManifest === null ||
       compactionManifest.manifestJson !== compactionReceipt.manifestJson
     ) {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<SettledSummaryOverflowError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
     let persistedManifest: Record<string, unknown>;
     let persistedRequest: Record<string, unknown>;
@@ -101,16 +100,16 @@ export const recoverSettledSummaryOverflow = (
         request === null ||
         Array.isArray(request)
       ) {
-        return yield* Effect.fail(
-          failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-        );
+        return yield* Effect.fail<SettledSummaryOverflowError>({
+          _tag: "AgentLoopStepReplayBindingMismatch",
+        });
       }
       persistedManifest = manifest as Record<string, unknown>;
       persistedRequest = request as Record<string, unknown>;
     } catch {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<SettledSummaryOverflowError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
     const recoveryBindingFingerprint = currentBindingFingerprint;
     if (
@@ -130,31 +129,31 @@ export const recoverSettledSummaryOverflow = (
       persistedRequest.modelRef !== capability.modelRef ||
       persistedRequest.outputContractRef !== "compaction-result-v1"
     ) {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<SettledSummaryOverflowError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
     const summary = compactionReceipt.canonicalEvents
       .flatMap((event) => (event._tag === "TextDelta" ? [event.text] : []))
       .join("")
       .trim();
     if (summary.length === 0) {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<SettledSummaryOverflowError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
-    const currentSession = yield* tx
-      .transact(sessions.findById(input.execution.sessionId))
-      .pipe(Effect.mapError(failure));
+    const currentSession = yield* tx.transact(
+      sessions.findById(input.execution.sessionId),
+    );
     if (
       Option.isNone(currentSession) ||
       (currentSession.value.contextEpoch !== compactionLink.contextEpoch &&
         Number(currentSession.value.contextEpoch) !==
           Number(compactionLink.contextEpoch) + 1)
     ) {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<SettledSummaryOverflowError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
     yield* commitRecoveredSummaryCompaction(
       {
@@ -172,7 +171,7 @@ export const recoverSettledSummaryOverflow = (
           ? {}
           : { qualificationProbe: options.qualificationProbe }),
       },
-    ).pipe(Effect.mapError(failure));
+    );
     const replacementLinks = providerTurnLinks.filter(
       (link) => link.role === "OverflowReplacement",
     );
@@ -181,9 +180,9 @@ export const recoverSettledSummaryOverflow = (
       turn,
     );
     if (replacementLinks.length > 1) {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<SettledSummaryOverflowError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
     const existingReplacement = replacementLinks[0];
     if (existingReplacement !== undefined) {
@@ -194,30 +193,28 @@ export const recoverSettledSummaryOverflow = (
         Number(existingReplacement.contextEpoch) !==
           Number(compactionLink.contextEpoch) + 1
       ) {
-        return yield* Effect.fail(
-          failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-        );
+        return yield* Effect.fail<SettledSummaryOverflowError>({
+          _tag: "AgentLoopStepReplayBindingMismatch",
+        });
       }
     } else {
-      yield* tx
-        .transact(
-          loopSteps.ensureProviderTurnLink(
-            {
-              identity: loopStepIdentity,
-              overflowOrdinal: 0,
-              role: "OverflowReplacement",
-              providerTurnId: replacementProviderTurnId,
-              predecessorProviderTurnId: compactionLink.providerTurnId,
-              contextEpoch: parse(ContextEpochNumber)(
-                Number(compactionLink.contextEpoch) + 1,
-              ),
-              state: "Prepared",
-              createdAt: yield* now(),
-            },
-            loopStepFence,
-          ),
-        )
-        .pipe(Effect.mapError(failure));
+      yield* tx.transact(
+        loopSteps.ensureProviderTurnLink(
+          {
+            identity: loopStepIdentity,
+            overflowOrdinal: 0,
+            role: "OverflowReplacement",
+            providerTurnId: replacementProviderTurnId,
+            predecessorProviderTurnId: compactionLink.providerTurnId,
+            contextEpoch: parse(ContextEpochNumber)(
+              Number(compactionLink.contextEpoch) + 1,
+            ),
+            state: "Prepared",
+            createdAt: yield* now(),
+          },
+          loopStepFence,
+        ),
+      );
     }
     // The settled Summary receipt has been promoted to the exact
     // replacement checkpoint. The next loop iteration is pinned

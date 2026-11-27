@@ -1,5 +1,6 @@
 import type { Execution } from "@arbor/domain";
 import type { SessionTimelineProjection } from "@arbor/model-context";
+import type { ProviderTurnId, SettledProviderTurnResult } from "@arbor/ports";
 import {
   isEffectsCommittedStepState,
   isPreEffectsStepState,
@@ -13,11 +14,28 @@ import {
 } from "../../checkpoint/native-evidence.js";
 import type { ModelDecisionDependencies } from "../contract.js";
 import type { DecisionCursor } from "../startup-recovery.js";
+import type { NativeCheckpointSourceError } from "./errors.js";
 
 type NativeSourceDependencies = Pick<
   ModelDecisionDependencies,
-  "input" | "options" | "providerTurns" | "loopSteps" | "tx" | "failure"
+  "input" | "options" | "providerTurns" | "loopSteps" | "tx"
 >;
+
+type NativeCheckpointSourceResult = {
+  readonly cursor: DecisionCursor;
+  readonly checkpointSourceIdentity: {
+    readonly executionId: Execution["executionId"];
+    readonly logicalStepNo: number;
+    readonly repairAttempt: number;
+  };
+  readonly checkpointFrontier: ReturnType<
+    typeof decodeUniqueNativePortableFrontier
+  >;
+  readonly checkpointReceipt: SettledProviderTurnResult;
+  readonly checkpointManifestJson: Record<string, unknown> | undefined;
+  readonly checkpointNativeProviderTurnId: ProviderTurnId;
+  readonly expectedCheckpointOwnerExecutionId: Execution["executionId"];
+};
 
 /** Resolve and validate the checkpoint's durable producer and its source
  * Step. The caller retains ownership of the process-local decision cursor. */
@@ -34,9 +52,8 @@ export const validateNativeCheckpointSource = (
     readonly nativeCheckpointIsInherited: boolean;
     readonly cursor: DecisionCursor;
   },
-) => {
-  const { input, options, providerTurns, loopSteps, tx, failure } =
-    dependencies;
+): Effect.Effect<NativeCheckpointSourceResult, NativeCheckpointSourceError> => {
+  const { input, options, providerTurns, loopSteps, tx } = dependencies;
   const {
     nativeCheckpoint,
     sessionRecord,
@@ -60,9 +77,9 @@ export const validateNativeCheckpointSource = (
       nativeCheckpoint.toEpoch === undefined ||
       nativeCheckpoint.toEpoch !== Number(sessionRecord.value.contextEpoch)
     ) {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<NativeCheckpointSourceError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
     // A checkpoint can outlive the in-memory model-loop cursor. Bind it to
     // the persisted AgentLoopStep in every binding branch, including an
@@ -75,17 +92,17 @@ export const validateNativeCheckpointSource = (
       providerTurns === undefined ||
       loopSteps === undefined
     ) {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<NativeCheckpointSourceError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
     const checkpointNativeProviderTurnId = nativeCompactionProviderTurnId(
       nativeCheckpoint.providerTurnId,
     );
     if (checkpointNativeProviderTurnId === null) {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<NativeCheckpointSourceError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
     if (options.qualificationProbe !== undefined) {
       yield* Effect.promise(
@@ -108,7 +125,7 @@ export const validateNativeCheckpointSource = (
         ),
       ],
       { concurrency: 1 },
-    ).pipe(Effect.mapError(failure));
+    );
     if (options.qualificationProbe !== undefined) {
       yield* Effect.promise(
         () =>
@@ -239,17 +256,17 @@ export const validateNativeCheckpointSource = (
           event.stateRef === nativeCheckpoint.opaqueItemRef,
       ).length !== 1
     ) {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<NativeCheckpointSourceError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
-    const checkpointSourceStepOption = yield* tx
-      .transact(loopSteps.find(checkpointSourceIdentity))
-      .pipe(Effect.mapError(failure));
+    const checkpointSourceStepOption = yield* tx.transact(
+      loopSteps.find(checkpointSourceIdentity),
+    );
     if (!Option.isSome(checkpointSourceStepOption)) {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<NativeCheckpointSourceError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
     const checkpointSourceStep = checkpointSourceStepOption.value;
     if (
@@ -262,22 +279,22 @@ export const validateNativeCheckpointSource = (
       checkpointSourceStep.providerTurnId !==
         (checkpointSource as Record<string, unknown>).providerTurnId
     ) {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<NativeCheckpointSourceError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
     if (
       checkpointSourceStep.state === "NextStepReady" &&
       checkpointSourceStep.successor === undefined
     ) {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<NativeCheckpointSourceError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
     if (!isRecoverableStepState(checkpointSourceStep.state)) {
-      return yield* Effect.fail(
-        failure({ _tag: "AgentLoopStepReplayBindingMismatch" }),
-      );
+      return yield* Effect.fail<NativeCheckpointSourceError>({
+        _tag: "AgentLoopStepReplayBindingMismatch",
+      });
     }
     // A checkpoint produced by an earlier Work execution is valid
     // Session context, but its source step is not this execution's cursor.

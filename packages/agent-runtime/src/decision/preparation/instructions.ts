@@ -27,15 +27,11 @@ import {
   classifySubmittedDecisionBindingFailure,
   isPinnedSubmittedDecisionReplay,
 } from "../submitted-replay.js";
+import type { DecisionInstructionError } from "./errors.js";
 
 type InstructionDependencies = Pick<
   ModelDecisionDependencies,
-  | "input"
-  | "tx"
-  | "loopSteps"
-  | "providerTurns"
-  | "decisionRequests"
-  | "failure"
+  "input" | "tx" | "loopSteps" | "providerTurns" | "decisionRequests"
 >;
 
 export type CompactionWorkPinning = Pick<
@@ -71,8 +67,8 @@ export const assembleDecisionInstructions = (
       settlement: ExecutionSettlement,
     ) => Effect.Effect<ModelDecisionOutcome, ExecutionDriverError>;
   },
-): Effect.Effect<InstructionAssembly, ExecutionDriverError> => {
-  const { input, tx, loopSteps, providerTurns, decisionRequests, failure } =
+): Effect.Effect<InstructionAssembly, DecisionInstructionError> => {
+  const { input, tx, loopSteps, providerTurns, decisionRequests } =
     dependencies;
   const {
     workspace,
@@ -136,9 +132,9 @@ export const assembleDecisionInstructions = (
       boundEpisode?._tag === "DecisionEpisode" &&
       decisionRequests !== undefined
     ) {
-      const request = yield* tx
-        .transact(decisionRequests.findById(boundEpisode.decisionId))
-        .pipe(Effect.mapError(failure));
+      const request = yield* tx.transact(
+        decisionRequests.findById(boundEpisode.decisionId),
+      );
       if (Option.isNone(request)) {
         return yield* proposeSettlement({
           _tag: "Failed",
@@ -152,9 +148,7 @@ export const assembleDecisionInstructions = (
       if (request.value.state._tag !== "Pending") {
         const pinnedActions =
           loopStep !== undefined && loopSteps !== undefined
-            ? yield* tx
-                .transact(loopSteps.listActions(loopStep.identity))
-                .pipe(Effect.mapError(failure))
+            ? yield* tx.transact(loopSteps.listActions(loopStep.identity))
             : [];
         const pendingSelectionAction = pinnedActions.find(
           (action) =>
@@ -165,11 +159,9 @@ export const assembleDecisionInstructions = (
         );
         const pinnedProviderResult =
           loopStep !== undefined && providerTurns !== undefined
-            ? yield* tx
-                .transact(
-                  providerTurns.findSettledResult(loopStep.providerTurnId),
-                )
-                .pipe(Effect.mapError(failure))
+            ? yield* tx.transact(
+                providerTurns.findSettledResult(loopStep.providerTurnId),
+              )
             : undefined;
         const replayingPinnedSelection = isPinnedSubmittedDecisionReplay({
           executionWorkspaceId: String(input.execution.workspaceId),
