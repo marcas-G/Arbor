@@ -14,7 +14,6 @@ import {
 } from "@arbor/ports";
 import { it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
-import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect } from "vitest";
 import {
   AgentLoopStepStoreLive,
