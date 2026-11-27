@@ -189,9 +189,43 @@ describe("Inbox input promotion process crash", () => {
       let parentWorkspaceId = "";
       let senderWorkspaceId = "";
       const daemonOutput: string[] = [];
+      // The child's send_message decision is held here until the test has
+      // finished every daemon-dependent setup step. Without this gate the
+      // daemon autonomously drives child → SendMessage → parent Inbox
+      // promotion right after RecordDecision, racing the public-view polling
+      // in proposeAndApproveChildWithInitialWork. When the daemon wins, the
+      // AH15Before probe parks inside tx.transact — the SQLite adapter
+      // serializes every transaction behind one permit, so the paused probe
+      // freezes all daemon DB work including public views — and the test's
+      // next unbounded view fetch hangs past every waitFor deadline. The
+      // AH15After probe fires outside the transaction, which is why only the
+      // Before variant hangs. Holding the scripted provider response (rather
+      // than replying with a Manual wait) keeps the child execution in flight
+      // without settling it as Yielded and without holding any DB lock.
+      let releaseChildSendDecision: () => void = () => {};
+      const childSendDecisionReleased = new Promise<void>((resolve) => {
+        releaseChildSendDecision = resolve;
+      });
+      let childSendDecisionHeld = false;
       const fixture = await startProductionFixture({
         isolatedPortHandshake: true,
         admitWorkspaceDirectory: true,
+        beforeResponse: (call) => {
+          const context = JSON.stringify(call.messages);
+          const available = new Set(
+            call.tools
+              .map((tool) => tool.function?.name)
+              .filter((name): name is string => name !== undefined),
+          );
+          const isChildSendDecision =
+            !childSendDecisionHeld &&
+            context.includes(childMarker) &&
+            available.has("send_message") &&
+            !call.messages.some((message) => message.role === "tool");
+          if (!isChildSendDecision) return Promise.resolve(undefined);
+          childSendDecisionHeld = true;
+          return childSendDecisionReleased.then(() => "respond" as const);
+        },
         reply: (call) => {
           const context = JSON.stringify(call.messages);
           const available = new Set(
@@ -323,6 +357,11 @@ describe("Inbox input promotion process crash", () => {
       expect(child.currentWork.objective).toBe(
         `For ${childMarker}, send one Query to the parent containing ${messageMarker}.`,
       );
+      // Daemon-dependent setup is complete (the responsibility-tree view poll
+      // inside proposeAndApproveChildWithInitialWork was the last public
+      // request this scenario makes before the crash boundary); the child may
+      // now issue its Query so the daemon walks into the AH15 pause.
+      releaseChildSendDecision();
 
       const hit = await waitForPublic(
         async () => hits.find((candidate) => candidate.boundary === boundary),
