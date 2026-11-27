@@ -1,19 +1,10 @@
-import type {
-  AgentBinding,
-  AgentExecutionState,
-  Execution,
-} from "@arbor/domain";
-import type {
-  ControlBasis,
-  ModelContextService,
-  TurnProfileResolverService,
-} from "@arbor/model-context";
+import type { AgentExecutionState, Execution } from "@arbor/domain";
+import type { ControlBasis } from "@arbor/model-context";
 import type {
   AgentLoopStepFence,
   AgentLoopStepStoreService,
   BlobStorePortService,
   ConversationCheckpointStoreService,
-  DecisionRequestStoreService,
   ExecutionActivity,
   ExecutionDriverError,
   ModelCapability,
@@ -55,13 +46,11 @@ export interface ModelDecisionDependencies {
     readonly execution: Execution;
     readonly agentExecutionState: AgentExecutionState;
   };
-  readonly agentBinding: AgentBinding;
   readonly capability: ModelCapability;
   readonly currentControlBasis: () => Effect.Effect<
     ControlBasis,
     ExecutionDriverError
   >;
-  readonly modelContext: ModelContextService;
   readonly providerRuntime: ProviderRuntimeService;
   readonly tx: TransactionPortService;
   readonly loopSteps?: AgentLoopStepStoreService;
@@ -70,9 +59,7 @@ export interface ModelDecisionDependencies {
   readonly sessions: SessionRepositoryService;
   readonly conversationCheckpoints?: ConversationCheckpointStoreService;
   readonly blobs?: Pick<BlobStorePortService, "put" | "get">;
-  readonly turnProfileResolver: TurnProfileResolverService;
   readonly works: WorkRepositoryService;
-  readonly decisionRequests?: Pick<DecisionRequestStoreService, "findById">;
   readonly workspaces: WorkspaceRepositoryService;
   readonly options: ModelDecisionOptions;
   readonly admitProviderTurn: (
