@@ -31,6 +31,7 @@
     { "pattern": "packages/domain/**", "lanes": ["quick", "core"] },
     { "pattern": "packages/application/**", "lanes": ["core", "process"] },
     { "pattern": "packages/agent-runtime/**", "lanes": ["core", "process"] },
+    { "pattern": "packages/execution-runtime/**", "lanes": ["core", "process"] },
     { "pattern": "packages/model-context/**", "lanes": ["core", "process", "provider"] },
     { "pattern": "packages/ports/**", "lanes": ["core", "process", "provider"] },
     { "pattern": "packages/provider-*/**", "lanes": ["core", "provider"] },
