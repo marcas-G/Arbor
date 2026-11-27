@@ -3,8 +3,9 @@ import {
   ToolCatalogPort,
   ToolDefinitionStore,
 } from "@arbor/ports";
+import { it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect } from "vitest";
 import {
   BUILTIN_TOOLS,
   GLOB_DEFINITION,
@@ -43,8 +44,17 @@ const app = Layer.mergeAll(
   ),
 );
 
+const visibleRefs = (catalogLayer: Layer.Layer<ToolCatalogPort>) =>
+  Effect.gen(function* () {
+    const catalog = yield* ToolCatalogPort;
+    return yield* catalog.visibleRefs();
+  }).pipe(Effect.provide(catalogLayer));
+
+const visibleNamesFrom = (refs: ReadonlyArray<{ readonly name: string }>) =>
+  refs.map((ref) => ref.name).sort();
+
 describe("tool catalog", () => {
-  it("hides every registered shell definition in Disabled mode", async () => {
+  it.effect("hides every registered shell definition in Disabled mode", () => {
     const registry = Layer.succeed(ProjectToolRegistry, {
       register: () => Effect.die("register is not used"),
       lookup: () => Effect.succeed(Option.none()),
@@ -55,54 +65,42 @@ describe("tool catalog", () => {
       ToolCatalogPortLive({ processExecutionMode: "Disabled" }),
       registry,
     );
-    const visible = await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          const catalog = yield* ToolCatalogPort;
-          return yield* catalog.visibleRefs();
-        }),
-        disabledCatalog,
-      ),
-    );
-    expect(visible.map((ref) => ref.name).sort()).toEqual(visibleNames());
+    return Effect.gen(function* () {
+      const visible = yield* visibleRefs(disabledCatalog);
+      expect(visibleNamesFrom(visible)).toEqual(visibleNames());
+    });
   });
 
-  it("keeps shell hidden in Native mode until a supported tuple is verified", async () => {
-    const nativeCatalog = Layer.provide(
-      ToolCatalogPortLive({ processExecutionMode: "NativeOsSupportedOnly" }),
-      emptyRegistry,
-    );
-    const visible = await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          const catalog = yield* ToolCatalogPort;
-          return yield* catalog.visibleRefs();
-        }),
-        nativeCatalog,
-      ),
-    );
-    expect(visible.map((ref) => ref.name).sort()).toEqual(visibleNames());
-  });
+  it.effect(
+    "keeps shell hidden in Native mode until a supported tuple is verified",
+    () => {
+      const nativeCatalog = Layer.provide(
+        ToolCatalogPortLive({ processExecutionMode: "NativeOsSupportedOnly" }),
+        emptyRegistry,
+      );
+      return Effect.gen(function* () {
+        const visible = yield* visibleRefs(nativeCatalog);
+        expect(visibleNamesFrom(visible)).toEqual(visibleNames());
+      });
+    },
+  );
 
-  it("exposes shell in Disabled only for an explicit test harness injection", async () => {
-    const testCatalog = Layer.provide(
-      ToolCatalogPortLive({
-        processExecutionMode: "Disabled",
-        testOnlyAllowTrustedLocalProcessExecution: true,
-      }),
-      emptyRegistry,
-    );
-    const visible = await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          const catalog = yield* ToolCatalogPort;
-          return yield* catalog.visibleRefs();
+  it.effect(
+    "exposes shell in Disabled only for an explicit test harness injection",
+    () => {
+      const testCatalog = Layer.provide(
+        ToolCatalogPortLive({
+          processExecutionMode: "Disabled",
+          testOnlyAllowTrustedLocalProcessExecution: true,
         }),
-        testCatalog,
-      ),
-    );
-    expect(visible.map((ref) => ref.name).sort()).toEqual(visibleNames(true));
-  });
+        emptyRegistry,
+      );
+      return Effect.gen(function* () {
+        const visible = yield* visibleRefs(testCatalog);
+        expect(visibleNamesFrom(visible)).toEqual(visibleNames(true));
+      });
+    },
+  );
 
   it("exposes the builtin definitions with exact schemas", async () => {
     const result = await Effect.runPromise(
