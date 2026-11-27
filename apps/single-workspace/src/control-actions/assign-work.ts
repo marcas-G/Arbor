@@ -171,11 +171,7 @@ export const assignWorkHandler = (
               executionId: execution.executionId,
               logicalActionId,
             });
-          }).pipe(
-            Effect.mapError(
-              actionOperationalFailure("AssignWork.bindingAttention"),
-            ),
-          );
+          });
         const prior = yield* findPriorCommandReceipt({
           context,
           namespace: "assign-work-command",
@@ -188,7 +184,6 @@ export const assignWorkHandler = (
           onCommittedDecodeFailure: (commandId) =>
             block(commandId, "ReceiptMismatch"),
           operation: "AssignWork.priorReceipt",
-          errorOperation: "AssignWork",
           lookupOperation: "AssignWork.receiptLookup",
           identityErrorMessage:
             "prior Command receipt belongs to another Project",
@@ -395,7 +390,6 @@ export const assignWorkHandler = (
           commandType: "AssignWork",
           commandHandlerRegistry: dependencies.commandHandlerRegistry,
           operation: "AssignWork.currentWorkspaceReceiptReplay",
-          errorOperation: "AssignWork",
           lookupOperation: "AssignWork.receiptLookup",
           identityErrorMessage:
             "prior current-Workspace AssignWork receipt belongs to another Project",
@@ -547,7 +541,6 @@ export const assignWorkHandler = (
           tx: dependencies.tx,
           projectId: execution.projectId,
           operation: "AssignWork.priorReceipt",
-          errorOperation: "AssignWork",
           lookupOperation: "AssignWork.receiptLookup",
           identityErrorMessage:
             "prior Command receipt belongs to another Project",

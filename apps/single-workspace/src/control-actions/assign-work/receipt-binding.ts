@@ -1,21 +1,36 @@
-import type { AgentAction, AgentActionError } from "@arbor/agent-runtime";
+import type { AgentAction } from "@arbor/agent-runtime";
 import { workEpisode } from "@arbor/domain";
 import type {
   AssignWorkBindingFailureCode,
   AssignWorkTargetBinding,
+  ControlApprovalStoreError,
   ControlApprovalStoreService,
+  DomainEventJournalError,
   DomainEventJournalService,
+  PermissionGrantRepositoryError,
   PermissionGrantRepositoryService,
+  TransactionOperationalFailure,
   TransactionPortService,
+  WorkRepositoryError,
   WorkRepositoryService,
+  WorkspaceRepositoryError,
   WorkspaceRepositoryService,
 } from "@arbor/ports";
 import { sha256Hex } from "@arbor/ports";
 import { Effect, Option } from "effect";
-import {
-  actionOperationalFailure,
-  type PriorCommittedCommandReceipt,
-} from "../command-receipts.js";
+import type { PriorCommittedCommandReceipt } from "../command-receipts.js";
+
+/** E09: the AssignWork receipt-binding validator keeps its narrow typed
+ * failures (the ports repository/store/journal reads it performs plus the
+ * transaction channel) while composing inside the assignWorkHandler; the
+ * handler folds exactly once at the AgentActionHandler boundary it owns. */
+export type AssignWorkReceiptBindingError =
+  | WorkspaceRepositoryError
+  | WorkRepositoryError
+  | PermissionGrantRepositoryError
+  | ControlApprovalStoreError
+  | DomainEventJournalError
+  | TransactionOperationalFailure;
 
 export const validateAssignWorkReceiptBinding = (input: {
   readonly binding: AssignWorkTargetBinding;
@@ -30,7 +45,10 @@ export const validateAssignWorkReceiptBinding = (input: {
   readonly journal: DomainEventJournalService;
   readonly grants: Pick<PermissionGrantRepositoryService, "findById">;
   readonly approvals: Pick<ControlApprovalStoreService, "findById">;
-}): Effect.Effect<AssignWorkBindingFailureCode | null, AgentActionError> =>
+}): Effect.Effect<
+  AssignWorkBindingFailureCode | null,
+  AssignWorkReceiptBindingError
+> =>
   Effect.gen(function* () {
     const { binding, prior, action, execution, invocation } = input;
     const receipt = prior;
@@ -216,6 +234,4 @@ export const validateAssignWorkReceiptBinding = (input: {
     });
     if (workAssigned.length !== 1) return "EventMismatch";
     return null;
-  }).pipe(
-    Effect.mapError(actionOperationalFailure("AssignWork.bindingValidation")),
-  );
+  });

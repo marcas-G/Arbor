@@ -123,60 +123,51 @@ export const verificationWaitEligibilityHandler = (
       );
 
       if (sameWorkVerificationConditions.length > 0) {
-        const eligibility = yield* dependencies.tx
-          .transact(
-            Effect.gen(function* () {
-              const [storedWork, storedWorkspace] = yield* Effect.all([
-                dependencies.works.findById(episode.workId),
-                dependencies.workspaces.findById(execution.workspaceId),
-              ]);
-              if (
-                Option.isNone(storedWork) ||
-                Option.isNone(storedWorkspace) ||
-                storedWork.value.workspaceId !== execution.workspaceId ||
-                storedWorkspace.value.currentWorkId !== episode.workId ||
-                storedWork.value.lifecycle !== "Open" ||
-                Number(storedWork.value.revision) !==
-                  Number(episode.targetWorkRevision)
-              ) {
-                return "not-current" as const;
-              }
+        const eligibility = yield* dependencies.tx.transact(
+          Effect.gen(function* () {
+            const [storedWork, storedWorkspace] = yield* Effect.all([
+              dependencies.works.findById(episode.workId),
+              dependencies.workspaces.findById(execution.workspaceId),
+            ]);
+            if (
+              Option.isNone(storedWork) ||
+              Option.isNone(storedWorkspace) ||
+              storedWork.value.workspaceId !== execution.workspaceId ||
+              storedWorkspace.value.currentWorkId !== episode.workId ||
+              storedWork.value.lifecycle !== "Open" ||
+              Number(storedWork.value.revision) !==
+                Number(episode.targetWorkRevision)
+            ) {
+              return "not-current" as const;
+            }
 
-              const history = yield* dependencies.verifications.listByWork(
-                episode.workId,
-              );
-              const targetRevisions = new Set(
-                sameWorkVerificationConditions.map((condition) =>
-                  Number(condition.targetWorkRevision),
-                ),
-              );
-              const openRevisions = new Set(
-                history
-                  .filter((verification) =>
-                    targetRevisions.has(
-                      Number(verification.targetWorkRevision),
-                    ),
-                  )
-                  .filter(
-                    (verification) => verification.state.status === "Open",
-                  )
-                  .map((verification) =>
-                    Number(verification.targetWorkRevision),
-                  ),
-              );
-              if (openRevisions.size > 0) return "open-verification" as const;
-              const hasConcludedSource = history.some(
-                (verification) =>
-                  targetRevisions.has(
-                    Number(verification.targetWorkRevision),
-                  ) && verification.state.status === "Concluded",
-              );
-              return hasConcludedSource
-                ? ("verification-concluded" as const)
-                : ("missing-source" as const);
-            }),
-          )
-          .pipe(Effect.mapError(actionOperationalFailure("WaitEligibility")));
+            const history = yield* dependencies.verifications.listByWork(
+              episode.workId,
+            );
+            const targetRevisions = new Set(
+              sameWorkVerificationConditions.map((condition) =>
+                Number(condition.targetWorkRevision),
+              ),
+            );
+            const openRevisions = new Set(
+              history
+                .filter((verification) =>
+                  targetRevisions.has(Number(verification.targetWorkRevision)),
+                )
+                .filter((verification) => verification.state.status === "Open")
+                .map((verification) => Number(verification.targetWorkRevision)),
+            );
+            if (openRevisions.size > 0) return "open-verification" as const;
+            const hasConcludedSource = history.some(
+              (verification) =>
+                targetRevisions.has(Number(verification.targetWorkRevision)) &&
+                verification.state.status === "Concluded",
+            );
+            return hasConcludedSource
+              ? ("verification-concluded" as const)
+              : ("missing-source" as const);
+          }),
+        );
 
         if (eligibility === "not-current") {
           return yield* Effect.fail(
@@ -431,7 +422,6 @@ export const recordVerificationEvidenceHandler = (
           tx: dependencies.tx,
           projectId: execution.projectId,
           operation: "RecordVerificationEvidence.priorReceipt",
-          errorOperation: "RecordVerificationEvidence",
           lookupOperation: "RecordVerificationEvidence.receiptLookup",
         });
         if (prior._tag === "Committed") {
@@ -593,7 +583,6 @@ export const concludeVerificationHandler = (
           tx: dependencies.tx,
           projectId: execution.projectId,
           operation: "ConcludeVerification.priorReceipt",
-          errorOperation: "ConcludeVerification",
           lookupOperation: "ConcludeVerification.receiptLookup",
         });
         if (prior._tag === "Committed") {

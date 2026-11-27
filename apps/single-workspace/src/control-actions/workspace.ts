@@ -111,7 +111,6 @@ export const allocateWorkspaceSandboxHandler = (
         projectId: execution.projectId,
         commandType: "AuthorizeWorkspaceSandbox",
         operation: "AllocateWorkspaceSandbox.receiptFirst",
-        errorOperation: "AllocateWorkspaceSandbox",
       });
       if (prior._tag === "TerminalRejected")
         return yield* Effect.fail(

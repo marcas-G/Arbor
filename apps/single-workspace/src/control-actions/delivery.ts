@@ -278,7 +278,7 @@ export const deliverMessageGatewayHandler = (
             executionId: execution.executionId,
             logicalActionId: pinnedLogicalActionId,
           });
-        }).pipe(Effect.mapError(actionOperationalFailure("Deliver.attention")));
+        });
 
       const findInboxByKey = dependencies.inbox.findByKey;
       if (findInboxByKey === undefined) {
