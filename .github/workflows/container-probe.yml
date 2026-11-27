@@ -1,0 +1,63 @@
+name: Container Probe
+
+# Throwaway probe: validates that the self-hosted runner can execute a
+# container job with the settings the real CI will use (uid mapping,
+# cgroup CPU cap, host-network proxy access, pnpm setup inside the image).
+# Delete this workflow once the values are confirmed.
+
+on:
+  push:
+    branches: [ci/container-probe]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: [self-hosted, linux, x64, arbor-ci]
+    container:
+      image: node:24.21.0-bookworm
+      options: --user 1000:1000 --cpus=2 --memory=8g --network host
+    timeout-minutes: 25
+    env:
+      HTTP_PROXY: http://127.0.0.1:7890
+      HTTPS_PROXY: http://127.0.0.1:7890
+      NO_PROXY: localhost,127.0.0.1,::1,[::1]
+      NODE_USE_ENV_PROXY: "1"
+    steps:
+      - name: Identity and mounts
+        run: |
+          id
+          node -v
+          echo "HOME=$HOME"
+          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+          ls -ld "$GITHUB_WORKSPACE" "$RUNNER_TEMP" 2>/dev/null || true
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Ownership after checkout
+        run: |
+          ls -ld . .git
+          git log -1 --oneline
+          test -w . && echo "workspace writable"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.4.2
+          dest: ${{ runner.temp }}/pnpm
+
+      - name: pnpm install
+        run: |
+          pnpm -v
+          time pnpm install --frozen-lockfile
+
+      - name: Fast gate
+        run: pnpm test:manifest
+
+      - name: Residual ownership
+        run: ls -ld node_modules | head -1
