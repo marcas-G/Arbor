@@ -35,6 +35,7 @@ env:
   # the host proxy; the runner forwards HTTP(S)_PROXY into the container.
   NODE_USE_ENV_PROXY: "1"
   PNPM_STORE_DIR: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && '/github/home/.local/share/pnpm/store' || '/pnpm-store' }}
+  npm_config_store_dir: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && '/github/home/.local/share/pnpm/store' || '/pnpm-store' }}
 
 jobs:
   plan:
