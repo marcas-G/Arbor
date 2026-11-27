@@ -81,7 +81,7 @@ export const makeP6CommandHandlers = (dependencies: {
 }): ReadonlyArray<CommandHandler<unknown, unknown>> =>
   makeGovernanceCommandHandlers(dependencies);
 
-const P6CommandHandlerRegistryLive = makeGovernanceCommandRegistryLive({
+const workspaceCommandHandlerRegistry = makeGovernanceCommandRegistryLive({
   includeDeliverMessage: false,
 });
 
@@ -103,7 +103,7 @@ export const makeP6App = (
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
   const journal = Layer.provide(DomainEventJournalLive, infra);
   const registry = Layer.provide(
-    P6CommandHandlerRegistryLive,
+    workspaceCommandHandlerRegistry,
     Layer.mergeAll(
       Layer.provide(TransactionPortLive, infra),
       Layer.provide(ProjectRepositoryLive, infra),

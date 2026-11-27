@@ -101,7 +101,7 @@ export const makeP7CommandHandlers = (dependencies: {
 }): ReadonlyArray<CommandHandler<unknown, unknown>> =>
   makeGovernanceCommandHandlers(dependencies);
 
-const P7CommandHandlerRegistryLive = makeGovernanceCommandRegistryLive({
+const consumerCommandHandlerRegistry = makeGovernanceCommandRegistryLive({
   includeDeliverMessage: true,
 });
 
@@ -131,7 +131,7 @@ export const makeP7App = (
   const base = layer({ filename });
   const infra = Layer.mergeAll(base, ClockLive, IdGeneratorLive);
   const registry = Layer.provide(
-    P7CommandHandlerRegistryLive,
+    consumerCommandHandlerRegistry,
     Layer.mergeAll(
       Layer.provide(TransactionPortLive, infra),
       Layer.provide(ProjectRepositoryLive, infra),
