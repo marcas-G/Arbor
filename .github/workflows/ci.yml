@@ -241,7 +241,7 @@ jobs:
     # The daemon-boot release journey, sharded (plan PR 3): round-robin
     # over the sorted file list so heavy multi-restart families spread
     # evenly; each shard is an isolated runner and runs serially inside.
-    # 8 shards x max-parallel 6 against hosted and local runner pools. Measured on
+    # 6 shards x max-parallel 6 against hosted and local runner pools. Measured on
     # this 32-core host: 12 concurrent shards oversubscribed the box (load
     # ~48) and daemon-startup/90s test timeouts produced false failures,
     # while 6 concurrent shards stay inside the CPU budget. The hosted
@@ -263,8 +263,8 @@ jobs:
       fail-fast: false
       max-parallel: 6
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
-    name: functional (${{ matrix.shard }}/8)
+        shard: [1, 2, 3, 4, 5, 6]
+    name: functional (${{ matrix.shard }}/6)
     steps:
       - name: Checkout full history
         uses: actions/checkout@v4
@@ -314,12 +314,12 @@ jobs:
             echo "CI plan artifact unavailable; shadow summary skipped (full shard still runs)." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          node scripts/ci/plan.mjs --report ci-plan.json --shard ${{ matrix.shard }}/8 >> "$GITHUB_STEP_SUMMARY"
+          node scripts/ci/plan.mjs --report ci-plan.json --shard ${{ matrix.shard }}/6 >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Functional release journey (shard ${{ matrix.shard }}/8)
+      - name: Functional release journey (shard ${{ matrix.shard }}/6)
         run: |
           set -e
-          mapfile -t FILES < <(node scripts/testing/functional-shard.mjs ${{ matrix.shard }} 8)
+          mapfile -t FILES < <(node scripts/testing/functional-shard.mjs ${{ matrix.shard }} 6)
           echo "running ${#FILES[@]} files"
           pnpm vitest run "${FILES[@]}" --config tests/configs/vitest.functional.config.ts
 

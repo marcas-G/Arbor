@@ -32,7 +32,7 @@ Four pipelines by verification obligation (not by speed alone):
 Safety invariants (permissions, transactions, execution recovery) keep
 merge-blocking evidence — slowness never defers a required invariant.
 
-The adopted implementation keeps eight functional shards but caps hosted and
+The adopted implementation keeps six functional shards and caps hosted and
 local execution at six concurrent shards. Container UIDs match the runner
 workspace owner, hosted jobs use a writable per-job pnpm store, and Linux
 process-tree cleanup distinguishes zombie descendants from live processes
