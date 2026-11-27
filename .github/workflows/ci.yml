@@ -201,9 +201,6 @@ jobs:
       - name: Build web dist (daemon serves it; run-suite did this implicitly)
         run: pnpm --filter @arbor/web build
 
-      - name: Install functional UI browser
-        run: pnpm exec playwright install --with-deps chromium
-
       - name: Functional release journey (shard ${{ matrix.shard }}/6)
         run: |
           set -e
@@ -211,12 +208,64 @@ jobs:
           echo "running ${#FILES[@]} files"
           pnpm vitest run "${FILES[@]}" --config vitest.functional.config.ts
 
+  functional-ui:
+    # The six Playwright browser specs. Kept out of the shards (which run
+    # only .functional.test.ts and need no browser). The Microsoft apt
+    # mirror 403s transiently on hosted runners — one retry.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.4.2
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.21.0
+          cache: pnpm
+
+      - name: Prepare isolated local temp directory
+        shell: bash
+        run: |
+          ci_tmp="$GITHUB_WORKSPACE/.ci-tmp/ui"
+          mkdir -p "$ci_tmp"
+          chmod 700 "$ci_tmp"
+          echo "TMPDIR=$ci_tmp" >> "$GITHUB_ENV"
+          echo "TMP=$ci_tmp" >> "$GITHUB_ENV"
+          echo "TEMP=$ci_tmp" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Build web dist
+        run: pnpm --filter @arbor/web build
+
+      - name: Install UI browser (retry once on apt-mirror flake)
+        run: |
+          pnpm exec playwright install --with-deps chromium || {
+            sleep 20
+            pnpm exec playwright install --with-deps chromium
+          }
+
+      - name: Functional UI journey
+        run: pnpm test:functional:ui
+
   health:
     # Post-lane aggregation: audit + the health snapshot over the unit
     # lane's coverage artifact. Not a required check (skips are
     # ambiguous when an upstream lane fails); its verdict rides the
     # run summary and the uploaded snapshot.
-    needs: [static, unit, functional]
+    needs: [static, unit, functional, functional-ui]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 15
