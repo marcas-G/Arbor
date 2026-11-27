@@ -364,12 +364,47 @@ jobs:
       - name: Functional UI journey
         run: pnpm test:functional:ui
 
+  web:
+    # Independent web verification: root Vitest excludes apps/web, so the
+    # web package needs its own typecheck, build and unit-test lane.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.4.2
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.21.0
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace packages
+        run: pnpm build
+
+      - name: Web typecheck
+        run: pnpm --filter @arbor/web typecheck
+
+      - name: Web build
+        run: pnpm --filter @arbor/web build
+
+      - name: Web unit tests
+        run: pnpm --filter @arbor/web test
+
   health:
     # Post-lane aggregation: audit + the health snapshot over the unit
     # lane's coverage artifact. Not a required check (skips are
     # ambiguous when an upstream lane fails); its verdict rides the
     # run summary and the uploaded snapshot.
-    needs: [static, unit, functional, functional-ui]
+    needs: [static, unit, functional, functional-ui, web]
     if: always()
     runs-on: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local') && 'ubuntu-24.04' || 'arbor-ci' }}
     container:
