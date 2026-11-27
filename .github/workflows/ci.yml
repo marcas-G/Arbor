@@ -35,7 +35,6 @@ env:
   # the host proxy; the runner forwards HTTP(S)_PROXY into the container.
   NODE_USE_ENV_PROXY: "1"
   PNPM_STORE_DIR: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && '/github/home/.local/share/pnpm/store' || '/pnpm-store' }}
-  npm_config_store_dir: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && '/github/home/.local/share/pnpm/store' || '/pnpm-store' }}
 
 jobs:
   plan:
@@ -48,6 +47,8 @@ jobs:
     # failures degrade to a conservative full-selection plan so lane
     # obligations never depend on this job's logic.
     runs-on: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && 'ubuntu-24.04' || 'arbor-ci' }}
+    env:
+      npm_config_store_dir: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && '/github/home/.local/share/pnpm/store' || '/pnpm-store' }}
     container:
       image: node:24.21.0-bookworm
       options: --user ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && '1001:1001' || '1000:1000' }} --cpus=2 --memory=8g
@@ -99,6 +100,8 @@ jobs:
     # naming ratchet. ~4 minutes; failures localize here without waiting
     # for the long lanes.
     runs-on: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && 'ubuntu-24.04' || 'arbor-ci' }}
+    env:
+      npm_config_store_dir: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && '/github/home/.local/share/pnpm/store' || '/pnpm-store' }}
     container:
       image: node:24.21.0-bookworm
       options: --user ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && '1001:1001' || '1000:1000' }} --cpus=2 --memory=8g
@@ -166,6 +169,8 @@ jobs:
   unit:
     # Build once, then core tests + the source-size ratchet + coverage.
     runs-on: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && 'ubuntu-24.04' || 'arbor-ci' }}
+    env:
+      npm_config_store_dir: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && '/github/home/.local/share/pnpm/store' || '/pnpm-store' }}
     container:
       image: node:24.21.0-bookworm
       options: --user ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && '1001:1001' || '1000:1000' }} --cpus=3 --memory=8g
@@ -243,6 +248,8 @@ jobs:
     # baseline measured 9-31 min per 6-way shard, so balance matters as
     # much as width.
     runs-on: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && 'ubuntu-24.04' || 'arbor-ci' }}
+    env:
+      npm_config_store_dir: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && '/github/home/.local/share/pnpm/store' || '/pnpm-store' }}
     container:
       image: node:24.21.0-bookworm
       # Functional shards run one test file at a time but each bootstraps a
@@ -321,6 +328,8 @@ jobs:
     # only .functional.test.ts and need no browser). The Microsoft apt
     # mirror 403s transiently on self-hosted runners — one retry.
     runs-on: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && 'ubuntu-24.04' || 'arbor-ci' }}
+    env:
+      npm_config_store_dir: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && '/github/home/.local/share/pnpm/store' || '/pnpm-store' }}
     container:
       # Locally built from node:24.21.0-bookworm + Chromium libs + the
       # 1.63.0 browser build (MCR pulls stall on this host); served by the
@@ -424,6 +433,8 @@ jobs:
     needs: [static, unit, functional, functional-ui, web]
     if: always()
     runs-on: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && 'ubuntu-24.04' || 'arbor-ci' }}
+    env:
+      npm_config_store_dir: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && '/github/home/.local/share/pnpm/store' || '/pnpm-store' }}
     container:
       image: node:24.21.0-bookworm
       options: --user ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && '1001:1001' || '1000:1000' }} --cpus=2 --memory=8g
