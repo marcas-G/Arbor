@@ -58,6 +58,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Mark checkout safe for container user
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Resolve comparison base
         id: comparison_base
         shell: bash
@@ -105,6 +108,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Mark checkout safe for container user
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Resolve comparison base
         id: comparison_base
@@ -169,6 +175,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Mark checkout safe for container user
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Resolve comparison base
         id: comparison_base
@@ -253,6 +262,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Mark checkout safe for container user
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -322,6 +334,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Mark checkout safe for container user
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -372,6 +387,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Mark checkout safe for container user
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
