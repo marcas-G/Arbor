@@ -365,6 +365,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build workspace packages
+        run: pnpm build
+
       - name: Web typecheck
         run: pnpm --filter @arbor/web typecheck
 
