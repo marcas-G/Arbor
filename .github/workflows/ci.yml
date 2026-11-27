@@ -6,6 +6,15 @@ on:
   push:
     branches: [master]
   workflow_dispatch:
+    inputs:
+      runner_pool:
+        description: Runner pool for a trusted manual qualification
+        required: true
+        default: hosted
+        type: choice
+        options:
+          - hosted
+          - local
 
 concurrency:
   group: arbor-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -14,6 +23,18 @@ concurrency:
 permissions:
   contents: read
   pull-requests: read
+
+defaults:
+  run:
+    # Container jobs default to `sh`; several steps use bashisms (mapfile,
+    # process substitution) and the repo's scripts assume bash.
+    shell: bash
+
+env:
+  # Node tooling inside the job containers must reach their packages through
+  # the host proxy; the runner forwards HTTP(S)_PROXY into the container.
+  NODE_USE_ENV_PROXY: "1"
+  PNPM_STORE_DIR: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && '/github/home/.local/share/pnpm/store' || '/pnpm-store' }}
 
 jobs:
   plan:
@@ -25,7 +46,14 @@ jobs:
     # selection would have skipped in their step summaries. Planner
     # failures degrade to a conservative full-selection plan so lane
     # obligations never depend on this job's logic.
-    runs-on: ubuntu-24.04
+    runs-on: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && 'ubuntu-24.04' || 'arbor-ci' }}
+    env:
+      npm_config_store_dir: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && '/github/home/.local/share/pnpm/store' || '/pnpm-store' }}
+    container:
+      image: node:24.21.0-bookworm
+      options: --user ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && '1001:1001' || '1000:1000' }} --cpus=2 --memory=8g
+      volumes:
+        - arbor-pnpm-store:/pnpm-store
     timeout-minutes: 10
     steps:
       - name: Checkout full history
@@ -33,10 +61,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24.21.0
+      - name: Mark checkout safe for container user
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Resolve comparison base
         id: comparison_base
@@ -73,13 +99,23 @@ jobs:
     # artifacts — lint, types, architecture boundaries, manifests and the
     # naming ratchet. ~4 minutes; failures localize here without waiting
     # for the long lanes.
-    runs-on: ubuntu-24.04
+    runs-on: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && 'ubuntu-24.04' || 'arbor-ci' }}
+    env:
+      npm_config_store_dir: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && '/github/home/.local/share/pnpm/store' || '/pnpm-store' }}
+    container:
+      image: node:24.21.0-bookworm
+      options: --user ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && '1001:1001' || '1000:1000' }} --cpus=2 --memory=8g
+      volumes:
+        - arbor-pnpm-store:/pnpm-store
     timeout-minutes: 20
     steps:
       - name: Checkout full history
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Mark checkout safe for container user
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Resolve comparison base
         id: comparison_base
@@ -99,12 +135,6 @@ jobs:
         with:
           version: 12.4.2
 
-      - name: Install Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24.21.0
-          cache: pnpm
-
       - name: Verify Linux runner storage
         run: node scripts/ci/verify-runner-storage.mjs
 
@@ -119,7 +149,7 @@ jobs:
           echo "TEMP=$ci_tmp" >> "$GITHUB_ENV"
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --store-dir "$PNPM_STORE_DIR"
 
       - name: Lint
         run: pnpm lint
@@ -138,13 +168,23 @@ jobs:
 
   unit:
     # Build once, then core tests + the source-size ratchet + coverage.
-    runs-on: ubuntu-24.04
+    runs-on: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && 'ubuntu-24.04' || 'arbor-ci' }}
+    env:
+      npm_config_store_dir: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && '/github/home/.local/share/pnpm/store' || '/pnpm-store' }}
+    container:
+      image: node:24.21.0-bookworm
+      options: --user ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && '1001:1001' || '1000:1000' }} --cpus=3 --memory=8g
+      volumes:
+        - arbor-pnpm-store:/pnpm-store
     timeout-minutes: 45
     steps:
       - name: Checkout full history
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Mark checkout safe for container user
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Resolve comparison base
         id: comparison_base
@@ -164,12 +204,6 @@ jobs:
         with:
           version: 12.4.2
 
-      - name: Install Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24.21.0
-          cache: pnpm
-
       - name: Verify Linux runner storage
         run: node scripts/ci/verify-runner-storage.mjs
 
@@ -184,7 +218,7 @@ jobs:
           echo "TEMP=$ci_tmp" >> "$GITHUB_ENV"
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --store-dir "$PNPM_STORE_DIR"
 
       - name: Build
         run: pnpm build
@@ -207,10 +241,27 @@ jobs:
     # The daemon-boot release journey, sharded (plan PR 3): round-robin
     # over the sorted file list so heavy multi-restart families spread
     # evenly; each shard is an isolated runner and runs serially inside.
-    runs-on: ubuntu-24.04
+    # 6 shards x max-parallel 6 against hosted and local runner pools. Measured on
+    # this 32-core host: 12 concurrent shards oversubscribed the box (load
+    # ~48) and daemon-startup/90s test timeouts produced false failures,
+    # while 6 concurrent shards stay inside the CPU budget. The hosted
+    # baseline measured 9-31 min per 6-way shard, so balance matters as
+    # much as width.
+    runs-on: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && 'ubuntu-24.04' || 'arbor-ci' }}
+    env:
+      npm_config_store_dir: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && '/github/home/.local/share/pnpm/store' || '/pnpm-store' }}
+    container:
+      image: node:24.21.0-bookworm
+      # Functional shards run one test file at a time but each bootstraps a
+      # daemon plus a web server and browser-less client: 3 cpus keeps the
+      # shard under its standalone budget instead of starving its neighbours.
+      options: --user ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && '1001:1001' || '1000:1000' }} --cpus=3 --memory=8g
+      volumes:
+        - arbor-pnpm-store:/pnpm-store
     timeout-minutes: 45
     strategy:
       fail-fast: false
+      max-parallel: 6
       matrix:
         shard: [1, 2, 3, 4, 5, 6]
     name: functional (${{ matrix.shard }}/6)
@@ -220,16 +271,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Mark checkout safe for container user
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 12.4.2
-
-      - name: Install Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24.21.0
-          cache: pnpm
 
       - name: Verify Linux runner storage
         run: node scripts/ci/verify-runner-storage.mjs
@@ -245,7 +293,7 @@ jobs:
           echo "TEMP=$ci_tmp" >> "$GITHUB_ENV"
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --store-dir "$PNPM_STORE_DIR"
 
       - name: Build
         run: pnpm build
@@ -278,8 +326,18 @@ jobs:
   functional-ui:
     # The six Playwright browser specs. Kept out of the shards (which run
     # only .functional.test.ts and need no browser). The Microsoft apt
-    # mirror 403s transiently on hosted runners — one retry.
-    runs-on: ubuntu-24.04
+    # mirror 403s transiently on self-hosted runners — one retry.
+    runs-on: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && 'ubuntu-24.04' || 'arbor-ci' }}
+    env:
+      npm_config_store_dir: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && '/github/home/.local/share/pnpm/store' || '/pnpm-store' }}
+    container:
+      # Locally built from node:24.21.0-bookworm + Chromium libs + the
+      # 1.63.0 browser build (MCR pulls stall on this host); served by the
+      # pool's local registry. Rebuild: actions-runner/ci-images.
+      image: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && 'mcr.microsoft.com/playwright:v1.63.0-noble' || 'localhost:5000/arbor-ci/playwright:1.63.0' }}
+      options: --user ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && '1001:1001' || '1000:1000' }} --cpus=2 --memory=8g
+      volumes:
+        - arbor-pnpm-store:/pnpm-store
     timeout-minutes: 25
     steps:
       - name: Checkout full history
@@ -287,16 +345,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Mark checkout safe for container user
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 12.4.2
-
-      - name: Install Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24.21.0
-          cache: pnpm
 
       - name: Prepare isolated local temp directory
         shell: bash
@@ -309,20 +364,13 @@ jobs:
           echo "TEMP=$ci_tmp" >> "$GITHUB_ENV"
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --store-dir "$PNPM_STORE_DIR"
 
       - name: Build
         run: pnpm build
 
       - name: Build web dist
         run: pnpm --filter @arbor/web build
-
-      - name: Install UI browser (retry once on apt-mirror flake)
-        run: |
-          pnpm exec playwright install --with-deps chromium || {
-            sleep 20
-            pnpm exec playwright install --with-deps chromium
-          }
 
       - name: Download CI plan (shadow mode)
         continue-on-error: true
@@ -342,15 +390,11 @@ jobs:
       - name: Functional UI journey
         run: pnpm test:functional:ui
 
-  health:
-    # Post-lane aggregation: audit + the health snapshot over the unit
-    # lane's coverage artifact. Not a required check (skips are
-    # ambiguous when an upstream lane fails); its verdict rides the
-    # run summary and the uploaded snapshot.
-    needs: [static, unit, functional, functional-ui]
-    if: always()
+  web:
+    # Independent web verification: root Vitest excludes apps/web, so the
+    # web package needs its own typecheck, build and unit-test lane.
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -368,6 +412,49 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Build workspace packages
+        run: pnpm build
+
+      - name: Web typecheck
+        run: pnpm --filter @arbor/web typecheck
+
+      - name: Web build
+        run: pnpm --filter @arbor/web build
+
+      - name: Web unit tests
+        run: pnpm --filter @arbor/web test
+
+  health:
+    # Post-lane aggregation: audit + the health snapshot over the unit
+    # lane's coverage artifact. Not a required check (skips are
+    # ambiguous when an upstream lane fails); its verdict rides the
+    # run summary and the uploaded snapshot.
+    needs: [static, unit, functional, functional-ui, web]
+    if: always()
+    runs-on: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && 'ubuntu-24.04' || 'arbor-ci' }}
+    env:
+      npm_config_store_dir: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && '/github/home/.local/share/pnpm/store' || '/pnpm-store' }}
+    container:
+      image: node:24.21.0-bookworm
+      options: --user ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && '1001:1001' || '1000:1000' }} --cpus=2 --memory=8g
+      volumes:
+        - arbor-pnpm-store:/pnpm-store
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Mark checkout safe for container user
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.4.2
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --store-dir "$PNPM_STORE_DIR"
 
       - name: Download coverage
         continue-on-error: true

@@ -1,0 +1,5 @@
+# Repository-specific labels used by the dedicated self-hosted CI pool.
+# Schema required by actionlint (self-hosted-runner.labels), not runner-label.
+self-hosted-runner:
+  labels:
+    - arbor-ci

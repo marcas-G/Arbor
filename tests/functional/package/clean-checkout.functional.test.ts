@@ -68,7 +68,17 @@ describe("release-functional clean committed checkout", () => {
         ],
         temporaryRoot,
       );
-      run("pnpm", ["install", "--frozen-lockfile", "--offline"], checkout);
+      const storeDir = process.env.npm_config_store_dir;
+      run(
+        "pnpm",
+        [
+          "install",
+          "--frozen-lockfile",
+          "--offline",
+          ...(storeDir ? ["--store-dir", storeDir] : []),
+        ],
+        checkout,
+      );
       run("pnpm", ["build"], checkout);
       run("pnpm", ["--filter", "@arbor/web", "build"], checkout);
       const output = run(

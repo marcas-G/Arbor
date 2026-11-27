@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
+import { readdirSync, readFileSync } from "node:fs";
 
 export const childHasExited = (child: ChildProcess) =>
   child.exitCode !== null || child.signalCode !== null;
@@ -50,6 +51,25 @@ const cleanedUnixProcessGroups = new WeakSet<ChildProcess>();
 const processErrorCode = (error: unknown) =>
   (error as NodeJS.ErrnoException).code;
 
+const unixProcessGroupHasLiveMembers = (processGroupId: number): boolean => {
+  if (process.platform !== "linux") return true;
+  for (const entry of readdirSync("/proc")) {
+    if (!/^\d+$/u.test(entry)) continue;
+    try {
+      const stat = readFileSync(`/proc/${entry}/stat`, "utf8");
+      const endOfCommand = stat.lastIndexOf(") ");
+      if (endOfCommand < 0) continue;
+      const fields = stat.slice(endOfCommand + 2).split(" ");
+      const state = fields[0];
+      const processGroup = Number(fields[2]);
+      if (processGroup === processGroupId && state !== "Z") return true;
+    } catch {
+      // The process can disappear between directory enumeration and stat.
+    }
+  }
+  return false;
+};
+
 const stopUnixProcessGroupBounded = async (
   child: ChildProcess,
   timeoutMs: number,
@@ -87,6 +107,15 @@ const stopUnixProcessGroupBounded = async (
           );
         }
       }
+    }
+
+    if (
+      !groupGone &&
+      childHasExited(child) &&
+      seam.signalProcessGroup === undefined &&
+      !unixProcessGroupHasLiveMembers(processGroupId)
+    ) {
+      groupGone = true;
     }
 
     if (childHasExited(child) && groupGone) {

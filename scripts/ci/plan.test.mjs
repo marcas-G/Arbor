@@ -176,7 +176,10 @@ test("impact-map risk tags escalate within the bucket, never below it", () => {
 test("shard accounting keeps selection and inventory consistent", () => {
   const plan = buildCiPlan(["packages/agent-runtime/src/agent-loop-driver.ts"]);
   const shards = plan.selection.functional.shards;
-  assert.deepEqual(Object.keys(shards), ["1", "2", "3", "4", "5", "6"]);
+  assert.deepEqual(
+    Object.keys(shards),
+    Array.from({ length: FUNCTIONAL_SHARD_TOTAL }, (_, i) => String(i + 1)),
+  );
   assert.equal(plan.selection.functional.shardTotal, FUNCTIONAL_SHARD_TOTAL);
   const selectedInWalk = Object.values(shards).reduce(
     (sum, shard) => sum + shard.selected,
@@ -216,7 +219,10 @@ test("shadow summaries report without changing behavior", () => {
   assert.match(overall, /policy digest/i);
 
   const shard = shardSummaryMarkdown(plan, 3, FUNCTIONAL_SHARD_TOTAL);
-  assert.match(shard, /functional shard 3\/6/);
+  assert.match(
+    shard,
+    new RegExp(`functional shard 3/${FUNCTIONAL_SHARD_TOTAL}`),
+  );
   assert.match(
     shard,
     /this job ran the \*\*full\*\* shard; no test was skipped/i,

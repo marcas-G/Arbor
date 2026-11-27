@@ -35,7 +35,7 @@ The design-chain and full naming commands are standalone audits. They do not cha
 
 Review semantic correctness, responsibility and dependency direction, error/interrupt paths, transaction and recovery behavior, authority/secret boundaries, tests and truthful documentation. Avoid approving changes simply because line counts or aggregate health scores improve. Refuse scope creep, duplicated authority and evidence inflation. Report existing defects even when they block a release; do not punish disclosure as though it introduced the defect.
 
-PR quality and CodeQL use ephemeral GitHub-hosted Linux runners. Public fork code must not execute on a persistent self-hosted runner. Environment-specific qualification outside hosted CI requires an authorized isolated environment and separate evidence. See [engineering practices](docs/engineering/README.md).
+PR quality CI runs on the repository's disposable self-hosted Linux runner pool selected by the `arbor-ci` label; CodeQL stays on GitHub-hosted Ubuntu 24.04 as an independent security boundary. Public fork code must not execute on a persistent self-hosted host: require maintainer approval before any fork workflow runs, and never place credentials or user data on the runner host. Environment-specific qualification outside CI requires an authorized isolated environment and separate evidence. See [engineering practices](docs/engineering/README.md).
 
 ## References
 
