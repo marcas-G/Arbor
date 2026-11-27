@@ -207,14 +207,17 @@ jobs:
     # The daemon-boot release journey, sharded (plan PR 3): round-robin
     # over the sorted file list so heavy multi-restart families spread
     # evenly; each shard is an isolated runner and runs serially inside.
+    # 12 shards x max-parallel 12 against the local runner pool: the hosted
+    # baseline measured 9-31 min per 6-way shard (round-robin skew), so the
+    # wall clock is set by the slowest shard, not by the sum.
     runs-on: [self-hosted, linux, x64, arbor-ci]
     timeout-minutes: 45
     strategy:
       fail-fast: false
-      max-parallel: 6
+      max-parallel: 12
       matrix:
-        shard: [1, 2, 3, 4, 5, 6]
-    name: functional (${{ matrix.shard }}/6)
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    name: functional (${{ matrix.shard }}/12)
     steps:
       - name: Checkout full history
         uses: actions/checkout@v4
@@ -267,12 +270,12 @@ jobs:
             echo "CI plan artifact unavailable; shadow summary skipped (full shard still runs)." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          node scripts/ci/plan.mjs --report ci-plan.json --shard ${{ matrix.shard }}/6 >> "$GITHUB_STEP_SUMMARY"
+          node scripts/ci/plan.mjs --report ci-plan.json --shard ${{ matrix.shard }}/12 >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Functional release journey (shard ${{ matrix.shard }}/6)
+      - name: Functional release journey (shard ${{ matrix.shard }}/12)
         run: |
           set -e
-          mapfile -t FILES < <(node scripts/testing/functional-shard.mjs ${{ matrix.shard }} 6)
+          mapfile -t FILES < <(node scripts/testing/functional-shard.mjs ${{ matrix.shard }} 12)
           echo "running ${#FILES[@]} files"
           pnpm vitest run "${FILES[@]}" --config vitest.functional.config.ts
 
