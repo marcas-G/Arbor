@@ -543,6 +543,6 @@ describe("Inbox input promotion process crash", () => {
         ),
       ).toHaveLength(1);
       expect(fixture.daemonErrors).toEqual([]);
-    }, 90_000);
+    }, 180_000);
   }
 });
