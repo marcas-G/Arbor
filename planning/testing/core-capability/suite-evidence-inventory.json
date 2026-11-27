@@ -1,20 +1,20 @@
 {
   "schemaVersion": "arbor-suite-evidence-inventory-v1",
-  "generatedAt": "2026-11-27T18:34:46.921Z",
+  "generatedAt": "2026-11-27T18:55:46.465Z",
   "vitestVersion": "5.0.1",
   "method": "Vitest list --no-staticParse imports suite definitions without executing test bodies; tier is a reviewed file-cohort classification, with mixed suites explicitly retained.",
   "root": {
     "totals": {
       "files": 585,
-      "cases": 3318,
+      "cases": 3327,
       "byLevel": {
         "L2": {
           "files": 398,
-          "cases": 2202
+          "cases": 2201
         },
         "L1": {
           "files": 172,
-          "cases": 1034
+          "cases": 1044
         },
         "MIXED": {
           "files": 5,
@@ -498,8 +498,8 @@
         "testCases": 8,
         "testNames": [
           "/ legacy-adoption immutable failure facts > writes one exact fact/event pair and exact retry preserves the first timestamp",
-          "/ legacy-adoption immutable failure facts > rejects stale generations before writing any fact or event",
-          "/ legacy-adoption immutable failure facts > rejects an expired current generation before reading or writing evidence",
+          "/ legacy-adoption immutable failure facts > rejects { label: 'stale generations', …(2) } before writing any fact or event",
+          "/ legacy-adoption immutable failure facts > rejects { …(3) } before writing any fact or event",
           "/ legacy-adoption immutable failure facts > keeps Attention active and writes no resolution when any exact action proof is absent",
           "/ legacy-adoption immutable failure facts > resolves only a complete exact denial binding and writes the immutable resolution event/fact",
           "/ legacy-adoption immutable failure facts > resolves an exact Applied settlement only with its same-invocation Observation",
@@ -942,10 +942,10 @@
           "SandboxPolicyRequirementReadPort > returns None when the exact action is no longer Pending",
           "SandboxPolicyRequirementReadPort > returns None for a valid non-policy-bearing executable invocation",
           "SandboxPolicyRequirementReadPort > recognizes a non-shell executable only when its exact sandbox profile is bound",
-          "SandboxPolicyRequirementReadPort > fails closed when a bound effect-attempt profile differs from RecoveryBinding",
-          "SandboxPolicyRequirementReadPort > fails closed on duplicate action evidence",
-          "SandboxPolicyRequirementReadPort > fails closed when a Pending action is not at the current Step cursor",
-          "SandboxPolicyRequirementReadPort > fails closed on corrupt exact recovery proof instead of treating it as absence"
+          "SandboxPolicyRequirementReadPort > fails closed { …(4) }",
+          "SandboxPolicyRequirementReadPort > fails closed { …(4) }",
+          "SandboxPolicyRequirementReadPort > fails closed { …(4) }",
+          "SandboxPolicyRequirementReadPort > fails closed { …(4) }"
         ],
         "evidenceLevel": "L2",
         "classification": "INTEGRATION",
@@ -1306,22 +1306,21 @@
       },
       {
         "suiteFile": "adapters/persistence-sqlite/test/work-readmission-gate/reconciliation-scope.test.ts",
-        "testCases": 15,
+        "testCases": 14,
         "testNames": [
-          "WorkReadmissionGateStore > fails closed when ReconciliationEscalated aggregate and payload bind different Executions",
+          "WorkReadmissionGateStore > fails closed when ReconciliationEscalated { …(3) }",
+          "WorkReadmissionGateStore > fails closed when ReconciliationEscalated { …(3) }",
+          "WorkReadmissionGateStore > fails closed when ReconciliationEscalated { …(3) }",
           "WorkReadmissionGateStore > does not let a B/C mismatch block A, while each referenced Workspace fails closed",
-          "WorkReadmissionGateStore > fails closed when a ReconciliationEscalated payload binds this Workspace but aggregate_ref points elsewhere",
-          "WorkReadmissionGateStore > fails closed when ReconciliationEscalated payload points to a missing Execution",
+          "WorkReadmissionGateStore > fails closed with SourceExecutionMissing when ReconciliationEscalated { …(4) }",
+          "WorkReadmissionGateStore > fails closed with SourceExecutionMissing when ReconciliationEscalated { …(4) }",
+          "WorkReadmissionGateStore > fails closed with SourceExecutionMissing when ReconciliationEscalated { …(4) }",
           "WorkReadmissionGateStore > lets unrelated A skip aggregate B with a missing payload identity, while B rejects it",
           "WorkReadmissionGateStore > lets unrelated A skip aggregate B with a foreign-project payload, while B rejects it",
-          "WorkReadmissionGateStore > fails closed when both ReconciliationEscalated identities match but the Execution is missing",
-          "WorkReadmissionGateStore > fails closed when aggregate Execution is missing but payload binds the requested Workspace",
           "WorkReadmissionGateStore > fails closed when both ReconciliationEscalated identities match an Execution in another Project",
           "WorkReadmissionGateStore > fails closed for A and B when aggregate is missing even if payload points to B",
           "WorkReadmissionGateStore > fails closed for A and B when aggregate belongs to another Project even if payload points to B",
-          "WorkReadmissionGateStore > fails closed when an in-scope ReconciliationEscalated event omits its Execution binding",
           "WorkReadmissionGateStore > ignores a valid ReconciliationEscalated event whose exact Execution belongs to another Workspace",
-          "WorkReadmissionGateStore > scopes a missing ReconciliationEscalated payload identity to its aggregate Workspace",
           "WorkReadmissionGateStore > scopes an unparseable ReconciliationEscalated payload by aggregate Execution"
         ],
         "evidenceLevel": "L2",
@@ -3098,13 +3097,10 @@
       },
       {
         "suiteFile": "packages/agent-runtime/test/control-claim-completion.test.ts",
-        "testCases": 7,
+        "testCases": 4,
         "testNames": [
           "claim_completion codec (49 §126-136) > decodes a well-formed claim",
-          "claim_completion codec (49 §126-136) > rejects a missing claim",
-          "claim_completion codec (49 §126-136) > rejects an empty claim",
-          "claim_completion codec (49 §126-136) > rejects unknown keys (closed object)",
-          "claim_completion codec (49 §126-136) > rejects malformed JSON",
+          "claim_completion codec (49 §126-136) > rejects a missing, empty, unknown-key or malformed claim through the codec",
           "claim_completion codec (49 §126-136) > is not exposed without a registered handler (no placeholder)",
           "claim_completion codec (49 §126-136) > is exposed once a ClaimCompletion handler is registered"
         ],
@@ -3114,14 +3110,13 @@
       },
       {
         "suiteFile": "packages/agent-runtime/test/control-declare-dependency.test.ts",
-        "testCases": 6,
+        "testCases": 5,
         "testNames": [
           "declare_dependency codec > decodes an AnyProducer dependency with roles",
           "declare_dependency codec > decodes a WorkspaceBound producer",
           "declare_dependency codec > rejects an unknown producer binding tag",
           "declare_dependency codec > rejects a malformed workspaceId",
-          "declare_dependency codec > rejects an expectedDeliverable without a kind",
-          "declare_dependency codec > is not exposed without a registered handler"
+          "declare_dependency codec > rejects an expectedDeliverable without a kind"
         ],
         "evidenceLevel": "L1",
         "classification": "COMPONENT",
@@ -3150,7 +3145,7 @@
       },
       {
         "suiteFile": "packages/agent-runtime/test/control-propose-child.test.ts",
-        "testCases": 10,
+        "testCases": 9,
         "testNames": [
           "propose_workspace codec > decodes a full proposal",
           "propose_workspace codec > decodes a bounded ownership subregion for activation-time containment",
@@ -3160,8 +3155,7 @@
           "propose_workspace codec > rejects unknown top-level keys",
           "propose_workspace codec > rejects an invalid resource address tag",
           "propose_workspace codec > rejects an initialWork without objective",
-          "propose_workspace codec > rejects initialWork without an explicit verificationMission",
-          "propose_workspace codec > is not exposed without a registered handler"
+          "propose_workspace codec > rejects initialWork without an explicit verificationMission"
         ],
         "evidenceLevel": "L1",
         "classification": "COMPONENT",
@@ -3169,13 +3163,12 @@
       },
       {
         "suiteFile": "packages/agent-runtime/test/control-spawn-specialist.test.ts",
-        "testCases": 5,
+        "testCases": 4,
         "testNames": [
           "spawn_specialist codec > decodes a mission with constraints",
           "spawn_specialist codec > decodes a bare mission",
           "spawn_specialist codec > rejects a missing or empty mission",
-          "spawn_specialist codec > rejects non-string constraints",
-          "spawn_specialist codec > is not exposed without a registered handler"
+          "spawn_specialist codec > rejects non-string constraints"
         ],
         "evidenceLevel": "L1",
         "classification": "COMPONENT",
@@ -3456,30 +3449,11 @@
       },
       {
         "suiteFile": "packages/agent-runtime/test/programs.test.ts",
-        "testCases": 22,
+        "testCases": 3,
         "testNames": [
-          "-programs > p8-verification > carries a complete dual version header",
-          "-programs > p8-verification > verifies textHash against the sha256 of its body",
-          "-programs > p8-verification > contains every mandatory clause and no forbidden phrase",
-          "-programs > p8-query-inspection > carries a complete dual version header",
-          "-programs > p8-query-inspection > verifies textHash against the sha256 of its body",
-          "-programs > p8-query-inspection > contains every mandatory clause and no forbidden phrase",
-          "-programs > verification states the honest three-value duty in plain words",
-          "-programs > verification carries no auto-pass or silently pass wording",
-          "-programs > query-inspection states read-only discipline and message-only results",
-          "-programs > query-inspection carries no write-instruction wording",
-          "-programs > registers the two families beside the four families",
-          "-programs > keeps the families green after the registry extension",
-          "-programs > passes the program gate across all six families",
-          "-programs > rejects a tampered p8 body with a typed hash mismatch",
-          "-programs > rejects an incomplete p8 header with a typed header error",
-          "-programs > fails the eval gate when registry and file textVersion disagree",
-          "-programs > fails the eval gate when a mandatory clause is missing",
-          "-programs > fails the eval gate on a synthetic read-only negative clause",
-          "-programs > enforces the E4 version gate on load for both families",
-          "-programs > M-2 placeholder mission migration > formation preserves the explicitly proposed verification mission",
-          "-programs > M-2 placeholder mission migration > StartVerification accepts the formation mission",
-          "-programs > M-2 placeholder mission migration > StartVerification typed-rejects the legacy p6-placeholder mission"
+          "M-2 placeholder mission migration > formation preserves the explicitly proposed verification mission",
+          "M-2 placeholder mission migration > StartVerification accepts the formation mission",
+          "M-2 placeholder mission migration > StartVerification typed-rejects the legacy p6-placeholder mission"
         ],
         "evidenceLevel": "L1",
         "classification": "COMPONENT",
@@ -3487,30 +3461,67 @@
       },
       {
         "suiteFile": "packages/agent-runtime/test/prompt-programs.test.ts",
-        "testCases": 22,
+        "testCases": 59,
         "testNames": [
           "-prompt-programs > p6-formation > carries a complete dual version header",
           "-prompt-programs > p6-formation > verifies textHash against the sha256 of its body",
-          "-prompt-programs > p6-formation > contains every mandatory clause of -05 section 2",
+          "-prompt-programs > p6-formation > contains every mandatory clause and no forbidden phrase",
           "-prompt-programs > p6-communication > carries a complete dual version header",
           "-prompt-programs > p6-communication > verifies textHash against the sha256 of its body",
-          "-prompt-programs > p6-communication > contains every mandatory clause of -05 section 2",
+          "-prompt-programs > p6-communication > contains every mandatory clause and no forbidden phrase",
           "-prompt-programs > p6-bootstrap > carries a complete dual version header",
           "-prompt-programs > p6-bootstrap > verifies textHash against the sha256 of its body",
-          "-prompt-programs > p6-bootstrap > contains every mandatory clause of -05 section 2",
+          "-prompt-programs > p6-bootstrap > contains every mandatory clause and no forbidden phrase",
           "-prompt-programs > p6-human-steer > carries a complete dual version header",
           "-prompt-programs > p6-human-steer > verifies textHash against the sha256 of its body",
-          "-prompt-programs > p6-human-steer > contains every mandatory clause of -05 section 2",
-          "-prompt-programs > forbids the invented Deliver kind and preemption wording in communication",
-          "-prompt-programs > keeps the human gate requirement in formation",
-          "-prompt-programs > keeps the CanonicalInstruction/DataOnly distinction in bootstrap",
-          "-prompt-programs > keeps severity semantics in human-steer",
-          "-prompt-programs > rejects a tampered body with a typed hash mismatch",
-          "-prompt-programs > rejects an incomplete header with a typed header error",
+          "-prompt-programs > p6-human-steer > contains every mandatory clause and no forbidden phrase",
+          "-prompt-programs > p8-verification > carries a complete dual version header",
+          "-prompt-programs > p8-verification > verifies textHash against the sha256 of its body",
+          "-prompt-programs > p8-verification > contains every mandatory clause and no forbidden phrase",
+          "-prompt-programs > p8-query-inspection > carries a complete dual version header",
+          "-prompt-programs > p8-query-inspection > verifies textHash against the sha256 of its body",
+          "-prompt-programs > p8-query-inspection > contains every mandatory clause and no forbidden phrase",
+          "-prompt-programs > registers the two P8 families beside the four P6 families",
+          "-prompt-programs > passes the program gate across all six families",
+          "-prompt-programs > rejects a tampered p6-formation body with a typed hash mismatch",
+          "-prompt-programs > rejects a tampered p6-communication body with a typed hash mismatch",
+          "-prompt-programs > rejects a tampered p6-bootstrap body with a typed hash mismatch",
+          "-prompt-programs > rejects a tampered p6-human-steer body with a typed hash mismatch",
+          "-prompt-programs > rejects a tampered p8-verification body with a typed hash mismatch",
+          "-prompt-programs > rejects a tampered p8-query-inspection body with a typed hash mismatch",
+          "-prompt-programs > rejects an incomplete p6-formation header with a typed header error",
+          "-prompt-programs > rejects an incomplete p6-communication header with a typed header error",
+          "-prompt-programs > rejects an incomplete p6-bootstrap header with a typed header error",
+          "-prompt-programs > rejects an incomplete p6-human-steer header with a typed header error",
+          "-prompt-programs > rejects an incomplete p8-verification header with a typed header error",
+          "-prompt-programs > rejects an incomplete p8-query-inspection header with a typed header error",
+          "-prompt-programs > fails the eval gate when registry and file textVersion disagree",
+          "-prompt-programs > fails the eval gate when registry and file textVersion disagree",
+          "-prompt-programs > fails the eval gate when registry and file textVersion disagree",
+          "-prompt-programs > fails the eval gate when registry and file textVersion disagree",
+          "-prompt-programs > fails the eval gate when registry and file textVersion disagree",
           "-prompt-programs > fails the eval gate when registry and file textVersion disagree",
           "-prompt-programs > fails the eval gate when a mandatory clause is missing",
-          "-prompt-programs > enforces the E4 version gate on load",
-          "-prompt-programs > passes the program gate across all four families"
+          "-prompt-programs > fails the eval gate when a mandatory clause is missing",
+          "-prompt-programs > fails the eval gate when a mandatory clause is missing",
+          "-prompt-programs > fails the eval gate when a mandatory clause is missing",
+          "-prompt-programs > fails the eval gate when a mandatory clause is missing",
+          "-prompt-programs > fails the eval gate when a mandatory clause is missing",
+          "-prompt-programs > enforces the E4 version gate on load for p6-formation",
+          "-prompt-programs > enforces the E4 version gate on load for p6-communication",
+          "-prompt-programs > enforces the E4 version gate on load for p6-bootstrap",
+          "-prompt-programs > enforces the E4 version gate on load for p6-human-steer",
+          "-prompt-programs > enforces the E4 version gate on load for p8-verification",
+          "-prompt-programs > enforces the E4 version gate on load for p8-query-inspection",
+          "-prompt-programs > fails the eval gate on a synthetic read-only negative clause",
+          "-prompt-programs > P6 content contracts > forbids the invented Deliver kind and preemption wording in communication",
+          "-prompt-programs > P6 content contracts > keeps the human gate requirement in formation",
+          "-prompt-programs > P6 content contracts > keeps the CanonicalInstruction/DataOnly distinction in bootstrap",
+          "-prompt-programs > P6 content contracts > keeps severity semantics in human-steer",
+          "-prompt-programs > P8 content contracts > verification states the honest three-value duty in plain words",
+          "-prompt-programs > P8 content contracts > verification carries no auto-pass or silently pass wording",
+          "-prompt-programs > P8 content contracts > query-inspection states read-only discipline and message-only results",
+          "-prompt-programs > P8 content contracts > query-inspection carries no write-instruction wording"
         ],
         "evidenceLevel": "L1",
         "classification": "COMPONENT",
@@ -4989,12 +5000,10 @@
       },
       {
         "suiteFile": "packages/tool-runtime/test/filesystem-tools.test.ts",
-        "testCases": 4,
+        "testCases": 2,
         "testNames": [
           "filesystem discovery and write tools > writes nested files and avoids replacing identical content on a separate call",
-          "filesystem discovery and write tools > rejects writes outside the selected mount and through a symlink parent",
-          "filesystem discovery and write tools > finds files with bounded globbing without traversing symlink directories",
-          "filesystem discovery and write tools > searches text with regex and returns mount-relative locations"
+          "filesystem discovery and write tools > finds files with bounded globbing without traversing symlink directories"
         ],
         "evidenceLevel": "L1",
         "classification": "COMPONENT",
@@ -9542,15 +9551,15 @@
   "combined": {
     "totals": {
       "files": 625,
-      "cases": 3617,
+      "cases": 3626,
       "byLevel": {
         "L2": {
           "files": 400,
-          "cases": 2213
+          "cases": 2212
         },
         "L1": {
           "files": 202,
-          "cases": 1283
+          "cases": 1293
         },
         "MIXED": {
           "files": 6,
@@ -10034,8 +10043,8 @@
         "testCases": 8,
         "testNames": [
           "/ legacy-adoption immutable failure facts > writes one exact fact/event pair and exact retry preserves the first timestamp",
-          "/ legacy-adoption immutable failure facts > rejects stale generations before writing any fact or event",
-          "/ legacy-adoption immutable failure facts > rejects an expired current generation before reading or writing evidence",
+          "/ legacy-adoption immutable failure facts > rejects { label: 'stale generations', …(2) } before writing any fact or event",
+          "/ legacy-adoption immutable failure facts > rejects { …(3) } before writing any fact or event",
           "/ legacy-adoption immutable failure facts > keeps Attention active and writes no resolution when any exact action proof is absent",
           "/ legacy-adoption immutable failure facts > resolves only a complete exact denial binding and writes the immutable resolution event/fact",
           "/ legacy-adoption immutable failure facts > resolves an exact Applied settlement only with its same-invocation Observation",
@@ -10478,10 +10487,10 @@
           "SandboxPolicyRequirementReadPort > returns None when the exact action is no longer Pending",
           "SandboxPolicyRequirementReadPort > returns None for a valid non-policy-bearing executable invocation",
           "SandboxPolicyRequirementReadPort > recognizes a non-shell executable only when its exact sandbox profile is bound",
-          "SandboxPolicyRequirementReadPort > fails closed when a bound effect-attempt profile differs from RecoveryBinding",
-          "SandboxPolicyRequirementReadPort > fails closed on duplicate action evidence",
-          "SandboxPolicyRequirementReadPort > fails closed when a Pending action is not at the current Step cursor",
-          "SandboxPolicyRequirementReadPort > fails closed on corrupt exact recovery proof instead of treating it as absence"
+          "SandboxPolicyRequirementReadPort > fails closed { …(4) }",
+          "SandboxPolicyRequirementReadPort > fails closed { …(4) }",
+          "SandboxPolicyRequirementReadPort > fails closed { …(4) }",
+          "SandboxPolicyRequirementReadPort > fails closed { …(4) }"
         ],
         "evidenceLevel": "L2",
         "classification": "INTEGRATION",
@@ -10842,22 +10851,21 @@
       },
       {
         "suiteFile": "adapters/persistence-sqlite/test/work-readmission-gate/reconciliation-scope.test.ts",
-        "testCases": 15,
+        "testCases": 14,
         "testNames": [
-          "WorkReadmissionGateStore > fails closed when ReconciliationEscalated aggregate and payload bind different Executions",
+          "WorkReadmissionGateStore > fails closed when ReconciliationEscalated { …(3) }",
+          "WorkReadmissionGateStore > fails closed when ReconciliationEscalated { …(3) }",
+          "WorkReadmissionGateStore > fails closed when ReconciliationEscalated { …(3) }",
           "WorkReadmissionGateStore > does not let a B/C mismatch block A, while each referenced Workspace fails closed",
-          "WorkReadmissionGateStore > fails closed when a ReconciliationEscalated payload binds this Workspace but aggregate_ref points elsewhere",
-          "WorkReadmissionGateStore > fails closed when ReconciliationEscalated payload points to a missing Execution",
+          "WorkReadmissionGateStore > fails closed with SourceExecutionMissing when ReconciliationEscalated { …(4) }",
+          "WorkReadmissionGateStore > fails closed with SourceExecutionMissing when ReconciliationEscalated { …(4) }",
+          "WorkReadmissionGateStore > fails closed with SourceExecutionMissing when ReconciliationEscalated { …(4) }",
           "WorkReadmissionGateStore > lets unrelated A skip aggregate B with a missing payload identity, while B rejects it",
           "WorkReadmissionGateStore > lets unrelated A skip aggregate B with a foreign-project payload, while B rejects it",
-          "WorkReadmissionGateStore > fails closed when both ReconciliationEscalated identities match but the Execution is missing",
-          "WorkReadmissionGateStore > fails closed when aggregate Execution is missing but payload binds the requested Workspace",
           "WorkReadmissionGateStore > fails closed when both ReconciliationEscalated identities match an Execution in another Project",
           "WorkReadmissionGateStore > fails closed for A and B when aggregate is missing even if payload points to B",
           "WorkReadmissionGateStore > fails closed for A and B when aggregate belongs to another Project even if payload points to B",
-          "WorkReadmissionGateStore > fails closed when an in-scope ReconciliationEscalated event omits its Execution binding",
           "WorkReadmissionGateStore > ignores a valid ReconciliationEscalated event whose exact Execution belongs to another Workspace",
-          "WorkReadmissionGateStore > scopes a missing ReconciliationEscalated payload identity to its aggregate Workspace",
           "WorkReadmissionGateStore > scopes an unparseable ReconciliationEscalated payload by aggregate Execution"
         ],
         "evidenceLevel": "L2",
@@ -13293,13 +13301,10 @@
       },
       {
         "suiteFile": "packages/agent-runtime/test/control-claim-completion.test.ts",
-        "testCases": 7,
+        "testCases": 4,
         "testNames": [
           "claim_completion codec (49 §126-136) > decodes a well-formed claim",
-          "claim_completion codec (49 §126-136) > rejects a missing claim",
-          "claim_completion codec (49 §126-136) > rejects an empty claim",
-          "claim_completion codec (49 §126-136) > rejects unknown keys (closed object)",
-          "claim_completion codec (49 §126-136) > rejects malformed JSON",
+          "claim_completion codec (49 §126-136) > rejects a missing, empty, unknown-key or malformed claim through the codec",
           "claim_completion codec (49 §126-136) > is not exposed without a registered handler (no placeholder)",
           "claim_completion codec (49 §126-136) > is exposed once a ClaimCompletion handler is registered"
         ],
@@ -13309,14 +13314,13 @@
       },
       {
         "suiteFile": "packages/agent-runtime/test/control-declare-dependency.test.ts",
-        "testCases": 6,
+        "testCases": 5,
         "testNames": [
           "declare_dependency codec > decodes an AnyProducer dependency with roles",
           "declare_dependency codec > decodes a WorkspaceBound producer",
           "declare_dependency codec > rejects an unknown producer binding tag",
           "declare_dependency codec > rejects a malformed workspaceId",
-          "declare_dependency codec > rejects an expectedDeliverable without a kind",
-          "declare_dependency codec > is not exposed without a registered handler"
+          "declare_dependency codec > rejects an expectedDeliverable without a kind"
         ],
         "evidenceLevel": "L1",
         "classification": "COMPONENT",
@@ -13345,7 +13349,7 @@
       },
       {
         "suiteFile": "packages/agent-runtime/test/control-propose-child.test.ts",
-        "testCases": 10,
+        "testCases": 9,
         "testNames": [
           "propose_workspace codec > decodes a full proposal",
           "propose_workspace codec > decodes a bounded ownership subregion for activation-time containment",
@@ -13355,8 +13359,7 @@
           "propose_workspace codec > rejects unknown top-level keys",
           "propose_workspace codec > rejects an invalid resource address tag",
           "propose_workspace codec > rejects an initialWork without objective",
-          "propose_workspace codec > rejects initialWork without an explicit verificationMission",
-          "propose_workspace codec > is not exposed without a registered handler"
+          "propose_workspace codec > rejects initialWork without an explicit verificationMission"
         ],
         "evidenceLevel": "L1",
         "classification": "COMPONENT",
@@ -13364,13 +13367,12 @@
       },
       {
         "suiteFile": "packages/agent-runtime/test/control-spawn-specialist.test.ts",
-        "testCases": 5,
+        "testCases": 4,
         "testNames": [
           "spawn_specialist codec > decodes a mission with constraints",
           "spawn_specialist codec > decodes a bare mission",
           "spawn_specialist codec > rejects a missing or empty mission",
-          "spawn_specialist codec > rejects non-string constraints",
-          "spawn_specialist codec > is not exposed without a registered handler"
+          "spawn_specialist codec > rejects non-string constraints"
         ],
         "evidenceLevel": "L1",
         "classification": "COMPONENT",
@@ -13651,30 +13653,11 @@
       },
       {
         "suiteFile": "packages/agent-runtime/test/programs.test.ts",
-        "testCases": 22,
+        "testCases": 3,
         "testNames": [
-          "-programs > p8-verification > carries a complete dual version header",
-          "-programs > p8-verification > verifies textHash against the sha256 of its body",
-          "-programs > p8-verification > contains every mandatory clause and no forbidden phrase",
-          "-programs > p8-query-inspection > carries a complete dual version header",
-          "-programs > p8-query-inspection > verifies textHash against the sha256 of its body",
-          "-programs > p8-query-inspection > contains every mandatory clause and no forbidden phrase",
-          "-programs > verification states the honest three-value duty in plain words",
-          "-programs > verification carries no auto-pass or silently pass wording",
-          "-programs > query-inspection states read-only discipline and message-only results",
-          "-programs > query-inspection carries no write-instruction wording",
-          "-programs > registers the two families beside the four families",
-          "-programs > keeps the families green after the registry extension",
-          "-programs > passes the program gate across all six families",
-          "-programs > rejects a tampered p8 body with a typed hash mismatch",
-          "-programs > rejects an incomplete p8 header with a typed header error",
-          "-programs > fails the eval gate when registry and file textVersion disagree",
-          "-programs > fails the eval gate when a mandatory clause is missing",
-          "-programs > fails the eval gate on a synthetic read-only negative clause",
-          "-programs > enforces the E4 version gate on load for both families",
-          "-programs > M-2 placeholder mission migration > formation preserves the explicitly proposed verification mission",
-          "-programs > M-2 placeholder mission migration > StartVerification accepts the formation mission",
-          "-programs > M-2 placeholder mission migration > StartVerification typed-rejects the legacy p6-placeholder mission"
+          "M-2 placeholder mission migration > formation preserves the explicitly proposed verification mission",
+          "M-2 placeholder mission migration > StartVerification accepts the formation mission",
+          "M-2 placeholder mission migration > StartVerification typed-rejects the legacy p6-placeholder mission"
         ],
         "evidenceLevel": "L1",
         "classification": "COMPONENT",
@@ -13682,30 +13665,67 @@
       },
       {
         "suiteFile": "packages/agent-runtime/test/prompt-programs.test.ts",
-        "testCases": 22,
+        "testCases": 59,
         "testNames": [
           "-prompt-programs > p6-formation > carries a complete dual version header",
           "-prompt-programs > p6-formation > verifies textHash against the sha256 of its body",
-          "-prompt-programs > p6-formation > contains every mandatory clause of -05 section 2",
+          "-prompt-programs > p6-formation > contains every mandatory clause and no forbidden phrase",
           "-prompt-programs > p6-communication > carries a complete dual version header",
           "-prompt-programs > p6-communication > verifies textHash against the sha256 of its body",
-          "-prompt-programs > p6-communication > contains every mandatory clause of -05 section 2",
+          "-prompt-programs > p6-communication > contains every mandatory clause and no forbidden phrase",
           "-prompt-programs > p6-bootstrap > carries a complete dual version header",
           "-prompt-programs > p6-bootstrap > verifies textHash against the sha256 of its body",
-          "-prompt-programs > p6-bootstrap > contains every mandatory clause of -05 section 2",
+          "-prompt-programs > p6-bootstrap > contains every mandatory clause and no forbidden phrase",
           "-prompt-programs > p6-human-steer > carries a complete dual version header",
           "-prompt-programs > p6-human-steer > verifies textHash against the sha256 of its body",
-          "-prompt-programs > p6-human-steer > contains every mandatory clause of -05 section 2",
-          "-prompt-programs > forbids the invented Deliver kind and preemption wording in communication",
-          "-prompt-programs > keeps the human gate requirement in formation",
-          "-prompt-programs > keeps the CanonicalInstruction/DataOnly distinction in bootstrap",
-          "-prompt-programs > keeps severity semantics in human-steer",
-          "-prompt-programs > rejects a tampered body with a typed hash mismatch",
-          "-prompt-programs > rejects an incomplete header with a typed header error",
+          "-prompt-programs > p6-human-steer > contains every mandatory clause and no forbidden phrase",
+          "-prompt-programs > p8-verification > carries a complete dual version header",
+          "-prompt-programs > p8-verification > verifies textHash against the sha256 of its body",
+          "-prompt-programs > p8-verification > contains every mandatory clause and no forbidden phrase",
+          "-prompt-programs > p8-query-inspection > carries a complete dual version header",
+          "-prompt-programs > p8-query-inspection > verifies textHash against the sha256 of its body",
+          "-prompt-programs > p8-query-inspection > contains every mandatory clause and no forbidden phrase",
+          "-prompt-programs > registers the two P8 families beside the four P6 families",
+          "-prompt-programs > passes the program gate across all six families",
+          "-prompt-programs > rejects a tampered p6-formation body with a typed hash mismatch",
+          "-prompt-programs > rejects a tampered p6-communication body with a typed hash mismatch",
+          "-prompt-programs > rejects a tampered p6-bootstrap body with a typed hash mismatch",
+          "-prompt-programs > rejects a tampered p6-human-steer body with a typed hash mismatch",
+          "-prompt-programs > rejects a tampered p8-verification body with a typed hash mismatch",
+          "-prompt-programs > rejects a tampered p8-query-inspection body with a typed hash mismatch",
+          "-prompt-programs > rejects an incomplete p6-formation header with a typed header error",
+          "-prompt-programs > rejects an incomplete p6-communication header with a typed header error",
+          "-prompt-programs > rejects an incomplete p6-bootstrap header with a typed header error",
+          "-prompt-programs > rejects an incomplete p6-human-steer header with a typed header error",
+          "-prompt-programs > rejects an incomplete p8-verification header with a typed header error",
+          "-prompt-programs > rejects an incomplete p8-query-inspection header with a typed header error",
+          "-prompt-programs > fails the eval gate when registry and file textVersion disagree",
+          "-prompt-programs > fails the eval gate when registry and file textVersion disagree",
+          "-prompt-programs > fails the eval gate when registry and file textVersion disagree",
+          "-prompt-programs > fails the eval gate when registry and file textVersion disagree",
+          "-prompt-programs > fails the eval gate when registry and file textVersion disagree",
           "-prompt-programs > fails the eval gate when registry and file textVersion disagree",
           "-prompt-programs > fails the eval gate when a mandatory clause is missing",
-          "-prompt-programs > enforces the E4 version gate on load",
-          "-prompt-programs > passes the program gate across all four families"
+          "-prompt-programs > fails the eval gate when a mandatory clause is missing",
+          "-prompt-programs > fails the eval gate when a mandatory clause is missing",
+          "-prompt-programs > fails the eval gate when a mandatory clause is missing",
+          "-prompt-programs > fails the eval gate when a mandatory clause is missing",
+          "-prompt-programs > fails the eval gate when a mandatory clause is missing",
+          "-prompt-programs > enforces the E4 version gate on load for p6-formation",
+          "-prompt-programs > enforces the E4 version gate on load for p6-communication",
+          "-prompt-programs > enforces the E4 version gate on load for p6-bootstrap",
+          "-prompt-programs > enforces the E4 version gate on load for p6-human-steer",
+          "-prompt-programs > enforces the E4 version gate on load for p8-verification",
+          "-prompt-programs > enforces the E4 version gate on load for p8-query-inspection",
+          "-prompt-programs > fails the eval gate on a synthetic read-only negative clause",
+          "-prompt-programs > P6 content contracts > forbids the invented Deliver kind and preemption wording in communication",
+          "-prompt-programs > P6 content contracts > keeps the human gate requirement in formation",
+          "-prompt-programs > P6 content contracts > keeps the CanonicalInstruction/DataOnly distinction in bootstrap",
+          "-prompt-programs > P6 content contracts > keeps severity semantics in human-steer",
+          "-prompt-programs > P8 content contracts > verification states the honest three-value duty in plain words",
+          "-prompt-programs > P8 content contracts > verification carries no auto-pass or silently pass wording",
+          "-prompt-programs > P8 content contracts > query-inspection states read-only discipline and message-only results",
+          "-prompt-programs > P8 content contracts > query-inspection carries no write-instruction wording"
         ],
         "evidenceLevel": "L1",
         "classification": "COMPONENT",
@@ -15184,12 +15204,10 @@
       },
       {
         "suiteFile": "packages/tool-runtime/test/filesystem-tools.test.ts",
-        "testCases": 4,
+        "testCases": 2,
         "testNames": [
           "filesystem discovery and write tools > writes nested files and avoids replacing identical content on a separate call",
-          "filesystem discovery and write tools > rejects writes outside the selected mount and through a symlink parent",
-          "filesystem discovery and write tools > finds files with bounded globbing without traversing symlink directories",
-          "filesystem discovery and write tools > searches text with regex and returns mount-relative locations"
+          "filesystem discovery and write tools > finds files with bounded globbing without traversing symlink directories"
         ],
         "evidenceLevel": "L1",
         "classification": "COMPONENT",
