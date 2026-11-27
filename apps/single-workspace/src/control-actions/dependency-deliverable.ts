@@ -109,7 +109,6 @@ export const declareDependencyHandler = (
           tx: dependencies.tx,
           projectId: execution.projectId,
           operation: "DeclareDependency.priorReceipt",
-          errorOperation: "DeclareDependency",
           lookupOperation: "DeclareDependency.receiptLookup",
         });
         if (prior._tag === "Committed") {
@@ -471,7 +470,6 @@ export const produceDeliverableHandler = (
           tx: dependencies.tx,
           projectId: execution.projectId,
           operation: "ProduceDeliverable.priorReceipt",
-          errorOperation: "ProduceDeliverable",
           identityErrorMessage:
             "prior Command receipt belongs to another Project",
         });

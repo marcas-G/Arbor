@@ -493,14 +493,9 @@ export const makeVerificationCommandEnvironmentPreparation = (
           | undefined;
         let verificationBinding: VerificationSandboxBindingV1 | undefined;
         if (dependencies.blobs !== undefined) {
-          const inputBlob = yield* dependencies.blobs
-            .put(new TextEncoder().encode(inputManifestJson))
-            .pipe(
-              Effect.mapError(
-                () =>
-                  new VerificationCommandEnvironmentError("PreparationFailed"),
-              ),
-            );
+          const inputBlob = yield* dependencies.blobs.put(
+            new TextEncoder().encode(inputManifestJson),
+          );
           inputManifestRef = `blob:sha256:${inputBlob}`;
           verificationBinding = {
             version: 1,
@@ -537,14 +532,9 @@ export const makeVerificationCommandEnvironmentPreparation = (
             },
             mounts: mounts.map(({ ref, access }) => ({ ref, access })),
           });
-          const qualificationBlob = yield* dependencies.blobs
-            .put(new TextEncoder().encode(qualificationJson))
-            .pipe(
-              Effect.mapError(
-                () =>
-                  new VerificationCommandEnvironmentError("PreparationFailed"),
-              ),
-            );
+          const qualificationBlob = yield* dependencies.blobs.put(
+            new TextEncoder().encode(qualificationJson),
+          );
           verificationMountQualificationEvidenceRef = `blob:sha256:${qualificationBlob}`;
         }
         const ownedCopies = [...copies];

@@ -1,5 +1,6 @@
 import type { AgentActionError } from "@arbor/agent-runtime";
 import {
+  type CommandHandlerError,
   type CommandHandlerRegistryService,
   decodeRegisteredCommandReceipt,
   FINGERPRINT_ALGORITHM_VERSION,
@@ -20,6 +21,7 @@ import {
 import type {
   CommandStoreError,
   CommandStoreService,
+  TransactionOperationalFailure,
   TransactionPortService,
 } from "@arbor/ports";
 import { Effect, Option } from "effect";
@@ -128,10 +130,26 @@ type PriorCommandReceipt =
       readonly receipt: PriorRejectedCommandReceipt;
     };
 
+/** E09: the shared receipt-first helpers keep their narrow typed failures
+ * (ports store/transaction failures plus the application command-handler
+ * channel) while composing inside the capability handlers. Each handler folds
+ * exactly once at the AgentActionHandler boundary it owns; every caller passes
+ * the same operation string the helper-level fold used to carry, so the folded
+ * AgentActionError values are unchanged on every path. */
+export type PriorCommandReceiptError =
+  | CommandStoreError
+  | TransactionOperationalFailure;
+
+export type PriorCommittedReplayError =
+  | CommandHandlerError
+  | TransactionOperationalFailure;
+
 /** Shared receipt-first boundary. The caller retains command identity and all
  * canonical-result/error-algebra decisions; this function only reads older
- * generation receipts, validates their envelope identity, and skips fences. */
-export const findPriorCommandReceipt = (input: {
+ * generation receipts, validates their envelope identity, and skips fences.
+ * `DecodeFailure` is the caller's committed-decode recovery channel; its
+ * members join the composed union instead of being pre-folded. */
+export const findPriorCommandReceipt = <DecodeFailure>(input: {
   readonly context: Extract<
     CommandSubmissionContext,
     { readonly _tag: "ExecutionOrigin" }
@@ -149,12 +167,14 @@ export const findPriorCommandReceipt = (input: {
   readonly commandHandlerRegistry: CommandHandlerRegistryService | undefined;
   readonly onCommittedDecodeFailure?: (
     commandId: CommandIdType,
-  ) => Effect.Effect<never, AgentActionError>;
+  ) => Effect.Effect<never, DecodeFailure>;
   readonly operation: string;
-  readonly errorOperation: string;
   readonly lookupOperation?: string;
   readonly identityErrorMessage?: string;
-}): Effect.Effect<PriorCommandReceipt, AgentActionError> =>
+}): Effect.Effect<
+  PriorCommandReceipt,
+  AgentActionError | PriorCommandReceiptError | DecodeFailure
+> =>
   Effect.gen(function* () {
     if (input.commandReceipts === undefined) {
       return yield* Effect.fail(
@@ -236,7 +256,7 @@ export const findPriorCommandReceipt = (input: {
         Effect.catch(
           (
             failure: CommandStoreError,
-          ): Effect.Effect<never, AgentActionError | CommandStoreError> =>
+          ): Effect.Effect<never, CommandStoreError | DecodeFailure> =>
             failure._tag === "PersistenceCorruption" &&
             prior.value.resolution === "Committed" &&
             input.onCommittedDecodeFailure !== undefined
@@ -257,7 +277,7 @@ export const findPriorCommandReceipt = (input: {
       };
     }
     return { _tag: "None" as const };
-  }).pipe(Effect.mapError(actionOperationalFailure(input.errorOperation)));
+  });
 
 export const validatePriorCommittedReplay = <Payload>(input: {
   readonly receipt: PriorCommittedCommandReceipt;
@@ -270,7 +290,7 @@ export const validatePriorCommittedReplay = <Payload>(input: {
   readonly actor: import("@arbor/domain").Actor;
   readonly registry: CommandHandlerRegistryService | undefined;
   readonly tx: TransactionPortService;
-}): Effect.Effect<void, AgentActionError> =>
+}): Effect.Effect<void, AgentActionError | PriorCommittedReplayError> =>
   Effect.gen(function* () {
     if (input.registry === undefined) {
       return yield* Effect.fail(
@@ -341,8 +361,4 @@ export const validatePriorCommittedReplay = <Payload>(input: {
         input.context,
       ),
     );
-  }).pipe(
-    Effect.mapError(
-      actionOperationalFailure(`${input.commandType}.priorReceipt`),
-    ),
-  );
+  });

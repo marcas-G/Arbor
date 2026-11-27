@@ -121,7 +121,6 @@ export const acceptResultHandler = (
           tx: dependencies.tx,
           projectId: execution.projectId,
           operation: "AcceptResult.priorReceipt",
-          errorOperation: "AcceptResult",
           lookupOperation: "AcceptResult.receiptLookup",
         });
         if (prior._tag === "Committed") {
@@ -473,7 +472,6 @@ export const selectCurrentWorkHandler = (
           projectId: execution.projectId,
           operation: "SelectCurrentWork.priorReceipt",
           lookupOperation: "SelectCurrentWork.receiptLookup",
-          errorOperation: "SelectCurrentWork",
         });
         if (prior._tag === "Committed") {
           const result = prior.receipt.resolution.result;

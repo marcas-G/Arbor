@@ -194,7 +194,6 @@ export const sendMessageHandler = (
           tx: dependencies.tx,
           projectId: execution.projectId,
           operation: "SendMessage.priorReceipt",
-          errorOperation: "SendMessage",
           lookupOperation: "SendMessage.receiptLookup",
         });
         if (prior._tag === "Committed") {
