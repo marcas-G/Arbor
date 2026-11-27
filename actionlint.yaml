@@ -1,3 +1,0 @@
-# Repository-specific labels used by the dedicated self-hosted CI pool.
-runner-label:
-  - arbor-ci
