@@ -198,6 +198,9 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Build web dist (daemon serves it; run-suite did this implicitly)
+        run: pnpm --filter @arbor/web build
+
       - name: Install functional UI browser
         run: pnpm exec playwright install --with-deps chromium
 
