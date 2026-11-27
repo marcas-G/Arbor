@@ -16,30 +16,21 @@ import {
   WorkspaceRepositoryLive,
 } from "../../adapters/persistence-sqlite/src/index.js";
 import {
-  CommandGateway,
+  type CommandGateway,
   CommandGatewayLive,
   type CommandHandler,
   CommandHandlerRegistry,
-  type CreateProjectPayload,
   FenceStopCheckInertLive,
   makeP1CommandHandlers,
   makeP15CommandHandlers,
   P1CommandHandlerRegistryLive,
-  semanticRequestFingerprint,
-  type VerifiedCommandAuthority,
 } from "../../packages/application/src/index.js";
 import {
   Actor,
   type CommandId,
-  ContextEpochNumber,
-  makeProjectPolicy,
-  makeWorkspacePolicy,
   Principal,
   type ProjectId,
   parse,
-  ResponsibilityRevision,
-  Revision,
-  responsibilityBound,
   type SessionId,
   type WorkspaceId,
 } from "../../packages/domain/dist/index.js";
@@ -56,6 +47,10 @@ import {
   WorkRepository,
   WorkspaceRepository,
 } from "../../packages/ports/src/index.js";
+import {
+  gatewayEventTypes,
+  seedProjectViaGateway,
+} from "./gateway-fixtures.js";
 import { ensureLegacyProjectResourceSourceFixture } from "./legacy-project-resource-source.js";
 
 export const testActor = parse(Actor)("user:test");
@@ -140,22 +135,7 @@ export const countRows = (table: string) =>
     return Number(rows[0]?.count ?? 0);
   });
 
-export const eventTypes = Effect.gen(function* () {
-  const sql = yield* SqlClient;
-  const rows = yield* sql.unsafe<{ event_type: string }>(
-    "SELECT event_type FROM domain_events ORDER BY sequence",
-  );
-  return rows.map((row) => row.event_type);
-});
-
-const definition = {
-  purpose: "p",
-  ownedResponsibilities: [],
-  obligations: [],
-  includes: [],
-  excludes: [],
-  interfaces: [],
-};
+export const eventTypes = gatewayEventTypes;
 
 export const ensureProjectResourceSourceTestColumn =
   ensureLegacyProjectResourceSourceFixture;
@@ -166,57 +146,11 @@ export const seedProject = (args: {
   readonly sessionId: SessionId;
   readonly commandId: CommandId;
 }) =>
-  Effect.gen(function* () {
-    yield* ensureProjectResourceSourceTestColumn();
-    const gateway = yield* CommandGateway;
-    const payload: CreateProjectPayload = {
-      name: "Arbor",
-      revision: parse(Revision)(0),
-      projectPolicy: makeProjectPolicy(),
-      projectPolicyRevision: parse(Revision)(0),
-      defaultConfiguration: {},
-      environmentRef: "local",
-      rootWorkspaceId: args.rootWorkspaceId,
-      primarySession: {
-        sessionId: args.sessionId,
-        contextEpoch: parse(ContextEpochNumber)(0),
-      },
-      rootWorkspace: {
-        name: "root",
-        responsibilityDefinition: definition,
-        responsibilityRevision: parse(ResponsibilityRevision)(0),
-        resourceSelection: { _tag: "ConversationOnly" },
-        agentBinding: responsibilityBound(args.rootWorkspaceId),
-        workspacePolicy: makeWorkspacePolicy(),
-        workspacePolicyRevision: parse(Revision)(0),
-        revision: parse(Revision)(0),
-      },
-    };
-    const authority: VerifiedCommandAuthority = {
-      _tag: "CreateProjectAuthority",
-      principal: testPrincipal,
-      commandId: args.commandId,
-      semanticRequestFingerprint: semanticRequestFingerprint({
-        commandType: "CreateProject",
-        projectId: args.projectId,
-        actor: testActor,
-        schemaVersion: "2",
-        payload,
-      }),
-      projectId: args.projectId,
-    };
-    return yield* gateway.execute(
-      {
-        commandType: "CreateProject",
-        commandId: args.commandId,
-        projectId: args.projectId,
-        actor: testActor,
-        issuedAt: "t",
-        payload,
-      },
-      { _tag: "External", principal: testPrincipal },
-      authority,
-    );
+  seedProjectViaGateway({
+    name: "Arbor",
+    ...args,
+    actor: testActor,
+    principal: testPrincipal,
   });
 
 /**

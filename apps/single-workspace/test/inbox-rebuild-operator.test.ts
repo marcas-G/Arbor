@@ -477,15 +477,11 @@ describe("Inbox operator rebuild CLI contract", () => {
         );
         expect(interrupted.code).not.toBe(0);
         const preparedText = readFileSync(manifest, "utf8");
-        expect(
-          validateP6InboxManifestText(preparedText).map(
-            ({ record }) => record.kind,
-          ),
-        ).toEqual(["Created", "Prepared"]);
-        const readback = new DatabaseSync(fixture.databaseFilename, {
-          readOnly: true,
-        });
-        try {
+        expect(manifestRecordKinds(preparedText)).toEqual([
+          "Created",
+          "Prepared",
+        ]);
+        withReadOnlyDatabase(fixture.databaseFilename, (readback) => {
           expect(
             readback
               .prepare(
@@ -507,9 +503,7 @@ describe("Inbox operator rebuild CLI contract", () => {
           expect(readback.prepare("PRAGMA foreign_key_check").all()).toEqual(
             [],
           );
-        } finally {
-          readback.close();
-        }
+        });
         await assertUnboundLegacyReadSurface(fixture.databaseFilename);
         const resumed = await runOperatorCli(
           processCli,
@@ -623,11 +617,8 @@ describe("Inbox operator rebuild CLI contract", () => {
           validateP6InboxManifestText(readFileSync(secondManifest, "utf8"))[2]
             ?.record,
         ).toMatchObject({ inserted: 0, moved: 1, noOp: 0 });
-        const after = new DatabaseSync(fixture.databaseFilename, {
-          readOnly: true,
-        });
         let updatedAt = "";
-        try {
+        withReadOnlyDatabase(fixture.databaseFilename, (after) => {
           const row = after
             .prepare(
               "SELECT workspace_id,revision,updated_at FROM inbox_entries WHERE entry_key = ?",
@@ -642,9 +633,7 @@ describe("Inbox operator rebuild CLI contract", () => {
             revision: 3,
           });
           updatedAt = row.updated_at;
-        } finally {
-          after.close();
-        }
+        });
         const digest = logicalSqliteDigest(fixture.databaseFilename);
         const replay = await runOperatorCli(
           processCli,
@@ -655,10 +644,7 @@ describe("Inbox operator rebuild CLI contract", () => {
         );
         expect(replay.code, replay.output).toBe(0);
         expect(logicalSqliteDigest(fixture.databaseFilename)).toBe(digest);
-        const finalRead = new DatabaseSync(fixture.databaseFilename, {
-          readOnly: true,
-        });
-        try {
+        withReadOnlyDatabase(fixture.databaseFilename, (finalRead) => {
           expect(
             finalRead
               .prepare(
@@ -670,9 +656,7 @@ describe("Inbox operator rebuild CLI contract", () => {
             revision: 3,
             updated_at: updatedAt,
           });
-        } finally {
-          finalRead.close();
-        }
+        });
         expect(
           validateP6InboxManifestText(readFileSync(firstManifest, "utf8"))[2]
             ?.record,
@@ -694,19 +678,10 @@ describe("Inbox operator rebuild CLI contract", () => {
           "created",
         );
         expect(stopped.code).not.toBe(0);
-        expect(
-          validateP6InboxManifestText(readFileSync(manifest, "utf8")).map(
-            ({ record }) => record.kind,
-          ),
-        ).toEqual(["Created"]);
-        const db = new DatabaseSync(fixture.databaseFilename);
-        try {
-          db.prepare(
-            "UPDATE works SET revision=1, updated_at='drift' WHERE work_id='wrk_p6_operator_fixture'",
-          ).run();
-        } finally {
-          db.close();
-        }
+        expect(manifestRecordKinds(readFileSync(manifest, "utf8"))).toEqual([
+          "Created",
+        ]);
+        setFixtureWorkRevision(fixture.databaseFilename, 1, "drift");
         const drift = logicalSqliteDigest(fixture.databaseFilename);
         const refused = await runOperatorCli(
           processCli,
@@ -717,16 +692,7 @@ describe("Inbox operator rebuild CLI contract", () => {
         );
         expect(refused.code, refused.output).not.toBe(0);
         expect(logicalSqliteDigest(fixture.databaseFilename)).toBe(drift);
-        const restore = new DatabaseSync(fixture.databaseFilename);
-        try {
-          restore
-            .prepare(
-              "UPDATE works SET revision=0, updated_at='t0' WHERE work_id='wrk_p6_operator_fixture'",
-            )
-            .run();
-        } finally {
-          restore.close();
-        }
+        setFixtureWorkRevision(fixture.databaseFilename, 0, "t0");
         const resumed = await runOperatorCli(
           processCli,
           fixture.databaseFilename,
@@ -792,14 +758,7 @@ describe("Inbox operator rebuild CLI contract", () => {
           "prepared",
         );
         expect(stopped.code).not.toBe(0);
-        const db = new DatabaseSync(fixture.databaseFilename);
-        try {
-          db.prepare(
-            "UPDATE works SET revision=1, updated_at='drift' WHERE work_id='wrk_p6_operator_fixture'",
-          ).run();
-        } finally {
-          db.close();
-        }
+        setFixtureWorkRevision(fixture.databaseFilename, 1, "drift");
         const drift = logicalSqliteDigest(fixture.databaseFilename);
         const refused = await runOperatorCli(
           processCli,
@@ -810,16 +769,7 @@ describe("Inbox operator rebuild CLI contract", () => {
         );
         expect(refused.code, refused.output).not.toBe(0);
         expect(logicalSqliteDigest(fixture.databaseFilename)).toBe(drift);
-        const restore = new DatabaseSync(fixture.databaseFilename);
-        try {
-          restore
-            .prepare(
-              "UPDATE works SET revision=0, updated_at='t0' WHERE work_id='wrk_p6_operator_fixture'",
-            )
-            .run();
-        } finally {
-          restore.close();
-        }
+        setFixtureWorkRevision(fixture.databaseFilename, 0, "t0");
         const beforeResume = logicalSqliteDigest(fixture.databaseFilename);
         const resumed = await runOperatorCli(
           processCli,
@@ -832,11 +782,11 @@ describe("Inbox operator rebuild CLI contract", () => {
         expect(logicalSqliteDigest(fixture.databaseFilename)).toBe(
           beforeResume,
         );
-        expect(
-          validateP6InboxManifestText(readFileSync(manifest, "utf8")).map(
-            ({ record }) => record.kind,
-          ),
-        ).toEqual(["Created", "Prepared", "Committed"]);
+        expect(manifestRecordKinds(readFileSync(manifest, "utf8"))).toEqual([
+          "Created",
+          "Prepared",
+          "Committed",
+        ]);
       }),
     caseTimeoutMs,
   );
@@ -940,15 +890,11 @@ describe("Inbox operator rebuild CLI contract", () => {
         );
         expect(result.code, result.output).not.toBe(0);
         expect(logicalSqliteDigest(fixture.databaseFilename)).toBe(before);
-        expect(
-          validateP6InboxManifestText(readFileSync(manifest, "utf8")).map(
-            ({ record }) => record.kind,
-          ),
-        ).toEqual(["Created", "Prepared"]);
-        const db = new DatabaseSync(fixture.databaseFilename, {
-          readOnly: true,
-        });
-        try {
+        expect(manifestRecordKinds(readFileSync(manifest, "utf8"))).toEqual([
+          "Created",
+          "Prepared",
+        ]);
+        withReadOnlyDatabase(fixture.databaseFilename, (db) => {
           expect(
             db
               .prepare(
@@ -956,9 +902,7 @@ describe("Inbox operator rebuild CLI contract", () => {
               )
               .all(),
           ).toEqual([]);
-        } finally {
-          db.close();
-        }
+        });
       }),
     caseTimeoutMs,
   );
@@ -1045,12 +989,9 @@ describe("Inbox operator rebuild CLI contract", () => {
       withP6Fixture(async (context) => {
         const { fixture } = context;
         await commitInitialProjection(context);
-        const stat = statSync(fixture.databaseFilename, { bigint: true });
-        const lock = join(
+        const lock = p39WriterLockPath(
+          fixture.databaseFilename,
           fixture.directory,
-          ".arbor-p39-writer-" +
-            sha256Hex(`${String(stat.dev)}:${String(stat.ino)}`) +
-            ".sqlite",
         );
         expect(existsSync(lock)).toBe(true);
         const before = logicalSqliteDigest(fixture.databaseFilename);
@@ -1075,12 +1016,9 @@ describe("Inbox operator rebuild CLI contract", () => {
       withP6Fixture(async (context) => {
         const { fixture } = context;
         await commitInitialProjection(context);
-        const stat = statSync(fixture.databaseFilename, { bigint: true });
-        const lock = join(
+        const lock = p39WriterLockPath(
+          fixture.databaseFilename,
           fixture.directory,
-          ".arbor-p39-writer-" +
-            sha256Hex(`${String(stat.dev)}:${String(stat.ino)}`) +
-            ".sqlite",
         );
         const holder = spawn(
           process.execPath,
@@ -1139,6 +1077,43 @@ describe("Inbox operator rebuild CLI contract", () => {
   );
 });
 
+/** Child-process env shared by every operator CLI launcher below: the
+ * Windows PowerShell module path must be pinned so spawned Node children do
+ * not inherit a host session's PSModulePath (taskkill/PowerShell probing). */
+const operatorChildEnv = (): NodeJS.ProcessEnv => {
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([key]) => key.toLowerCase() !== "psmodulepath",
+    ),
+  ) as NodeJS.ProcessEnv;
+  const systemRoot = env.WINDIR ?? env.SystemRoot ?? "C:\\Windows";
+  env.PSModulePath = join(
+    systemRoot,
+    "System32",
+    "WindowsPowerShell",
+    "v1.0",
+    "Modules",
+  );
+  return env;
+};
+
+/** Manifest record-kind sequence for the resume/drift assertions. */
+const manifestRecordKinds = (text: string): ReadonlyArray<string> =>
+  validateP6InboxManifestText(text).map(({ record }) => String(record.kind));
+
+/** Read-only SQLite access with guaranteed close (the P6 oracle pattern). */
+const withReadOnlyDatabase = <A>(
+  filename: string,
+  read: (database: DatabaseSync) => A,
+): A => {
+  const database = new DatabaseSync(filename, { readOnly: true });
+  try {
+    return read(database);
+  } finally {
+    database.close();
+  }
+};
+
 const runOperatorCli = async (
   cli: string,
   database: string,
@@ -1159,19 +1134,7 @@ const runOperatorCli = async (
   if (resume) args.push("--resume");
   return new Promise((resolveRun, reject) => {
     const startedAt = Date.now();
-    const env = Object.fromEntries(
-      Object.entries(process.env).filter(
-        ([key]) => key.toLowerCase() !== "psmodulepath",
-      ),
-    ) as NodeJS.ProcessEnv;
-    const systemRoot = env.WINDIR ?? env.SystemRoot ?? "C:\\Windows";
-    env.PSModulePath = join(
-      systemRoot,
-      "System32",
-      "WindowsPowerShell",
-      "v1.0",
-      "Modules",
-    );
+    const env = operatorChildEnv();
     Object.assign(env, extraEnv);
     const processChild = spawn(process.execPath, args, {
       cwd: process.cwd(),
@@ -1334,19 +1297,7 @@ const stopOperatorCliAtBoundary = async (
     "--manifest",
     manifest,
   ];
-  const env = Object.fromEntries(
-    Object.entries(process.env).filter(
-      ([key]) => key.toLowerCase() !== "psmodulepath",
-    ),
-  ) as NodeJS.ProcessEnv;
-  const systemRoot = env.WINDIR ?? env.SystemRoot ?? "C:\\Windows";
-  env.PSModulePath = join(
-    systemRoot,
-    "System32",
-    "WindowsPowerShell",
-    "v1.0",
-    "Modules",
-  );
+  const env = operatorChildEnv();
   env.NODE_ENV = "test";
   env.ARBOR_P6_TEST_HOLD_BOUNDARY = boundary;
   const child = spawn(process.execPath, args, {
@@ -1389,19 +1340,7 @@ const startOperatorCliPausedAtP39 = async (
   readonly close: Promise<number | null>;
   readonly getOutput: () => string;
 }> => {
-  const env = Object.fromEntries(
-    Object.entries(process.env).filter(
-      ([key]) => key.toLowerCase() !== "psmodulepath",
-    ),
-  ) as NodeJS.ProcessEnv;
-  const systemRoot = env.WINDIR ?? env.SystemRoot ?? "C:\\Windows";
-  env.PSModulePath = join(
-    systemRoot,
-    "System32",
-    "WindowsPowerShell",
-    "v1.0",
-    "Modules",
-  );
+  const env = operatorChildEnv();
   env.NODE_ENV = "test";
   env.ARBOR_P6_TEST_HOLD_BOUNDARY = "before-p39";
   const child = spawn(
@@ -1488,13 +1427,12 @@ const raceOperatorSidecar = async (
     raceResults.filter(({ code }) => code !== 0),
     JSON.stringify(raceResults),
   ).toHaveLength(1);
-  expect(
-    validateP6InboxManifestText(readFileSync(racedManifest, "utf8")).map(
-      ({ record }) => record.kind,
-    ),
-  ).toEqual(["Created", "Prepared", "Committed"]);
-  const racedReport = new DatabaseSync(racedSidecar, { readOnly: true });
-  try {
+  expect(manifestRecordKinds(readFileSync(racedManifest, "utf8"))).toEqual([
+    "Created",
+    "Prepared",
+    "Committed",
+  ]);
+  withReadOnlyDatabase(racedSidecar, (racedReport) => {
     expect(
       (
         racedReport.prepare("PRAGMA application_id").get() as {
@@ -1516,9 +1454,7 @@ const raceOperatorSidecar = async (
           .get() as { count: number }
       ).count,
     ).toBe(0);
-  } finally {
-    racedReport.close();
-  }
+  });
 };
 
 const waitForOutput = (
@@ -1593,8 +1529,7 @@ export const qualifySidecarCrashRestart = async (
     if (state === "empty") {
       expect(statSync(sidecar).size).toBe(0);
     } else {
-      const sidecarDb = new DatabaseSync(sidecar, { readOnly: true });
-      try {
+      withReadOnlyDatabase(sidecar, (sidecarDb) => {
         const applicationId = (
           sidecarDb.prepare("PRAGMA application_id").get() as {
             application_id: number;
@@ -1628,33 +1563,28 @@ export const qualifySidecarCrashRestart = async (
             ).count,
           ).toBe(0);
         }
-      } finally {
-        sidecarDb.close();
-      }
+      });
     }
     if (phase === "writer-lock-initialized-before-permit") {
       const lockPath = databaseWriterLockFilename(database);
       expect(typeof lockPath).toBe("string");
       if (typeof lockPath !== "string")
         throw new Error("P39 writer-lock path was unavailable after crash");
-      const lockDb = new DatabaseSync(lockPath, { readOnly: true });
-      try {
+      withReadOnlyDatabase(lockPath, (lockDb) => {
         expect(
           lockDb
             .prepare("SELECT lock_id FROM p39_writer_lock WHERE lock_id = 1")
             .all(),
         ).toEqual([{ lock_id: 1 }]);
-      } finally {
-        lockDb.close();
-      }
+      });
     }
     const retry = await runOperatorCli(cli, database, sidecar, manifest, false);
     expect(retry.code, `${phase}: ${retry.output}`).toBe(0);
-    expect(
-      validateP6InboxManifestText(readFileSync(manifest, "utf8")).map(
-        ({ record }) => record.kind,
-      ),
-    ).toEqual(["Created", "Prepared", "Committed"]);
+    expect(manifestRecordKinds(readFileSync(manifest, "utf8"))).toEqual([
+      "Created",
+      "Prepared",
+      "Committed",
+    ]);
   }
   expect(existsSync(existingP39Sidecar)).toBe(true);
 };
@@ -1671,19 +1601,7 @@ export const crashOperatorCliAtP39Phase = async (
   readonly signal: NodeJS.Signals | null;
   readonly output: string;
 }> => {
-  const env = Object.fromEntries(
-    Object.entries(process.env).filter(
-      ([key]) => key.toLowerCase() !== "psmodulepath",
-    ),
-  ) as NodeJS.ProcessEnv;
-  const systemRoot = env.WINDIR ?? env.SystemRoot ?? "C:\\Windows";
-  env.PSModulePath = join(
-    systemRoot,
-    "System32",
-    "WindowsPowerShell",
-    "v1.0",
-    "Modules",
-  );
+  const env = operatorChildEnv();
   env.NODE_ENV = "test";
   env.ARBOR_P6_TEST_CRASH_P39_PHASE = phase;
   const child = spawn(
@@ -1719,6 +1637,35 @@ export const crashOperatorCliAtP39Phase = async (
   );
   const result = await closed;
   return { code: result.code, signal: result.signal, output };
+};
+
+/** The P39 writer-lock file path the operator derives from the database
+ * inode (same derivation as `databaseWriterLockFilename`). */
+const p39WriterLockPath = (database: string, directory: string): string => {
+  const stat = statSync(database, { bigint: true });
+  return join(
+    directory,
+    ".arbor-p39-writer-" +
+      sha256Hex(`${String(stat.dev)}:${String(stat.ino)}`) +
+      ".sqlite",
+  );
+};
+
+/** Input-drift injection for the Created/Prepared resume tests: move the
+ * fixture Work revision (1/'drift' breaks the preimage, 0/'t0' restores it). */
+const setFixtureWorkRevision = (
+  databaseFilename: string,
+  revision: number,
+  updatedAt: string,
+): void => {
+  const db = new DatabaseSync(databaseFilename);
+  try {
+    db.prepare(
+      "UPDATE works SET revision = ?, updated_at = ? WHERE work_id = 'wrk_p6_operator_fixture'",
+    ).run(revision, updatedAt);
+  } finally {
+    db.close();
+  }
 };
 
 const seedFailAfterFirstCandidate = (databaseFilename: string): void => {
@@ -1882,8 +1829,7 @@ const assertUnboundLegacyReadSurface = async (
   const repeatedParentRead = await query("user:parent");
   expect(repeatedParentRead.value.unconsumed).toHaveLength(1);
   expect(logicalSqliteDigest(databaseFilename)).toBe(digestBefore);
-  const after = new DatabaseSync(databaseFilename, { readOnly: true });
-  try {
+  withReadOnlyDatabase(databaseFilename, (after) => {
     expect(
       after
         .prepare(
@@ -1891,7 +1837,5 @@ const assertUnboundLegacyReadSurface = async (
         )
         .get(`retry-verification-unbound:${commandId}`),
     ).toEqual({ consumed_at: null, revision: 1 });
-  } finally {
-    after.close();
-  }
+  });
 };

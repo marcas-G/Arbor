@@ -19,6 +19,46 @@ import {
   makeExternalSubmission,
 } from "../src/transport/composition.js";
 
+/** Standard tracing stubs shared by the boundary tests: every leg records
+ * into `calls`; override only the leg a specific case asserts on. */
+const tracingSubmission = (
+  calls: string[],
+  overrides: {
+    readonly resolver?: Parameters<
+      typeof makeExternalSubmission
+    >[0]["resolver"];
+    readonly gateway?: Parameters<typeof makeExternalSubmission>[0]["gateway"];
+    readonly loadInputs?: Parameters<
+      typeof makeExternalSubmission
+    >[0]["loadInputs"];
+  } = {},
+) =>
+  makeExternalSubmission({
+    resolver:
+      overrides.resolver ??
+      ({
+        resolve: () => {
+          calls.push("resolver");
+          return Effect.succeed({} as never);
+        },
+      } as never),
+    gateway:
+      overrides.gateway ??
+      ({
+        execute: () => {
+          calls.push("gateway");
+          return Effect.succeed({} as never);
+        },
+      } as never),
+    registry: { lookup: () => Option.some({ schemaVersion: 1 }) } as never,
+    loadInputs:
+      overrides.loadInputs ??
+      (() => {
+        calls.push("load-inputs");
+        return Effect.succeed({} as AuthorityInputs);
+      }),
+  });
+
 describe("external command composition boundary", () => {
   it("submits exact direct-parent approval authority and denies wrong parent or actor spoof", async () => {
     const projectId = "prj_018ee90a-5b83-7def-8c2d-7ef1a3c5a101";
@@ -523,27 +563,7 @@ describe("external command composition boundary", () => {
 
   it("rejects a well-formed envelope with another Actor before loading authority facts", async () => {
     const calls: string[] = [];
-    const submission = makeExternalSubmission({
-      resolver: {
-        resolve: () => {
-          calls.push("resolver");
-          return Effect.succeed({} as never);
-        },
-      } as never,
-      gateway: {
-        execute: () => {
-          calls.push("gateway");
-          return Effect.succeed({} as never);
-        },
-      } as never,
-      registry: {
-        lookup: () => Option.some({ schemaVersion: 1 }),
-      } as never,
-      loadInputs: () => {
-        calls.push("load-inputs");
-        return Effect.succeed({} as AuthorityInputs);
-      },
-    });
+    const submission = tracingSubmission(calls);
     const response = await Effect.runPromise(
       submission.submit(
         "user:local" as never,
@@ -664,7 +684,7 @@ describe("external command composition boundary", () => {
         token: "user:outsider" as never,
       }),
     });
-    const submission = makeExternalSubmission({
+    const submission = tracingSubmission(calls, {
       resolver: {
         resolve: (input: AuthorityDecisionInput) => {
           calls.push("resolver");
@@ -678,13 +698,6 @@ describe("external command composition boundary", () => {
           } as never);
         },
       } as never,
-      gateway: {
-        execute: () => {
-          calls.push("gateway");
-          return Effect.succeed({} as never);
-        },
-      } as never,
-      registry: { lookup: () => Option.some({ schemaVersion: 1 }) } as never,
       loadInputs: () => {
         calls.push("load-inputs");
         return Effect.succeed({
@@ -723,13 +736,7 @@ describe("external command composition boundary", () => {
 
   it("rejects raw external AssignWork before loading facts, Resolver, or Gateway", async () => {
     const calls: string[] = [];
-    const submission = makeExternalSubmission({
-      resolver: {
-        resolve: () => {
-          calls.push("resolver");
-          return Effect.succeed({} as never);
-        },
-      } as never,
+    const submission = tracingSubmission(calls, {
       gateway: {
         execute: () => {
           calls.push("gateway");
@@ -739,13 +746,6 @@ describe("external command composition boundary", () => {
           } as never);
         },
       } as never,
-      registry: {
-        lookup: () => Option.some({ schemaVersion: 1 }),
-      } as never,
-      loadInputs: () => {
-        calls.push("load-inputs");
-        return Effect.succeed({} as AuthorityInputs);
-      },
     });
     const response = await Effect.runPromise(
       submission.submit(
