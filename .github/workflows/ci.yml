@@ -98,6 +98,10 @@ jobs:
         uses: pnpm/action-setup@v4
         with:
           version: 12.4.2
+          # The default (~/setup-pnpm) is shared by every runner on this
+          # host; concurrent jobs then race on rmdir and fail with
+          # ENOTEMPTY. runner.temp is per job, so the install is isolated.
+          dest: ${{ runner.temp }}/pnpm
 
       - name: Install Node
         uses: actions/setup-node@v4
@@ -163,6 +167,10 @@ jobs:
         uses: pnpm/action-setup@v4
         with:
           version: 12.4.2
+          # The default (~/setup-pnpm) is shared by every runner on this
+          # host; concurrent jobs then race on rmdir and fail with
+          # ENOTEMPTY. runner.temp is per job, so the install is isolated.
+          dest: ${{ runner.temp }}/pnpm
 
       - name: Install Node
         uses: actions/setup-node@v4
@@ -228,6 +236,10 @@ jobs:
         uses: pnpm/action-setup@v4
         with:
           version: 12.4.2
+          # The default (~/setup-pnpm) is shared by every runner on this
+          # host; concurrent jobs then race on rmdir and fail with
+          # ENOTEMPTY. runner.temp is per job, so the install is isolated.
+          dest: ${{ runner.temp }}/pnpm
 
       - name: Install Node
         uses: actions/setup-node@v4
@@ -295,6 +307,10 @@ jobs:
         uses: pnpm/action-setup@v4
         with:
           version: 12.4.2
+          # The default (~/setup-pnpm) is shared by every runner on this
+          # host; concurrent jobs then race on rmdir and fail with
+          # ENOTEMPTY. runner.temp is per job, so the install is isolated.
+          dest: ${{ runner.temp }}/pnpm
 
       - name: Install Node
         uses: actions/setup-node@v4
@@ -363,6 +379,10 @@ jobs:
         uses: pnpm/action-setup@v4
         with:
           version: 12.4.2
+          # The default (~/setup-pnpm) is shared by every runner on this
+          # host; concurrent jobs then race on rmdir and fail with
+          # ENOTEMPTY. runner.temp is per job, so the install is isolated.
+          dest: ${{ runner.temp }}/pnpm
 
       - name: Install Node
         uses: actions/setup-node@v4
