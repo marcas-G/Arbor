@@ -34,6 +34,7 @@ env:
   # Node tooling inside the job containers must reach their packages through
   # the host proxy; the runner forwards HTTP(S)_PROXY into the container.
   NODE_USE_ENV_PROXY: "1"
+  PNPM_STORE_DIR: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && '/github/home/.local/share/pnpm/store' || '/pnpm-store' }}
 
 jobs:
   plan:
@@ -144,7 +145,7 @@ jobs:
           echo "TEMP=$ci_tmp" >> "$GITHUB_ENV"
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --store-dir /pnpm-store
+        run: pnpm install --frozen-lockfile --store-dir "$PNPM_STORE_DIR"
 
       - name: Lint
         run: pnpm lint
@@ -211,7 +212,7 @@ jobs:
           echo "TEMP=$ci_tmp" >> "$GITHUB_ENV"
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --store-dir /pnpm-store
+        run: pnpm install --frozen-lockfile --store-dir "$PNPM_STORE_DIR"
 
       - name: Build
         run: pnpm build
@@ -284,7 +285,7 @@ jobs:
           echo "TEMP=$ci_tmp" >> "$GITHUB_ENV"
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --store-dir /pnpm-store
+        run: pnpm install --frozen-lockfile --store-dir "$PNPM_STORE_DIR"
 
       - name: Build
         run: pnpm build
@@ -353,7 +354,7 @@ jobs:
           echo "TEMP=$ci_tmp" >> "$GITHUB_ENV"
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --store-dir /pnpm-store
+        run: pnpm install --frozen-lockfile --store-dir "$PNPM_STORE_DIR"
 
       - name: Build
         run: pnpm build
@@ -441,7 +442,7 @@ jobs:
           version: 12.4.2
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --store-dir /pnpm-store
+        run: pnpm install --frozen-lockfile --store-dir "$PNPM_STORE_DIR"
 
       - name: Download coverage
         continue-on-error: true
