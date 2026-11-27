@@ -241,10 +241,10 @@ jobs:
     # The daemon-boot release journey, sharded (plan PR 3): round-robin
     # over the sorted file list so heavy multi-restart families spread
     # evenly; each shard is an isolated runner and runs serially inside.
-    # 8 shards x max-parallel 8 against the local runner pool. Measured on
+    # 8 shards x max-parallel 6 against hosted and local runner pools. Measured on
     # this 32-core host: 12 concurrent shards oversubscribed the box (load
     # ~48) and daemon-startup/90s test timeouts produced false failures,
-    # while 6-8 concurrent shards stay inside the CPU budget. The hosted
+    # while 6 concurrent shards stay inside the CPU budget. The hosted
     # baseline measured 9-31 min per 6-way shard, so balance matters as
     # much as width.
     runs-on: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && 'ubuntu-24.04' || 'arbor-ci' }}
