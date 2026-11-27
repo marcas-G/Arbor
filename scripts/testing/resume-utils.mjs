@@ -15,7 +15,7 @@ const resumeOrchestrationPaths = new Set([
 ]);
 
 const additiveManifestPaths = new Set([
-  "planning/testing/manifest.json",
+  "tests/manifest.json",
   "scripts/testing/check-manifest.mjs",
   "scripts/testing/manifest.test.mjs",
 ]);
@@ -147,7 +147,7 @@ export function buildResumePlan({
   if (!selection.compatible) return incompatible(selection.reason);
   if (
     selection.mode === "additive" &&
-    (!changedSet.has("planning/testing/manifest.json") ||
+    (!changedSet.has("tests/manifest.json") ||
       !selection.addedFiles.every((path) => changedSet.has(path)))
   ) {
     return incompatible("additive-manifest-diff-incomplete");

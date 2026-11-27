@@ -62,11 +62,13 @@ require touching the predicate module, not every consumer.
 
 - Test files for a package live in that package's `test/`; cross-package
   and journey tests live under `tests/<concern>/` (`functional/`,
-  `architecture/`, `capability/`, `convergence/`). New top-level test
-  directories require an entry here.
+  `architecture/`, `capability/`, `convergence/`, `configs/`). New top-level
+  test directories require an entry here.
 - Vitest/Playwright configs live in `tests/configs/`, not the repository
-  root (existing configs migrate when next touched; scripts that reference
-  them by root path update in the same change).
+  root. The root `vitest.config.ts` is the single deliberate exception:
+  Vitest's default config discovery depends on it for bare
+  `pnpm vitest run <file>` invocations. Scripts that reference configs by
+  root path update in the same change as any config move.
 - Runtime evidence, fixtures and generated material never mix with
   configuration directories. Evidence belongs in artifact storage; the
   repository keeps indexes and digests (see GOVERNANCE "Evidence and state").

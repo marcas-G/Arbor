@@ -562,22 +562,22 @@ describe("-acceptance mechanical assertions (06 checklist)", () => {
 
     expect(
       parseArchitectureConfigArgument(
-        "vitest run --config vitest.architecture.config.ts",
+        "vitest run --config tests/configs/vitest.architecture.config.ts",
       ),
-    ).toBe("vitest.architecture.config.ts");
+    ).toBe("tests/configs/vitest.architecture.config.ts");
     expect(
       parseArchitectureConfigArgument(
-        "pnpm exec vitest run --config vitest.architecture.config.ts",
+        "pnpm exec vitest run --config tests/configs/vitest.architecture.config.ts",
       ),
-    ).toBe("vitest.architecture.config.ts");
+    ).toBe("tests/configs/vitest.architecture.config.ts");
     expect(
       parseArchitectureConfigArgument(
-        "echo vitest run --config vitest.architecture.config.ts",
+        "echo vitest run --config tests/configs/vitest.architecture.config.ts",
       ),
     ).toBeUndefined();
     expect(
       parseArchitectureConfigArgument(
-        "pnpm install && vitest run --config vitest.architecture.config.ts",
+        "pnpm install && vitest run --config tests/configs/vitest.architecture.config.ts",
       ),
     ).toBeUndefined();
     expect(
@@ -590,7 +590,7 @@ describe("-acceptance mechanical assertions (06 checklist)", () => {
     ).toBeUndefined();
     expect(
       parseArchitectureConfigArgument(
-        "vitest run --config vitest.architecture.config.ts; echo bad",
+        "vitest run --config tests/configs/vitest.architecture.config.ts; echo bad",
       ),
     ).toBeUndefined();
 

@@ -231,7 +231,7 @@ test("a failing release Vitest group finalizes failed without starting Playwrigh
       readFileSync(join(resultDirectory, "result-manifest.json"), "utf8"),
     );
     const manifest = JSON.parse(
-      readFileSync(join(root, "planning/testing/manifest.json"), "utf8"),
+      readFileSync(join(root, "tests/manifest.json"), "utf8"),
     );
     assert.equal(finalManifest.status, "failed");
     assert.equal(finalManifest.exitCode, 1);

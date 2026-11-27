@@ -224,7 +224,10 @@ if (mode === "real-provider") {
       `REAL provider cases were not launched; missing configuration: ${providerState.missing.join(", ")}`,
     );
   } else {
-    const realConfig = resolve(repoRoot, "vitest.capability-real.config.ts");
+    const realConfig = resolve(
+      repoRoot,
+      "tests/configs/vitest.capability-real.config.ts",
+    );
     for (const capability of selectedCapabilities) {
       const testFile = capability.l3.testFile;
       if (

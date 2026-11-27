@@ -126,7 +126,7 @@ KP-001
 
 - `package.json`
 - `scripts/testing/run-suite.mjs`
-- `vitest.functional.config.ts`
+- `tests/configs/vitest.functional.config.ts`
 - `planning/results/S1-S4-current-candidate-pause-checkpoint-20261026.result.md`
 
 **优先级**
@@ -433,14 +433,14 @@ manifest，无法覆盖此正式装配差异。P4 的既有 `(name, version, has
 KP-006
 
 **现象**
-`tests/functional/pending/**` 中仍保留多项真实进程测试。默认 `vitest.functional.config.ts` 只选择 `process/**` 和 `package/**`，因此 pending 文件不会进入 `completeCoverage=true` 的默认 release profile。
+`tests/functional/pending/**` 中仍保留多项真实进程测试。默认 `tests/configs/vitest.functional.config.ts` 只选择 `process/**` 和 `package/**`，因此 pending 文件不会进入 `completeCoverage=true` 的默认 release profile。
 
 这些文件不等于全部仍失败；问题是它们的当前处置没有在一个机器可检查的清单中统一为“已被其他测试覆盖”“仍待产品决策”“仍待实现”或“应提升到默认门禁”。
 
 **复现步骤**
 
 1. 列出 `tests/functional/pending/*.test.ts`。
-2. 查看 `vitest.functional.config.ts` 的 include。
+2. 查看 `tests/configs/vitest.functional.config.ts` 的 include。
 3. 运行 `pnpm test:manifest`，默认 inventory 不包含 pending 目录。
 
 **影响范围**
@@ -452,7 +452,7 @@ KP-006
 **涉及文件**
 
 - `tests/functional/pending/**`
-- `vitest.functional.config.ts`
+- `tests/configs/vitest.functional.config.ts`
 - `scripts/testing/check-manifest.mjs`
 - `scripts/testing/resume-utils.mjs`
 
@@ -1130,7 +1130,7 @@ KP-021
 **复现步骤**
 
 1. 在任一提交上连续运行：
-   `pnpm exec vitest run --config vitest.functional.config.ts --no-file-parallelism -t "rejects NotOccurred retry after approval drift" tests/functional/process/agent-action-ah7-reconcilable.functional.test.ts`
+   `pnpm exec vitest run --config tests/configs/vitest.functional.config.ts --no-file-parallelism -t "rejects NotOccurred retry after approval drift" tests/functional/process/agent-action-ah7-reconcilable.functional.test.ts`
 2. 观察多次运行中 pass/fail 交替。
 
 **影响范围**

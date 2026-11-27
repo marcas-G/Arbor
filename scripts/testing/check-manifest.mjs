@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const realRoot = realpathSync(root);
-const manifestPath = join(root, "planning/testing/manifest.json");
+const manifestPath = join(root, "tests/manifest.json");
 
 function fail(message) {
   throw new Error(`test manifest: ${message}`);
@@ -232,7 +232,7 @@ export function validateManifest(
     );
     if (!sameSet(sorted(actualPatterns), sorted(functional.include ?? []))) {
       report(
-        "manifest functional include patterns differ from vitest.functional.config.ts",
+        "manifest functional include patterns differ from tests/configs/vitest.functional.config.ts",
       );
     }
     const actualFiles = sorted(
@@ -265,9 +265,17 @@ export function validateManifest(
     const actualTestDir = configText
       .match(/testDir:\s*["']([^"']+)["']/)?.[1]
       ?.replaceAll("\\", "/");
-    if (actualTestDir !== `./${ui.testDir}` && actualTestDir !== ui.testDir) {
+    // The Playwright config lives under tests/configs/; its testDir is
+    // config-relative, so compare after resolving against the config file.
+    const resolvedTestDir =
+      actualTestDir === undefined
+        ? undefined
+        : relative(root, resolve(dirname(uiConfig.absolutePath), actualTestDir))
+            .split(sep)
+            .join("/");
+    if (resolvedTestDir !== ui.testDir) {
       report(
-        "manifest Playwright testDir differs from playwright.functional.config.ts",
+        "manifest Playwright testDir differs from tests/configs/playwright.functional.config.ts",
       );
     }
     if (!/retries:\s*0\b/.test(configText))

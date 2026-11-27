@@ -95,7 +95,7 @@ test("an additive manifest inherits old passes and executes every new file", () 
     previousResult,
     previousVitestProgress,
     changedPaths: [
-      "planning/testing/manifest.json",
+      "tests/manifest.json",
       "scripts/testing/check-manifest.mjs",
       "scripts/testing/manifest.test.mjs",
       "planning/testing/README.md",
@@ -128,7 +128,7 @@ test("an additive manifest rejects removal, reorder, or non-test additions", () 
       previousResult,
       previousVitestProgress,
       changedPaths: [
-        "planning/testing/manifest.json",
+        "tests/manifest.json",
         ...nextFiles.filter((path) => !selectedFiles.includes(path)),
       ],
       currentGitDirty: false,
@@ -139,10 +139,7 @@ test("an additive manifest rejects removal, reorder, or non-test additions", () 
 
 test("additive compatibility requires the manifest and every new file in the diff", () => {
   const expandedFiles = [...selectedFiles, "tests/new.test.ts"];
-  for (const changedPaths of [
-    ["tests/new.test.ts"],
-    ["planning/testing/manifest.json"],
-  ]) {
+  for (const changedPaths of [["tests/new.test.ts"], ["tests/manifest.json"]]) {
     const plan = buildResumePlan({
       profileName: "release",
       manifestSha256: "new-manifest",
@@ -162,7 +159,7 @@ test("shared source, config, or support changes fail closed to a full run", () =
   for (const changedPath of [
     "packages/runtime/src/agent.ts",
     "tests/support/daemon.ts",
-    "vitest.functional.config.ts",
+    "tests/configs/vitest.functional.config.ts",
   ]) {
     const plan = buildResumePlan({
       profileName: "release",

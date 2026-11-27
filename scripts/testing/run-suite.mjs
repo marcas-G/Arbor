@@ -24,7 +24,7 @@ import {
 } from "./vitest-progress-reporter.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const manifestPath = join(root, "planning/testing/manifest.json");
+const manifestPath = join(root, "tests/manifest.json");
 const manifestBytes = readFileSync(manifestPath);
 const manifest = JSON.parse(manifestBytes.toString("utf8"));
 const profileName = process.argv[2];
@@ -496,7 +496,7 @@ async function runTestGroup(groupName) {
   if (runner === "vitest-functional" || runner === "vitest-unit") {
     const config =
       runner === "vitest-functional"
-        ? "vitest.functional.config.ts"
+        ? "tests/configs/vitest.functional.config.ts"
         : "vitest.config.ts";
     commandResult = await runCommand(
       groupName,
@@ -542,7 +542,7 @@ async function runTestGroup(groupName) {
         "playwright",
         "test",
         "--config",
-        "playwright.functional.config.ts",
+        "tests/configs/playwright.functional.config.ts",
         "--reporter=json",
         "--retries=0",
         "--max-failures=1",

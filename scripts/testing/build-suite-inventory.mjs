@@ -233,7 +233,9 @@ const summarize = (tests) => {
 const root = summarize(collect(undefined));
 const webRoot = resolve(repoRoot, "apps/web");
 const web = summarize(collect("vitest.config.ts", webRoot));
-const realProvider = summarize(collect("vitest.capability-real.config.ts"));
+const realProvider = summarize(
+  collect("tests/configs/vitest.capability-real.config.ts"),
+);
 const combinedSuites = [...root.suites, ...web.suites].sort((left, right) =>
   left.suiteFile.localeCompare(right.suiteFile),
 );
