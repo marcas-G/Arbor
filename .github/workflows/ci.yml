@@ -42,6 +42,11 @@ jobs:
           git cat-file -e "${base}^{commit}"
           echo "sha=$base" >> "$GITHUB_OUTPUT"
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.4.2
+
       - name: Install Node
         uses: actions/setup-node@v4
         with:
@@ -60,11 +65,6 @@ jobs:
           echo "TMPDIR=$ci_tmp" >> "$GITHUB_ENV"
           echo "TMP=$ci_tmp" >> "$GITHUB_ENV"
           echo "TEMP=$ci_tmp" >> "$GITHUB_ENV"
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 12.4.2
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -107,6 +107,11 @@ jobs:
           git cat-file -e "${base}^{commit}"
           echo "sha=$base" >> "$GITHUB_OUTPUT"
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.4.2
+
       - name: Install Node
         uses: actions/setup-node@v4
         with:
@@ -125,11 +130,6 @@ jobs:
           echo "TMPDIR=$ci_tmp" >> "$GITHUB_ENV"
           echo "TMP=$ci_tmp" >> "$GITHUB_ENV"
           echo "TEMP=$ci_tmp" >> "$GITHUB_ENV"
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 12.4.2
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -165,6 +165,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.4.2
+
       - name: Install Node
         uses: actions/setup-node@v4
         with:
@@ -183,11 +188,6 @@ jobs:
           echo "TMPDIR=$ci_tmp" >> "$GITHUB_ENV"
           echo "TMP=$ci_tmp" >> "$GITHUB_ENV"
           echo "TEMP=$ci_tmp" >> "$GITHUB_ENV"
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 12.4.2
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -214,16 +214,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.4.2
+
       - name: Install Node
         uses: actions/setup-node@v4
         with:
           node-version: 24.21.0
           cache: pnpm
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 12.4.2
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
