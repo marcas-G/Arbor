@@ -36,7 +36,6 @@ import {
   TransactionPort,
   TransactionScope,
 } from "../packages/ports/src/index.js";
-import { p7SeedProject, p7SeedWork } from "./support/consumer-harness.js";
 import {
   type CommitGate,
   commitGate,
@@ -45,6 +44,7 @@ import {
   p9Boot,
   runP9Consumer,
 } from "./support/consumer-app-support.js";
+import { p7SeedProject, p7SeedWork } from "./support/consumer-harness.js";
 import {
   collectDurabilityEvidence,
   type DurabilityEvidence,

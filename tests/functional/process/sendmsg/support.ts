@@ -110,9 +110,7 @@ interface WorkWaitRow {
 }
 
 export const fixtures: ProductionFixture[] = [];
-export const ah10Child = resolve(
-  "tests/functional/support/process-child.mjs",
-);
+export const ah10Child = resolve("tests/functional/support/process-child.mjs");
 
 export const manualWait = (reason: string) => ({
   _tag: "ToolCall" as const,

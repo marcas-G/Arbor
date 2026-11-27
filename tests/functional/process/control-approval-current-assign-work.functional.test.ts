@@ -56,9 +56,7 @@ interface ActionRow {
 }
 
 const fixtures: ProductionFixture[] = [];
-const ah10ProcessChild = resolve(
-  "tests/functional/support/process-child.mjs",
-);
+const ah10ProcessChild = resolve("tests/functional/support/process-child.mjs");
 
 afterEach(async () => {
   for (const fixture of fixtures.splice(0)) await fixture.stop();

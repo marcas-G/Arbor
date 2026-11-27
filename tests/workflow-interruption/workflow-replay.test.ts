@@ -25,16 +25,16 @@ import {
   VerificationRepository,
 } from "../../packages/ports/src/index.js";
 import {
+  makeP9ConsumerApp,
+  runP9Consumer,
+} from "../support/consumer-app-support.js";
+import {
   p7Project,
   p7RootWorkspace,
   p7SeedWork,
   p7TestActor,
   p7TestPrincipal,
 } from "../support/consumer-harness.js";
-import {
-  makeP9ConsumerApp,
-  runP9Consumer,
-} from "../support/consumer-app-support.js";
 import { labeled } from "../support/harness-api.js";
 import {
   ACC,

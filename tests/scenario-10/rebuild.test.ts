@@ -58,6 +58,7 @@ import {
 } from "../../packages/projection-runtime/src/index.js";
 import { NoHoldWorkReadmissionGateStoreLive } from "../../packages/testkit/src/index.js";
 import {
+  type FixtureDependencies,
   insertDependencyRow,
   insertEventRow,
   insertMessageRow,
@@ -66,7 +67,6 @@ import {
   insertWorkspaceRow,
   makeP10Deps,
   migrate,
-  type FixtureDependencies,
   p10Child,
   p10Project,
   p10Root,

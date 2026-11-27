@@ -41,19 +41,19 @@ import {
   WorkRepository,
 } from "../packages/ports/src/index.js";
 import {
-  p7Project,
-  p7SeedProject,
-  p7SeedWork,
-  p7TestActor,
-  p7TestPrincipal,
-} from "./support/consumer-harness.js";
-import {
   commitGate,
   gatedTransactionPort,
   makeP9ConsumerApp,
   p9Boot,
   runP9Consumer,
 } from "./support/consumer-app-support.js";
+import {
+  p7Project,
+  p7SeedProject,
+  p7SeedWork,
+  p7TestActor,
+  p7TestPrincipal,
+} from "./support/consumer-harness.js";
 import { labeled } from "./support/harness-api.js";
 
 /** P9-010 — consumer crash injection matrix CC-1..CC-6 (P9 `02` §7 +

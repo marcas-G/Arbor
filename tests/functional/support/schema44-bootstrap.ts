@@ -30,13 +30,13 @@ import {
 } from "../../../adapters/persistence-sqlite/src/index.js";
 import { backfillRetryVerificationOrigins } from "../../../apps/single-workspace/src/retry-verification-origin-backfill.js";
 import {
-  removeP39PrivateTestDirectory,
-  setPrivateWindowsAcl,
-} from "../../support/windows-deployment-qualification.js";
-import {
   createSchema44TestDatabase,
   type Schema44TestDatabase,
 } from "../../support/schema44-database.js";
+import {
+  removeP39PrivateTestDirectory,
+  setPrivateWindowsAcl,
+} from "../../support/windows-deployment-qualification.js";
 
 const manifestEnvironmentKey = "ARBOR_FUNCTIONAL_SCHEMA44_MANIFEST";
 const manifestFilename = "schema44-manifest.json";

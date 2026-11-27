@@ -81,7 +81,9 @@ describe("-closure P11(10) -> P12(13) persisted upgrade path (B-11)", () => {
             const version = yield* sql.unsafe<{ user_version: number }>(
               "PRAGMA user_version",
             );
-            expect(Number(version[0]?.user_version)).toBe(ClosureMigrationBaseline);
+            expect(Number(version[0]?.user_version)).toBe(
+              ClosureMigrationBaseline,
+            );
 
             expect(yield* columnNames(sql, "execution_leases")).not.toContain(
               "worker_incarnation_id",
@@ -108,7 +110,9 @@ describe("-closure P11(10) -> P12(13) persisted upgrade path (B-11)", () => {
             const before = yield* sql.unsafe<{ user_version: number }>(
               "PRAGMA user_version",
             );
-            expect(Number(before[0]?.user_version)).toBe(ClosureMigrationBaseline);
+            expect(Number(before[0]?.user_version)).toBe(
+              ClosureMigrationBaseline,
+            );
 
             const applied = yield* runMigrations(P12_MIGRATIONS);
             expect(applied).toBe(P12_BASELINE - ClosureMigrationBaseline);

@@ -19,14 +19,19 @@ import {
   createP39PrivateTestFile,
   isWindowsPathQualificationEnabled,
   makeP39PrivateTestDirectory,
-  windowsAclQualificationAvailable,
-  windowsTestEnvironment,
   removeP39PrivateTestDirectory,
   setPrivateWindowsAcl,
+  windowsAclQualificationAvailable,
+  windowsTestEnvironment,
 } from "../../../tests/support/windows-deployment-qualification.js";
 import { layer } from "../src/client.js";
-import { runMigrations, splitStatements } from "../src/migrate.js";
-import * as migrations from "../src/migrations.js";
+import {
+  databaseWriterLockFilename,
+  preparePrimaryDatabasePath,
+  sameOperatingSystemIdentity,
+  validateProtectedDirectory,
+  validateProtectedFile,
+} from "../src/database-writer-lock.js";
 import {
   P39_REPORT_DATABASE_DDL,
   readP39BlockReports,
@@ -36,21 +41,16 @@ import {
   writeP39BlockReportAndReadBack,
 } from "../src/maintenance.js";
 import { runP39SqliteMaintenance } from "../src/maintenance-adapter.js";
+import { runMigrations, splitStatements } from "../src/migrate.js";
+import * as migrations from "../src/migrations.js";
 import {
   validateReportSidecarDatabase,
   validateReportSidecarPath,
 } from "../src/report-database.js";
 import {
-  type WindowsSecurityQueryExecutor,
   validateWindowsProtectedPaths,
+  type WindowsSecurityQueryExecutor,
 } from "../src/windows-security.js";
-import {
-  sameOperatingSystemIdentity,
-  databaseWriterLockFilename,
-  preparePrimaryDatabasePath,
-  validateProtectedDirectory,
-  validateProtectedFile,
-} from "../src/database-writer-lock.js";
 
 const crossPlatformP39PathQualificationAvailable =
   isWindowsPathQualificationEnabled(

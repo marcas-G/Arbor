@@ -30,12 +30,12 @@ import {
   layer as sqliteLayer,
 } from "../../adapters/persistence-sqlite/src/index.js";
 import { backfillRetryVerificationOrigins } from "../../apps/single-workspace/src/retry-verification-origin-backfill.js";
+import { HISTORICAL_SCHEMA42_SUFFIX_MIGRATIONS } from "./schema-prefix-contract.js";
 import {
   createP39PrivateTestFile,
   removeP39PrivateTestDirectory,
   setPrivateWindowsAcl,
 } from "./windows-deployment-qualification.js";
-import { HISTORICAL_SCHEMA42_SUFFIX_MIGRATIONS } from "./schema-prefix-contract.js";
 
 export class Schema42TestDatabaseSetupError extends Error {
   readonly code: "P39_UNSUPPORTED_DEPLOYMENT" | "SCHEMA42_SETUP_FAILED";

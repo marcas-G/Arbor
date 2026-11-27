@@ -1,16 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
-  isWindowsPathQualificationEnabled,
   isP39WindowsAclQualificationEnabled,
+  isWindowsPathQualificationEnabled,
 } from "../../../tests/support/windows-deployment-qualification.js";
 import {
   executeP39WindowsSecurityQuery,
   isP39WindowsPowerShellPathSafe,
+  p39WindowsProtectedPathsScript,
+  validateWindowsProtectedPaths,
   WINDOWS_POWERSHELL_EXECUTABLE,
   WINDOWS_SECURITY_QUERY_TIMEOUT_MS,
   type WindowsSecurityQueryExecutor,
-  p39WindowsProtectedPathsScript,
-  validateWindowsProtectedPaths,
 } from "../src/windows-security.js";
 
 describe("Windows security query timeout", () => {
@@ -40,11 +40,7 @@ describe("Windows security query timeout", () => {
       args: ReadonlyArray<string>;
       timeout: number;
     }> = [];
-    const executor: WindowsSecurityQueryExecutor = (
-      command,
-      args,
-      options,
-    ) => {
+    const executor: WindowsSecurityQueryExecutor = (command, args, options) => {
       calls.push({ command, args, timeout: options.timeout });
       return "P39_PROTECTED_PATHS_OK";
     };
@@ -133,9 +129,7 @@ describe("Windows security query timeout", () => {
     expect(validateWindowsProtectedPaths(paths, unexpectedExecutor)).toBe(
       false,
     );
-    expect(validateWindowsProtectedPaths([], unexpectedExecutor)).toBe(
-      false,
-    );
+    expect(validateWindowsProtectedPaths([], unexpectedExecutor)).toBe(false);
   });
 
   it("keeps the shared timeout and fails closed for a timed-out batch", () => {

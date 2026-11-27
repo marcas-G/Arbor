@@ -5,30 +5,30 @@ import { Effect, Exit, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect, it } from "vitest";
 import {
-  createP39PrivateTestFile,
-  makeP39PrivateTestDirectory,
-  removeP39PrivateTestDirectory,
-} from "../../../tests/support/windows-deployment-qualification.js";
-import {
   CURRENT_SCHEMA45_SUFFIX_IDS,
   HISTORICAL_SCHEMA42_SUFFIX_IDS,
   HISTORICAL_SCHEMA42_SUFFIX_MIGRATIONS,
 } from "../../../tests/support/schema-prefix-contract.js";
 import {
+  createP39PrivateTestFile,
+  makeP39PrivateTestDirectory,
+  removeP39PrivateTestDirectory,
+} from "../../../tests/support/windows-deployment-qualification.js";
+import {
   acquireMaintenanceWriterExclusion,
   CURRENT_MIGRATIONS,
+  DatabaseWriterLockClient,
+  databaseWriterLockLayer,
   type MigrationFile,
   P38_MIGRATIONS,
   P39_MAINTENANCE_MIGRATION_MANIFEST,
   P39_MAINTENANCE_MIGRATIONS,
   P39_RECONCILIATION_MIGRATION,
-  DatabaseWriterLockClient,
   P40_TOOL_OBSERVATION_REPLAY_MIGRATION,
   P41_SUBMITTED_DECISION_BINDING_ATTENTION_DDL,
   P41_SUBMITTED_DECISION_BINDING_ATTENTION_FINGERPRINT,
   P41_SUBMITTED_DECISION_BINDING_ATTENTION_MIGRATION,
   P42_PROJECT_RESOURCE_SOURCE_MIGRATION,
-  databaseWriterLockLayer,
   preparePrimaryDatabasePath,
   releaseDatabaseWriterPermit,
   runMigrations,

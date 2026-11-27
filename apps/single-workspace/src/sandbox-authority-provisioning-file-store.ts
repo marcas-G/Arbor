@@ -159,10 +159,7 @@ export const makeSandboxAuthorityProvisioningFileStore = (
         !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(paths.sourceIdentity)
       )
         throw fileStoreError("SourceIdentityInvalid");
-      if (
-        !hasNoReparsePath(source, "file") ||
-        !validateProtectedFile(source)
-      )
+      if (!hasNoReparsePath(source, "file") || !validateProtectedFile(source))
         throw fileStoreError("SourcePathInvalid");
       if (
         !hasNoReparsePath(highWater, "file") ||

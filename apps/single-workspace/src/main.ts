@@ -10,10 +10,10 @@ import {
 } from "@arbor/execution-runtime";
 import {
   acquireRuntimeWriterPermit,
-  type MaintenanceFailure,
   type DatabaseWriterLockFailure,
-  p39UnsupportedDeployment,
   databaseWriterLockLayer,
+  type MaintenanceFailure,
+  p39UnsupportedDeployment,
   preparePrimaryDatabasePath,
   releaseDatabaseWriterPermit,
   type SqliteAdapterError,

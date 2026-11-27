@@ -1,7 +1,7 @@
 import {
   createP39PrivateTestTempRoot,
-  windowsTestEnvironment,
   removeP39PrivateTestTempRoot,
+  windowsTestEnvironment,
 } from "./windows-deployment-qualification.js";
 
 const environmentKeys = ["TEMP", "TMP", "TMPDIR", "PSModulePath"] as const;

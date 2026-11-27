@@ -25,11 +25,6 @@ import {
 import { Effect } from "effect";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  createP39PrivateTestFile,
-  makeP39PrivateTestDirectory,
-  removeP39PrivateTestDirectory,
-} from "../../../tests/support/windows-deployment-qualification.js";
-import {
   createCurrentSchemaTestDatabase,
   createSchema42TestDatabase,
   createSchema44TestDatabaseFactory,
@@ -38,6 +33,11 @@ import {
   type Schema44TestDatabase,
   type Schema44TestDatabaseFactory,
 } from "../../../tests/support/schema44-database.js";
+import {
+  createP39PrivateTestFile,
+  makeP39PrivateTestDirectory,
+  removeP39PrivateTestDirectory,
+} from "../../../tests/support/windows-deployment-qualification.js";
 import {
   formatSchemaUpgradeCliFailure,
   parseSchemaUpgradeArguments,

@@ -2,13 +2,13 @@ import { DatabaseSync } from "node:sqlite";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import { createSchema51TestDatabase } from "../../../tests/support/schema44-database.js";
+import { P53_CANONICAL_OWNERSHIP_CARVEOUTS_MIGRATION } from "../src/canonical-ownership-carveouts-migration.js";
 import {
   CURRENT_MIGRATIONS,
   CURRENT_SCHEMA_VERSION,
   layer,
   runMigrations,
 } from "../src/index.js";
-import { P53_CANONICAL_OWNERSHIP_CARVEOUTS_MIGRATION } from "../src/canonical-ownership-carveouts-migration.js";
 
 const run = (
   filename: string,

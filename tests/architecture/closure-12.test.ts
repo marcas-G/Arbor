@@ -286,9 +286,9 @@ describe("-closure", () => {
     expect(usage.includes("CommandGateway")).toBe(false);
 
     // Decision R channels exclude telemetry (mechanical boundary suite).
-    expect(
-      exists("tests/architecture/observability-boundaries.test.ts"),
-    ).toBe(true);
+    expect(exists("tests/architecture/observability-boundaries.test.ts")).toBe(
+      true,
+    );
   });
 
   it("CI-4 — every §8.16A safety dimension has mechanism + state + reset + rule + policy + violation + durability + tests", () => {
@@ -411,9 +411,9 @@ describe("-closure", () => {
   it("package DAG holds and the P12 architecture suites are present", () => {
     expect(checkEdges(readPackages())).toEqual([]);
     expect(exists("tests/architecture/package-dag.test.ts")).toBe(true);
-    expect(
-      exists("tests/architecture/observability-boundaries.test.ts"),
-    ).toBe(true);
+    expect(exists("tests/architecture/observability-boundaries.test.ts")).toBe(
+      true,
+    );
   });
 
   it("B-11 — P12_MIGRATION_BASELINE is bound to max(P12_MIGRATIONS id); the persisted upgrade suite is on the include path", () => {

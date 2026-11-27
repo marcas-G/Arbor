@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { sha256Hex } from "../../../../packages/ports/src/index.js";
 import {
-  isP9SandboxUnavailableTerminal,
-  type OutcomeProbe,
   type ActionRow,
   type InvocationRow,
-  type StepRow,
+  isP9SandboxUnavailableTerminal,
+  type OutcomeProbe,
   p9ActionStepForProbe,
   p9NoEffectEvidenceForProbe,
   postDecisionExpectedFailureProbeForInvocation,
+  type StepRow,
 } from "./oracle.js";
 
 describe("V6 P9 action oracle tracks the exact P4 source Step", () => {

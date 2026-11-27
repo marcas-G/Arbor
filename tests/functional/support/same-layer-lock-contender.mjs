@@ -1,7 +1,10 @@
 import { Effect } from "effect";
 
-const { DatabaseWriterLockClient, databaseWriterLockLayer, releaseDatabaseWriterPermit } =
-  await import("../../../adapters/persistence-sqlite/dist/index.js");
+const {
+  DatabaseWriterLockClient,
+  databaseWriterLockLayer,
+  releaseDatabaseWriterPermit,
+} = await import("../../../adapters/persistence-sqlite/dist/index.js");
 const [lockFilename, modeRaw] = process.argv.slice(2);
 if (
   lockFilename === undefined ||

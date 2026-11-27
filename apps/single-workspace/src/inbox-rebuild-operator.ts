@@ -13,12 +13,12 @@ import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   CURRENT_MIGRATIONS,
+  databaseWriterLockFilename,
+  type MaintenanceFailure,
+  type MaintenanceSqlClient,
   makeTransactionPortLive,
   P38_MIGRATIONS,
   P39_MAINTENANCE_MIGRATIONS,
-  type MaintenanceFailure,
-  type MaintenanceSqlClient,
-  databaseWriterLockFilename,
   RetryVerificationOriginRepositoryLive,
   runMigrations,
   runP39SqliteMaintenanceWithPermit,

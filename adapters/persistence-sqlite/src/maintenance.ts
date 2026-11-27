@@ -97,10 +97,7 @@ export interface MaintenancePort {
   readonly applyOrderedMigrations: (
     lease: WriterExclusionLease,
     reservation: PrimarySnapshotReservation,
-  ) => Effect.Effect<
-    void,
-    SqlError | SqliteAdapterError | MaintenanceFailure
-  >;
+  ) => Effect.Effect<void, SqlError | SqliteAdapterError | MaintenanceFailure>;
 }
 
 export interface MaintenanceFailure {
@@ -141,9 +138,7 @@ export const p39UnsupportedDeployment = (
 
 const canonicalJson = (value: unknown): string => JSON.stringify(value);
 
-const makeReport = (
-  snapshot: PreflightSnapshot,
-): MigrationBlockReport => {
+const makeReport = (snapshot: PreflightSnapshot): MigrationBlockReport => {
   const blockers = [...snapshot.activeNotAdmittedInvocations].sort((a, b) =>
     a.invocationId < b.invocationId
       ? -1

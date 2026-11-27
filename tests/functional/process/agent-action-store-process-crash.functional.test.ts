@@ -41,9 +41,7 @@ const fence = {
   workerIncarnationId,
   fencingGeneration: 0 as never,
 };
-const childPath = resolve(
-  "tests/functional/support/store-crash-child.mjs",
-);
+const childPath = resolve("tests/functional/support/store-crash-child.mjs");
 const directories: string[] = [];
 const activeChildren = new Set<ChildProcess>();
 

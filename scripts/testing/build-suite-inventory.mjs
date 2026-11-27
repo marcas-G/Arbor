@@ -100,9 +100,7 @@ const l2WebFiles = new Set([
   "apps/web/test/workbench-shell.test.tsx",
 ]);
 
-const exactL3Files = new Set([
-  "apps/single-workspace/test/web-e2e.test.ts",
-]);
+const exactL3Files = new Set(["apps/single-workspace/test/web-e2e.test.ts"]);
 
 const normalize = (path) => path.split(sep).join("/");
 

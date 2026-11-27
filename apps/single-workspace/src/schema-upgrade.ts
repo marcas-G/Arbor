@@ -9,6 +9,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { backup, DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import {
+  databaseWriterLockFilename,
   layer,
   type MigrationFile,
   makeLegacyCurrentWorkContractRevision,
@@ -40,7 +41,6 @@ import {
   P55_SESSION_CAUSAL_PROVENANCE_MIGRATION,
   P56_LINUX_WORKSPACE_NETWORK_V2_MIGRATION,
   P57_WORKSPACE_SANDBOX_AUTHORIZATION_MIGRATION,
-  databaseWriterLockFilename,
   preflightVerificationEvidenceSnapshot,
   runMigrations,
   runP39SqliteMaintenance,

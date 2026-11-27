@@ -4,9 +4,9 @@ import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect } from "vitest";
 import { layer } from "../src/client.js";
+import { P38_EXECUTABLE_APPROVAL_MIGRATION } from "../src/executable-approval-migration.js";
 import { runMigrations } from "../src/migrate.js";
 import { P37_MIGRATIONS, P38_MIGRATIONS } from "../src/migrations.js";
-import { P38_EXECUTABLE_APPROVAL_MIGRATION } from "../src/executable-approval-migration.js";
 
 describe("cumulative historical database upgrade", () => {
   it.effect(

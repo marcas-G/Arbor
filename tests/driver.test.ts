@@ -522,10 +522,7 @@ describe("driver / dispatch / safety", () => {
           },
         ]),
     } as never);
-    const recoveryEvidence = Layer.succeed(
-      RecoveryEvidenceStore,
-      {} as never,
-    );
+    const recoveryEvidence = Layer.succeed(RecoveryEvidenceStore, {} as never);
     const program = Effect.gen(function* () {
       yield* runMigrations(P12_MIGRATIONS);
       yield* seed;

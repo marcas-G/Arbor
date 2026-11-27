@@ -22,10 +22,7 @@ import {
   type PublicClient,
 } from "../../support/public-client.js";
 import { removeFunctionalFixtureDirectory } from "../../support/schema44-bootstrap.js";
-import type {
-  OutcomeProbe,
-  readP9OutcomeSourceForProbe,
-} from "./oracle.js";
+import type { OutcomeProbe, readP9OutcomeSourceForProbe } from "./oracle.js";
 
 export interface SandboxCandidate {
   readonly kind: string;

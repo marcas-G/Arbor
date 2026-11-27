@@ -15,11 +15,11 @@ import {
   p7SeedProject,
   p7TestActor,
 } from "../../../tests/support/consumer-harness.js";
+import { createCurrentSchemaTestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import {
   isWindowsPathQualificationEnabled,
   windowsAclQualificationAvailable,
 } from "../../../tests/support/windows-deployment-qualification.js";
-import { createCurrentSchemaTestDatabaseFactory } from "../../../tests/support/schema44-database.js";
 import { buildSingleWorkspaceLayer } from "../src/composition.js";
 import { runDaemonOnce } from "../src/main.js";
 

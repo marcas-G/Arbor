@@ -12,10 +12,10 @@ import {
   type ExecutionDriverError,
   ExecutionDriverPort,
   InboxProjectionStore,
-  RecoveryEvidenceStore,
   type PortableOperationKind,
   type ProviderCancellationSignal,
   ProviderTurnStore,
+  RecoveryEvidenceStore,
   type RuntimeSafetyGateService,
   type RuntimeSafetyObservation,
   SessionRepository,
@@ -38,9 +38,9 @@ import type { ControlActionAuthorizerService } from "./control-authorization.js"
 import { foldAgentLoopStepCompletionError } from "./decision/errors.js";
 import { toExecutionDriverError } from "./execution-driver-failure.js";
 import { ModelDecisionService } from "./model-decision-service.js";
-import { providerTurnSafetyFingerprint } from "./safety-identity.js";
 import type { AgentLoopQualificationProbe } from "./qualification-probe.js";
 import { selectPendingInputPromotions } from "./safe-input-drain.js";
+import { providerTurnSafetyFingerprint } from "./safety-identity.js";
 import { settlementProposal } from "./settlement-proposal.js";
 
 export {

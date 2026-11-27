@@ -96,7 +96,9 @@ const program = Effect.scoped(
         timerFired,
       })}\n`,
     );
-  }).pipe(Effect.provide(databaseWriterLockLayer(lockFilename, Number(timeoutRaw)))),
+  }).pipe(
+    Effect.provide(databaseWriterLockLayer(lockFilename, Number(timeoutRaw))),
+  ),
 );
 
 try {

@@ -100,12 +100,12 @@ const secondFixture = {
   workId: "wrk_018f2b3c-4d5e-7abc-8def-0123456789ad",
 };
 const repositoryRoot = join(import.meta.dirname, "..", "..", "..");
-const p10DaemonChild = join(
+const attentionDaemonChild = join(
   repositoryRoot,
   "tests",
   "functional",
   "support",
-  "p10-attention-daemon-child.mjs",
+  "attention-daemon-child.mjs",
 );
 
 const makeApp = (filename = ":memory:") => {
@@ -537,7 +537,7 @@ const startDaemonChildUntilMarker = async (
 ) => {
   const child = spawn(
     process.execPath,
-    [p10DaemonChild, databaseFile, targetProjectId, mode, markerFile],
+    [attentionDaemonChild, databaseFile, targetProjectId, mode, markerFile],
     { cwd: repositoryRoot, stdio: ["ignore", "pipe", "pipe"] },
   );
   let stdout = "";

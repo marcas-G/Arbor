@@ -21,19 +21,19 @@ import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import { Effect } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
-import { type SqliteAdapterError, sqliteAdapterError } from "./errors.js";
-import { splitStatements } from "./migrate.js";
-import {
-  P39_REPORT_APPLICATION_ID,
-  P39_REPORT_DATABASE_DDL,
-  P39_REPORT_USER_VERSION,
-  type MaintenanceFailure,
-} from "./maintenance.js";
-import { executeP39WindowsSecurityQuery } from "./windows-security.js";
 import {
   validateProtectedDirectory,
   validateProtectedFile,
 } from "./database-writer-lock.js";
+import { type SqliteAdapterError, sqliteAdapterError } from "./errors.js";
+import {
+  type MaintenanceFailure,
+  P39_REPORT_APPLICATION_ID,
+  P39_REPORT_DATABASE_DDL,
+  P39_REPORT_USER_VERSION,
+} from "./maintenance.js";
+import { splitStatements } from "./migrate.js";
+import { executeP39WindowsSecurityQuery } from "./windows-security.js";
 
 const failure = (
   code: MaintenanceFailure["code"],

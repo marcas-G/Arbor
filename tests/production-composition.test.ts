@@ -49,7 +49,11 @@ import {
   WorkWaitStore,
 } from "../packages/ports/src/index.js";
 import { UsageService } from "../packages/projection-runtime/src/index.js";
-import { p7Project, p7RootWorkspace, p7SeedProject } from "./support/consumer-harness.js";
+import {
+  p7Project,
+  p7RootWorkspace,
+  p7SeedProject,
+} from "./support/consumer-harness.js";
 import {
   createCurrentSchemaTestDatabaseFactory,
   withSchema44TestDatabase,

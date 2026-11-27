@@ -170,9 +170,7 @@ export const ah10SendMsgReplyScenario = async (
       ) {
         if (!replyProbeArmed) {
           parentSeedWaitIssued = true;
-          return manualWait(
-            `Parent Reply Work waits for probe ${replyMarker}`,
-          );
+          return manualWait(`Parent Reply Work waits for probe ${replyMarker}`);
         }
         if (context.includes("MessageDelivered(")) {
           return {

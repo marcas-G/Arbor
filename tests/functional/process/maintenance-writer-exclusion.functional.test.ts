@@ -14,9 +14,9 @@ import {
   isWindowsPathQualificationEnabled,
   makeP39PrivateTestDirectory,
   p39TestTempRoot,
+  removeP39PrivateTestDirectory,
   windowsAclQualificationAvailable,
   windowsTestEnvironment,
-  removeP39PrivateTestDirectory,
 } from "../../support/windows-deployment-qualification.js";
 
 const windowsPathQualificationAvailable = isWindowsPathQualificationEnabled(
@@ -610,7 +610,9 @@ describe.skipIf(!windowsPathQualificationAvailable)(
                   expect(blockedByBoth.failure._tag).toBe(
                     "DatabaseWriterLockFailure",
                   );
-                  if (blockedByBoth.failure._tag === "DatabaseWriterLockFailure") {
+                  if (
+                    blockedByBoth.failure._tag === "DatabaseWriterLockFailure"
+                  ) {
                     expect(blockedByBoth.failure.code).toBe(
                       "P39_WRITER_LOCK_ACQUIRE_FAILED",
                     );
@@ -632,7 +634,9 @@ describe.skipIf(!windowsPathQualificationAvailable)(
                 const exclusive = yield* client.acquire("MaintenanceExclusive");
                 phase = "release final MaintenanceExclusive permit";
                 yield* client.release(exclusive);
-              }).pipe(Effect.provide(databaseWriterLockLayer(lockFilename, 1_000))),
+              }).pipe(
+                Effect.provide(databaseWriterLockLayer(lockFilename, 1_000)),
+              ),
             ),
           );
         } catch (cause) {
@@ -720,7 +724,9 @@ describe.skipIf(!windowsPathQualificationAvailable)(
             Effect.gen(function* () {
               const permit = yield* acquireRuntimeWriterPermit();
               yield* releaseDatabaseWriterPermit(permit);
-            }).pipe(Effect.provide(databaseWriterLockLayer(lockFilename, 1_000))),
+            }).pipe(
+              Effect.provide(databaseWriterLockLayer(lockFilename, 1_000)),
+            ),
           ),
         );
       } finally {

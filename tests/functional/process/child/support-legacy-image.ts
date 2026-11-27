@@ -4,15 +4,15 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
-  makeP39PrivateTestDirectory,
-  removeP39PrivateTestDirectory,
-} from "../../../support/windows-deployment-qualification.js";
-import {
   copySchema44RowsIntoP38Seed,
   createP32HistoricalTestImage,
   createSchema42TestDatabase,
   createSchema44TestDatabase,
 } from "../../../support/schema44-database.js";
+import {
+  makeP39PrivateTestDirectory,
+  removeP39PrivateTestDirectory,
+} from "../../../support/windows-deployment-qualification.js";
 
 export const schemaSnapshot = (db: DatabaseSync) => {
   const objects = db

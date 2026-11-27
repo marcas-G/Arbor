@@ -1,8 +1,8 @@
 import {
   type ClockService,
   canonicalizeRecoveryBindingV1,
-  type RecoveryEvidenceStoreService,
   type RecoveryBindingV1,
+  type RecoveryEvidenceStoreService,
   recoveryBindingV1Digest,
   type ToolDefinition,
   type ToolExecutionContext,

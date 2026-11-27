@@ -71,31 +71,30 @@ export const p39TestTempRoot = (): string =>
 /** Create an invocation-wide temp root without relying on Microsoft.PowerShell.Security.
  * Its protected DACL grants FullControl only to the current SID, SYSTEM, and
  * Administrators, and descendants inherit exactly those grants. */
-export const createP39PrivateTestTempRoot =
-  (): PrivateTestTempRoot | null => {
-    if (process.platform !== "win32") return null;
-    const parent = tmpdir();
-    const path = mkdtempSync(join(parent, "arbor-vitest-p39-"));
-    const currentSid = getCurrentWindowsSid();
+export const createP39PrivateTestTempRoot = (): PrivateTestTempRoot | null => {
+  if (process.platform !== "win32") return null;
+  const parent = tmpdir();
+  const path = mkdtempSync(join(parent, "arbor-vitest-p39-"));
+  const currentSid = getCurrentWindowsSid();
 
-    execFileSync("icacls.exe", [path, "/inheritance:r", "/C", "/Q"], {
-      encoding: "utf8",
-      timeout: childProcessTimeoutMs,
-      windowsHide: true,
-    });
-    for (const sid of [currentSid, "S-1-5-18", "S-1-5-32-544"]) {
-      execFileSync(
-        "icacls.exe",
-        [path, "/grant:r", `*${sid}:(OI)(CI)F`, "/C", "/Q"],
-        {
-          encoding: "utf8",
-          timeout: childProcessTimeoutMs,
-          windowsHide: true,
-        },
-      );
-    }
-    return { path, currentSid };
-  };
+  execFileSync("icacls.exe", [path, "/inheritance:r", "/C", "/Q"], {
+    encoding: "utf8",
+    timeout: childProcessTimeoutMs,
+    windowsHide: true,
+  });
+  for (const sid of [currentSid, "S-1-5-18", "S-1-5-32-544"]) {
+    execFileSync(
+      "icacls.exe",
+      [path, "/grant:r", `*${sid}:(OI)(CI)F`, "/C", "/Q"],
+      {
+        encoding: "utf8",
+        timeout: childProcessTimeoutMs,
+        windowsHide: true,
+      },
+    );
+  }
+  return { path, currentSid };
+};
 
 /** Restore current-user cleanup access to one private per-test temp root and
  * remove it after the owning test file has finished. */

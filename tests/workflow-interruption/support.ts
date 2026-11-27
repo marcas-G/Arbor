@@ -47,7 +47,7 @@ import {
   WorkRepository,
   WorkspaceRepository,
 } from "../../packages/ports/src/index.js";
-import { yieldedSettlement } from "../support/execution-episode-fixtures.js";
+import { p9Boot } from "../support/consumer-app-support.js";
 import {
   p7Project,
   p7RootWorkspace,
@@ -56,7 +56,7 @@ import {
   p7TestActor,
   p7TestPrincipal,
 } from "../support/consumer-harness.js";
-import { p9Boot } from "../support/consumer-app-support.js";
+import { yieldedSettlement } from "../support/execution-episode-fixtures.js";
 
 /** P9-012 — P7/P8 workflow interruption replay (WF1–WF3, 02 §8) +
  * dispatch failure / lost dispatch (DF1–DF2, 02 §9 / 04 §4) + D5.

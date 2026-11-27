@@ -47,10 +47,7 @@ test("symbol rule matches planning-coded declarations only", () => {
   const constDecl = "const ";
   const fnDecl = "function ";
   for (const [line, symbol] of [
-    [
-      `${head}WriterLockClient extends Context.Service<`,
-      "WriterLockClient",
-    ],
+    [`${head}WriterLockClient extends Context.Service<`, "WriterLockClient"],
     [`${iface}AH7RecoveryProbe {`, "AH7RecoveryProbe"],
     [
       `${typeDecl}SandboxUnavailableObservationV1 =`,
@@ -91,10 +88,9 @@ test("number exemption accepts protocol, algorithm and version numerals", () => 
   assert.equal(NUMBER_EXEMPT_PATTERN.test("WriterLockClient"), false);
   assert.equal(NUMBER_EXEMPT_PATTERN.test("RecoveryProbe"), false);
   // The planning code wins over a trailing version suffix.
-  const versioned = [
-    "export type ",
-    "SandboxUnavailableObservationV1 =",
-  ].join("");
+  const versioned = ["export type ", "SandboxUnavailableObservationV1 ="].join(
+    "",
+  );
   assert.equal(
     symbolViolation(versioned)?.symbol,
     "SandboxUnavailableObservationV1",

@@ -16,7 +16,6 @@ import { it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { describe, expect } from "vitest";
-import { seedWorkspaceGraph } from "./support/seed-workspace.js";
 import {
   AgentLoopStepStoreLive,
   ClockLive,
@@ -27,6 +26,7 @@ import {
   runMigrations,
   TransactionPortLive,
 } from "../src/index.js";
+import { seedWorkspaceGraph } from "./support/seed-workspace.js";
 
 const projectId = parse(ProjectId)("prj_018f2b3c-4d5e-7abc-8def-0123456789a1");
 const workspaceId = parse(WorkspaceId)(

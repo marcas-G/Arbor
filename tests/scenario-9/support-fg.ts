@@ -48,13 +48,13 @@ import {
   WorkRepository,
   WorkspaceRepository,
 } from "../../packages/ports/src/index.js";
-import { yieldedSettlement } from "../support/execution-episode-fixtures.js";
 import {
   p7Project,
   p7RootWorkspace,
   p7TestActor,
   p7TestPrincipal,
 } from "../support/consumer-harness.js";
+import { yieldedSettlement } from "../support/execution-episode-fixtures.js";
 import { sqlCount } from "./support.js";
 
 // ---------------------------------------------------------------------------

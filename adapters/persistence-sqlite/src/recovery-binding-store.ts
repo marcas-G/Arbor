@@ -1,8 +1,8 @@
 import type { ToolInvocationId } from "@arbor/domain";
 import {
   canonicalizeRecoveryBindingV1,
-  RecoveryEvidenceStore,
   type RecoveryBindingV1,
+  RecoveryEvidenceStore,
   recoveryBindingV1Digest,
   type SelectedP39EffectAttempt,
   TransactionScope,

@@ -71,9 +71,7 @@ export const ah10GenTakeoverFenceReceipt = async (
       if (context.includes(marker) && available.has("produce_deliverable")) {
         if (!probeArmed) {
           seedWaitIssued = true;
-          return manualWait(
-            `seed Work waits for takeover probe ${marker}`,
-          );
+          return manualWait(`seed Work waits for takeover probe ${marker}`);
         }
         providerMarkerCalls.push(`provider-call-${index}`);
         return {

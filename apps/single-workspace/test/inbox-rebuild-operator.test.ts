@@ -11,9 +11,9 @@ import {
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
+  databaseWriterLockFilename,
   P39_REPORT_APPLICATION_ID,
   P39_REPORT_USER_VERSION,
-  databaseWriterLockFilename,
   RetryVerificationOriginRepositoryLive,
   layer as sqliteLayer,
   TransactionPortLive,
@@ -25,12 +25,12 @@ import {
 } from "@arbor/ports";
 import { Effect, Layer } from "effect";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { windowsTestEnvironment } from "../../../tests/support/windows-deployment-qualification.js";
 import {
   createSchema48TestDatabaseFactory,
   type Schema48TestDatabase,
   type Schema48TestDatabaseFactory,
 } from "../../../tests/support/schema44-database.js";
+import { windowsTestEnvironment } from "../../../tests/support/windows-deployment-qualification.js";
 import {
   canonicalP6InboxJson,
   deriveTrustedSchema48Signature,

@@ -344,7 +344,8 @@ describe("pending P37 L6 DeliverMessage real-process crash matrix", () => {
       onStdout: (line) => {
         try {
           const probe = JSON.parse(line) as ProcessProbe;
-          if (probe.tag === "P37_DELIVER_PROBE") recordProcessProbe(probes, probe);
+          if (probe.tag === "P37_DELIVER_PROBE")
+            recordProcessProbe(probes, probe);
         } catch {
           // The fixture retains stderr; unrelated stdout is not a P37 signal.
         }

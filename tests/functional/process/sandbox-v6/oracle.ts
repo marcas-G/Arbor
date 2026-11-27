@@ -322,9 +322,7 @@ export const readP9OutcomeSourceForProbe = (
            FROM tool_invocations
           WHERE execution_id = ? AND invocation_id = ?`,
       )
-      .get(probe.executionId, probe.invocationId) as
-      | InvocationRow
-      | undefined;
+      .get(probe.executionId, probe.invocationId) as InvocationRow | undefined;
     const actions = db
       .prepare(
         `SELECT execution_id, logical_step_no, repair_attempt, action_index,
@@ -390,9 +388,7 @@ export const readP9OutcomeSourceForProbe = (
               `SELECT artifact_id, invocation_id FROM artifacts
                 WHERE invocation_id = ? ORDER BY artifact_id`,
             )
-            .all(
-              probe.invocationId,
-            ) as unknown as ReadonlyArray<ArtifactRow>);
+            .all(probe.invocationId) as unknown as ReadonlyArray<ArtifactRow>);
     db.exec("COMMIT");
     return {
       invocation,

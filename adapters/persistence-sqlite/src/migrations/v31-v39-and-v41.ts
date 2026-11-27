@@ -1,5 +1,5 @@
-import type { MigrationFile } from "../migrate.js";
 import { P38_EXECUTABLE_APPROVAL_MIGRATION } from "../executable-approval-migration.js";
+import type { MigrationFile } from "../migrate.js";
 import { P39_RECONCILIATION_DDL } from "../reconciliation-ddl.js";
 import { P36_TOOL_INVOCATION_ADMISSION_DDL } from "./v01-v10.js";
 import { P30_MIGRATIONS } from "./v21-v30.js";

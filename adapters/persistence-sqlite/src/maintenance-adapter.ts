@@ -5,7 +5,29 @@ import * as SqliteClient from "@effect/sql-sqlite-node/SqliteClient";
 import { Context, Effect, Layer } from "effect";
 import { SqlClient } from "effect/unstable/sql/SqlClient";
 import type { SqlError } from "effect/unstable/sql/SqlError";
+import type {
+  DatabaseWriterLockClientService,
+  DatabaseWriterLockFailure,
+  DatabaseWriterPermit,
+} from "./database-writer-lock.js";
+import {
+  DatabaseWriterLockClient,
+  databaseWriterLockFilename,
+  databaseWriterLockLayer,
+} from "./database-writer-lock.js";
 import type { SqliteAdapterError } from "./errors.js";
+import {
+  type MaintenanceFailure,
+  type MaintenancePort,
+  type MigrationBlockReport,
+  type PreflightSnapshot,
+  p39UnsupportedDeployment,
+  readP39BlockReports,
+  runP39MaintenanceGateWithLease,
+  validateMigrationPrefix,
+  type WriterExclusionLease,
+  writeP39BlockReportAndReadBack,
+} from "./maintenance.js";
 import { splitStatements } from "./migrate.js";
 import {
   CURRENT_SCHEMA_VERSION,
@@ -13,33 +35,11 @@ import {
   P39_MAINTENANCE_MIGRATIONS,
 } from "./migrations.js";
 import {
-  type MaintenanceFailure,
-  type MaintenancePort,
-  type MigrationBlockReport,
-  type PreflightSnapshot,
-  type WriterExclusionLease,
-  p39UnsupportedDeployment,
-  readP39BlockReports,
-  runP39MaintenanceGateWithLease,
-  validateMigrationPrefix,
-  writeP39BlockReportAndReadBack,
-} from "./maintenance.js";
-import {
   type ReportSidecarValidationPhase,
   validateExistingReportSidecarDatabase,
   validateReportSidecarDatabase,
   validateReportSidecarPath,
 } from "./report-database.js";
-import type {
-  DatabaseWriterPermit,
-  DatabaseWriterLockClientService,
-  DatabaseWriterLockFailure,
-} from "./database-writer-lock.js";
-import {
-  DatabaseWriterLockClient,
-  databaseWriterLockFilename,
-  databaseWriterLockLayer,
-} from "./database-writer-lock.js";
 
 /** The subset of Effect SQL used by the maintenance adapter. Concrete
  * SqlClient services from the primary and operator-selected sidecar databases
@@ -103,10 +103,7 @@ export const runP39SqliteMaintenanceWithPermit = (
   continuation: (
     primary: MaintenanceSqlClient,
     permit: DatabaseWriterPermit,
-  ) => Effect.Effect<
-    void,
-    MaintenanceFailure | SqliteAdapterError | SqlError
-  >,
+  ) => Effect.Effect<void, MaintenanceFailure | SqliteAdapterError | SqlError>,
   settings: {
     readonly onPhase?: (
       phase:
@@ -437,7 +434,10 @@ export const runP39SqliteMaintenanceWithPermit = (
     yield* Effect.scoped(
       Effect.provide(
         maintenance,
-        databaseWriterLockLayer(lockPath, options.writerLockBusyTimeoutMs ?? 30_000),
+        databaseWriterLockLayer(
+          lockPath,
+          options.writerLockBusyTimeoutMs ?? 30_000,
+        ),
       ),
     ).pipe(
       Effect.mapError((cause) => {
@@ -579,7 +579,9 @@ const makeP39SqliteMaintenancePort = (
         if (lease.token !== writerLockPermit?.token) {
           return yield* Effect.fail(failure("P39_WRITER_LOCK_ACQUIRE_FAILED"));
         }
-        const currentLockPath = databaseWriterLockFilename(options.primaryFilename);
+        const currentLockPath = databaseWriterLockFilename(
+          options.primaryFilename,
+        );
         if (
           typeof currentLockPath !== "string" ||
           currentLockPath !== options.writerLockFilename

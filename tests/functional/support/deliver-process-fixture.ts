@@ -110,7 +110,10 @@ const p37LoggedBoundaries = new Set([
   "P10AfterDeliverAttentionConsumerCommit",
 ]);
 
-export const recordProcessProbe = (probes: ProcessProbe[], probe: ProcessProbe) => {
+export const recordProcessProbe = (
+  probes: ProcessProbe[],
+  probe: ProcessProbe,
+) => {
   probes.push(probe);
   if (
     !p37LoggedBoundaries.has(probe.boundary) &&

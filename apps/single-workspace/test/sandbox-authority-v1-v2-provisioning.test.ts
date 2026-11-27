@@ -252,12 +252,8 @@ describe.skipIf(!windowsQualificationAvailable)(
       try {
         seed(root);
         expect(validateProtectedDirectory(root)).toBe(true);
-        expect(validateProtectedFile(join(root, "authority.json"))).toBe(
-          true,
-        );
-        expect(validateProtectedFile(join(root, "high-water.json"))).toBe(
-          true,
-        );
+        expect(validateProtectedFile(join(root, "authority.json"))).toBe(true);
+        expect(validateProtectedFile(join(root, "high-water.json"))).toBe(true);
         const store = await Effect.runPromise(
           makeSandboxAuthorityProvisioningFileStore(pathsFor(root)),
         );

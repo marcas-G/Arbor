@@ -27,8 +27,7 @@ const skippedDirectories = new Set([
   "tests",
   "__tests__",
 ]);
-const p39SpawnModule =
-  "adapters/persistence-sqlite/src/windows-security.ts";
+const p39SpawnModule = "adapters/persistence-sqlite/src/windows-security.ts";
 const trustedLocalSpawnModule =
   "adapters/sandbox-local/src/trusted-local-process.ts";
 const nativePosixSpawnModule = "adapters/sandbox-native-posix/src/index.ts";
@@ -610,10 +609,7 @@ describe("SandboxProcessPort architecture boundary", () => {
     expect(
       callCount(
         readFileSync(
-          join(
-            repoRoot,
-            "adapters/persistence-sqlite/src/report-database.ts",
-          ),
+          join(repoRoot, "adapters/persistence-sqlite/src/report-database.ts"),
           "utf8",
         ),
         "executeP39WindowsSecurityQuery",
@@ -633,7 +629,10 @@ describe("SandboxProcessPort architecture boundary", () => {
     expect(
       callCount(
         readFileSync(
-          join(repoRoot, "adapters/persistence-sqlite/src/database-writer-lock.ts"),
+          join(
+            repoRoot,
+            "adapters/persistence-sqlite/src/database-writer-lock.ts",
+          ),
           "utf8",
         ),
         "validateWindowsProtectedPaths",

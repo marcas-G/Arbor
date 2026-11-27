@@ -3,9 +3,9 @@ import {
   canonicalArgumentsDigestV1,
   canonicalizeRecoveryBindingV1,
   P4_TOOL_OBSERVATION_FORMAT_V1,
-  SandboxOutcomeReadPort,
   type RecoveryBindingV1,
   recoveryBindingV1Digest,
+  SandboxOutcomeReadPort,
   sha256Hex,
   TransactionPort,
 } from "@arbor/ports";

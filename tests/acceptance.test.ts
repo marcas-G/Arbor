@@ -639,13 +639,7 @@ describe("-acceptance (P11 00 CI-1..CI-5 + end-to-end story)", () => {
       ["p10", "architecture-10.test.ts"],
     ] as const) {
       expect(
-        existsSync(
-          join(
-            import.meta.dirname,
-            "architecture",
-            filename,
-          ),
-        ),
+        existsSync(join(import.meta.dirname, "architecture", filename)),
         phase,
       ).toBe(true);
     }

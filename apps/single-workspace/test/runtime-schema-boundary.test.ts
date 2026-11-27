@@ -9,12 +9,12 @@ import { SqlClient } from "effect/unstable/sql/SqlClient";
 import { afterAll, describe, expect, it } from "vitest";
 import * as PersistenceSqlite from "../../../adapters/persistence-sqlite/src/index.js";
 import { PersistenceHealthProbe } from "../../../packages/ports/src/health.js";
+import { createSchema48TestDatabase } from "../../../tests/support/schema44-database.js";
 import {
   createP39PrivateTestFile,
   makeP39PrivateTestDirectory,
   removeP39PrivateTestDirectory,
 } from "../../../tests/support/windows-deployment-qualification.js";
-import { createSchema48TestDatabase } from "../../../tests/support/schema44-database.js";
 import { buildSingleWorkspaceLayer } from "../src/composition.js";
 import {
   PersistenceHealthProbeSqliteLive,

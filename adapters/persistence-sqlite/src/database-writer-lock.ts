@@ -17,8 +17,8 @@ import type { SqlError } from "effect/unstable/sql/SqlError";
 import type { SqliteAdapterError } from "./errors.js";
 import { sqliteAdapterError } from "./errors.js";
 import {
-  type WindowsProtectedPath,
   validateWindowsProtectedPaths,
+  type WindowsProtectedPath,
 } from "./windows-security.js";
 
 export const P39_WRITER_LOCK_DDL = `
@@ -100,10 +100,7 @@ const validateProtectedPaths = (
       }
       const mode = Number(stat.mode & 0o7777n);
       if (
-        !sameOperatingSystemIdentity(
-          `uid:${stat.uid}`,
-          `uid:${currentUid}`,
-        ) ||
+        !sameOperatingSystemIdentity(`uid:${stat.uid}`, `uid:${currentUid}`) ||
         (mode & 0o022) !== 0 ||
         (kind === "directory" ? (mode & 0o100) === 0 : (mode & 0o200) === 0)
       ) {
@@ -303,7 +300,10 @@ export const preparePrimaryDatabasePath = (
     ) {
       return invalidLockPath();
     }
-    const lockFilename = databaseWriterLockFilenameValidatedParent(canonical, true);
+    const lockFilename = databaseWriterLockFilenameValidatedParent(
+      canonical,
+      true,
+    );
     return typeof lockFilename === "string"
       ? { databaseFilename: canonical, writerLockFilename: lockFilename }
       : lockFilename;
@@ -322,13 +322,17 @@ const unsupportedWriterDeployment = (): DatabaseWriterLockFailure => ({
   code: "P39_WRITER_LOCK_UNSUPPORTED_DEPLOYMENT",
 });
 
-const writerLockAcquireFailed = (cause?: unknown): DatabaseWriterLockFailure => ({
+const writerLockAcquireFailed = (
+  cause?: unknown,
+): DatabaseWriterLockFailure => ({
   _tag: "DatabaseWriterLockFailure",
   code: "P39_WRITER_LOCK_ACQUIRE_FAILED",
   ...(cause === undefined ? {} : { cause }),
 });
 
-const writerLockSchemaInvalid = (cause?: unknown): DatabaseWriterLockFailure => ({
+const writerLockSchemaInvalid = (
+  cause?: unknown,
+): DatabaseWriterLockFailure => ({
   _tag: "DatabaseWriterLockFailure",
   code: "P39_WRITER_LOCK_SCHEMA_INVALID",
   ...(cause === undefined ? {} : { cause }),

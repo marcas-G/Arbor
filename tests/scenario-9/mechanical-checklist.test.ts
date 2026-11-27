@@ -525,10 +525,7 @@ describe("-acceptance mechanical assertions (06 checklist)", () => {
       ["p7", "architecture-7.test.ts"],
       ["p8", "architecture-8.test.ts"],
     ] as const) {
-      expect(
-        architecture.includes(filename),
-        phase,
-      ).toBe(true);
+      expect(architecture.includes(filename), phase).toBe(true);
     }
     // The pnpm check reference assertion: the guard chain itself is wired
     // (lint + typecheck + architecture + test, all green together).

@@ -69,9 +69,7 @@ export const manualWait = (reason: string) => ({
     waitSpec: { mode: "Any" as const, conditions: [{ _tag: "Manual" }] },
   },
 });
-export const ah10Child = resolve(
-  "tests/functional/support/process-child.mjs",
-);
+export const ah10Child = resolve("tests/functional/support/process-child.mjs");
 
 afterEach(async () => {
   for (const fixture of fixtures.splice(0)) await fixture.stop();

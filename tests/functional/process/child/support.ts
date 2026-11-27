@@ -227,9 +227,7 @@ export const createAh10ScenarioState = (
 };
 
 export const fixtures: ProductionFixture[] = [];
-export const ah10Child = resolve(
-  "tests/functional/support/process-child.mjs",
-);
+export const ah10Child = resolve("tests/functional/support/process-child.mjs");
 
 afterEach(async () => {
   for (const fixture of fixtures.splice(0)) await fixture.stop();

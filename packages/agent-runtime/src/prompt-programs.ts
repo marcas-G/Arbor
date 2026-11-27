@@ -17,10 +17,14 @@ export type AgentPromptProgramFamilyId =
   | "p6-human-steer";
 
 /** P8-010: the two Program families P8 owns (P8 `02` §4 / `05` §2). */
-export type VerificationProgramFamilyId = "p8-verification" | "p8-query-inspection";
+export type VerificationProgramFamilyId =
+  | "p8-verification"
+  | "p8-query-inspection";
 
 /** Every family id served by the shared program infrastructure. */
-export type ProgramFamilyId = AgentPromptProgramFamilyId | VerificationProgramFamilyId;
+export type ProgramFamilyId =
+  | AgentPromptProgramFamilyId
+  | VerificationProgramFamilyId;
 
 export interface ProgramRegistryEntry {
   readonly familyId: ProgramFamilyId;

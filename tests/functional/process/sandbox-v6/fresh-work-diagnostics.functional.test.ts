@@ -15,11 +15,11 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { CURRENT_SCHEMA_VERSION } from "../../../../adapters/persistence-sqlite/src/index.js";
 import { shellPolicy } from "../../../../packages/tool-runtime/src/tools/shell.js";
+import { createCurrentSchemaTestDatabase } from "../../../support/schema44-database.js";
 import {
   windowsAclQualificationAvailable,
   windowsTestEnvironment,
 } from "../../../support/windows-deployment-qualification.js";
-import { createCurrentSchemaTestDatabase } from "../../../support/schema44-database.js";
 import {
   archiveProductionFixtureFailure,
   writeProductionFixtureArchiveSkipped,

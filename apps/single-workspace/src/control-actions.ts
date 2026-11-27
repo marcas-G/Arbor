@@ -447,7 +447,9 @@ const makeSingleWorkspaceControlActionHandlersLayer = (
                       projects: projects.value,
                       workspaces,
                       listWorkspaceIdsByProject: (projectId) =>
-                        workspaces.listWorkspaceIdsByProject(projectId) as Effect.Effect<
+                        workspaces.listWorkspaceIdsByProject(
+                          projectId,
+                        ) as Effect.Effect<
                           ReadonlyArray<import("@arbor/domain").WorkspaceId>,
                           unknown,
                           never

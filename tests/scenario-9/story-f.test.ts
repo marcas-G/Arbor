@@ -13,18 +13,18 @@ import {
   pollOnce,
 } from "../../packages/application/src/consumer-loop.js";
 import {
-  p7Project,
-  p7SeedProject,
-  p7SeedWork,
-  p7TestPrincipal,
-} from "../support/consumer-harness.js";
-import {
   commitGate,
   gatedTransactionPort,
   makeP9ConsumerApp,
   p9Boot,
   runP9Consumer,
 } from "../support/consumer-app-support.js";
+import {
+  p7Project,
+  p7SeedProject,
+  p7SeedWork,
+  p7TestPrincipal,
+} from "../support/consumer-harness.js";
 import {
   collectDurabilityEvidence,
   type DurabilityEvidence,
