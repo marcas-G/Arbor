@@ -233,6 +233,21 @@ const resolver: EnvironmentResolverService = {
 const hash = (bytes: Buffer | string) =>
   createHash("sha256").update(bytes).digest("hex");
 
+/** Shared fail-closed oracle: run one preparation effect and report the
+ * settled side, so every rejection test asserts the same shape. */
+const outcomeOf = <A>(
+  effect: Effect.Effect<A, unknown>,
+): Promise<
+  | { readonly _tag: "Left"; readonly error: unknown }
+  | { readonly _tag: "Right"; readonly value: A }
+> =>
+  Effect.runPromise(
+    Effect.match(effect, {
+      onFailure: (error) => ({ _tag: "Left" as const, error }),
+      onSuccess: (value) => ({ _tag: "Right" as const, value }),
+    }),
+  );
+
 const makeSignedWindowsAuthority = () => {
   const host = sandboxPolicyCurrentHostV1();
   if (host === undefined || host.osFamily !== "Windows")
@@ -739,11 +754,8 @@ describe("production sandbox decision materializer", () => {
       const { preparation } = fixture((state) => {
         state.worktrees = worktrees;
       });
-      const outcome = await Effect.runPromise(
-        Effect.match(preparation.prepare(payload(), authority), {
-          onFailure: (error) => ({ _tag: "Left" as const, error }),
-          onSuccess: (value) => ({ _tag: "Right" as const, value }),
-        }),
+      const outcome = await outcomeOf(
+        preparation.prepare(payload(), authority),
       );
       expect(outcome._tag).toBe("Left");
     }
@@ -751,11 +763,8 @@ describe("production sandbox decision materializer", () => {
 
   it("never downgrades an OsEnforced request to TrustedLocal", async () => {
     const { preparation } = fixture();
-    const outcome = await Effect.runPromise(
-      Effect.match(preparation.prepare(osPayload(), authority), {
-        onFailure: (error) => ({ _tag: "Left" as const, error }),
-        onSuccess: (value) => ({ _tag: "Right" as const, value }),
-      }),
+    const outcome = await outcomeOf(
+      preparation.prepare(osPayload(), authority),
     );
     expect(outcome).toMatchObject({
       _tag: "Left",
@@ -765,12 +774,7 @@ describe("production sandbox decision materializer", () => {
 
   it("fails closed when the startup V2 authority snapshot is unavailable", async () => {
     const { preparation } = fixture(undefined, resolver, null);
-    const outcome = await Effect.runPromise(
-      Effect.match(preparation.prepare(payload(), authority), {
-        onFailure: (error) => ({ _tag: "Left" as const, error }),
-        onSuccess: (value) => ({ _tag: "Right" as const, value }),
-      }),
-    );
+    const outcome = await outcomeOf(preparation.prepare(payload(), authority));
     expect(outcome).toMatchObject({
       _tag: "Left",
       error: { _tag: "TransactionOperationalFailure" },
@@ -788,12 +792,7 @@ describe("production sandbox decision materializer", () => {
         ),
     };
     const { preparation } = fixture(undefined, inconsistentResolver);
-    const result = await Effect.runPromise(
-      Effect.match(preparation.prepare(payload(), authority), {
-        onFailure: (error) => ({ _tag: "Left" as const, error }),
-        onSuccess: (value) => ({ _tag: "Right" as const, value }),
-      }),
-    );
+    const result = await outcomeOf(preparation.prepare(payload(), authority));
     expect(result).toMatchObject({
       _tag: "Left",
       error: { _tag: "TransactionOperationalFailure" },
