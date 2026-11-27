@@ -299,7 +299,10 @@ jobs:
     # mirror 403s transiently on self-hosted runners — one retry.
     runs-on: [self-hosted, linux, x64, arbor-ci]
     container:
-      image: mcr.microsoft.com/playwright:v1.63.0-noble
+      # Locally built from node:24.21.0-bookworm + Chromium libs + the
+      # 1.63.0 browser build (MCR pulls stall on this host); served by the
+      # pool's local registry. Rebuild: actions-runner/ci-images.
+      image: localhost:5000/arbor-ci/playwright:1.63.0
       options: --user 1000:1000 --cpus=2 --memory=8g
       volumes:
         - arbor-pnpm-store:/pnpm-store
