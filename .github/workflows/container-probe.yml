@@ -18,11 +18,11 @@ jobs:
     runs-on: [self-hosted, linux, x64, arbor-ci]
     container:
       image: node:24.21.0-bookworm
-      options: --user 1000:1000 --cpus=2 --memory=8g --network host
+      options: --user 1000:1000 --cpus=2 --memory=8g --add-host=host.docker.internal:host-gateway
     timeout-minutes: 25
     env:
-      HTTP_PROXY: http://127.0.0.1:7890
-      HTTPS_PROXY: http://127.0.0.1:7890
+      HTTP_PROXY: http://host.docker.internal:7890
+      HTTPS_PROXY: http://host.docker.internal:7890
       NO_PROXY: localhost,127.0.0.1,::1,[::1]
       NODE_USE_ENV_PROXY: "1"
     steps:
