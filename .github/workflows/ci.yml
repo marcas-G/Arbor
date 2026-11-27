@@ -215,17 +215,20 @@ jobs:
     # The daemon-boot release journey, sharded (plan PR 3): round-robin
     # over the sorted file list so heavy multi-restart families spread
     # evenly; each shard is an isolated runner and runs serially inside.
-    # 12 shards x max-parallel 12 against the local runner pool: the hosted
-    # baseline measured 9-31 min per 6-way shard (round-robin skew), so the
-    # wall clock is set by the slowest shard, not by the sum.
+    # 8 shards x max-parallel 8 against the local runner pool. Measured on
+    # this 32-core host: 12 concurrent shards oversubscribed the box (load
+    # ~48) and daemon-startup/90s test timeouts produced false failures,
+    # while 6-8 concurrent shards stay inside the CPU budget. The hosted
+    # baseline measured 9-31 min per 6-way shard, so balance matters as
+    # much as width.
     runs-on: [self-hosted, linux, x64, arbor-ci]
     timeout-minutes: 45
     strategy:
       fail-fast: false
-      max-parallel: 12
+      max-parallel: 8
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
-    name: functional (${{ matrix.shard }}/12)
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    name: functional (${{ matrix.shard }}/8)
     steps:
       - name: Checkout full history
         uses: actions/checkout@v4
@@ -282,12 +285,12 @@ jobs:
             echo "CI plan artifact unavailable; shadow summary skipped (full shard still runs)." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          node scripts/ci/plan.mjs --report ci-plan.json --shard ${{ matrix.shard }}/12 >> "$GITHUB_STEP_SUMMARY"
+          node scripts/ci/plan.mjs --report ci-plan.json --shard ${{ matrix.shard }}/8 >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Functional release journey (shard ${{ matrix.shard }}/12)
+      - name: Functional release journey (shard ${{ matrix.shard }}/8)
         run: |
           set -e
-          mapfile -t FILES < <(node scripts/testing/functional-shard.mjs ${{ matrix.shard }} 12)
+          mapfile -t FILES < <(node scripts/testing/functional-shard.mjs ${{ matrix.shard }} 8)
           echo "running ${#FILES[@]} files"
           pnpm vitest run "${FILES[@]}" --config vitest.functional.config.ts
 
@@ -337,11 +340,14 @@ jobs:
       - name: Build web dist
         run: pnpm --filter @arbor/web build
 
-      - name: Install UI browser (retry once on apt-mirror flake)
+      - name: Install UI browser
+        # The Chromium system libraries are a one-time host prerequisite
+        # (see docs/engineering/README.md); re-running --with-deps here
+        # needs root, which the runner user does not have.
         run: |
-          pnpm exec playwright install --with-deps chromium || {
+          pnpm exec playwright install chromium || {
             sleep 20
-            pnpm exec playwright install --with-deps chromium
+            pnpm exec playwright install chromium
           }
 
       - name: Download CI plan (shadow mode)

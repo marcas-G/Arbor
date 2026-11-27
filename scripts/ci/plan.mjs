@@ -78,7 +78,7 @@ const impactMapSha256 = createHash("sha256")
   .digest("hex");
 
 // Must mirror the functional matrix width in .github/workflows/ci.yml.
-export const FUNCTIONAL_SHARD_TOTAL = 12;
+export const FUNCTIONAL_SHARD_TOTAL = 8;
 
 const docsPatterns = ["docs/**", "**/*.md"];
 
