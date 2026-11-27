@@ -48,7 +48,7 @@ jobs:
     runs-on: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && 'ubuntu-24.04' || 'arbor-ci' }}
     container:
       image: node:24.21.0-bookworm
-      options: --user 1000:1000 --cpus=2 --memory=8g
+      options: --cpus=2 --memory=8g
       volumes:
         - arbor-pnpm-store:/pnpm-store
     timeout-minutes: 10
@@ -96,7 +96,7 @@ jobs:
     runs-on: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && 'ubuntu-24.04' || 'arbor-ci' }}
     container:
       image: node:24.21.0-bookworm
-      options: --user 1000:1000 --cpus=2 --memory=8g
+      options: --cpus=2 --memory=8g
       volumes:
         - arbor-pnpm-store:/pnpm-store
     timeout-minutes: 20
@@ -160,7 +160,7 @@ jobs:
     runs-on: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && 'ubuntu-24.04' || 'arbor-ci' }}
     container:
       image: node:24.21.0-bookworm
-      options: --user 1000:1000 --cpus=3 --memory=8g
+      options: --cpus=3 --memory=8g
       volumes:
         - arbor-pnpm-store:/pnpm-store
     timeout-minutes: 45
@@ -237,7 +237,7 @@ jobs:
       # Functional shards run one test file at a time but each bootstraps a
       # daemon plus a web server and browser-less client: 3 cpus keeps the
       # shard under its standalone budget instead of starving its neighbours.
-      options: --user 1000:1000 --cpus=3 --memory=8g
+      options: --cpus=3 --memory=8g
       volumes:
         - arbor-pnpm-store:/pnpm-store
     timeout-minutes: 45
@@ -312,7 +312,7 @@ jobs:
       # 1.63.0 browser build (MCR pulls stall on this host); served by the
       # pool's local registry. Rebuild: actions-runner/ci-images.
       image: ${{ github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local') && 'mcr.microsoft.com/playwright:v1.63.0-noble' || 'localhost:5000/arbor-ci/playwright:1.63.0' }}
-      options: --user 1000:1000 --cpus=2 --memory=8g
+      options: --cpus=2 --memory=8g
       volumes:
         - arbor-pnpm-store:/pnpm-store
     timeout-minutes: 25
@@ -409,7 +409,7 @@ jobs:
     runs-on: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.runner_pool != 'local')) && 'ubuntu-24.04' || 'arbor-ci' }}
     container:
       image: node:24.21.0-bookworm
-      options: --user 1000:1000 --cpus=2 --memory=8g
+      options: --cpus=2 --memory=8g
       volumes:
         - arbor-pnpm-store:/pnpm-store
     timeout-minutes: 15
