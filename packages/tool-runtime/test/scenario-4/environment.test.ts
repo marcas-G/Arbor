@@ -1,4 +1,3 @@
-import { ProviderTurnId, parse } from "@arbor/domain";
 import {
   type ToolInvocationRecord,
   ToolRuntimePort,
@@ -17,21 +16,15 @@ import {
   invocationId,
   okExecutor,
   p39ApprovedCase,
+  p39RecoveryContext,
   workspaceId,
 } from "./support.js";
 import { app, run } from "./support-app.js";
-import type { PipelineTrace } from "./support-harness.js";
+import { newTrace, type PipelineTrace } from "./support-harness.js";
 
 describe("tool runtime pipeline", () => {
   it("fails closed when does not return authenticated selected evidence for RNO", async () => {
-    const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
-    };
+    const trace = newTrace();
     const rnoExecutor: ToolExecutor = {
       ...okExecutor,
       execute: () =>
@@ -145,41 +138,15 @@ describe("tool runtime pipeline", () => {
       resultRef: null,
     };
     const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
+      ...newTrace(),
       environmentResolutions: 0,
       resourceAdmissionCalls: 0,
     };
-    const p39Context = {
-      ...context,
-      authority: {
-        ...authority,
-        sourceRevision: JSON.stringify({
-          workspacePolicyRevision: 0,
-          activeGrants: [],
-          verifierId: null,
-        }),
-      },
-      recoveryBindingIdentity: {
-        executionId,
-        providerTurnId: parse(ProviderTurnId)(
-          "ptn_018f2b3c-4d5e-7abc-8def-0123456789a7",
-        ),
-        logicalStepNo: 8,
-        repairAttempt: 0,
-        logicalActionId: "action-denied-replay",
-        actionIndex: 0,
-        callRef: "c",
-      },
-      recoveryBindingPolicyRevisions: {
-        workspacePolicyRevision: 0,
-        projectPolicyRevision: 0,
-      },
-    } as import("@arbor/ports").ToolExecutionContext;
+    const p39Context = p39RecoveryContext(
+      "ptn_018f2b3c-4d5e-7abc-8def-0123456789a7",
+      8,
+      "action-denied-replay",
+    );
     const executor: ToolExecutor = {
       ...okExecutor,
       execute: () => {
@@ -213,42 +180,16 @@ describe("tool runtime pipeline", () => {
       },
     };
     const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
+      ...newTrace(),
       environmentResolutions: 0,
       resourceAdmissionCalls: 0,
       p39BindingCalls: 0,
     };
-    const p39Context = {
-      ...context,
-      authority: {
-        ...authority,
-        sourceRevision: JSON.stringify({
-          workspacePolicyRevision: 0,
-          activeGrants: [],
-          verifierId: null,
-        }),
-      },
-      recoveryBindingIdentity: {
-        executionId,
-        providerTurnId: parse(ProviderTurnId)(
-          "ptn_018f2b3c-4d5e-7abc-8def-0123456789b8",
-        ),
-        logicalStepNo: 9,
-        repairAttempt: 0,
-        logicalActionId: "action-p39-freshness",
-        actionIndex: 0,
-        callRef: "c",
-      },
-      recoveryBindingPolicyRevisions: {
-        workspacePolicyRevision: 0,
-        projectPolicyRevision: 0,
-      },
-    } as import("@arbor/ports").ToolExecutionContext;
+    const p39Context = p39RecoveryContext(
+      "ptn_018f2b3c-4d5e-7abc-8def-0123456789b8",
+      9,
+      "action-p39-freshness",
+    );
     const appLayer = app(
       false,
       executor,
@@ -292,12 +233,7 @@ describe("tool runtime pipeline", () => {
   it("accepts a environment revision only when the current persisted revision exactly matches", async () => {
     const p39Case = p39ApprovedCase("c4", "action-p39-exact-current");
     const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
+      ...newTrace(),
       resolvedEnvironmentRevisionSequence: ["rev-exact", "rev-exact"],
       currentEnvironmentRevisionValues: ["rev-exact", "rev-exact"],
       resourceAdmissionCalls: 0,
@@ -340,12 +276,7 @@ describe("tool runtime pipeline", () => {
   it("refreshes once when invocation and boundary environment revisions differ", async () => {
     const p39Case = p39ApprovedCase("c5", "action-p39-invocation-boundary");
     const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
+      ...newTrace(),
       resolvedEnvironmentRevisionSequence: [
         "invocation-old",
         "boundary-old",
@@ -410,12 +341,7 @@ describe("tool runtime pipeline", () => {
         { _tag: "GitWorktree", path: "/repo/changed" },
       ] as const;
       const trace: PipelineTrace = {
-        noEffectDenials: [],
-        events: [],
-        approvalConsumer: null,
-        intentWrites: 0,
-        effectAdmissions: 0,
-        approvalConsumes: 0,
+        ...newTrace(),
         resolvedEnvironmentRevisionSequence: [
           "invocation-old",
           "boundary-old",
@@ -499,12 +425,7 @@ describe("tool runtime pipeline", () => {
   it("accepts environment None only for observed revision zero and binds only the selected target region", async () => {
     const argumentsJson = '{"target":{"mount":"workspace","path":"."}}';
     const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
+      ...newTrace(),
       resolvedEnvironmentRevisionSequence: ["0", "0"],
       currentEnvironmentRevisionValues: [null, null],
       workspaceBoundaryAddresses: [
@@ -512,32 +433,11 @@ describe("tool runtime pipeline", () => {
         { _tag: "ExternalResource", address: "https://example.test" },
       ],
     };
-    const p39Context = {
-      ...context,
-      authority: {
-        ...authority,
-        sourceRevision: JSON.stringify({
-          workspacePolicyRevision: 0,
-          activeGrants: [],
-          verifierId: null,
-        }),
-      },
-      recoveryBindingIdentity: {
-        executionId,
-        providerTurnId: parse(ProviderTurnId)(
-          "ptn_018f2b3c-4d5e-7abc-8def-0123456789c1",
-        ),
-        logicalStepNo: 10,
-        repairAttempt: 0,
-        logicalActionId: "action-p39-none-zero",
-        actionIndex: 0,
-        callRef: "c",
-      },
-      recoveryBindingPolicyRevisions: {
-        workspacePolicyRevision: 0,
-        projectPolicyRevision: 0,
-      },
-    } as import("@arbor/ports").ToolExecutionContext;
+    const p39Context = p39RecoveryContext(
+      "ptn_018f2b3c-4d5e-7abc-8def-0123456789c1",
+      10,
+      "action-p39-none-zero",
+    );
 
     const result = await run(
       app(false, okExecutor, {}, trace),
@@ -567,42 +467,16 @@ describe("tool runtime pipeline", () => {
 
   it("refreshes exactly once after the first stale revision, then consumes the fresh snapshot", async () => {
     const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
+      ...newTrace(),
       resolvedEnvironmentRevisionSequence: ["rev1", "rev1", "rev2", "rev2"],
       currentEnvironmentRevisionValues: [null, "rev2", "rev2"],
       resourceAdmissionCalls: 0,
     };
-    const p39Context = {
-      ...context,
-      authority: {
-        ...authority,
-        sourceRevision: JSON.stringify({
-          workspacePolicyRevision: 0,
-          activeGrants: [],
-          verifierId: null,
-        }),
-      },
-      recoveryBindingIdentity: {
-        executionId,
-        providerTurnId: parse(ProviderTurnId)(
-          "ptn_018f2b3c-4d5e-7abc-8def-0123456789c2",
-        ),
-        logicalStepNo: 11,
-        repairAttempt: 0,
-        logicalActionId: "action-p39-refresh-once",
-        actionIndex: 0,
-        callRef: "c",
-      },
-      recoveryBindingPolicyRevisions: {
-        workspacePolicyRevision: 0,
-        projectPolicyRevision: 0,
-      },
-    } as import("@arbor/ports").ToolExecutionContext;
+    const p39Context = p39RecoveryContext(
+      "ptn_018f2b3c-4d5e-7abc-8def-0123456789c2",
+      11,
+      "action-p39-refresh-once",
+    );
     const result = await run(
       app(false, okExecutor, {}, trace),
       '{"target":{"mount":"workspace","path":"."}}',
@@ -621,43 +495,17 @@ describe("tool runtime pipeline", () => {
 
   it("fails closed after the single allowed stale-snapshot refresh", async () => {
     const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
+      ...newTrace(),
       resolvedEnvironmentRevisionSequence: ["rev1", "rev1", "rev2", "rev2"],
       currentEnvironmentRevisionValues: [null, "still-stale"],
       resourceAdmissionCalls: 0,
       p39BindingCalls: 0,
     };
-    const p39Context = {
-      ...context,
-      authority: {
-        ...authority,
-        sourceRevision: JSON.stringify({
-          workspacePolicyRevision: 0,
-          activeGrants: [],
-          verifierId: null,
-        }),
-      },
-      recoveryBindingIdentity: {
-        executionId,
-        providerTurnId: parse(ProviderTurnId)(
-          "ptn_018f2b3c-4d5e-7abc-8def-0123456789c3",
-        ),
-        logicalStepNo: 12,
-        repairAttempt: 0,
-        logicalActionId: "action-p39-stale-twice",
-        actionIndex: 0,
-        callRef: "c",
-      },
-      recoveryBindingPolicyRevisions: {
-        workspacePolicyRevision: 0,
-        projectPolicyRevision: 0,
-      },
-    } as import("@arbor/ports").ToolExecutionContext;
+    const p39Context = p39RecoveryContext(
+      "ptn_018f2b3c-4d5e-7abc-8def-0123456789c3",
+      12,
+      "action-p39-stale-twice",
+    );
     const outcome = await Effect.runPromise(
       Effect.provide(
         Effect.match(

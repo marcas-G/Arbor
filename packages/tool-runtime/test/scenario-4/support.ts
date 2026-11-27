@@ -108,6 +108,46 @@ export const okExecutor: ToolExecutor = {
     }),
 };
 
+/** A shell executor whose execution is a defect: retry-replay paths must
+ * never reach it, so a die pins that invariant louder than a stub result. */
+export const mustNotExecuteShellExecutor = (reason: string): ToolExecutor => ({
+  name: "shell",
+  write: true,
+  requiresApproval: () => false,
+  execute: () => Effect.die(new Error(reason)),
+});
+
+/** The recovery-bound context every P39 environment-freshness test builds:
+ * the JSON authority snapshot plus a distinct recovery-binding identity. */
+export const p39RecoveryContext = (
+  providerTurnId: string,
+  logicalStepNo: number,
+  logicalActionId: string,
+): import("@arbor/ports").ToolExecutionContext => ({
+  ...context,
+  authority: {
+    ...authority,
+    sourceRevision: JSON.stringify({
+      workspacePolicyRevision: 0,
+      activeGrants: [],
+      verifierId: null,
+    }),
+  },
+  recoveryBindingIdentity: {
+    executionId,
+    providerTurnId: parse(ProviderTurnId)(providerTurnId),
+    logicalStepNo,
+    repairAttempt: 0,
+    logicalActionId,
+    actionIndex: 0,
+    callRef: "c",
+  },
+  recoveryBindingPolicyRevisions: {
+    workspacePolicyRevision: 0,
+    projectPolicyRevision: 0,
+  },
+});
+
 export const p39ApprovedCase = (
   suffix: "c4" | "c5" | "c6" | "c7",
   logicalActionId: string,

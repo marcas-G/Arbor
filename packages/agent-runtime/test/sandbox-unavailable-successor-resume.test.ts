@@ -686,12 +686,6 @@ describe("SandboxUnavailableV1 successor recovery", () => {
         fixture.canonicalNetworkSelection,
       ),
     ).toEqual({ kind: "TrustedLocalUnconfinedV1", version: 1 });
-    expect(fixture.decision.providerId).toBe("TrustedLocal");
-    expect(fixture.decision.networkPolicy).toEqual({
-      kind: "TrustedLocalUnconfinedV1",
-      version: 1,
-    });
-    expect(fixture.result).toBeDefined();
     expect(fixture.join()).toEqual(
       Option.some({ decision: fixture.decision, result: fixture.result }),
     );

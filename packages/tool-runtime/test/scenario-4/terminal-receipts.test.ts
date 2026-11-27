@@ -1,15 +1,22 @@
-import { type ToolInvocationRecord, ToolRuntimePort } from "@arbor/ports";
+import type { ToolInvocationRecord } from "@arbor/ports";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import {
   executionId,
-  intent,
   invocationId,
   p39TerminalReceiptCase,
   workspaceId,
 } from "./support.js";
-import { app } from "./support-app.js";
-import type { PipelineTrace } from "./support-harness.js";
+import {
+  retryApp,
+  runShellRetry,
+  runShellRetryMatched,
+} from "./support-app.js";
+import {
+  newTrace,
+  type PipelineTrace,
+  retryHarness,
+} from "./support-harness.js";
 
 describe("tool runtime pipeline", () => {
   it.each(["NotOccurred", "Success", "ExpectedFailure"] as const)(
@@ -17,70 +24,30 @@ describe("tool runtime pipeline", () => {
     async (terminalOutcome) => {
       const receipt = p39TerminalReceiptCase(terminalOutcome);
       const trace: PipelineTrace = {
-        noEffectDenials: [],
-        events: [],
-        approvalConsumer: null,
-        intentWrites: 0,
-        effectAdmissions: 0,
-        approvalConsumes: 0,
+        ...newTrace(),
         workspaceBoundaryAddresses: [{ _tag: "GitWorktree", path: "/repo/b" }],
         workspaceRevisionSequence: [1, 1],
         p39SelectedEvidence: receipt.selected,
         p40WinnerEvidence: receipt.settlementEvidence,
-        reconciliationRetry: {
-          profile: receipt.profile,
-          verifiedBinding: receipt.verifiedBinding,
-          attempt: receipt.attempt,
-          authority: receipt.authority,
-          result: receipt.result,
-          factId: receipt.factId,
-          settlementEvidence: receipt.settlementEvidence,
-        },
+        reconciliationRetry: retryHarness(receipt),
       };
       let executorCalls = 0;
-      const outcome = await Effect.runPromise(
-        Effect.provide(
-          Effect.match(
-            Effect.gen(function* () {
-              const runtime = yield* ToolRuntimePort;
-              return yield* runtime.invoke(
-                {
-                  ...intent(receipt.argumentsJson),
-                  toolName: "shell",
-                  toolVersion: "2",
-                  invocationId,
-                  approvalId: null,
-                } as never,
-                receipt.context,
-              );
-            }),
-            {
-              onFailure: (cause) => ({ _tag: "Failure" as const, cause }),
-              onSuccess: (value) => ({ _tag: "Success" as const, value }),
+      const outcome = await runShellRetryMatched(
+        retryApp(
+          {
+            name: "shell",
+            write: true,
+            requiresApproval: () => false,
+            execute: () => {
+              executorCalls += 1;
+              return Effect.die(new Error("terminal receipt replay executed"));
             },
-          ),
-          app(
-            false,
-            {
-              name: "shell",
-              write: true,
-              requiresApproval: () => false,
-              execute: () => {
-                executorCalls += 1;
-                return Effect.die(
-                  new Error("terminal receipt replay executed"),
-                );
-              },
-            },
-            {},
-            trace,
-            undefined,
-            false,
-            receipt.prior,
-            "rev",
-            trace.reconciliationRetry,
-          ),
+          },
+          trace,
+          receipt.prior,
         ),
+        receipt.context,
+        receipt.argumentsJson,
       );
 
       expect(outcome).toEqual({
@@ -120,59 +87,27 @@ describe("tool runtime pipeline", () => {
   it("falls back to strict replay when a terminal Reconcilable Success has no selected fact", async () => {
     const receipt = p39TerminalReceiptCase("Success");
     const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
+      ...newTrace(),
       p40WinnerEvidence: receipt.settlementEvidence,
-      reconciliationRetry: {
-        profile: receipt.profile,
-        verifiedBinding: receipt.verifiedBinding,
-        attempt: receipt.attempt,
-        authority: receipt.authority,
-        result: receipt.result,
-        factId: receipt.factId,
-        settlementEvidence: receipt.settlementEvidence,
-      },
+      reconciliationRetry: retryHarness(receipt),
     };
     let executorCalls = 0;
-    const result = await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          const runtime = yield* ToolRuntimePort;
-          return yield* runtime.invoke(
-            {
-              ...intent(receipt.argumentsJson),
-              toolName: "shell",
-              toolVersion: "2",
-              invocationId,
-              approvalId: null,
-            } as never,
-            receipt.context,
-          );
-        }),
-        app(
-          false,
-          {
-            name: "shell",
-            write: true,
-            requiresApproval: () => false,
-            execute: () => {
-              executorCalls += 1;
-              return Effect.die(new Error("ordinary receipt replay executed"));
-            },
+    const result = await runShellRetry(
+      retryApp(
+        {
+          name: "shell",
+          write: true,
+          requiresApproval: () => false,
+          execute: () => {
+            executorCalls += 1;
+            return Effect.die(new Error("ordinary receipt replay executed"));
           },
-          {},
-          trace,
-          undefined,
-          false,
-          receipt.prior,
-          "rev",
-          trace.reconciliationRetry,
-        ),
+        },
+        trace,
+        receipt.prior,
       ),
+      receipt.context,
+      receipt.argumentsJson,
     );
 
     expect(result).toEqual(receipt.settlementEvidence.observation);
@@ -191,64 +126,26 @@ describe("tool runtime pipeline", () => {
       settlement: { _tag: "ExpectedFailure" as const },
     } satisfies ToolInvocationRecord;
     const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
+      ...newTrace(),
       workspaceBoundaryAddresses: [{ _tag: "GitWorktree", path: "/repo/b" }],
       workspaceRevisionSequence: [1, 1],
       p40WinnerEvidence: receipt.settlementEvidence,
-      reconciliationRetry: {
-        profile: receipt.profile,
-        verifiedBinding: receipt.verifiedBinding,
-        attempt: receipt.attempt,
-        authority: receipt.authority,
-        result: receipt.result,
-        factId: receipt.factId,
-        settlementEvidence: receipt.settlementEvidence,
-      },
+      reconciliationRetry: retryHarness(receipt),
     };
-    const outcome = await Effect.runPromise(
-      Effect.provide(
-        Effect.match(
-          Effect.gen(function* () {
-            const runtime = yield* ToolRuntimePort;
-            return yield* runtime.invoke(
-              {
-                ...intent(receipt.argumentsJson),
-                toolName: "shell",
-                toolVersion: "2",
-                invocationId,
-                approvalId: null,
-              } as never,
-              receipt.context,
-            );
-          }),
-          {
-            onFailure: (cause) => ({ _tag: "Failure" as const, cause }),
-            onSuccess: (value) => ({ _tag: "Success" as const, value }),
-          },
-        ),
-        app(
-          false,
-          {
-            name: "shell",
-            write: true,
-            requiresApproval: () => false,
-            execute: () =>
-              Effect.die(new Error("ordinary receipt drift executed")),
-          },
-          {},
-          trace,
-          undefined,
-          false,
-          ordinarySettled,
-          "rev",
-          trace.reconciliationRetry,
-        ),
+    const outcome = await runShellRetryMatched(
+      retryApp(
+        {
+          name: "shell",
+          write: true,
+          requiresApproval: () => false,
+          execute: () =>
+            Effect.die(new Error("ordinary receipt drift executed")),
+        },
+        trace,
+        ordinarySettled,
       ),
+      receipt.context,
+      receipt.argumentsJson,
     );
 
     expect(outcome._tag).toBe("Failure");
@@ -278,12 +175,7 @@ describe("tool runtime pipeline", () => {
     async (invalidReceipt) => {
       const receipt = p39TerminalReceiptCase();
       const trace: PipelineTrace = {
-        noEffectDenials: [],
-        events: [],
-        approvalConsumer: null,
-        intentWrites: 0,
-        effectAdmissions: 0,
-        approvalConsumes: 0,
+        ...newTrace(),
         p40WinnerEvidence: receipt.settlementEvidence,
         ...(invalidReceipt === "corrupt-evidence"
           ? { p40ReadFailure: "HashMismatch" as const }
@@ -309,15 +201,7 @@ describe("tool runtime pipeline", () => {
               workspaceRevisionSequence: [1, 1],
             }
           : {}),
-        reconciliationRetry: {
-          profile: receipt.profile,
-          verifiedBinding: receipt.verifiedBinding,
-          attempt: receipt.attempt,
-          authority: receipt.authority,
-          result: receipt.result,
-          factId: receipt.factId,
-          settlementEvidence: receipt.settlementEvidence,
-        },
+        reconciliationRetry: retryHarness(receipt),
       };
       const eapId = "eap_terminal_receipt_context";
       const mismatchedPrior =
@@ -369,51 +253,27 @@ describe("tool runtime pipeline", () => {
       const intentApprovalId =
         invalidReceipt === "approval-id" ? "iap_different_receipt" : null;
       let executorCalls = 0;
-      const outcome = await Effect.runPromise(
-        Effect.provide(
-          Effect.match(
-            Effect.gen(function* () {
-              const runtime = yield* ToolRuntimePort;
-              return yield* runtime.invoke(
-                {
-                  ...intent(receipt.argumentsJson),
-                  toolName: "shell",
-                  toolVersion: "2",
-                  invocationId,
-                  approvalId: intentApprovalId,
-                } as never,
-                contextWithMismatch,
-              );
-            }),
-            {
-              onFailure: (cause) => ({ _tag: "Failure" as const, cause }),
-              onSuccess: (value) => ({ _tag: "Success" as const, value }),
+      const outcome = await runShellRetryMatched(
+        retryApp(
+          {
+            name: "shell",
+            write: true,
+            requiresApproval: () => false,
+            execute: () => {
+              executorCalls += 1;
+              return Effect.succeed({
+                settlement: { _tag: "Success" as const },
+                observation: { text: "should not execute", truncated: false },
+                resultRef: null,
+              });
             },
-          ),
-          app(
-            false,
-            {
-              name: "shell",
-              write: true,
-              requiresApproval: () => false,
-              execute: () => {
-                executorCalls += 1;
-                return Effect.succeed({
-                  settlement: { _tag: "Success" as const },
-                  observation: { text: "should not execute", truncated: false },
-                  resultRef: null,
-                });
-              },
-            },
-            {},
-            trace,
-            undefined,
-            false,
-            mismatchedPrior,
-            "rev",
-            trace.reconciliationRetry,
-          ),
+          },
+          trace,
+          mismatchedPrior,
         ),
+        contextWithMismatch,
+        receipt.argumentsJson,
+        intentApprovalId,
       );
 
       expect(outcome._tag).toBe("Failure");

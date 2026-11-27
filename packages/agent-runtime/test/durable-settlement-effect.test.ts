@@ -247,7 +247,5 @@ describe("direct Control settlement effect commit", () => {
     expect(harness.state().items).toHaveLength(1);
 
     expect(handlerCalls).toBe(2);
-    expect(harness.state().waitEffects).toBe(1);
-    expect(harness.state().items).toHaveLength(1);
   });
 });

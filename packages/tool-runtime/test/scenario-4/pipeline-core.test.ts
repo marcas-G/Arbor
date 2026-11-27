@@ -8,7 +8,7 @@ import {
 import { createShellExecutor } from "../../src/tools/shell.js";
 import { okExecutor } from "./support.js";
 import { app, run, runShell } from "./support-app.js";
-import type { PipelineTrace } from "./support-harness.js";
+import { newTrace, type PipelineTrace } from "./support-harness.js";
 
 describe("tool runtime pipeline", () => {
   it("distinguishes post-I/O authority denial from executable approval denial", () => {
@@ -71,14 +71,7 @@ describe("tool runtime pipeline", () => {
       "r'm' -rf /",
       "& 'sudo' rm -rf /",
     ]) {
-      const trace: PipelineTrace = {
-        noEffectDenials: [],
-        events: [],
-        approvalConsumer: null,
-        intentWrites: 0,
-        effectAdmissions: 0,
-        approvalConsumes: 0,
-      };
+      const trace: PipelineTrace = newTrace();
       const shell = createShellExecutor();
       const result = await runShell(app(false, shell, {}, trace), command);
 
@@ -93,14 +86,7 @@ describe("tool runtime pipeline", () => {
   });
 
   it("projects a typed authority policy rejection as Denied without execution", async () => {
-    const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
-    };
+    const trace: PipelineTrace = newTrace();
     let executorCalls = 0;
     const executor: ToolExecutor = {
       ...okExecutor,

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, it } from "vitest";
 import type { ToolExecutionResult } from "../src/runtime.js";
 
 const rnoSettlement = {
@@ -7,13 +7,13 @@ const rnoSettlement = {
   reconciliationFactRef: "fact_p39_selected",
 } as const;
 
-const runtimeResult: ToolExecutionResult = {
+const _runtimeResult: ToolExecutionResult = {
   settlement: rnoSettlement,
   observation: { text: "no effect", truncated: false },
   resultRef: "artifact_p4_result",
 };
 
-const executorSelectedResult: ToolExecutionResult = {
+const _executorSelectedResult: ToolExecutionResult = {
   settlement: rnoSettlement,
   observation: { text: "no effect", truncated: false },
   resultRef: "artifact_p4_result",
@@ -26,7 +26,9 @@ const executorSelectedResult: ToolExecutionResult = {
 
 describe("reconciliation selection typing", () => {
   it("accepts the effect outcome without accepting executor-authored selection", () => {
-    expect(runtimeResult.settlement).toEqual(rnoSettlement);
-    expect(executorSelectedResult).toBeDefined();
+    // The contract is compile-time only: the @ts-expect-error above proves
+    // ToolExecutionResult rejects an executor-authored reconciliationSelection
+    // (selection is derived from RecoveryEvidenceStore, not executor output).
+    // No runtime surface exists to assert.
   });
 });
