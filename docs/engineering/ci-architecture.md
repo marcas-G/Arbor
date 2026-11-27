@@ -2,7 +2,7 @@
 
 Status: adopted 2026-11-27 (owner decision, full 16-section source plan
 from the owner's parallel analysis). Owner document for the CI campaign.
-The interim four-job split (PR #51) is a stepping stone inside stage 2.
+The interim four-job split (PR #51) is a stepping stone inside stage 2. The current quality workflow runs on dedicated `self-hosted, linux, x64, arbor-ci` runners; CodeQL remains GitHub-hosted.
 
 ## Problems measured at master@1492bfe2
 
