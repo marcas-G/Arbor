@@ -501,12 +501,11 @@ export const ControlActionAuthorizerLive: Layer.Layer<
               approvalRevision: approval.revision,
               actionDigest,
               controlBasisDigest,
+              // Bind every approved AssignWork — current-Workspace and
+              // direct-child alike — to its Gateway Command receipt: the
+              // command consumes the ActionApproval with its CommandId and
+              // the runtime only verifies that consumption (DID §9.9).
               ...(input.action._tag === "AssignWork" &&
-              ((input.action.targetWorkspaceRef !== undefined &&
-                input.action.targetWorkspaceRef !== "current") ||
-                (input.action.targetWorkspaceId !== undefined &&
-                  input.action.targetWorkspaceId !==
-                    input.execution.workspaceId)) &&
               approval.state === "Approved" &&
               approval.bindingProven === true
                 ? {
