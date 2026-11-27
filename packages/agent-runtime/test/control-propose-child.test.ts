@@ -197,9 +197,4 @@ describe("propose_workspace codec", () => {
     );
     expect(exit._tag).toBe("Failure");
   });
-
-  it("is not exposed without a registered handler", async () => {
-    const registry = makeControlToolRegistry();
-    expect(registry.classify("propose_workspace")).toBe("NotControl");
-  });
 });

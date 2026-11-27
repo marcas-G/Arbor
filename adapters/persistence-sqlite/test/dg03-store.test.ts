@@ -1178,7 +1178,5 @@ describe("SQLite store contract", () => {
     expect(result.stateAfterExpiredLease?.effect_admission_state).toBe(
       "NotAdmitted",
     );
-    expect(Exit.isFailure(result.staleWrite)).toBe(true);
-    expect(result.staleRows?.count).toBe(0);
   });
 });

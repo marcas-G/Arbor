@@ -1,46 +1,22 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ToolExecutionContext, ToolIntent } from "@arbor/ports";
 import { it } from "@effect/vitest";
 import { Effect } from "effect";
 import { describe, expect } from "vitest";
 import { listExecutor } from "../src/index.js";
+import { executeFsTool, fsToolSandbox } from "./fs-tool-harness.js";
 
 const root = mkdtempSync(join(tmpdir(), "arbor-list-"));
 writeFileSync(join(root, "a.txt"), "a");
-
-const intent = (argumentsJson: string): ToolIntent => ({
-  callRef: "c",
-  toolName: "list",
-  toolVersion: "2",
-  argumentsJson,
-  invocationId: "tin_x" as never,
-  approvalId: null,
-});
-const context = {} as ToolExecutionContext;
-const sandbox = {
-  handleId: "s",
-  rootPath: root,
-  mounts: [
-    {
-      ref: "workspace",
-      rootPath: root,
-      region: { resourceSpaceId: "filesystem", normalizedRegion: {} },
-      access: "ReadOnly" as const,
-    },
-  ],
-  writableRegions: [],
-};
+const sandbox = fsToolSandbox(root, "ReadOnly");
 
 const executeList = (argumentsJson: string) =>
-  listExecutor.execute({
-    intent: intent(argumentsJson),
-    definition: {} as never,
-    context,
+  executeFsTool(
+    listExecutor,
+    { toolName: "list", toolVersion: "2", argumentsJson },
     sandbox,
-    regions: [],
-  });
+  );
 
 describe("list tool", () => {
   it.effect("lists a relative target within the sandbox", () =>

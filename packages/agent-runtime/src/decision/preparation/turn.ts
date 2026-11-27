@@ -4,17 +4,21 @@ import type {
   Work,
   Workspace,
 } from "@arbor/domain";
+import { responsibilityBound } from "@arbor/domain";
 import {
   type ControlBasis,
   GENERIC_COGNITION_PROGRAM,
   type InstructionFragment,
+  ModelContext,
   type projectCompressibleHistory,
   type SessionTimelineProjection,
   type TurnPreparation,
+  TurnProfileResolver,
 } from "@arbor/model-context";
 import type {
   AgentLoopStepIdentity,
   AgentLoopStepRecord,
+  DecisionRequestStore,
   ExecutionDriverError,
   PortableInputItem,
   ProviderRunInput,
@@ -41,15 +45,11 @@ import {
 type PreparationDependencies = Pick<
   ModelDecisionDependencies,
   | "input"
-  | "agentBinding"
   | "capability"
-  | "modelContext"
   | "tx"
   | "loopSteps"
   | "loopStepFence"
   | "providerTurns"
-  | "turnProfileResolver"
-  | "decisionRequests"
   | "options"
   | "now"
   | "conversationCheckpoints"
@@ -105,16 +105,16 @@ export const prepareTurnForDecision = (
       settlement: ExecutionSettlement,
     ) => Effect.Effect<ModelDecisionOutcome, ExecutionDriverError>;
   },
-): Effect.Effect<PreparationResult, TurnPreparationError> => {
-  const {
-    input,
-    agentBinding,
-    capability,
-    modelContext,
-    loopStepFence,
-    turnProfileResolver,
-    options,
-  } = dependencies;
+): Effect.Effect<
+  PreparationResult,
+  TurnPreparationError,
+  ModelContext | TurnProfileResolver | DecisionRequestStore
+> => {
+  const { input, capability, loopStepFence, options } = dependencies;
+  const agentBinding =
+    input.execution.binding._tag === "WorkspaceExecution"
+      ? responsibilityBound(input.execution.binding.workspaceId)
+      : input.execution.binding;
   const {
     turn,
     repairFragments,
@@ -136,6 +136,8 @@ export const prepareTurnForDecision = (
   } = phase;
   const { conversationMessages, conversationExecution } = phase.conversation;
   return Effect.gen(function* () {
+    const modelContext = yield* ModelContext;
+    const turnProfileResolver = yield* TurnProfileResolver;
     let compactionAttempts = phase.compactionAttempts;
     const instructions = yield* assembleDecisionInstructions(dependencies, {
       workspace,

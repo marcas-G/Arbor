@@ -10,7 +10,13 @@ import {
 } from "@arbor/ports";
 import { Effect, Layer } from "effect";
 import { ToolDefinitionStoreLive, type ToolExecutor } from "../../src/index.js";
-import { authority, context, intent, okExecutor } from "./support.js";
+import {
+  authority,
+  context,
+  intent,
+  invocationId,
+  okExecutor,
+} from "./support.js";
 import {
   clockDeps,
   invocationStoreDeps,
@@ -227,4 +233,88 @@ export const runFailure = (
         appLayer,
       ),
     ) as Effect.Effect<ToolRuntimeError, never, never>,
+  );
+
+/** The P39 retry app wiring shared by the replay-gatekeeping,
+ * terminal-receipts and reconciliation-recovery suites: fresh executor and
+ * trace with the prior invocation replayed against revision "rev". */
+export const retryApp = (
+  executor: ToolExecutor,
+  trace: PipelineTrace,
+  prior: import("@arbor/ports").ToolInvocationRecord,
+  // biome-ignore lint/suspicious/noExplicitAny: test helper erases the app layer type
+): Layer.Layer<any, any, never> =>
+  app(
+    false,
+    executor,
+    {},
+    trace,
+    undefined,
+    false,
+    prior,
+    "rev",
+    trace.reconciliationRetry,
+  );
+
+const shellRetryIntent = (argumentsJson: string, approvalId: string | null) =>
+  ({
+    ...intent(argumentsJson),
+    toolName: "shell",
+    toolVersion: "2",
+    invocationId,
+    approvalId,
+  }) as never;
+
+/** Invoke a shell retry through the given (retry-wired) app layer. */
+export const runShellRetry = (
+  // biome-ignore lint/suspicious/noExplicitAny: test helper erases the app layer type
+  appLayer: Layer.Layer<any, any, any>,
+  executionContext: import("@arbor/ports").ToolExecutionContext,
+  argumentsJson: string,
+  approvalId: string | null = null,
+): Promise<{ _tag: string }> =>
+  Effect.runPromise(
+    Effect.provide(
+      Effect.gen(function* () {
+        const runtime = yield* ToolRuntimePort;
+        return yield* runtime.invoke(
+          shellRetryIntent(argumentsJson, approvalId),
+          executionContext,
+        );
+      }),
+      appLayer,
+    ) as Effect.Effect<{ _tag: string }, unknown, never>,
+  );
+
+/** Same as runShellRetry, but folding the failure channel into the result so
+ * a denial/failure assertion stays one expect on a tagged object. */
+export const runShellRetryMatched = (
+  // biome-ignore lint/suspicious/noExplicitAny: test helper erases the app layer type
+  appLayer: Layer.Layer<any, any, any>,
+  executionContext: import("@arbor/ports").ToolExecutionContext,
+  argumentsJson: string,
+  approvalId: string | null = null,
+) =>
+  Effect.runPromise(
+    Effect.provide(
+      Effect.match(
+        Effect.gen(function* () {
+          const runtime = yield* ToolRuntimePort;
+          return yield* runtime.invoke(
+            shellRetryIntent(argumentsJson, approvalId),
+            executionContext,
+          );
+        }),
+        {
+          onFailure: (cause) => ({ _tag: "Failure" as const, cause }),
+          onSuccess: (value) => ({ _tag: "Success" as const, value }),
+        },
+      ),
+      appLayer,
+    ) as Effect.Effect<
+      | { _tag: "Failure"; cause: ToolRuntimeError }
+      | { _tag: "Success"; value: never },
+      never,
+      never
+    >,
   );

@@ -11,6 +11,7 @@ import type {
   ExecutionDriverError,
   PortableInputItem,
 } from "@arbor/ports";
+import { DecisionRequestStore } from "@arbor/ports";
 import { Effect, Option } from "effect";
 import type { ModelDecisionOutcome } from "../../agent-loop-policy.js";
 import type { SummaryCompactionInput } from "../../compaction-coordinator.js";
@@ -31,7 +32,7 @@ import type { DecisionInstructionError } from "./errors.js";
 
 type InstructionDependencies = Pick<
   ModelDecisionDependencies,
-  "input" | "tx" | "loopSteps" | "providerTurns" | "decisionRequests"
+  "input" | "tx" | "loopSteps" | "providerTurns"
 >;
 
 export type CompactionWorkPinning = Pick<
@@ -67,9 +68,12 @@ export const assembleDecisionInstructions = (
       settlement: ExecutionSettlement,
     ) => Effect.Effect<ModelDecisionOutcome, ExecutionDriverError>;
   },
-): Effect.Effect<InstructionAssembly, DecisionInstructionError> => {
-  const { input, tx, loopSteps, providerTurns, decisionRequests } =
-    dependencies;
+): Effect.Effect<
+  InstructionAssembly,
+  DecisionInstructionError,
+  DecisionRequestStore
+> => {
+  const { input, tx, loopSteps, providerTurns } = dependencies;
   const {
     workspace,
     currentWork,
@@ -82,6 +86,7 @@ export const assembleDecisionInstructions = (
     proposeSettlement,
   } = phase;
   return Effect.gen(function* () {
+    const decisionRequests = yield* DecisionRequestStore;
     const workContext = assembleWorkContext(
       workspace.value,
       currentWork,
@@ -128,10 +133,7 @@ export const assembleDecisionInstructions = (
       );
     }
     const boundEpisode = executionEpisode(input.execution);
-    if (
-      boundEpisode?._tag === "DecisionEpisode" &&
-      decisionRequests !== undefined
-    ) {
+    if (boundEpisode?._tag === "DecisionEpisode") {
       const request = yield* tx.transact(
         decisionRequests.findById(boundEpisode.decisionId),
       );

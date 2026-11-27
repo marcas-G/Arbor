@@ -156,6 +156,9 @@ export const ModelDecisionServiceLive = (
         effect: Effect.Effect<
           A,
           E,
+          | ModelContext
+          | TurnProfileResolver
+          | DecisionRequestStore
           | LocalPlanStore
           | WorkspaceKnowledgePort
           | WorkspacePlacementPort
@@ -167,6 +170,9 @@ export const ModelDecisionServiceLive = (
         >,
       ): Effect.Effect<A, E> =>
         effect.pipe(
+          Effect.provideService(ModelContext, modelContext),
+          Effect.provideService(TurnProfileResolver, turnProfileResolver),
+          Effect.provideService(DecisionRequestStore, decisionRequests),
           Effect.provideService(WorkspaceKnowledgePort, workspaceKnowledge),
           Effect.provideService(WorkspacePlacementPort, workspacePlacement),
           Effect.provideService(LocalPlanStore, localPlans),
@@ -213,18 +219,14 @@ export const ModelDecisionServiceLive = (
                         execution: input.execution,
                         agentExecutionState: input.agentExecutionState,
                       },
-                      agentBinding,
                       capability,
                       currentControlBasis,
-                      modelContext,
                       providerRuntime,
                       tx,
                       sessions,
                       conversationCheckpoints,
                       blobs,
-                      turnProfileResolver,
                       works,
-                      decisionRequests,
                       workspaces,
                       options: {
                         ...options,

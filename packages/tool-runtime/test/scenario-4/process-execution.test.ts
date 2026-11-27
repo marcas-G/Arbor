@@ -15,17 +15,12 @@ import {
   workspaceId,
 } from "./support.js";
 import { app, run } from "./support-app.js";
-import type { PipelineTrace } from "./support-harness.js";
+import { newTrace, type PipelineTrace } from "./support-harness.js";
 
 describe("tool runtime pipeline", () => {
   it("opens the full committed process mount set instead of the executor's single target", async () => {
     const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
+      ...newTrace(),
       sandboxCapabilities: [sandboxCapability("bwrap", "Supported", "0.8.0")],
     };
     const policy = processPolicy(processEpisode);
@@ -76,12 +71,7 @@ describe("tool runtime pipeline", () => {
 
   it("rejects an invalid requested process timeout before provider execution", async () => {
     const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
+      ...newTrace(),
       sandboxCapabilities: [sandboxCapability("bwrap", "Supported", "0.8.0")],
     };
     const invalidTimeoutExecutor: ToolExecutor = {
@@ -126,12 +116,7 @@ describe("tool runtime pipeline", () => {
 
   it("does not inject process capability or trust an unavailable result from an unregistered executor", async () => {
     const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
+      ...newTrace(),
       sandboxCapabilities: [sandboxCapability("bwrap", "Supported", "0.8.0")],
     };
     let processRunnerInjected = false;
@@ -196,12 +181,7 @@ describe("tool runtime pipeline", () => {
 
   it("returns typed provider unavailability without TrustedLocal fallback", async () => {
     const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
+      ...newTrace(),
       sandboxCapabilities: [
         sandboxCapability("bwrap", "Experimental", "0.8.0"),
         sandboxCapability("TrustedLocal", "Supported", "builtin-v1"),
@@ -229,12 +209,7 @@ describe("tool runtime pipeline", () => {
 
   it("rejects a newly received process action before writing intent when Disabled", async () => {
     const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
+      ...newTrace(),
       processExecutionMode: "Disabled",
       sandboxCapabilities: [
         sandboxCapability("bwrap", "Supported", "0.8.0"),
@@ -262,12 +237,7 @@ describe("tool runtime pipeline", () => {
 
   it("rejects a newly received process action when Native mode has no qualified tuple", async () => {
     const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
+      ...newTrace(),
       processExecutionMode: "NativeOsSupportedOnly",
       nativeOsSupportedTupleAvailable: false,
     };
@@ -308,12 +278,7 @@ describe("tool runtime pipeline", () => {
       reasonCode,
     }) => {
       const trace: PipelineTrace = {
-        noEffectDenials: [],
-        events: [],
-        approvalConsumer: null,
-        intentWrites: 0,
-        effectAdmissions: 0,
-        approvalConsumes: 0,
+        ...newTrace(),
         processExecutionMode,
         nativeOsSupportedTupleAvailable,
         persistSandboxInvocations: true,
@@ -385,12 +350,7 @@ describe("tool runtime pipeline", () => {
 
   it("does not use TrustedLocal as a Native mode fallback", async () => {
     const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
+      ...newTrace(),
       sandboxCapabilities: [],
     };
     const policy: SandboxProcessPolicy = {
@@ -422,12 +382,7 @@ describe("tool runtime pipeline", () => {
 
   it("uses TrustedLocal only when the test harness explicitly injects it", async () => {
     const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
+      ...newTrace(),
       processExecutionMode: "Disabled",
       nativeOsSupportedTupleAvailable: false,
       testOnlyAllowTrustedLocalProcessExecution: true,
@@ -458,12 +413,7 @@ describe("tool runtime pipeline", () => {
 
   it("binds provider-version mismatch unavailability to the durable policy tuple", async () => {
     const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
+      ...newTrace(),
       sandboxCapabilities: [sandboxCapability("bwrap", "Supported", "0.9.0")],
     };
     const result = await run(
@@ -486,12 +436,7 @@ describe("tool runtime pipeline", () => {
 
   it("binds capability-revision mismatch unavailability to the durable policy tuple", async () => {
     const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
+      ...newTrace(),
       sandboxCapabilities: [
         sandboxCapability("bwrap", "Supported", "0.8.0", "capability-v2"),
       ],
@@ -516,12 +461,7 @@ describe("tool runtime pipeline", () => {
 
   it("pins provider version and clamps a requested timeout to policy", async () => {
     const trace: PipelineTrace = {
-      noEffectDenials: [],
-      events: [],
-      approvalConsumer: null,
-      intentWrites: 0,
-      effectAdmissions: 0,
-      approvalConsumes: 0,
+      ...newTrace(),
       sandboxCapabilities: [sandboxCapability("bwrap", "Supported", "0.8.0")],
     };
     const result = await run(

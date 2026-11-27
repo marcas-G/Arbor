@@ -10,11 +10,14 @@ import {
 } from "@arbor/domain";
 import {
   type InstructionFragment,
+  type ModelContext,
   SESSION_TIMELINE_ENTRY_LIMIT,
+  type TurnProfileResolver,
 } from "@arbor/model-context";
 import type {
   ConversationAttemptStore,
   ConversationResponseJobStore,
+  DecisionRequestStore,
   ExecutionDriverError,
   ExecutionRepository,
   HumanMessageStore,
@@ -89,6 +92,9 @@ export const runModelDecision = (
   ModelDecisionOutcome,
   ExecutionDriverError,
   // E05 sink: capabilities acquired directly by decision submodules.
+  | ModelContext
+  | TurnProfileResolver
+  | DecisionRequestStore
   | LocalPlanStore
   | WorkspaceKnowledgePort
   | WorkspacePlacementPort

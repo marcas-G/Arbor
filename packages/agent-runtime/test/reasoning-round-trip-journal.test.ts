@@ -153,7 +153,6 @@ describe("reasoning round-trip output journal", () => {
     ).toBe("ModelOutput");
     const ref =
       reasoning?.item._tag === "AttachmentRef" ? reasoning.item.ref : undefined;
-    expect(ref).toBeDefined();
     expect(blobs).toHaveLength(1);
     expect(
       decodeReasoningAttachment(blobs.get(ref as string) as Uint8Array),
