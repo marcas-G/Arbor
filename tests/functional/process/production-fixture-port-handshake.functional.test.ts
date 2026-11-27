@@ -133,6 +133,19 @@ const waitForProcessGone = async (pid: number, timeoutMs: number) => {
   while (true) {
     try {
       process.kill(pid, 0);
+      if (process.platform === "linux") {
+        try {
+          const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+          const endOfCommand = stat.lastIndexOf(") ");
+          if (endOfCommand >= 0) {
+            const state = stat.slice(endOfCommand + 2).split(" ")[0];
+            if (state === "Z") return;
+          }
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+          throw error;
+        }
+      }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ESRCH") return;
       throw error;
