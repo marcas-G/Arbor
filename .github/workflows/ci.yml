@@ -15,6 +15,17 @@ permissions:
   contents: read
   pull-requests: read
 
+defaults:
+  run:
+    # Container jobs default to `sh`; several steps use bashisms (mapfile,
+    # process substitution) and the repo's scripts assume bash.
+    shell: bash
+
+env:
+  # Node tooling inside the job containers must reach their packages through
+  # the host proxy; the runner forwards HTTP(S)_PROXY into the container.
+  NODE_USE_ENV_PROXY: "1"
+
 jobs:
   plan:
     # CI campaign PR 5 — impact-analysis shadow mode. Generates the CI
@@ -26,17 +37,17 @@ jobs:
     # failures degrade to a conservative full-selection plan so lane
     # obligations never depend on this job's logic.
     runs-on: [self-hosted, linux, x64, arbor-ci]
+    container:
+      image: node:24.21.0-bookworm
+      options: --user 1000:1000 --cpus=2 --memory=8g
+      volumes:
+        - arbor-pnpm-store:/pnpm-store
     timeout-minutes: 10
     steps:
       - name: Checkout full history
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Install Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24.21.0
 
       - name: Resolve comparison base
         id: comparison_base
@@ -74,6 +85,11 @@ jobs:
     # naming ratchet. ~4 minutes; failures localize here without waiting
     # for the long lanes.
     runs-on: [self-hosted, linux, x64, arbor-ci]
+    container:
+      image: node:24.21.0-bookworm
+      options: --user 1000:1000 --cpus=2 --memory=8g
+      volumes:
+        - arbor-pnpm-store:/pnpm-store
     timeout-minutes: 20
     steps:
       - name: Checkout full history
@@ -98,16 +114,6 @@ jobs:
         uses: pnpm/action-setup@v4
         with:
           version: 12.4.2
-          # The default (~/setup-pnpm) is shared by every runner on this
-          # host; concurrent jobs then race on rmdir and fail with
-          # ENOTEMPTY. runner.temp is per job, so the install is isolated.
-          dest: ${{ runner.temp }}/pnpm
-
-      - name: Install Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24.21.0
-          cache: pnpm
 
       - name: Verify Linux runner storage
         run: node scripts/ci/verify-runner-storage.mjs
@@ -123,7 +129,7 @@ jobs:
           echo "TEMP=$ci_tmp" >> "$GITHUB_ENV"
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --store-dir /pnpm-store
 
       - name: Lint
         run: pnpm lint
@@ -143,6 +149,11 @@ jobs:
   unit:
     # Build once, then core tests + the source-size ratchet + coverage.
     runs-on: [self-hosted, linux, x64, arbor-ci]
+    container:
+      image: node:24.21.0-bookworm
+      options: --user 1000:1000 --cpus=3 --memory=8g
+      volumes:
+        - arbor-pnpm-store:/pnpm-store
     timeout-minutes: 45
     steps:
       - name: Checkout full history
@@ -167,16 +178,6 @@ jobs:
         uses: pnpm/action-setup@v4
         with:
           version: 12.4.2
-          # The default (~/setup-pnpm) is shared by every runner on this
-          # host; concurrent jobs then race on rmdir and fail with
-          # ENOTEMPTY. runner.temp is per job, so the install is isolated.
-          dest: ${{ runner.temp }}/pnpm
-
-      - name: Install Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24.21.0
-          cache: pnpm
 
       - name: Verify Linux runner storage
         run: node scripts/ci/verify-runner-storage.mjs
@@ -192,7 +193,7 @@ jobs:
           echo "TEMP=$ci_tmp" >> "$GITHUB_ENV"
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --store-dir /pnpm-store
 
       - name: Build
         run: pnpm build
@@ -222,6 +223,14 @@ jobs:
     # baseline measured 9-31 min per 6-way shard, so balance matters as
     # much as width.
     runs-on: [self-hosted, linux, x64, arbor-ci]
+    container:
+      image: node:24.21.0-bookworm
+      # Functional shards run one test file at a time but each bootstraps a
+      # daemon plus a web server and browser-less client: 3 cpus keeps the
+      # shard under its standalone budget instead of starving its neighbours.
+      options: --user 1000:1000 --cpus=3 --memory=8g
+      volumes:
+        - arbor-pnpm-store:/pnpm-store
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -239,16 +248,6 @@ jobs:
         uses: pnpm/action-setup@v4
         with:
           version: 12.4.2
-          # The default (~/setup-pnpm) is shared by every runner on this
-          # host; concurrent jobs then race on rmdir and fail with
-          # ENOTEMPTY. runner.temp is per job, so the install is isolated.
-          dest: ${{ runner.temp }}/pnpm
-
-      - name: Install Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24.21.0
-          cache: pnpm
 
       - name: Verify Linux runner storage
         run: node scripts/ci/verify-runner-storage.mjs
@@ -264,7 +263,7 @@ jobs:
           echo "TEMP=$ci_tmp" >> "$GITHUB_ENV"
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --store-dir /pnpm-store
 
       - name: Build
         run: pnpm build
@@ -299,6 +298,11 @@ jobs:
     # only .functional.test.ts and need no browser). The Microsoft apt
     # mirror 403s transiently on self-hosted runners — one retry.
     runs-on: [self-hosted, linux, x64, arbor-ci]
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-noble
+      options: --user 1000:1000 --cpus=2 --memory=8g
+      volumes:
+        - arbor-pnpm-store:/pnpm-store
     timeout-minutes: 25
     steps:
       - name: Checkout full history
@@ -310,16 +314,6 @@ jobs:
         uses: pnpm/action-setup@v4
         with:
           version: 12.4.2
-          # The default (~/setup-pnpm) is shared by every runner on this
-          # host; concurrent jobs then race on rmdir and fail with
-          # ENOTEMPTY. runner.temp is per job, so the install is isolated.
-          dest: ${{ runner.temp }}/pnpm
-
-      - name: Install Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24.21.0
-          cache: pnpm
 
       - name: Prepare isolated local temp directory
         shell: bash
@@ -332,23 +326,13 @@ jobs:
           echo "TEMP=$ci_tmp" >> "$GITHUB_ENV"
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --store-dir /pnpm-store
 
       - name: Build
         run: pnpm build
 
       - name: Build web dist
         run: pnpm --filter @arbor/web build
-
-      - name: Install UI browser
-        # The Chromium system libraries are a one-time host prerequisite
-        # (see docs/engineering/README.md); re-running --with-deps here
-        # needs root, which the runner user does not have.
-        run: |
-          pnpm exec playwright install chromium || {
-            sleep 20
-            pnpm exec playwright install chromium
-          }
 
       - name: Download CI plan (shadow mode)
         continue-on-error: true
@@ -376,6 +360,11 @@ jobs:
     needs: [static, unit, functional, functional-ui]
     if: always()
     runs-on: [self-hosted, linux, x64, arbor-ci]
+    container:
+      image: node:24.21.0-bookworm
+      options: --user 1000:1000 --cpus=2 --memory=8g
+      volumes:
+        - arbor-pnpm-store:/pnpm-store
     timeout-minutes: 15
     steps:
       - name: Checkout
@@ -385,19 +374,9 @@ jobs:
         uses: pnpm/action-setup@v4
         with:
           version: 12.4.2
-          # The default (~/setup-pnpm) is shared by every runner on this
-          # host; concurrent jobs then race on rmdir and fail with
-          # ENOTEMPTY. runner.temp is per job, so the install is isolated.
-          dest: ${{ runner.temp }}/pnpm
-
-      - name: Install Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24.21.0
-          cache: pnpm
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --store-dir /pnpm-store
 
       - name: Download coverage
         continue-on-error: true
