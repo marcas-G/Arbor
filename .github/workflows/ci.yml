@@ -16,11 +16,13 @@ permissions:
   pull-requests: read
 
 jobs:
-  quality:
-    # Ephemeral GitHub-hosted Linux VM; the storage preflight below remains
-    # mandatory for SQLite and sandbox tests.
+  static:
+    # Fast lane: everything that needs only the toolchain, no build
+    # artifacts — lint, types, architecture boundaries, manifests and the
+    # naming ratchet. ~4 minutes; failures localize here without waiting
+    # for the long lanes.
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 20
     steps:
       - name: Checkout full history
         uses: actions/checkout@v4
@@ -40,10 +42,16 @@ jobs:
           git cat-file -e "${base}^{commit}"
           echo "sha=$base" >> "$GITHUB_OUTPUT"
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.4.2
+
       - name: Install Node
         uses: actions/setup-node@v4
         with:
           node-version: 24.21.0
+          cache: pnpm
 
       - name: Verify Linux runner storage
         run: node scripts/ci/verify-runner-storage.mjs
@@ -58,11 +66,6 @@ jobs:
           echo "TMP=$ci_tmp" >> "$GITHUB_ENV"
           echo "TEMP=$ci_tmp" >> "$GITHUB_ENV"
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 12.4.2
-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -71,9 +74,6 @@ jobs:
 
       - name: Typecheck
         run: pnpm typecheck
-
-      - name: Build
-        run: pnpm build
 
       - name: Architecture
         run: pnpm architecture
@@ -84,6 +84,59 @@ jobs:
       - name: Semantic-naming transition gate
         run: node scripts/governance/check-semantic-naming.mjs --baseline "${{ steps.comparison_base.outputs.sha }}"
 
+  unit:
+    # Build once, then core tests + the source-size ratchet + coverage.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve comparison base
+        id: comparison_base
+        shell: bash
+        env:
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || github.sha }}
+        run: |
+          base="$EVENT_BASE_SHA"
+          if [[ "$base" =~ ^0+$ ]]; then
+            base="$GITHUB_SHA"
+          fi
+          git cat-file -e "${base}^{commit}"
+          echo "sha=$base" >> "$GITHUB_OUTPUT"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.4.2
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.21.0
+          cache: pnpm
+
+      - name: Verify Linux runner storage
+        run: node scripts/ci/verify-runner-storage.mjs
+
+      - name: Prepare isolated local temp directory
+        shell: bash
+        run: |
+          ci_tmp="$GITHUB_WORKSPACE/.ci-tmp"
+          mkdir -p "$ci_tmp"
+          chmod 700 "$ci_tmp"
+          echo "TMPDIR=$ci_tmp" >> "$GITHUB_ENV"
+          echo "TMP=$ci_tmp" >> "$GITHUB_ENV"
+          echo "TEMP=$ci_tmp" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
       - name: Core tests
         run: pnpm test
 
@@ -93,11 +146,94 @@ jobs:
       - name: Coverage
         run: pnpm test:coverage
 
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: arbor-coverage-${{ github.sha }}
+          if-no-files-found: warn
+          path: coverage/
+
+  functional:
+    # The daemon-boot release journey. Build + browser, then the
+    # serialized functional lane.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.4.2
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.21.0
+          cache: pnpm
+
+      - name: Verify Linux runner storage
+        run: node scripts/ci/verify-runner-storage.mjs
+
+      - name: Prepare isolated local temp directory
+        shell: bash
+        run: |
+          ci_tmp="$GITHUB_WORKSPACE/.ci-tmp"
+          mkdir -p "$ci_tmp"
+          chmod 700 "$ci_tmp"
+          echo "TMPDIR=$ci_tmp" >> "$GITHUB_ENV"
+          echo "TMP=$ci_tmp" >> "$GITHUB_ENV"
+          echo "TEMP=$ci_tmp" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
       - name: Install functional UI browser
         run: pnpm exec playwright install --with-deps chromium
 
       - name: Functional release journey
         run: pnpm test:functional
+
+  health:
+    # Post-lane aggregation: audit + the health snapshot over the unit
+    # lane's coverage artifact. Not a required check (skips are
+    # ambiguous when an upstream lane fails); its verdict rides the
+    # run summary and the uploaded snapshot.
+    needs: [static, unit, functional]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.4.2
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.21.0
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Download coverage
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: arbor-coverage-${{ github.sha }}
+          path: coverage/
 
       - name: Dependency audit
         id: audit
@@ -110,7 +246,7 @@ jobs:
         env:
           ARBOR_AUDIT_JSON: ${{ github.workspace }}/audit.json
           ARBOR_AUDIT_STATUS: ${{ steps.audit.outcome }}
-          ARBOR_BASE_SHA: ${{ steps.comparison_base.outputs.sha }}
+          ARBOR_BASE_SHA: ${{ github.sha }}
         run: node scripts/ci/health-metrics.mjs --enforce > health-metrics.json
 
       - name: Upload health snapshot
@@ -122,4 +258,3 @@ jobs:
           path: |
             health-metrics.json
             audit.json
-            coverage/
