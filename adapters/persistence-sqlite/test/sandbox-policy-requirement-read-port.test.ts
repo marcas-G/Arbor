@@ -1011,97 +1011,46 @@ describe("SandboxPolicyRequirementReadPort", () => {
     );
   });
 
-  it("fails closed when a bound effect-attempt profile differs from RecoveryBinding", async () => {
-    const result = await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          const sql = yield* SqlClient;
-          yield* seedSchema(sql);
-          yield* sql.unsafe(
-            `UPDATE tool_invocation_effect_attempts
+  it.each([
+    {
+      label: "when a bound effect-attempt profile differs from RecoveryBinding",
+      corrupt: `UPDATE tool_invocation_effect_attempts
                 SET profile_id = 'other-profile', profile_version = '1',
                     profile_hash = ?, profile_protocol = 'native-v1',
                     effect_key = 'effect-sandbox-policy-required'
               WHERE invocation_id = ?`,
-            ["e".repeat(64), invocationId],
-          );
-          const transactions = yield* TransactionPort;
-          const port = yield* SandboxPolicyRequirementReadPort;
-          return yield* Effect.match(
-            transactions.transact(
-              port.findPendingByExecution({
-                projectId,
-                workspaceId,
-                executionId,
-              }),
-            ),
-            {
-              onFailure: (error) => ({ _tag: "Failure" as const, error }),
-              onSuccess: (value) => ({ _tag: "Success" as const, value }),
-            },
-          );
-        }),
-        makeApp(),
-      ),
-    );
-    expect(result).toMatchObject({
-      _tag: "Failure",
-      error: {
-        _tag: "PersistenceCorruption",
-        operation: "sandbox-policy-requirement-read",
-      },
-    });
-  });
-
-  it("fails closed on duplicate action evidence", async () => {
-    const result = await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          const sql = yield* SqlClient;
-          yield* seedSchema(sql);
-          yield* sql.unsafe(
-            `INSERT INTO agent_loop_step_actions
+      params: ["e".repeat(64), invocationId],
+      repository: undefined,
+    },
+    {
+      label: "on duplicate action evidence",
+      corrupt: `INSERT INTO agent_loop_step_actions
              SELECT * FROM agent_loop_step_actions WHERE execution_id = ?`,
-            [executionId],
-          );
-          const transactions = yield* TransactionPort;
-          const port = yield* SandboxPolicyRequirementReadPort;
-          return yield* Effect.match(
-            transactions.transact(
-              port.findPendingByExecution({
-                projectId,
-                workspaceId,
-                executionId,
-              }),
-            ),
-            {
-              onFailure: (error) => ({ _tag: "Failure" as const, error }),
-              onSuccess: (value) => ({ _tag: "Success" as const, value }),
-            },
-          );
-        }),
-        makeApp(),
-      ),
-    );
-    expect(result).toMatchObject({
-      _tag: "Failure",
-      error: {
-        _tag: "PersistenceCorruption",
-        operation: "sandbox-policy-requirement-read",
-      },
-    });
-  });
-
-  it("fails closed when a Pending action is not at the current Step cursor", async () => {
+      params: [executionId],
+      repository: undefined,
+    },
+    {
+      label: "when a Pending action is not at the current Step cursor",
+      corrupt:
+        "UPDATE agent_loop_steps SET next_action_index = 0 WHERE execution_id = ?",
+      params: [executionId],
+      repository: undefined,
+    },
+    {
+      label:
+        "on corrupt exact recovery proof instead of treating it as absence",
+      corrupt:
+        "UPDATE tool_invocation_recovery_bindings SET binding_sha256 = ? WHERE invocation_id = ?",
+      params: ["d".repeat(64), invocationId],
+      repository: "ToolObservationEvidenceStore",
+    },
+  ] as const)("fails closed %s", async ({ corrupt, params, repository }) => {
     const result = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
           const sql = yield* SqlClient;
           yield* seedSchema(sql);
-          yield* sql.unsafe(
-            "UPDATE agent_loop_steps SET next_action_index = 0 WHERE execution_id = ?",
-            [executionId],
-          );
+          yield* sql.unsafe(corrupt, params);
           const transactions = yield* TransactionPort;
           const port = yield* SandboxPolicyRequirementReadPort;
           return yield* Effect.match(
@@ -1125,45 +1074,9 @@ describe("SandboxPolicyRequirementReadPort", () => {
       _tag: "Failure",
       error: {
         _tag: "PersistenceCorruption",
-        operation: "sandbox-policy-requirement-read",
-      },
-    });
-  });
-
-  it("fails closed on corrupt exact recovery proof instead of treating it as absence", async () => {
-    const result = await Effect.runPromise(
-      Effect.provide(
-        Effect.gen(function* () {
-          const sql = yield* SqlClient;
-          yield* seedSchema(sql);
-          yield* sql.unsafe(
-            "UPDATE tool_invocation_recovery_bindings SET binding_sha256 = ? WHERE invocation_id = ?",
-            ["d".repeat(64), invocationId],
-          );
-          const transactions = yield* TransactionPort;
-          const port = yield* SandboxPolicyRequirementReadPort;
-          return yield* Effect.match(
-            transactions.transact(
-              port.findPendingByExecution({
-                projectId,
-                workspaceId,
-                executionId,
-              }),
-            ),
-            {
-              onFailure: (error) => ({ _tag: "Failure" as const, error }),
-              onSuccess: (value) => ({ _tag: "Success" as const, value }),
-            },
-          );
-        }),
-        makeApp(),
-      ),
-    );
-    expect(result).toMatchObject({
-      _tag: "Failure",
-      error: {
-        _tag: "PersistenceCorruption",
-        repository: "ToolObservationEvidenceStore",
+        ...(repository === undefined
+          ? {}
+          : { repository: repository as string }),
         operation: "sandbox-policy-requirement-read",
       },
     });
