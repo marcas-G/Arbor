@@ -16,6 +16,58 @@ permissions:
   pull-requests: read
 
 jobs:
+  plan:
+    # CI campaign PR 5 — impact-analysis shadow mode. Generates the CI
+    # Plan for the base..head diff (scripts/ci/plan.mjs, reusing the
+    # checked impact map) and uploads it as an artifact. The plan NEVER
+    # gates anything in this PR: every lane below still runs its
+    # complete inventory; the functional lanes only report what
+    # selection would have skipped in their step summaries. Planner
+    # failures degrade to a conservative full-selection plan so lane
+    # obligations never depend on this job's logic.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.21.0
+
+      - name: Resolve comparison base
+        id: comparison_base
+        shell: bash
+        env:
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || github.sha }}
+        run: |
+          base="$EVENT_BASE_SHA"
+          if [[ "$base" =~ ^0+$ ]]; then
+            base="$GITHUB_SHA"
+          fi
+          git cat-file -e "${base}^{commit}"
+          echo "sha=$base" >> "$GITHUB_OUTPUT"
+
+      - name: Generate CI plan
+        env:
+          BASE_SHA: ${{ steps.comparison_base.outputs.sha }}
+        run: node scripts/ci/plan.mjs --base "$BASE_SHA" --head "$GITHUB_SHA" --output ci-plan.json
+
+      - name: Plan summary
+        if: always()
+        continue-on-error: true
+        run: node scripts/ci/plan.mjs --report ci-plan.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload CI plan
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: arbor-ci-plan-${{ github.sha }}
+          path: ci-plan.json
+
   static:
     # Fast lane: everything that needs only the toolchain, no build
     # artifacts — lint, types, architecture boundaries, manifests and the
@@ -201,6 +253,21 @@ jobs:
       - name: Build web dist (daemon serves it; run-suite did this implicitly)
         run: pnpm --filter @arbor/web build
 
+      - name: Download CI plan (shadow mode)
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: arbor-ci-plan-${{ github.sha }}
+
+      - name: Report CI plan shadow summary (advisory only)
+        continue-on-error: true
+        run: |
+          if [ ! -f ci-plan.json ]; then
+            echo "CI plan artifact unavailable; shadow summary skipped (full shard still runs)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          node scripts/ci/plan.mjs --report ci-plan.json --shard ${{ matrix.shard }}/6 >> "$GITHUB_STEP_SUMMARY"
+
       - name: Functional release journey (shard ${{ matrix.shard }}/6)
         run: |
           set -e
@@ -256,6 +323,21 @@ jobs:
             sleep 20
             pnpm exec playwright install --with-deps chromium
           }
+
+      - name: Download CI plan (shadow mode)
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: arbor-ci-plan-${{ github.sha }}
+
+      - name: Report CI plan shadow summary (advisory only)
+        continue-on-error: true
+        run: |
+          if [ ! -f ci-plan.json ]; then
+            echo "CI plan artifact unavailable; shadow summary skipped (full browser suite still runs)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          node scripts/ci/plan.mjs --report ci-plan.json --check functional-ui >> "$GITHUB_STEP_SUMMARY"
 
       - name: Functional UI journey
         run: pnpm test:functional:ui
