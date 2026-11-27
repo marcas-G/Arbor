@@ -342,12 +342,44 @@ jobs:
       - name: Functional UI journey
         run: pnpm test:functional:ui
 
+  web:
+    # Plan PR 1: independent web verification (root vitest excludes apps/web;
+    # it had zero CI coverage before).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.4.2
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.21.0
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Web typecheck
+        run: pnpm --filter @arbor/web typecheck
+
+      - name: Web build
+        run: pnpm --filter @arbor/web build
+
+      - name: Web unit tests
+        run: pnpm --filter @arbor/web test
+
   health:
     # Post-lane aggregation: audit + the health snapshot over the unit
     # lane's coverage artifact. Not a required check (skips are
     # ambiguous when an upstream lane fails); its verdict rides the
     # run summary and the uploaded snapshot.
-    needs: [static, unit, functional, functional-ui]
+    needs: [static, unit, functional, functional-ui, web]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 15
