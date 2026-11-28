@@ -813,6 +813,9 @@ const buildSingleWorkspaceLayerInternal = (
             ...(deploymentBinding.deployment.extraHeaders !== undefined
               ? { extraHeaders: deploymentBinding.deployment.extraHeaders }
               : {}),
+            ...(deploymentBinding.deployment.reasoning !== undefined
+              ? { reasoning: deploymentBinding.deployment.reasoning }
+              : {}),
           })
         : config.provider !== undefined
           ? selectProviderLayer(config.provider)

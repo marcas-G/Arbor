@@ -6,6 +6,7 @@ import type {
   PortableModelRequest,
   PortableRequestCompatibility,
   ProviderCancellationSignal,
+  ProviderReasoningConfig,
 } from "@arbor/ports";
 import {
   portableInputItems,
@@ -45,6 +46,7 @@ export interface OpenAICompatibleClientConfig {
   readonly allowUnauthenticated?: boolean;
   readonly fetch?: OpenAICompatibleFetch;
   readonly extraHeaders?: Readonly<Record<string, string>>;
+  readonly reasoning?: ProviderReasoningConfig;
 }
 
 const endpointOf = (baseUrl: string): string => {
@@ -256,6 +258,7 @@ const portableMessages = (
 export const openAICompatibleRequestBody = (
   modelRef: string,
   request: PortableModelRequest,
+  reasoning?: ProviderReasoningConfig,
 ): Record<string, unknown> => ({
   model: modelRef,
   messages: portableMessages(request),
@@ -273,6 +276,20 @@ export const openAICompatibleRequestBody = (
           },
         })),
       }
+    : {}),
+  ...(reasoning?.dialect === "openai" && reasoning.effort !== undefined
+    ? { reasoning_effort: reasoning.effort }
+    : {}),
+  ...(reasoning?.dialect === "deepseek" &&
+  reasoning.enabled === undefined &&
+  reasoning.effort !== undefined
+    ? { reasoning_effort: reasoning.effort }
+    : {}),
+  ...(reasoning?.dialect === "deepseek" && reasoning.enabled !== undefined
+    ? { thinking: { type: reasoning.enabled ? "enabled" : "disabled" } }
+    : {}),
+  ...(reasoning?.dialect === "qwen" && reasoning.enabled !== undefined
+    ? { enable_thinking: reasoning.enabled }
     : {}),
 });
 
@@ -549,7 +566,11 @@ export const OpenAICompatibleFetchClient = (
               ...config.extraHeaders,
             },
             body: JSON.stringify(
-              openAICompatibleRequestBody(config.model ?? modelRef, request),
+              openAICompatibleRequestBody(
+                config.model ?? modelRef,
+                request,
+                config.reasoning,
+              ),
             ),
             signal: controller.signal,
           },

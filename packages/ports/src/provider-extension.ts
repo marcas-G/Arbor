@@ -55,8 +55,19 @@ export interface AdapterDeploymentBinding {
    * (INV-P16-8, P12 `03` no-leak). */
   readonly secretRef?: SecretRef;
   readonly extraHeaders?: ReadonlyArray<Record<string, string>>;
+  /** Optional reasoning controls for OpenAI-compatible deployments. */
+  readonly reasoning?: ProviderReasoningConfig;
   /** Conformance-test injection point; absent in production. */
   readonly transportOverride?: unknown;
+}
+
+export interface ProviderReasoningConfig {
+  /** Provider wire dialect used to enable reasoning on compatible endpoints. */
+  readonly dialect: "openai" | "deepseek" | "qwen";
+  /** OpenAI-compatible reasoning effort, when supported by the model. */
+  readonly effort?: "none" | "low" | "medium" | "high" | "xhigh";
+  /** Explicit thinking-mode switch for providers that expose one. */
+  readonly enabled?: boolean;
 }
 
 export interface ProtocolAdapter {
@@ -95,6 +106,7 @@ export interface ModelDeployment {
   readonly secretRef?: SecretRef;
   readonly executionPolicyOverrides?: ProviderExecutionPolicyOverrides;
   readonly extraHeaders?: ReadonlyArray<Record<string, string>>;
+  readonly reasoning?: ProviderReasoningConfig;
 }
 
 export interface ResolvedModelBinding {
@@ -247,6 +259,7 @@ export const resolvedModelBindingCanonicalJson = (
     failureTaxonomy: binding.adapter.profile.failureTaxonomy,
     modelRef: binding.deployment.modelRef,
     protocolFamily: binding.adapter.profile.protocolFamily,
+    reasoning: binding.deployment.reasoning ?? null,
     wireModelName:
       binding.deployment.wireModelName ?? binding.deployment.modelRef,
   };

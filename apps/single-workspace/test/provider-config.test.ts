@@ -193,6 +193,7 @@ describe("arbor.config.json — standard provider configuration", () => {
           modelRef: "model-openai",
           endpoint: "https://api.deepseek.com/v1",
           wireModelName: "deepseek-chat",
+          reasoning: { dialect: "deepseek", effort: "high" },
           secret: { kind: "env", ref: "ARBOR_MODEL_API_KEY" },
           executionPolicyOverrides: { connectTimeoutMs: 10_000 },
         },
@@ -211,6 +212,10 @@ describe("arbor.config.json — standard provider configuration", () => {
       expect(deployment.modelRef).toBe("model-openai");
       expect(deployment.endpoint).toBe("https://api.deepseek.com/v1");
       expect(deployment.wireModelName).toBe("deepseek-chat");
+      expect(deployment.reasoning).toEqual({
+        dialect: "deepseek",
+        effort: "high",
+      });
       expect(deployment.secretRef).toBe("ARBOR_MODEL_API_KEY");
       expect(deployment.executionPolicyOverrides).toEqual({
         connectTimeoutMs: 10_000,
