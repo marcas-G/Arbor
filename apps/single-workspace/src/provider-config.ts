@@ -3,6 +3,7 @@ import { isAbsolute, resolve } from "node:path";
 import type {
   ModelDeployment,
   ProviderExecutionPolicyOverrides,
+  ProviderReasoningConfig,
 } from "@arbor/ports";
 import { secretRef } from "@arbor/ports";
 
@@ -47,6 +48,7 @@ export interface ArborProviderConfigFile {
     readonly secret?: ArborProviderSecretConfig;
     readonly executionPolicyOverrides?: ProviderExecutionPolicyOverrides;
     readonly extraHeaders?: ReadonlyArray<Record<string, string>>;
+    readonly reasoning?: ProviderReasoningConfig;
   };
 }
 
@@ -250,6 +252,9 @@ export const providerDeploymentOfConfig = (
         : {}),
       ...(provider.extraHeaders !== undefined
         ? { extraHeaders: provider.extraHeaders }
+        : {}),
+      ...(provider.reasoning !== undefined
+        ? { reasoning: provider.reasoning }
         : {}),
     },
     secretStore:

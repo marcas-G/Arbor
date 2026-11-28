@@ -184,6 +184,15 @@ describe("full binding fingerprint propagation", () => {
       ),
     ).not.toBe(fingerprint);
     expect(
+      resolvedModelBindingFingerprint({
+        ...resolveBinding(),
+        deployment: {
+          ...resolveBinding().deployment,
+          reasoning: { dialect: "deepseek", effort: "high" },
+        },
+      }),
+    ).not.toBe(fingerprint);
+    expect(
       resolvedModelBindingFingerprint(
         resolveBinding({ secretRef: secretRef("OTHER_SECRET_REF_SENTINEL") }),
       ),

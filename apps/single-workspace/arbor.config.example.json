@@ -10,7 +10,8 @@
     "deploymentId": "dep-env",
     "modelRef": "model-openai",
     "endpoint": "https://api.deepseek.com/v1",
-    "wireModelName": "deepseek-chat",
+    "wireModelName": "deepseek-v4-flash",
+    "reasoning": { "dialect": "deepseek", "enabled": true },
     "secret": { "kind": "env", "ref": "ARBOR_MODEL_API_KEY" },
     "executionPolicyOverrides": {}
   }

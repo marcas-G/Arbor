@@ -233,6 +233,8 @@ export const makeModelSetup = (options: {
             modelRef: "model-openai",
             endpoint: input.endpoint,
             wireModelName: input.model,
+            // The first-run form remains protocol-neutral. Reasoning is
+            // selected explicitly in a managed config or environment.
             secret: { kind: "file", root: secretRoot, ref: secretName },
           },
         };

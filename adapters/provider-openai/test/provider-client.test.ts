@@ -14,6 +14,7 @@ import {
   type OpenAICompatibleFetchResponse,
   OpenAIProviderLive,
   type OpenAISdkChunk,
+  openAICompatibleRequestBody,
 } from "../src/index.js";
 
 const request: PortableModelRequest = {
@@ -132,6 +133,33 @@ const openEndedTerminalEventStream = (
 };
 
 describe("OpenAI-compatible fetch provider", () => {
+  it("renders explicit reasoning controls for supported compatible dialects", () => {
+    const body = openAICompatibleRequestBody("deepseek-reasoner", request, {
+      dialect: "deepseek",
+      enabled: true,
+    });
+    expect(body).toMatchObject({
+      model: "deepseek-reasoner",
+      thinking: { type: "enabled" },
+    });
+    expect(body).not.toHaveProperty("reasoning_effort");
+    expect(
+      openAICompatibleRequestBody("qwen3-thinking", request, {
+        dialect: "qwen",
+        enabled: true,
+      }),
+    ).toMatchObject({
+      model: "qwen3-thinking",
+      enable_thinking: true,
+    });
+  });
+
+  it("does not infer reasoning controls from a model name", () => {
+    expect(
+      openAICompatibleRequestBody("deepseek-reasoner", request),
+    ).not.toHaveProperty("reasoning_effort");
+  });
+
   it("settles after [DONE] when the provider keeps the HTTP stream open", async () => {
     const stream = openEndedTerminalEventStream({
       choices: [{ delta: { content: "OK" }, finish_reason: "stop" }],
