@@ -50,6 +50,44 @@ export const DEFAULT_MODEL_CATALOG: ModelCatalog = {
       knownDeployments: ["dep-agicto-deepseek-flash"],
     },
     {
+      // Named compatible-provider profiles keep deployment identity explicit.
+      // Capability qualification remains deployment-specific.
+      modelRef: "model-deepseek-compatible",
+      adapterId: "provider-openai",
+      capability: {
+        modelRef: "model-deepseek-compatible",
+        family: "deepseek-compatible",
+        contextWindow: 128000,
+        outputCeiling: 8192,
+        toolProtocol: "json",
+        capabilities: ["text", "tools"],
+      },
+    },
+    {
+      modelRef: "model-qwen-compatible",
+      adapterId: "provider-openai",
+      capability: {
+        modelRef: "model-qwen-compatible",
+        family: "qwen-compatible",
+        contextWindow: 128000,
+        outputCeiling: 8192,
+        toolProtocol: "json",
+        capabilities: ["text", "tools"],
+      },
+    },
+    {
+      modelRef: "model-openrouter-compatible",
+      adapterId: "provider-openai",
+      capability: {
+        modelRef: "model-openrouter-compatible",
+        family: "openrouter-compatible",
+        contextWindow: 128000,
+        outputCeiling: 8192,
+        toolProtocol: "json",
+        capabilities: ["text", "tools"],
+      },
+    },
+    {
       // P16 E4a proof-of-construction: a compatible provider under the
       // EXISTING openai-chat-completions-sse family is pure catalog data +
       // a deployment fixture + qualification evidence — zero core/adapter
